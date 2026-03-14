@@ -6,7 +6,12 @@
 
 ---
 
-## The Problem
+> **How to review this document:**
+> Read each section, then answer the review questions at the end of that section. You can voice-record your answers — just mention the section number and question number before each answer. Be honest and specific. If something is wrong, say so. If something is missing, tell us what. Your field experience is what makes this product real.
+
+---
+
+## Section 1: The Problem
 
 Water restoration contractors today juggle **4-6 separate tools** to document a single job:
 
@@ -28,18 +33,30 @@ And even with all these tools, the core workflow is still painfully manual:
 4. Sits at a desk for 2-4 hours manually entering Xactimate line items
 5. Hopes they didn't miss anything
 
-**RestorOS eliminates steps 2-4.** Take a photo of the damage → AI generates the Xactimate line items. Speak your scope → AI structures it. That's the product.
+**RestorOS eliminates steps 2-4.** Take a photo of the damage, AI generates the Xactimate line items. Speak your scope, AI structures it. That's the product.
+
+### Review Questions — Section 1
+
+> **1.1** Is the tool list above accurate? Which of these tools do you actually use day-to-day? Are there tools we're missing?
+>
+> **1.2** Is the cost range ($500-1,600/mo) realistic for your shop? What do you actually spend on software per month?
+>
+> **1.3** How long does scoping actually take you? We said 2-4 hours of manual Xactimate entry — is that right, or is it more/less?
+>
+> **1.4** What's the most painful part of the current workflow? If you could wave a magic wand and fix ONE thing, what would it be?
+>
+> **1.5** Are there pain points we're not mentioning? Things that waste your time that aren't on this list?
 
 ---
 
-## Market Opportunity
+## Section 2: Market Opportunity
 
 | Metric | Value |
 |--------|-------|
 | US restoration businesses | 62,582 (IBISWorld 2025) |
 | Market growth rate | 4.3% YoY |
 | US restoration services market | $7.2 billion (2025) |
-| Water damage market (2026 → 2032) | $5.97B → $8.97B (6.93% CAGR) |
+| Water damage market (2026 to 2032) | $5.97B to $8.97B (6.93% CAGR) |
 | IICRC certified technicians | 49,000+ |
 | IICRC certified firms | 6,500+ |
 | Software TAM (US) | **$225M - $600M/year** |
@@ -54,218 +71,206 @@ The market is large, growing, and **underserved by modern software.** The domina
 - **AI + IoT in water damage assessment is a $3 billion emerging market**
 - **High technician turnover** — tools must be dead simple to learn
 - **Seasonal demand spikes** (hurricanes, winter pipe bursts) — infrastructure must scale
+- **Major franchises control significant market share:** SERVPRO (2,370+ locations), ServiceMaster Restore (800+), Paul Davis (300+)
+
+### Review Questions — Section 2
+
+> **2.1** Do the carriers you work with actually reject paper documentation now? Or do some still accept it?
+>
+> **2.2** Is Xactimate truly required by every carrier you work with? Have you ever submitted a non-Xactimate estimate and had it accepted?
+>
+> **2.3** How many restoration companies do you personally know in your area? Would you describe the market as competitive (lots of companies) or thin (few companies, lots of work)?
+>
+> **2.4** How bad is technician turnover in your experience? How long does it take to train a new tech on the current tools?
+>
+> **2.5** Do you work with any franchises (SERVPRO, etc.) or are you independent? How do franchise shops differ from independents in terms of tool adoption?
 
 ---
 
-## Competitor Deep Dive
+## Section 3: Competitor Deep Dive
 
-### Tier 1: Direct Competitors (Same Space)
+### Encircle — Field Documentation Leader
 
----
-
-#### Encircle — Field Documentation Leader
-
-**What they do:** The most popular field documentation app for restoration. Photos, floor plans, moisture readings, drying logs, contents inventories.
+The most popular field documentation app for restoration. Photos, floor plans, moisture readings, drying logs, contents inventories.
 
 | | Detail |
 |---|---|
-| **Founded** | 2013 (Kitchener, ON) |
 | **Pricing** | Small: $270/mo, Medium: $455/mo, Large: $650/mo — flat rate, unlimited users |
-| **Users** | Thousands of restoration companies globally |
 | **Mobile** | Native iOS + Android |
-| **AI** | Auto photo labeling, voice-to-text notes — **no AI scoping** |
+| **AI** | Auto photo labeling, voice-to-text notes — no AI scoping |
 | **Xactimate** | Floor plan import into Xactimate sketches |
 | **Strengths** | Brand recognition, comprehensive documentation, unlimited users, Xactimate sketch integration |
 | **Weaknesses** | No AI-generated line items, no voice-guided scoping, $270/mo minimum is steep for small shops, documentation only (not job management) |
 
-**What this means for RestorOS:**
-- Encircle is the benchmark for field documentation quality
-- Their $270/mo floor creates a pricing opportunity — RestorOS at $149/mo with MORE features
-- They could add AI, so speed-to-market matters
-- **Threat level: HIGH**
-
 ---
 
-#### DASH (by CoreLogic/Cotality) — Enterprise Legacy
+### DASH (by CoreLogic/Cotality) — Enterprise Legacy
 
-**What they do:** The most comprehensive all-in-one platform. Job management, compliance automation, accounting, CRM. Includes sub-products: Mitigate (moisture logging), LuxorCRM, ProAssist.
+The most comprehensive all-in-one platform. Job management, compliance automation, accounting, CRM. Built 20+ years ago.
 
 | | Detail |
 |---|---|
 | **Pricing** | Custom/enterprise — reportedly $500+/month |
-| **Users** | Large contractors, franchise networks |
 | **Mobile** | DASH mobile + Mitigate mobile apps |
 | **AI** | Minimal — automated compliance checklists |
 | **Xactimate** | Deep integration (same parent company: Verisk/Cotality) |
-| **Strengths** | Most comprehensive feature set, SOC 2 Type II certified, deep Xactimate integration, compliance automation |
-| **Weaknesses** | **Built on 20-year-old infrastructure.** Dated UI, poor mobile experience, expensive, overkill for small shops, difficult integrations |
-
-**What this means for RestorOS:**
-- DASH is the incumbent to displace at the enterprise level (later)
-- Their legacy tech is a liability — modern mobile-first UX is a real differentiator
-- Small shops actively avoid DASH due to cost and complexity
-- **Threat level: MEDIUM** (slow to innovate, but deep pockets)
+| **Strengths** | Most comprehensive features, SOC 2 certified, compliance automation |
+| **Weaknesses** | 20-year-old infrastructure, dated UI, expensive, overkill for small shops |
 
 ---
 
-#### Albiware (Albi) + DryBook 2.0 — Modern Mid-Market
+### Albiware (Albi) + DryBook 2.0 — Modern Mid-Market
 
-**What they do:** Job management + CRM + DryBook for field documentation (moisture, equipment, photos).
+Job management + CRM + DryBook for field documentation (moisture, equipment, photos).
 
 | | Detail |
 |---|---|
 | **Pricing** | Base: $55/mo, Pro: $85/mo per user |
-| **Mobile** | Mobile app (4.2 stars) |
 | **AI** | None |
-| **Xactimate** | Integration available |
-| **Strengths** | Most affordable full-featured platform, DryBook 2.0 is solid for moisture logging, modern-ish UI |
+| **Strengths** | Most affordable full-featured platform, DryBook 2.0 solid for moisture logging |
 | **Weaknesses** | No AI, less established brand, limited customization |
 
-**What this means for RestorOS:**
-- Similar price point — RestorOS needs to clearly differentiate on AI and voice
-- DryBook 2.0 sets the baseline for what moisture logging should look like
-- **Threat level: MEDIUM**
-
 ---
 
-#### PSA (Canam Systems) — Accounting-First
+### PSA (Canam Systems) — Accounting-First
 
-**What they do:** All-in-one with strong accounting built for restoration. Job management, CRM, SMS alerts.
+All-in-one with strong accounting built for restoration.
 
 | | Detail |
 |---|---|
-| **Pricing** | $325/mo for 5 users + $5.25/additional user. **$1,500 mandatory onboarding fee** |
-| **Users** | 1,500+ contractors |
-| **AI** | None |
-| **Strengths** | Best accounting features in the category, good franchise support, integrates with Encircle |
-| **Weaknesses** | $1,500 onboarding barrier, per-user pricing, no field moisture logging, no AI |
-
-**What this means for RestorOS:**
-- PSA proves contractors will pay $325+/mo for the right all-in-one tool
-- The $1,500 setup fee is universally hated — RestorOS should have zero setup cost
-- **Threat level: LOW-MEDIUM**
+| **Pricing** | $325/mo for 5 users + $5.25/additional. $1,500 mandatory onboarding fee |
+| **Strengths** | Best accounting features, good franchise support |
+| **Weaknesses** | $1,500 onboarding barrier, no field moisture logging, no AI |
 
 ---
 
-### Tier 2: Adjacent Competitors
+### DocuSketch — Hardware-Assisted Scoping
 
----
-
-#### DocuSketch — Hardware-Assisted Scoping
+360-degree scanning, floor plan generation, and "Estimating as a Service" (human-verified estimates in 48 hours).
 
 | | Detail |
 |---|---|
-| **What** | 360-degree scanning, floor plan generation, Xactimate sketches, and "Estimating as a Service" (human-verified estimates) |
 | **Pricing** | $40/project + $795 hardware kit |
-| **Turnaround** | Floor plans: 5 hours. Estimates: 48 hours (human-verified) |
-| **Strengths** | 99% accurate floor plans, 20 seconds per room capture, voice/video comments |
-| **Weaknesses** | Requires $795 hardware, per-project pricing adds up, 48-hour estimate turnaround, not a job management tool |
-
-**RestorOS advantage:** No hardware required (phone camera only), **instant** AI-generated line items (not 48-hour turnaround), full job management included.
+| **Strengths** | 99% accurate floor plans, 20 seconds per room |
+| **Weaknesses** | Requires $795 hardware, 48-hour turnaround on estimates, not a job management tool |
 
 ---
 
-#### magicplan — LiDAR + Emerging AI
+### magicplan — LiDAR + Emerging AI
+
+LiDAR-based floor plans, moisture readings, drying reports.
 
 | | Detail |
 |---|---|
-| **What** | LiDAR-based floor plans, moisture readings, drying reports, Xactimate sketch sync |
 | **Pricing** | $40/project, custom for high volume |
-| **AI** | **Announced "AI Capture Mode"** for 2025-2026: walk through + record + speak = carrier-compliant reports |
-| **Strengths** | Fast LiDAR scanning, real-time collaboration (magicplan PRO), broad adoption, upcoming AI features |
-| **Weaknesses** | Requires LiDAR-enabled iPhone, per-project pricing, AI Capture not yet shipped, not a full job management platform |
-
-**What this means for RestorOS:**
-- magicplan is the closest competitor to our vision — they see the same future (AI + voice)
-- Their AI Capture Mode validates our approach, but they haven't shipped it yet
-- LiDAR requirement limits their market; RestorOS works on any smartphone
-- **Threat level: MEDIUM-HIGH — monitor closely**
+| **AI** | **Announced "AI Capture Mode"** (walk through + voice + auto-reports) — not yet shipped |
+| **Strengths** | Fast LiDAR scanning, upcoming AI features |
+| **Weaknesses** | Requires LiDAR-enabled iPhone, per-project pricing, AI not shipped yet |
 
 ---
 
-#### Restorator Pro — AI Claims Advisor
+### Restorator Pro — AI Claims Advisor
+
+AI assistant trained on 10,000+ pages of restoration playbooks.
 
 | | Detail |
 |---|---|
-| **What** | AI assistant trained on 10,000+ pages of restoration playbooks. Answers questions about codes, pricing, compliance |
-| **Pricing** | **$29/month** with free tier |
+| **Pricing** | $29/month with free tier |
 | **AI** | Core feature — users report 15-30% more collected on claims |
-| **Weaknesses** | Not a field documentation or job management tool. It's an advisor, not an operational platform |
-
-**What this means for RestorOS:**
-- Proves contractors will pay for AI assistance
-- RestorOS could incorporate similar claims guidance as a feature
-- **Threat level: LOW** (complementary, not competitive)
+| **Weaknesses** | Not a field documentation or job management tool — it's an advisor only |
 
 ---
 
-#### Clean Claims — IoT Remote Monitoring
+### Clean Claims — IoT Remote Monitoring
+
+Moisture mapping + remote monitoring with Wi-Fi sensors — live 24/7 data without site visits.
 
 | | Detail |
 |---|---|
-| **What** | Moisture mapping + remote monitoring with Wi-Fi sensors — live 24/7 data without site visits |
-| **Pricing** | Not published |
-| **Strengths** | Remote monitoring eliminates unnecessary site visits, real-time job progress |
-| **Weaknesses** | Requires physical hardware, smaller brand, no AI |
-
-**What this means for RestorOS:**
-- Remote monitoring is a V3+ feature for RestorOS (partner with IoT hardware, don't build it)
-- **Threat level: LOW**
+| **Strengths** | Remote monitoring eliminates unnecessary site visits |
+| **Weaknesses** | Requires physical sensors/hardware, smaller brand, no AI |
 
 ---
 
-#### Other Players
+### Other Players
 
-| Tool | What | Price | RestorOS Advantage |
-|------|------|-------|--------------------|
-| **Xcelerate** | Job management + workflow automation | $55-85/user/mo | No field tools, no moisture logging, no AI |
-| **JobNimbus** | CRM/PM (roofing-first) | Custom | Not built for restoration |
-| **CompanyCam** | Photo documentation only | $19-27/user/mo | Photos only, no scoping, no readings |
-| **Job-Dox** | Project management | $350-650/mo | General PM, no restoration-specific features |
-| **Matterport** | 3D virtual tours | Enterprise | Overkill for most jobs |
-| **KnowHow** | Training/SOPs | Varies | Complementary (onboarding), not competitive |
+| Tool | What | Price | Why it's not a direct threat |
+|------|------|-------|------------------------------|
+| Xcelerate | Workflow automation | $55-85/user/mo | No field tools, no moisture logging |
+| JobNimbus | CRM (roofing-first) | Custom | Not built for restoration |
+| CompanyCam | Photo docs only | $19-27/user/mo | Photos only, no scoping |
+| Job-Dox | Project management | $350-650/mo | General PM, nothing restoration-specific |
+| KnowHow | Training/SOPs | Varies | Complementary, not competitive |
+
+### Review Questions — Section 3
+
+> **3.1** Which of these competitors have you actually used? What did you like/hate about them?
+>
+> **3.2** Are there tools we're missing? Anything your contractor friends use that's not on this list?
+>
+> **3.3** Is Encircle as dominant as we think? Do most restoration companies in your area use it?
+>
+> **3.4** Have you looked at magicplan? Their AI Capture Mode sounds similar to what we're building — have you seen it in action or heard other contractors talk about it?
+>
+> **3.5** Have you used Restorator Pro ($29/mo AI advisor)? Is the claims guidance actually useful?
+>
+> **3.6** What about DocuSketch — is the $795 hardware kit a real barrier, or do serious shops just buy it?
+>
+> **3.7** Is there anything a competitor does REALLY well that we absolutely must match or beat?
 
 ---
 
-## The Feature Matrix
+## Section 4: The Feature Matrix
 
-How RestorOS stacks up against every competitor across the features that matter:
+How RestorOS stacks up against every competitor:
 
-| Feature | RestorOS | Encircle | DASH | Albi | DocuSketch | magicplan | PSA | Xcelerate |
-|---------|:--------:|:--------:|:----:|:----:|:----------:|:---------:|:---:|:---------:|
-| **AI Photo → Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- | -- |
-| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | Voice comments | Announced | -- | -- |
-| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | -- | YES | -- | -- |
-| **Moisture Point Tracking** | **YES** | YES | YES | YES | -- | YES | -- | -- |
-| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | -- | Partial | -- | -- |
-| **Equipment Tracking** | **YES** | YES | YES | YES | -- | -- | -- | -- |
-| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES (360 cam) | YES (LiDAR) | -- | -- |
-| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES | YES |
-| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | Partial | Partial |
-| **Job Management** | **YES** | -- | YES | YES | -- | -- | YES | YES |
-| **CRM / Lead Management** | V2 | -- | YES | YES | -- | -- | YES | Partial |
-| **Team Management** | **YES** | Unlimited | YES | YES | -- | YES | Per-user | YES |
-| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | Sharing | Collab | -- | -- |
-| **Accounting** | V2+ | -- | YES | YES | -- | -- | **YES** | Partial |
-| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- | -- |
-| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- | -- |
-| **Mobile App** | PWA | Native | Native | Native | Native | Native | Native | Native |
-| **Offline Capable** | **YES** | YES | Partial | Partial | -- | Partial | -- | -- |
-| **Works on Any Phone** | **YES** | YES | YES | YES | YES | LiDAR only | YES | YES |
-| **No Hardware Required** | **YES** | YES | YES | YES | $795 kit | LiDAR phone | YES | YES |
-
-**Legend:** YES = Available, -- = Not available, Partial = Limited functionality
+| Feature | RestorOS | Encircle | DASH | Albi | DocuSketch | magicplan | PSA |
+|---------|:--------:|:--------:|:----:|:----:|:----------:|:---------:|:---:|
+| **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- |
+| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | Partial | Announced | -- |
+| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | -- | YES | -- |
+| **Moisture Point Tracking** | **YES** | YES | YES | YES | -- | YES | -- |
+| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | -- | Partial | -- |
+| **Equipment Tracking** | **YES** | YES | YES | YES | -- | -- | -- |
+| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES | YES | -- |
+| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES |
+| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | Partial |
+| **Job Management** | **YES** | -- | YES | YES | -- | -- | YES |
+| **Team Management** | **YES** | Unlimited | YES | YES | -- | YES | Per-user |
+| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | Sharing | Collab | -- |
+| **Accounting** | V2+ | -- | YES | YES | -- | -- | **YES** |
+| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- |
+| **Offline Capable** | **YES** | YES | Partial | Partial | -- | Partial | -- |
+| **Works on Any Phone** | **YES** | YES | YES | YES | YES | LiDAR only | YES |
+| **No Hardware Required** | **YES** | YES | YES | YES | $795 kit | LiDAR phone | YES |
+| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- |
+| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- |
 
 ### What Only RestorOS Does
 
-The highlighted row at the top of the matrix is the key: **AI Photo → Xactimate Line Items.** No other tool in the market takes a damage photo and produces Xactimate-ready scope entries. Every other tool requires manual line-item entry.
+The top row is the key: **AI Photo to Xactimate Line Items.** No other tool takes a damage photo and produces Xactimate-ready scope entries. Every other tool requires manual line-item entry.
 
 This single capability collapses a 2-4 hour workflow into minutes.
 
+### Review Questions — Section 4
+
+> **4.1** Look at this feature list — which features are absolute MUST-HAVES for you on day one? Which ones could wait?
+>
+> **4.2** Are there features missing from this matrix entirely? Things you need that no tool currently does well?
+>
+> **4.3** How important is floor plan / room sketching? Is it required by adjusters, or is it a "nice to have"? Can you submit a scope without a sketch?
+>
+> **4.4** How important is S500/IICRC compliance automation? Do adjusters actually check for compliance, or is it more of a CYA thing?
+>
+> **4.5** How important is offline capability? How often are you in basements or crawlspaces with no signal?
+>
+> **4.6** Is accounting integration a dealbreaker? Or do most small shops use QuickBooks separately and that's fine?
+>
+> **4.7** Would an adjuster/customer portal actually save you time? How do you currently share documentation with adjusters?
+
 ---
 
-## Pricing Comparison
+## Section 5: Pricing Comparison
 
 ### What Contractors Pay Today (Typical Small Shop, 3-5 Techs)
 
@@ -275,17 +280,17 @@ This single capability collapses a 2-4 hour workflow into minutes.
 | Encircle (documentation) | $270-455 |
 | Job management (Albi or PSA) | $165-325 |
 | CompanyCam (photos) | $57-135 (3-5 users) |
-| magicplan (floor plans) | $40/project × ~10 jobs = $400 |
+| magicplan (floor plans) | $40/project x ~10 jobs = $400 |
 | **Total** | **$592 - $1,464/month** |
 
-### What RestorOS Charges
+### What RestorOS Will Charge
 
 | Tier | Monthly | What's Included | Target |
 |------|---------|----------------|--------|
 | **Solo** | **$49** | 2 users, core features, 50 AI scopes/month | 1-2 person shops |
 | **Team** | **$149** | Unlimited users, full AI scoping (200/mo), moisture logging, reports | 3-10 person shops |
 | **Pro** | **$299** | Everything + adjuster portal, advanced analytics, priority support, 1,000 AI scopes/mo | 10-25 person shops |
-| **Enterprise** | Custom | Multi-location, API access, custom integrations, unlimited AI, dedicated support | Franchise operations |
+| **Enterprise** | Custom | Multi-location, API access, unlimited AI, dedicated support | Franchise operations |
 
 **Note:** Contractors still need Xactimate ($100-149/mo) — RestorOS complements it, doesn't replace it. But RestorOS replaces Encircle + job management + CompanyCam + magicplan.
 
@@ -297,143 +302,265 @@ This single capability collapses a 2-4 hour workflow into minutes.
 | 5-person shop | $692-1,164/mo | $149 (Team) | **$543-1,015/mo** |
 | 15-person company | $1,100-2,000+/mo | $299 (Pro) | **$801-1,701/mo** |
 
+### Review Questions — Section 5
+
+> **5.1** Would you pay $149/mo for a tool that replaced Encircle + CompanyCam + magicplan + your job management tool? Is that a no-brainer or would you need convincing?
+>
+> **5.2** Is the Solo tier at $49/mo attractive for a 1-2 person shop? Or would they need more than 50 AI scopes/month?
+>
+> **5.3** How many jobs do you scope per month? That helps us set the right AI scope limits per tier.
+>
+> **5.4** Would you prefer per-user pricing ($X/user/mo) or flat-rate pricing (one price, unlimited users)? Why?
+>
+> **5.5** What's the maximum you'd pay per month for a tool that cut your scoping time by 75%?
+>
+> **5.6** Is "AI scopes per month" the right way to limit tiers? Or would you prefer limits on number of jobs, or number of users?
+
 ---
 
-## Our Strategy to Win
+## Section 6: What We're Building (Core Features)
+
+### Feature 1: AI Photo Scope (The Killer Feature)
+
+Upload a photo of water damage. AI analyzes it and returns Xactimate-ready line items:
+
+```
+You upload a photo of water-damaged drywall and flooring.
+
+AI returns:
+  WTR DRYOUT  — Structural Drying         — 1 EA   — $480
+  DRYWLL RR   — Remove & Replace Drywall   — 120 SF — $324
+  BSBD RR     — Remove & Replace Baseboard — 32 LF  — $86
+  PLR/STN     — Paint Walls                — 120 SF — $144
+  FLR CVR     — Remove Floor Covering      — 80 SF  — $96
+
+You review, edit if needed, approve. Done in minutes instead of hours.
+```
+
+The tech can approve, edit, or reject each line item. AI suggestions are always human-verified before submission.
+
+### Feature 2: Voice-Guided Scoping
+
+Instead of typing, the app walks you through the scope step by step via voice:
+
+```
+App: "What room are you in?"
+You: "Master bedroom"
+
+App: "Describe the damage you see."
+You: "Water damage on the north wall, about 3 feet up from the floor.
+      Drywall is saturated, baseboard is warped, carpet is wet."
+
+App: "What material is the flooring?"
+You: "Carpet over plywood subfloor"
+
+App: "Estimated affected area?"
+You: "About 10 by 12"
+
+→ AI generates line items from your spoken description
+```
+
+Works hands-free with voice commands: say "next" to advance, "done" to finish, "approve" to accept AI suggestions.
+
+### Feature 3: Site Log (Moisture Readings + Equipment)
+
+Per-room tracking of:
+- **Atmospheric readings:** Temperature, Relative Humidity (RH%), Grains Per Pound (GPP)
+- **Moisture points:** Numbered measurement points on walls/floors with material type
+- **Dehumidifier output:** Temperature and RH of dehu exhaust
+- **Equipment placement:** Which dehumidifiers, air movers, air scrubbers are in which room
+- **Trend tracking:** See drying progress over multiple daily visits
+
+### Feature 4: Room Sketching
+
+Draw floor plans of affected rooms directly in the app. Mark affected areas, equipment placement, moisture reading points. Export sketches in a format compatible with Xactimate.
+
+### Feature 5: Job Management
+
+Create and track jobs with:
+- Customer info (name, phone, email)
+- Insurance info (carrier, claim number, adjuster)
+- Loss details (type, category, class, source, date)
+- Assign techs to jobs
+- Track job status (New > In Progress > Monitoring > Completed > Invoiced > Closed)
+
+### Feature 6: Photo Documentation
+
+- Capture photos with automatic GPS tagging
+- Assign photos to specific rooms
+- Tag as before/after
+- Offline capture with auto-upload when back online
+
+### Feature 7: Report Generation
+
+Generate professional reports:
+- Xactimate-ready scope notes (CSV/ESX export for direct import)
+- Moisture log reports (daily readings, trend charts)
+- Job summary with photos, scope, readings, equipment log
+- PDF export for adjusters
+
+### Feature 8: Team Management
+
+- Invite techs by email
+- Assign techs to jobs
+- Role-based access (Owner sees everything, Tech sees assigned jobs)
+
+### Review Questions — Section 6
+
+> **6.1** Rank these features in order of importance for YOUR daily workflow (1 = most important, 8 = least):
+> - AI Photo Scope
+> - Voice-Guided Scoping
+> - Site Log (Moisture + Equipment)
+> - Room Sketching
+> - Job Management
+> - Photo Documentation
+> - Report Generation
+> - Team Management
+>
+> **6.2** For AI Photo Scope — how accurate would the line items need to be for you to trust it? 70%? 85%? 95%? What happens if it misses something?
+>
+> **6.3** For Voice-Guided Scoping — would you actually use voice on a job site? How noisy is a typical job site? Are there situations where voice wouldn't work (homeowner present, loud equipment)?
+>
+> **6.4** For Room Sketching — how detailed do your sketches need to be? Just room shape and dimensions, or do you need to mark specific damage areas, equipment positions, reading points? Do adjusters actually look at the sketches closely?
+>
+> **6.5** For Moisture Readings — do you currently use a Bluetooth-connected moisture meter, or do you read the meter and type in the number? Which meters do you use (Protimeter, Delmhorst, Flir, Wagner, Tramex)?
+>
+> **6.6** For Reports — what format do adjusters actually want? PDF? Xactimate ESX file? Spreadsheet? Or do they just want photos + line items emailed?
+>
+> **6.7** Is there a feature NOT on this list that you'd need before you'd switch from your current tools?
+>
+> **6.8** What's your biggest concern about using AI for scoping? Accuracy? Liability? Adjuster pushback? Something else?
+
+---
+
+## Section 7: Our Strategy to Win
 
 ### 1. Lead with the "Magic Moment"
 
-The AI Photo Scope demo sells itself. A contractor uploads a photo of water-damaged drywall. Within seconds, line items appear:
-
-```
-WTR DRYOUT  — Structural Drying        — 1 EA  — $480
-DRYWLL RR   — Remove & Replace Drywall  — 120 SF — $324
-BSBD RR     — Remove & Replace Baseboard — 32 LF  — $86
-PLR/STN     — Paint Walls               — 120 SF — $144
-```
-
-**No other tool does this.** Every demo should start here.
+The AI Photo Scope demo sells itself. A contractor uploads a photo of water-damaged drywall. Within seconds, Xactimate line items appear. **No other tool does this.** Every demo, every video, every conference booth should start here.
 
 ### 2. Complement Xactimate, Never Compete
 
-99% of insurance carriers require Xactimate. We will never ask a contractor to stop using Xactimate. Instead:
-
+99% of insurance carriers require Xactimate. We never ask a contractor to stop using Xactimate. Instead:
 - RestorOS generates Xactimate-compatible line items
 - Export in CSV/ESX format for direct import
-- Reduce the time from "job site" to "estimate submitted" from days to hours
+- Reduce time from "job site" to "estimate submitted" from days to hours
 - **Tagline: "Everything before the estimate, faster."**
 
 ### 3. Win on Price for Small Shops
 
-50,000+ restoration businesses in the US have fewer than 20 employees. Most are 1-5 person operations. They can't afford $500-1,500/month in software.
-
-RestorOS at **$49-149/month** (replacing 3-4 tools) is an immediate ROI conversation:
-- "How many hours do you spend on scoping per week?" → "What if it took 30 minutes instead of 4 hours?"
-- "How many tools are you paying for?" → "What if one tool did all of it?"
+50,000+ restoration businesses with fewer than 20 employees can't afford $500-1,500/month in software. RestorOS at $49-149/month replaces 3-4 tools. The ROI conversation writes itself.
 
 ### 4. Voice-First for Field Credibility
 
-Restoration techs work in wet, dirty, often hazardous environments. Their hands are gloved, their clothes are PPE. Typing on a phone is impractical.
-
-Voice-guided scoping isn't a nice-to-have — it's the only input method that actually works in the field. This is something only a contractor would know, and it's why the product was originally conceived this way.
+Techs work in wet, dirty, hazardous environments. Hands are gloved, clothes are PPE. Typing on a phone is impractical. Voice-guided scoping isn't a nice-to-have — it's the only input method that works in the field.
 
 ### 5. Built by a Restorer
 
-The origin story matters in trades. Contractors trust other contractors, not software companies. The fact that RestorOS was conceived by a working restoration contractor who couldn't find the right tool is a powerful narrative.
+The origin story matters in trades. Contractors trust other contractors. The fact that RestorOS was conceived by a working restoration contractor who couldn't find the right tool is powerful.
 
 **"I built this because nothing on the market worked. I still use it every day."**
 
----
+### Review Questions — Section 7
 
-## Distribution Channels
-
-### Tier 1: High-Impact (Start Here)
-
-| Channel | Why | How | Expected Impact |
-|---------|-----|-----|----------------|
-| **Restoration Facebook Groups** | Where small contractors actually congregate. Groups like "Water Damage Restoration Pros," "Restoration Nation" have 10,000-50,000+ members | Post 30-second demo videos of AI Photo Scope. Show a real damage photo turning into line items in real-time | Viral potential — contractors share tools that save them time |
-| **YouTube / TikTok / Shorts** | Restoration contractors consume video content voraciously | "Watch AI scope this water loss in 30 seconds." Partner with restoration YouTubers (Reets Drying Academy, etc.) | Discovery + trust building |
-| **IICRC / RIA Conferences** | Annual gatherings of restoration professionals | Booth + live demo. "Bring your own damage photo" hands-on activation. Contractors try it on their real job photos | High-intent leads, face-to-face credibility |
-
-### Tier 2: Relationship-Driven
-
-| Channel | Why | How |
-|---------|-----|-----|
-| **Insurance carrier partnerships** | Carriers want faster, standardized documentation. RestorOS reduces claim cycle times | Approach preferred vendor networks (State Farm, Allstate, USAA). Offer carrier-specific compliance templates |
-| **Restoration supply distributors** | Aramsco, DKI ProSupply, Jon-Don already sell to every contractor | Bundle RestorOS subscription with equipment purchases or distribute through existing sales channels |
-| **Training organizations** | IICRC, Restoration Technical Institute, Reets Drying Academy certify new techs | Integrate RestorOS into certification training so new techs learn on the platform from day one |
-| **Franchise networks** | SERVPRO (2,370+), ServiceMaster (800+), Paul Davis (300+) | Enterprise deals — one contract, hundreds of locations |
-
-### Tier 3: Inbound / Growth
-
-| Channel | Strategy |
-|---------|----------|
-| **SEO** | Target "best restoration software," "Xactimate alternatives," "moisture logging app," "restoration scoping tool" |
-| **Content marketing** | Comparison pages (RestorOS vs Encircle, RestorOS vs DASH), industry guides, scoping best practices |
-| **Referral program** | 1 free month for each referral that converts. Contractors talk to each other at water losses |
-| **Free demo job** | Let any contractor run 1 complete job free (not a time-limited trial — a usage-limited proof of value) |
+> **7.1** Does the "magic moment" (photo to line items in seconds) resonate with you? Would that be enough to make you try the product?
+>
+> **7.2** Is the "complement Xactimate" positioning right? Or would some contractors actually want to REPLACE Xactimate if they could?
+>
+> **7.3** Does voice-first actually work in the field? Be honest — would you use voice, or would you just type? What about when the homeowner is standing right there?
+>
+> **7.4** How much does the "built by a restorer" story matter to you? Would you trust a tool more if you knew a contractor built it vs. a software company?
+>
+> **7.5** What would make you switch from your current tools? What's the minimum this product would need to do before you'd actually use it on a real job?
 
 ---
 
-## Defensive Moats (How We Stay Ahead)
+## Section 8: Distribution & Go-To-Market
 
-### 1. Data Moat
-Every AI-scoped job teaches the model. First mover with AI photo scoping accumulates training data (damage types, materials, regional pricing patterns) that later entrants can't replicate quickly. By the time a competitor ships AI scoping, we'll have tens of thousands of real-world scoping examples.
+### Where Contractors Actually Hang Out
 
-### 2. Workflow Lock-In
-Once a contractor's daily operations run through RestorOS (create job → scope → readings → equipment → report → submit), switching cost is high. Their data, their team structure, their workflow habits all live in the platform.
+| Channel | Why | How we'll reach them |
+|---------|-----|---------------------|
+| **Restoration Facebook Groups** | Groups like "Water Damage Restoration Pros" and "Restoration Nation" have 10,000-50,000+ members | Post 30-second demo videos of AI Photo Scope |
+| **YouTube / TikTok** | Contractors consume how-to content | "Watch AI scope this water loss in 30 seconds" |
+| **IICRC / RIA Conferences** | Annual gatherings of restoration pros | Booth + live "bring your own damage photo" demo |
+| **Supply distributors** | Aramsco, DKI ProSupply, Jon-Don already sell to every contractor | Bundle subscription with equipment purchases |
+| **Training organizations** | IICRC, Reets Drying Academy | Get RestorOS into certification curriculum |
+| **Insurance carrier networks** | Carriers want faster documentation | Preferred vendor network partnerships |
+| **Referral program** | Contractors talk to each other at water losses | 1 free month for each referral that converts |
+| **Franchise networks** | SERVPRO (2,370+), ServiceMaster (800+) | Enterprise deals — one contract, hundreds of locations |
 
-### 3. Xactimate Integration Depth
-Build the tightest possible Xactimate integration. Become the "recommended scoping tool" in Xactimate's partner ecosystem. This relationship compounds over time and creates a barrier for competitors.
+### Review Questions — Section 8
 
-### 4. Community
-Build a contractor community around RestorOS — shared templates, scoping tips, best practices, pricing insights. Encircle does this effectively. Community creates retention that no feature can match.
-
-### 5. Expansion Surface
-Start with water → add fire, mold, storm → add plumbing, electrical. Each vertical expansion multiplies the addressable market while leveraging the same core platform. First mover in AI-assisted restoration scoping becomes first mover in AI-assisted contractor scoping broadly.
-
----
-
-## Expansion Roadmap
-
-| Phase | Vertical | Why | AI Expansion |
-|-------|----------|-----|-------------|
-| **V1** | Water restoration | Most documentation-heavy, most compliance-driven, largest segment | Photo → water damage line items |
-| **V2** | Fire & smoke restoration | Same insurance workflow, same Xactimate dependency, natural extension | Photo → char/smoke/soot damage items |
-| **V3** | Mold remediation | Heavily regulated, extensive documentation required, caused by water damage | Photo → mold assessment items |
-| **V4** | Contents restoration | High-value segment, cataloging damaged personal property | Photo → contents inventory + replacement costs |
-| **V5** | Adjacent trades | Plumbing (referral source), general contractors (reconstruction) | Platform becomes "ContractorOS" |
-
----
-
-## Risk Assessment
-
-| Risk | Severity | Our Plan |
-|------|----------|----------|
-| **AI scope accuracy** | Critical | AI suggestions are always "human-verified" — contractors approve/edit/reject every line item. We don't auto-submit to insurance. Build accuracy over time with feedback loop |
-| **Encircle adds AI** | High | Speed to market. We ship AI scoping first, build data moat, establish brand. By the time they add it, we're the "AI scoping company" |
-| **Xactimate blocks integration** | Medium | Maintain multiple export formats (CSV, ESX, PDF). Build relationship with Xactware team. We make their product more valuable, not less |
-| **Contractor tech resistance** | Medium | "If it takes more than 3 taps, they won't use it." Voice-first design eliminates the keyboard. Founder credibility ("I'm a restorer too") overcomes skepticism |
-| **Insurance carrier pushback on AI** | Medium | Position as "AI-assisted, human-verified." Every estimate is reviewed by a human before submission. AI is the tool, the contractor is the professional |
-| **New well-funded entrant** | Medium | First-mover data advantage + community + Xactimate integration depth create moats. We don't need to be the biggest — we need to be the fastest and most accurate |
+> **8.1** Which Facebook groups are you in? Which ones are the most active?
+>
+> **8.2** Which YouTube channels or influencers do restoration contractors actually follow?
+>
+> **8.3** Do you attend IICRC or RIA conferences? Which ones?
+>
+> **8.4** Where do you buy your equipment (Aramsco, Jon-Don, other)? Would you pay attention to software recommended by your supply distributor?
+>
+> **8.5** Would a referral program (1 free month per referral) motivate you to tell other contractors?
+>
+> **8.6** How do you currently find out about new tools? Word of mouth? Facebook? Google search? Conferences? Rep from a vendor?
+>
+> **8.7** Is there a specific person, company, or community that if they endorsed this product, every contractor would pay attention?
 
 ---
 
-## Summary: Why RestorOS Wins
+## Section 9: Expansion Roadmap
 
-| Dimension | RestorOS | Best Alternative |
-|-----------|----------|-----------------|
-| **AI Photo Scoping** | YES (first to market) | Nobody |
-| **Voice-Guided Scoping** | YES | magicplan (announced, not shipped) |
-| **All-in-One Platform** | Scoping + docs + readings + equipment + jobs + reports | DASH (but 20yr old, expensive) |
-| **Price (small shop)** | $49-149/mo | Albi $55/user + Encircle $270 = $325+ |
-| **Mobile-First** | Built for phones in the field | Most are desktop-adapted-to-mobile |
-| **Time to Scope** | Minutes (AI-assisted) | Hours (manual) |
-| **Setup Cost** | $0 | PSA charges $1,500 |
-| **Built by a Contractor** | YES | No competitor was founded by a working restorer |
+We start with water restoration, then expand:
 
-**The bottom line:** RestorOS is the only tool that makes a restoration contractor's most painful daily task — scoping — dramatically faster through AI. Everything else in the market is a documentation tool. We're a productivity multiplier.
+| Phase | Vertical | Why |
+|-------|----------|-----|
+| **V1 (Now)** | Water restoration | Most documentation-heavy, highest compliance requirements |
+| **V2** | Fire & smoke | Same insurance workflow, same Xactimate dependency |
+| **V3** | Mold remediation | Heavily regulated, caused by water damage (natural upsell) |
+| **V4** | Contents restoration | High-value — catalog damaged personal property |
+| **V5** | Adjacent trades | Plumbing, general contractors (reconstruction after mitigation) |
+
+### Review Questions — Section 9
+
+> **9.1** Does this expansion order make sense? Would you prioritize differently?
+>
+> **9.2** Do you currently do fire, mold, or contents work? Or water only?
+>
+> **9.3** Are there other verticals we should consider? Roofing? Storm damage? Biohazard?
+>
+> **9.4** Do plumbers refer work to you? Would a tool that connected plumbers to restoration contractors be valuable?
 
 ---
 
-*RestorOS — Run your restoration business, not paperwork.*
+## Section 10: Risks and Concerns
+
+| Risk | Our Plan |
+|------|----------|
+| **AI scope accuracy** | All AI suggestions are human-verified. Contractors approve/edit/reject every line item. We never auto-submit to insurance |
+| **Encircle adds AI** | Speed to market. Ship first, build data moat, establish brand |
+| **Xactimate blocks integration** | Multiple export formats (CSV, ESX, PDF). We make Xactimate more valuable, not less |
+| **Contractor tech resistance** | Voice-first eliminates the keyboard. Founder credibility ("I'm a restorer too") |
+| **Insurance carrier pushback** | Position as "AI-assisted, human-verified." The contractor is the professional, AI is the tool |
+| **Liability for incorrect AI scopes** | Clear terms: AI is a suggestion tool. Contractor is responsible for the final estimate |
+
+### Review Questions — Section 10
+
+> **10.1** What's YOUR biggest concern about this product? What would make you hesitate to use it?
+>
+> **10.2** Would adjusters push back on AI-generated line items? Have you ever had an adjuster question how you came up with your scope?
+>
+> **10.3** Are there liability concerns we're not thinking about? If AI suggests the wrong line item and it gets submitted, who's responsible?
+>
+> **10.4** How tech-savvy are the contractors you know? Would they struggle with a new app, or are they comfortable with phones/tablets?
+>
+> **10.5** Any final thoughts? What are we missing? What would you change? What gets you excited about this?
+
+---
+
+## Thank You
+
+Your time and expertise are what make this product real. The difference between RestorOS and every other restoration tool is that this one is being built with direct input from people who actually do the work.
+
+Record your answers, send them back, and we'll build this thing right.
+
+*— The RestorOS Team*
