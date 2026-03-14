@@ -46,6 +46,10 @@ And even with all these tools, the core workflow is still painfully manual:
 > **1.4** What's the most painful part of the current workflow? If you could wave a magic wand and fix ONE thing, what would it be?
 >
 > **1.5** Are there pain points we're not mentioning? Things that waste your time that aren't on this list?
+>
+> **1.6** Is the problem we're describing (too many tools, too much manual scoping) THE main problem in your business? Or is there a bigger problem we should be solving instead? For example: getting paid faster, winning more jobs, dealing with adjusters, hiring techs, compliance headaches — what actually keeps you up at night?
+>
+> **1.7** If we only solved ONE problem really well, which problem should that be?
 
 ---
 
