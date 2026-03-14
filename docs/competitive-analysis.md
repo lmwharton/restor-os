@@ -11,6 +11,82 @@
 
 ---
 
+## Section 0: Your Business & Daily Workflow
+
+Before we get into the product, we need to understand YOUR world. These are the most important questions in the entire document.
+
+### About Your Business
+
+> **0.1** Tell us about your company — how many people, how long in business, what types of jobs (residential, commercial, both)?
+>
+> **0.2** How many jobs do you run per month on average? What's a slow month vs. a busy month (hurricane season, winter pipe bursts)?
+>
+> **0.3** What's the average job size in dollars? What's a small job vs. a big job?
+>
+> **0.4** How long does a typical water restoration job take start to finish (first call to final invoice)?
+>
+> **0.5** How many return visits does a typical water job require? How often do you go back to check readings — daily? Every other day?
+
+### A Day in Your Life
+
+> **0.6** Walk us through a typical day from when you wake up. When do you get the call? How do you decide to take the job? What happens when you arrive on site? What do you do first, second, third?
+>
+> **0.7** How much of your day is spent ON the job site vs. doing paperwork/admin? What percentage would you guess — 50/50? 70/30?
+>
+> **0.8** What's the most annoying part of your day? The thing you dread doing?
+>
+> **0.9** What's a "good day" look like vs. a "bad day"?
+
+### Getting Paid
+
+> **0.10** How do you get paid? Does insurance pay you directly, or does the homeowner pay and get reimbursed?
+>
+> **0.11** How long does it typically take to get paid after completing a job? Days? Weeks? Months?
+>
+> **0.12** What causes payment delays? Is it usually the adjuster, the homeowner, or something on your end (missing documentation, scope disputes)?
+>
+> **0.13** Have you ever lost money on a job because your scope was rejected or underpaid by the carrier? How often does that happen?
+>
+> **0.14** Do you supplement (ask for more money after the initial scope)? How often? Is that a pain point?
+
+### Working with Adjusters
+
+> **0.15** Describe your relationship with insurance adjusters. Is it mostly cooperative or adversarial?
+>
+> **0.16** What's the most common reason an adjuster pushes back on your scope or documentation?
+>
+> **0.17** Do adjusters visit the job site, or do they review everything remotely now? Has that changed recently?
+>
+> **0.18** What documentation format do adjusters actually want from you? Photos? Moisture logs? Xactimate file? PDF report? All of the above?
+>
+> **0.19** Have you ever had an adjuster approve a scope faster because your documentation was really clean and thorough? Does good documentation actually help you get paid faster?
+
+### Your Team
+
+> **0.20** How do you communicate with your techs during a job? Phone calls? Texts? WhatsApp? An app?
+>
+> **0.21** When a tech finishes documenting a job site, how do they get that information to you (the owner)? Email? Shared drive? They just tell you?
+>
+> **0.22** How tech-savvy are your techs? Would they struggle with a new app, or are they comfortable with phones/tablets?
+>
+> **0.23** What phone do your techs use? iPhone or Android? Do they have unlimited data, or is data usage a concern on job sites?
+>
+> **0.24** How long does it take to train a new tech on your current documentation process? What do they struggle with most?
+
+### Buying Software
+
+> **0.25** Who in your company decides to buy new software? Is it just you, or does someone else weigh in?
+>
+> **0.26** When you evaluate a new tool, what matters most? Price? Ease of use? Features? What another contractor said about it? A demo?
+>
+> **0.27** Have you ever tried a tool and stopped using it? Which one and why?
+>
+> **0.28** What would make it hard to switch from your current tools? Data you'd lose? Contracts? Training time? Just the hassle of change?
+>
+> **0.29** Do you have any creative workarounds or hacks you've invented because no tool does what you need? (These are gold — please share them)
+
+---
+
 ## Section 1: The Problem
 
 Water restoration contractors today juggle **4-6 separate tools** to document a single job:
