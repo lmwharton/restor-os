@@ -243,14 +243,30 @@ How RestorOS stacks up against every competitor:
 | **Offline Capable** | **YES** | YES | Partial | Partial | -- | Partial | -- |
 | **Works on Any Phone** | **YES** | YES | YES | YES | YES | LiDAR only | YES |
 | **No Hardware Required** | **YES** | YES | YES | YES | $795 kit | LiDAR phone | YES |
+| **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- |
 | **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- |
 | **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- |
 
 ### What Only RestorOS Does
 
-The top row is the key: **AI Photo to Xactimate Line Items.** No other tool takes a damage photo and produces Xactimate-ready scope entries. Every other tool requires manual line-item entry.
+**Two features no competitor has:**
 
-This single capability collapses a 2-4 hour workflow into minutes.
+1. **AI Photo to Xactimate Line Items.** No other tool takes a damage photo and produces Xactimate-ready scope entries. Every other tool requires manual line-item entry. This collapses a 2-4 hour workflow into minutes.
+
+2. **AI Hazardous Material Scanner.** When photos are uploaded, AI automatically scans for materials that are high-risk for asbestos and lead-based paint, and flags them with a warning.
+
+   **Asbestos detection:** Identifies popcorn ceilings, old vinyl floor tiles (9x9), pipe insulation, vermiculite insulation, transite siding, old duct tape/mastic — any material in a pre-1980s home that should be tested before disturbing.
+
+   **Lead paint detection:** Flags painted surfaces in pre-1978 homes, especially windowsills, trim, doors, and chipping/peeling paint in older construction.
+
+   **How it works:** Upload 10 photos of a job site. AI reviews every image. If 2 photos show asbestos-risk materials (e.g., old flooring and pipe wrap), those photos get flagged immediately with:
+   - A clear hazard warning explaining the risk
+   - Links to purchase asbestos/lead test kits
+   - Licensed abatement contractors in the area
+
+   **Revenue model:** Test kit manufacturers and abatement contractors pay for placement — essentially sponsored recommendations. This creates a revenue stream beyond subscriptions, and it's genuinely useful (contractors need test kits and abatement referrals anyway).
+
+   **No competitor does this.** Every other tool treats photos as passive documentation. RestorOS actively analyzes them for safety risks.
 
 ### Review Questions — Section 4
 
@@ -293,6 +309,18 @@ This single capability collapses a 2-4 hour workflow into minutes.
 | **Enterprise** | Custom | Multi-location, API access, unlimited AI, dedicated support | Franchise operations |
 
 **Note:** Contractors still need Xactimate ($100-149/mo) — RestorOS complements it, doesn't replace it. But RestorOS replaces Encircle + job management + CompanyCam + magicplan.
+
+### Additional Revenue: Hazmat Scanner Marketplace
+
+Beyond subscriptions, the AI Hazmat Scanner creates a marketplace revenue stream:
+
+| Revenue Source | How it works | Estimated Revenue |
+|---------------|-------------|------------------|
+| **Test kit manufacturers** | Featured placement when asbestos/lead is flagged (e.g., "Order a test kit from [Brand]") | Per-click or monthly sponsorship |
+| **Abatement contractors** | "Licensed abatement contractors near you" listings on flagged photos | Lead generation fee per referral |
+| **Equipment suppliers** | Recommended PPE, containment supplies when hazards detected | Affiliate commission |
+
+This is advertising contractors actually WANT — they need test kits and abatement referrals when hazards are detected. It's not intrusive, it's useful.
 
 ### Savings Calculator
 
@@ -405,6 +433,39 @@ Generate professional reports:
 - Assign techs to jobs
 - Role-based access (Owner sees everything, Tech sees assigned jobs)
 
+### Feature 9: AI Hazardous Material Scanner (Asbestos + Lead Paint)
+
+Every photo uploaded to RestorOS is automatically scanned by AI for hazardous materials:
+
+```
+You upload 10 photos of a water-damaged home built in 1972.
+
+AI flags 2 photos:
+  PHOTO 3 — Kitchen floor: 9x9 vinyl tiles detected.
+            HIGH RISK for asbestos-containing material.
+            DO NOT disturb without testing.
+
+  PHOTO 7 — Basement pipes: Wrapped pipe insulation detected.
+            HIGH RISK for asbestos-containing material.
+            DO NOT disturb without testing.
+
+Each flagged photo shows:
+  - Test kit links (purchase an asbestos test kit)
+  - Licensed abatement contractors near the job site
+  - EPA/OSHA compliance guidance
+```
+
+**What it detects:**
+- **Asbestos risks:** Popcorn ceilings, 9x9 floor tiles, pipe wrap insulation, vermiculite, transite siding, old mastic/duct tape — any suspect material in pre-1980s construction
+- **Lead paint risks:** Painted surfaces in pre-1978 homes, especially windowsills, trim, doors, chipping/peeling paint
+
+**Why it matters:**
+- Disturbing asbestos without testing can shut down a job, create massive liability, and endanger workers
+- EPA requires testing before disturbing suspect materials during renovation/restoration
+- Most contractors know to look for this, but new techs often don't — the AI catches what humans miss
+
+**Revenue opportunity:** Test kit manufacturers and abatement contractors pay for featured placement. This is advertising that contractors actually want — they need test kits and abatement referrals. It's a revenue stream beyond subscriptions.
+
 ### Review Questions — Section 6
 
 > **6.1** Rank these features in order of importance for YOUR daily workflow (1 = most important, 8 = least):
@@ -430,6 +491,14 @@ Generate professional reports:
 > **6.7** Is there a feature NOT on this list that you'd need before you'd switch from your current tools?
 >
 > **6.8** What's your biggest concern about using AI for scoping? Accuracy? Liability? Adjuster pushback? Something else?
+>
+> **6.9** For the AI Hazardous Material Scanner — how often do you encounter asbestos-suspect materials on jobs? How do you currently handle it? Do you test yourself or call an abatement company?
+>
+> **6.10** Would auto-flagging asbestos/lead risks in photos be useful, or do experienced techs always catch it themselves? What about newer techs — would this help them?
+>
+> **6.11** Would you click through to buy a test kit or contact an abatement contractor if the app recommended one? Or would you just use your existing contacts?
+>
+> **6.12** Are there other hazards the AI should flag? Mold? Sewage/biohazard? Structural damage? Electrical hazards (water near panels)?
 
 ---
 
