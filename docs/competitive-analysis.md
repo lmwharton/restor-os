@@ -499,6 +499,54 @@ From Brett: *"We need to make them feel like they're missing out and their compe
 
 ---
 
+## Xactimate Integration Strategy
+
+99% of carriers require Xactimate-formatted estimates. We complement Xactimate, never compete. Here's how competitors integrate and our path forward.
+
+### How Competitors Integrate
+
+| Company | Method | Verisk Partnership? | Direction |
+|---------|--------|:-------------------:|-----------|
+| **Encircle** | TPI (Third-Party Integration) framework — deepest integration | YES | Bidirectional |
+| **Albiware** | XactNet address-based sync — auto-imports completed estimates | YES | Bidirectional |
+| **DASH** | XactAnalysis SP — same parent company (Cotality/Verisk) | YES | Bidirectional |
+| **PSA** | XactAnalysis SP integration | YES | Bidirectional |
+| **DocuSketch** | Generates ESX files — user imports into Xactimate | NO | One-way (into Xactimate) |
+| **magicplan** | Generates ESX files for floor plans | NO | One-way (into Xactimate) |
+| **JobSight** | Users upload ESX files from Xactimate into JobSight | NO | One-way (into JobSight) |
+
+**Only 5 companies have official XactAnalysis SP integration:** Assured Complete, ClientRunner, DASH, Restoration Manager, and PSA.
+
+### ESX File Format (Our V1 Path)
+
+ESX is a ZIP-compressed archive containing XML data files. The format is proprietary but has been reverse-engineered by multiple companies (DocuSketch, magicplan, EstimateHub). No Verisk partnership required.
+
+**What's inside an ESX file:** Dates, images, policy info, damages, deductibles, estimated costs, sketches, and line items — all in structured XML.
+
+**Who generates ESX without Verisk's blessing:** DocuSketch, magicplan, EstimateHub, HOVER — proving the format is stable and producible by third parties.
+
+### Crewmatic Integration Roadmap
+
+| Phase | What | Partnership Needed? |
+|-------|------|:-------------------:|
+| **V1: ESX Generation** | AI generates Xactimate line items → Crewmatic packages as ESX file → contractor imports into Xactimate in one click | NO |
+| **V1: CSV/PDF Export** | Export scope as formatted CSV/PDF matching Xactimate structure for manual reference | NO |
+| **V2: ESX Import** | Import existing Xactimate estimates (ESX) into Crewmatic for job costing and comparison | NO |
+| **V3: Verisk TPI Partnership** | Apply for official Third-Party Integration once we have user traction and market presence | YES |
+
+**V1 advantage over JobSight:** JobSight only imports ESX (one-way into their system). Crewmatic will **generate** ESX files — taking AI-produced line items and packaging them for Xactimate import. This is the reverse direction and far more valuable. No competitor with AI does this.
+
+### Alternative Data Sources for Pricing
+
+| Source | What | Access |
+|--------|------|--------|
+| **Xactimate PDF parsing** | OCR/AI extraction of line items from Xactimate PDF reports | No partnership — standard PDF |
+| **EstimateHub** | Converts Xactimate PDFs → ESX files (potential partner or model to study) | Third-party service |
+| **RS Means API** (Gordian) | 92,000+ line items with geographic factors, 970+ locations | $396-$5,973/yr licensable |
+| **BLS Wage Data** | Trade wage rates for 830+ occupations across 600+ metro areas | Free (public domain) |
+
+---
+
 ## Distribution Channels
 
 | Channel | How |

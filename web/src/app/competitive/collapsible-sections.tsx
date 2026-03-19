@@ -59,6 +59,8 @@ const SECTION_SUMMARIES: Record<string, string> = {
     "Solo $49 · Team $149 · Pro $299 · Enterprise custom + Hazmat marketplace revenue",
   "strategy-to-win":
     "Lead with magic moment · Complement Xactimate · Win on price · Voice-first · FOMO lever",
+  "xactimate-integration-strategy":
+    "V1: ESX file generation (no partnership needed) · V2: ESX import · V3: Verisk TPI partnership",
   "distribution-channels":
     "Facebook groups · YouTube/TikTok · IICRC conferences · Supply distributors · Referrals",
   "expansion-roadmap":

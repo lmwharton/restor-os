@@ -34,7 +34,7 @@ const SECTION_GROUPS: Array<{
     label: "Go-to-Market",
     icon: "→",
     matcher: (t) =>
-      /strategy to win|distribution|expansion|risks/i.test(t),
+      /strategy to win|distribution|expansion|risks|xactimate integration/i.test(t),
   },
   {
     label: "Validation",
