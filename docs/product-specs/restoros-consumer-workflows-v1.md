@@ -1,16 +1,16 @@
-# RestorOS V1 - Consumer Workflow Specification
+# Crewmatic V1 - Consumer Workflow Specification
 
 **Document Version:** 1.1
 **Date:** 2026-03-19
 **Status:** Draft - Updated with Contractor Feedback (Brett Sodders interview)
 **Previous Version:** 1.0 (2026-03-13)
-**Product:** RestorOS - Water Restoration Contractor Platform
+**Product:** Crewmatic - Water Restoration Contractor Platform
 
 ---
 
 ## Executive Summary
 
-RestorOS is a field-first web application for water restoration contractors. It replaces fragmented paper/spreadsheet workflows with a guided, AI-assisted digital process that produces Xactimate-ready documentation.
+Crewmatic is a field-first web application for water restoration contractors. It replaces fragmented paper/spreadsheet workflows with a guided, AI-assisted digital process that produces Xactimate-ready documentation.
 
 **Core value proposition:** A restoration tech with a phone can arrive at a water-damaged property, document everything through photos and guided input, and produce insurance-grade scope notes and moisture reports -- faster than paper, with AI doing the heavy lifting.
 
@@ -1766,7 +1766,7 @@ The central hub showing all jobs, their statuses, and key metrics. Different vie
          |
 [2] Dashboard layout:
          +-----------------------------------------+
-         |  RestorOS Dashboard                      |
+         |  Crewmatic Dashboard                      |
          |  Good morning, John                      |
          |                                          |
          |  ACTIVE JOBS: 7    NEED REVIEW: 2        |

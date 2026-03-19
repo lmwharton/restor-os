@@ -1,8 +1,8 @@
-# RestorOS — Workflow Review & Validation
+# Crewmatic — Workflow Review & Validation
 
 > **For: Brett Sodders (Co-Founder)**
 >
-> We've designed 17 workflows for RestorOS based on your prototype, our research, and your first interview. Now we need you to validate each one: **Is this how you actually work? What's wrong? What's missing?**
+> We've designed 17 workflows for Crewmatic based on your prototype, our research, and your first interview. Now we need you to validate each one: **Is this how you actually work? What's wrong? What's missing?**
 
 ---
 
@@ -324,4 +324,4 @@ These workflows are the blueprint for what we're building. Your answers determin
 
 Take your time on W15 (the end-to-end job walkthrough) — that one answer alone is worth more than everything else combined.
 
-*— The RestorOS Team*
+*— The Crewmatic Team*

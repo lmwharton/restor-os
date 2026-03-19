@@ -1,14 +1,14 @@
-# RestorOS - Product Specification Suite
+# Crewmatic - Product Specification Suite
 
-**Product:** RestorOS - The Operating System for Restoration Contractors
+**Product:** Crewmatic - The Operating System for Restoration Contractors
 **Date:** 2026-03-13
 **Status:** Draft - Ready for Review
 
 ---
 
-## What is RestorOS?
+## What is Crewmatic?
 
-RestorOS is a field-first web application (PWA) for water restoration contractors. It replaces the fragmented paper/spreadsheet/multi-tool workflow with a single AI-powered platform that produces insurance-grade documentation.
+Crewmatic is a field-first web application (PWA) for water restoration contractors. It replaces the fragmented paper/spreadsheet/multi-tool workflow with a single AI-powered platform that produces insurance-grade documentation.
 
 **Core value proposition:** A tech with a phone arrives at a water-damaged property, documents everything through voice and photos, and produces Xactimate-ready scope notes — without touching a keyboard.
 
@@ -20,10 +20,10 @@ RestorOS is a field-first web application (PWA) for water restoration contractor
 
 | # | Document | Contents |
 |---|----------|----------|
-| 1 | [Competitive Analysis](restoros-competitive-analysis.md) | 13 competitors analyzed, feature matrix, pricing landscape, market opportunity ($180-360M TAM), go-to-market strategy |
-| 2 | [Consumer Workflows](restoros-consumer-workflows-v1.md) | 15 end-to-end workflows documented with triggers, steps, data schemas, edge cases, offline strategy |
-| 3 | [Backend Architecture](restoros-backend-architecture.md) | 17 database tables (full SQL), 50+ API endpoints, AI pipelines (voice + photo + guided), RLS, multi-tenancy |
-| 4 | [Frontend Architecture](restoros-frontend-architecture.md) | Component tree, state management, voice/camera UX, PWA strategy, streaming AI UI, performance targets |
+| 1 | [Competitive Analysis](crewmatic-competitive-analysis.md) | 13 competitors analyzed, feature matrix, pricing landscape, market opportunity ($180-360M TAM), go-to-market strategy |
+| 2 | [Consumer Workflows](crewmatic-consumer-workflows-v1.md) | 15 end-to-end workflows documented with triggers, steps, data schemas, edge cases, offline strategy |
+| 3 | [Backend Architecture](crewmatic-backend-architecture.md) | 17 database tables (full SQL), 50+ API endpoints, AI pipelines (voice + photo + guided), RLS, multi-tenancy |
+| 4 | [Frontend Architecture](crewmatic-frontend-architecture.md) | Component tree, state management, voice/camera UX, PWA strategy, streaming AI UI, performance targets |
 
 ---
 
@@ -80,7 +80,7 @@ RestorOS is a field-first web application (PWA) for water restoration contractor
 
 ## Competitive Position
 
-**RestorOS is the ONLY platform that:**
+**Crewmatic is the ONLY platform that:**
 1. Generates Xactimate line items from photos using AI
 2. Offers true voice-guided scoping workflows
 3. Combines field documentation + job management + AI in one tool
@@ -88,7 +88,7 @@ RestorOS is a field-first web application (PWA) for water restoration contractor
 
 **Key competitors:** Encircle (HIGH threat), magicplan (MEDIUM-HIGH), DASH (MEDIUM)
 
-**Positioning:** RestorOS complements Xactimate, doesn't replace it. "Everything before the estimate, faster."
+**Positioning:** Crewmatic complements Xactimate, doesn't replace it. "Everything before the estimate, faster."
 
 ---
 
@@ -107,10 +107,10 @@ RestorOS is a field-first web application (PWA) for water restoration contractor
 
 ## GitHub
 
-- **Org/Repo:** `restoros` or `restor-os`
+- **Org/Repo:** `crewmatic` or `restor-os`
 - **Monorepo structure:**
   ```
-  restoros/
+  crewmatic/
     apps/
       web/        → Next.js frontend (Vercel)
       api/        → FastAPI backend (Railway)
@@ -126,6 +126,6 @@ RestorOS is a field-first web application (PWA) for water restoration contractor
 ## Next Steps
 
 1. Review all 4 spec documents
-2. Finalize naming (RestorOS confirmed?)
+2. Finalize naming (Crewmatic confirmed?)
 3. Create GitHub repo
 4. Begin Phase 1: Foundation (backend + frontend in parallel)
