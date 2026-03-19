@@ -40,7 +40,7 @@ const SECTION_GROUPS: Array<{
     label: "Validation",
     icon: "✓",
     matcher: (t) =>
-      /follow-up|appendix a|interview/i.test(t),
+      /appendix a|interview/i.test(t),
   },
   {
     label: "Workflows",

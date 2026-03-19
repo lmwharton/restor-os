@@ -67,8 +67,6 @@ const SECTION_SUMMARIES: Record<string, string> = {
     "7 risks tracked · Encircle AI live · Speed to market · MICA mandates",
   "strategic-intelligence-verisk--the-xactimate-moat":
     "Verisk $31B · Xactimate $350/mo · Failed AccuLynx deal · Crowdsourced pricing opportunity",
-  "follow-up-questions-for-brett":
-    "15 follow-up questions across product, competition, workflows, and business",
   "appendix-a-contractor-interview--brett-sodders-co-founder":
     "30 Q&As · Feature priorities · Pricing validation · Competitive insights",
   "appendix-b-workflow-review--validation-questions":
@@ -293,7 +291,7 @@ export function CollapsibleDocument({
                       {isOpen && (
                         <div className="px-5 pb-6 pt-0">
                           <div className="border-t border-slate-100 pt-5">
-                            <div className="prose prose-slate prose-sm max-w-none prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-table:text-xs prose-th:bg-slate-800 prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-slate-200 prose-tr:border-slate-200 even:prose-tr:bg-slate-50 prose-blockquote:border-blue-500 prose-blockquote:bg-blue-50/60 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-slate-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-code:bg-slate-100 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-li:marker:text-slate-400 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px]">
+                            <div className="prose prose-slate prose-sm max-w-none prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-table:text-xs prose-th:bg-slate-800 prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-slate-200 prose-tr:border-slate-200 even:prose-tr:bg-slate-50 prose-blockquote:border-blue-500 prose-blockquote:bg-blue-50/60 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-slate-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-50 prose-pre:text-slate-700 prose-pre:border prose-pre:border-slate-200 prose-pre:rounded-lg prose-pre:text-xs prose-code:bg-slate-100 prose-code:text-slate-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-li:marker:text-slate-400 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px]">
                               <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{

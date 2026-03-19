@@ -551,50 +551,6 @@ An untapped market opportunity exists for a contractor-owned pricing database:
 
 ---
 
-## Follow-Up Questions for Brett
-
-These are gaps identified after reviewing the initial 30 answers. Brett — voice-record these when you get a chance.
-
-### Product & Prototype
-
-> **F1.** You mentioned building an adjuster report that auto-generates and auto-sends daily, plus S500/OSHA justifications on line items. Can you walk us through exactly how those work in the prototype? Screen-share or screenshots would be ideal.
->
-> **F2.** Can you share a sample Xactimate scope for a typical water job? (Doesn't need to be real customer data — just the format, line item codes, categories, how it's structured.) We need this to validate that our AI output matches what adjusters actually expect.
->
-> **F3.** When you scope a job manually today, what's your process? Do you walk room by room? Do you have a mental checklist of line items? How do you make sure you don't miss anything?
-
-### Competition & Market
-
-> **F4.** Which specific Facebook groups are you in? (You mentioned you'd send the names — we need these for go-to-market.)
->
-> **F5.** How does Shane Ozier reach contractors? Podcast? YouTube? Facebook posts? What's his handle/channel?
->
-> **F6.** Are there any restoration conferences or trade shows coming up in the next 6 months that we should be at?
->
-> **F7.** Do you know any contractors using Albi/DryBook or PSA? What do they say about it?
-
-### Workflows & Daily Operations
-
-> **F8.** When you create a scope, do you work room by room or do you walk the whole house first and then sit down to write it up?
->
-> **F9.** How do you handle supplementing (adding line items after the initial scope)? Is it a formal process or just emails back and forth with the adjuster?
->
-> **F10.** How do you currently share documentation with adjusters? Email attachments? A portal? Fax? (Seriously, some still fax.)
->
-> **F11.** When a tech takes moisture readings on a return visit, how do they compare to yesterday's readings? Do they look at a printout, scroll their phone, or just remember?
->
-> **F12.** What does your contract / work authorization look like? Is e-signature something you'd want in the app, or is paper fine?
-
-### Business & Growth
-
-> **F13.** How do you currently get new jobs? Referrals? Insurance program work? Google? What percentage comes from each?
->
-> **F14.** If you could send a professional-looking daily update to the adjuster automatically (with photos, readings, equipment status), would that change how fast you get paid? Would adjusters actually look at it?
->
-> **F15.** What's the split between insurance jobs vs. cash/out-of-pocket jobs? Does the workflow differ?
-
----
-
 ## Appendix A: Contractor Interview — Brett Sodders (Co-Founder)
 
 **Date:** March 2026
@@ -866,6 +822,48 @@ These are gaps identified after reviewing the initial 30 answers. Brett — voic
 | -- | S500/OSHA Line Item Justifications | New feature from Brett |
 
 ---
+
+### Follow-Up Questions for Brett
+
+These are gaps identified after reviewing the initial 30 answers. Brett — voice-record these when you get a chance.
+
+#### Product & Prototype
+
+> **F1.** You mentioned building an adjuster report that auto-generates and auto-sends daily, plus S500/OSHA justifications on line items. Can you walk us through exactly how those work in the prototype? Screen-share or screenshots would be ideal.
+>
+> **F2.** Can you share a sample Xactimate scope for a typical water job? (Doesn't need to be real customer data — just the format, line item codes, categories, how it's structured.) We need this to validate that our AI output matches what adjusters actually expect.
+>
+> **F3.** When you scope a job manually today, what's your process? Do you walk room by room? Do you have a mental checklist of line items? How do you make sure you don't miss anything?
+
+#### Competition & Market
+
+> **F4.** Which specific Facebook groups are you in? (You mentioned you'd send the names — we need these for go-to-market.)
+>
+> **F5.** How does Shane Ozier reach contractors? Podcast? YouTube? Facebook posts? What's his handle/channel?
+>
+> **F6.** Are there any restoration conferences or trade shows coming up in the next 6 months that we should be at?
+>
+> **F7.** Do you know any contractors using Albi/DryBook or PSA? What do they say about it?
+
+#### Workflows & Daily Operations
+
+> **F8.** When you create a scope, do you work room by room or do you walk the whole house first and then sit down to write it up?
+>
+> **F9.** How do you handle supplementing (adding line items after the initial scope)? Is it a formal process or just emails back and forth with the adjuster?
+>
+> **F10.** How do you currently share documentation with adjusters? Email attachments? A portal? Fax? (Seriously, some still fax.)
+>
+> **F11.** When a tech takes moisture readings on a return visit, how do they compare to yesterday's readings? Do they look at a printout, scroll their phone, or just remember?
+>
+> **F12.** What does your contract / work authorization look like? Is e-signature something you'd want in the app, or is paper fine?
+
+#### Business & Growth
+
+> **F13.** How do you currently get new jobs? Referrals? Insurance program work? Google? What percentage comes from each?
+>
+> **F14.** If you could send a professional-looking daily update to the adjuster automatically (with photos, readings, equipment status), would that change how fast you get paid? Would adjusters actually look at it?
+>
+> **F15.** What's the split between insurance jobs vs. cash/out-of-pocket jobs? Does the workflow differ?
 
 ---
 
