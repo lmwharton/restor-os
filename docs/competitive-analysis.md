@@ -172,6 +172,29 @@ Job management + CRM + DryBook for field documentation (moisture, equipment, pho
 
 ---
 
+#### JobSight — All-in-One Flat-Rate Challenger
+
+Founded 2020, Lindon, Utah. Bootstrapped, 2-10 employees. Built by restoration contractors (CEO Lindsay Bunker). No external funding.
+
+| | Detail |
+|---|---|
+| **Pricing** | Flat-rate (not public — "book a demo"). Unlimited users, unlimited storage, unlimited jobs |
+| **Mobile** | Native iOS + Android (v6.9 as of Mar 2026, rapid iteration since Sep 2022) |
+| **AI** | None |
+| **Integrations** | Xactimate, QuickBooks, Clean Claims, Matterport, CompanyCam, Zapier |
+| **Strengths** | Flat-rate unlimited pricing (same model as Crewmatic), real-time job costing with per-job P&L, receipt capture → approval workflows, built-in time clock, invoicing & payments, sub-contractor portal, e-sign documents, integrated two-way email/text, referral tracking with ROI analytics, post-job satisfaction surveys |
+| **Weaknesses** | Zero AI features, tiny team (2-10), minimal online presence (7 LinkedIn followers), very few reviews (8 App Store ratings), no brand recognition, no funding |
+
+**What this means for Crewmatic:**
+- JobSight validates the "flat-rate unlimited" pricing model — same approach we're taking
+- Their **job costing, invoicing, receipt capture, and time clock** are features we don't have yet — worth noting for V2+ roadmap
+- They've been at it since 2020 with no AI. AI is the moat they can't easily cross.
+- Small and bootstrapped like us — not a major threat, but proves the market wants all-in-one restoration tools
+- Case study: Complete Restoration reported 8% increase in job margins after adopting JobSight
+- **Threat level: LOW** (no AI, tiny team, no funding, minimal market presence)
+
+---
+
 ### Tier 2: Adjacent Competitors
 
 ---
@@ -228,28 +251,34 @@ Job management + CRM + DryBook for field documentation (moisture, equipment, pho
 
 ## Feature Matrix
 
-| Feature | Crewmatic | Encircle | DASH | Albi | DocuSketch | magicplan | PSA |
-|---------|:--------:|:--------:|:----:|:----:|:----------:|:---------:|:---:|
-| **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- |
-| **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- |
-| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | Partial | Announced | -- |
-| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | -- | YES | -- |
-| **Moisture Point Tracking** | **YES** | YES | YES | YES | -- | YES | -- |
-| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | -- | Partial | -- |
-| **Equipment Tracking** | **YES** | YES | YES | YES | -- | -- | -- |
-| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES | YES | -- |
-| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES |
-| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | Partial |
-| **Job Management** | **YES** | -- | YES | YES | -- | -- | YES |
-| **Team Management** | **YES** | Unlimited | YES | YES | -- | YES | Per-user |
-| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | Sharing | Collab | -- |
-| **Accounting** | V2+ | -- | YES | YES | -- | -- | **YES** |
-| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- |
-| **Offline Capable** | **YES** | YES | Partial | Partial | -- | Partial | -- |
-| **Works on Any Phone** | **YES** | YES | YES | YES | YES | LiDAR only | YES |
-| **No Hardware Required** | **YES** | YES | YES | YES | $795 kit | LiDAR phone | YES |
-| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- |
-| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- |
+| Feature | Crewmatic | Encircle | DASH | Albi | JobSight | DocuSketch | magicplan | PSA |
+|---------|:--------:|:--------:|:----:|:----:|:--------:|:----------:|:---------:|:---:|
+| **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- | -- |
+| **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- | -- |
+| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | -- | Partial | Announced | -- |
+| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | YES | -- | YES | -- |
+| **Moisture Point Tracking** | **YES** | YES | YES | YES | YES | -- | YES | -- |
+| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | YES | -- | Partial | -- |
+| **Equipment Tracking** | **YES** | YES | YES | YES | YES | -- | -- | -- |
+| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES | YES | YES | -- |
+| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES | YES |
+| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | YES | Partial |
+| **Job Management** | **YES** | -- | YES | YES | YES | -- | -- | YES |
+| **Team Management** | **YES** | Unlimited | YES | YES | Unlimited | -- | YES | Per-user |
+| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | -- | Sharing | Collab | -- |
+| **Accounting / Job Costing** | V2+ | -- | YES | YES | **YES** | -- | -- | **YES** |
+| **Invoicing & Payments** | -- | -- | Partial | Partial | **YES** | -- | -- | YES |
+| **Time Clock / Labor Tracking** | -- | -- | Partial | -- | **YES** | -- | -- | -- |
+| **Receipt Capture** | -- | -- | -- | -- | **YES** | -- | -- | -- |
+| **Referral / Lead Tracking** | -- | -- | YES | YES | **YES** | -- | -- | -- |
+| **E-Sign Documents** | -- | -- | -- | -- | **YES** | -- | -- | -- |
+| **Integrated Email/Text** | -- | -- | Partial | -- | **YES** | -- | -- | -- |
+| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- | -- |
+| **Offline Capable** | **YES** | YES | Partial | Partial | -- | -- | Partial | -- |
+| **Works on Any Phone** | **YES** | YES | YES | YES | YES | YES | LiDAR only | YES |
+| **No Hardware Required** | **YES** | YES | YES | YES | YES | $795 kit | LiDAR phone | YES |
+| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- | -- |
+| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- | -- |
 
 ### What Only Crewmatic Does
 

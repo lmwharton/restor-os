@@ -48,9 +48,9 @@ const SECTION_SUMMARIES: Record<string, string> = {
   "market-opportunity":
     "62,582 US restoration businesses · $7.2B market · 4.3% YoY growth",
   "competitor-deep-dive":
-    "Encircle (CRITICAL) · DASH/Mitigate · Albi · PSA · DocuSketch · magicplan",
+    "Encircle (CRITICAL) · DASH/Mitigate · Albi · PSA · JobSight · DocuSketch · magicplan",
   "feature-matrix":
-    "17 features compared across 7 competitors · 3 features only Crewmatic has",
+    "24 features compared across 8 competitors · 3 features only Crewmatic has",
   "workflow-level-competitive-comparison":
     "16 workflows compared · 5 where Crewmatic has zero competition",
   "what-were-building":
