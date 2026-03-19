@@ -165,7 +165,7 @@ export function CollapsibleDocument({
                   <span className="uppercase tracking-[0.12em]">
                     {group.label}
                   </span>
-                  <span className="text-[10px] text-slate-300 ml-auto tabular-nums">
+                  <span className="text-[10px] text-slate-400 ml-auto tabular-nums">
                     {group.sections.length}
                   </span>
                 </button>
@@ -260,7 +260,7 @@ export function CollapsibleDocument({
                             {section.title}
                           </h3>
                           {summary && !isOpen && (
-                            <p className="text-[12px] text-slate-400 mt-1 leading-relaxed truncate">
+                            <p className="text-[12px] text-slate-500 mt-1 leading-relaxed truncate">
                               {summary}
                             </p>
                           )}
@@ -270,7 +270,7 @@ export function CollapsibleDocument({
                               {section.subsections.slice(0, 6).map((sub) => (
                                 <span
                                   key={sub.id}
-                                  className="text-[10px] bg-slate-50 text-slate-400 px-2 py-0.5 rounded-full"
+                                  className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full"
                                 >
                                   {sub.title.length > 30
                                     ? sub.title.slice(0, 27) + "..."
@@ -278,7 +278,7 @@ export function CollapsibleDocument({
                                 </span>
                               ))}
                               {section.subsections.length > 6 && (
-                                <span className="text-[10px] text-slate-300 px-1 py-0.5">
+                                <span className="text-[10px] text-slate-400 px-1 py-0.5">
                                   +{section.subsections.length - 6} more
                                 </span>
                               )}
@@ -291,7 +291,7 @@ export function CollapsibleDocument({
                       {isOpen && (
                         <div className="px-5 pb-6 pt-0">
                           <div className="border-t border-slate-100 pt-5">
-                            <div className="prose prose-slate prose-sm max-w-none prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-table:text-xs prose-th:bg-slate-800 prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:border-slate-200 prose-tr:border-slate-200 even:prose-tr:bg-slate-50 prose-blockquote:border-blue-500 prose-blockquote:bg-blue-50/60 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-slate-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-50 prose-pre:text-slate-700 prose-pre:border prose-pre:border-slate-200 prose-pre:rounded-lg prose-pre:text-xs prose-code:bg-slate-100 prose-code:text-slate-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-li:marker:text-slate-400 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px]">
+                            <div className="prose prose-slate prose-sm max-w-none prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-table:text-xs prose-th:bg-slate-800 prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:text-slate-700 prose-td:border-slate-200 prose-tr:border-slate-200 even:prose-tr:bg-slate-50 prose-blockquote:border-blue-500 prose-blockquote:bg-blue-50/60 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-slate-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-50 prose-pre:text-slate-700 prose-pre:border prose-pre:border-slate-200 prose-pre:rounded-lg prose-pre:text-xs prose-code:bg-slate-100 prose-code:text-slate-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-li:marker:text-slate-400 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px]">
                               <ReactMarkdown
                                 remarkPlugins={[remarkGfm]}
                                 components={{
