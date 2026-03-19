@@ -1,8 +1,9 @@
 # RestorOS V1 - Consumer Workflow Specification
 
-**Document Version:** 1.0
-**Date:** 2026-03-13
-**Status:** Draft - Pending Review
+**Document Version:** 1.1
+**Date:** 2026-03-19
+**Status:** Draft - Updated with Contractor Feedback (Brett Sodders interview)
+**Previous Version:** 1.0 (2026-03-13)
 **Product:** RestorOS - Water Restoration Contractor Platform
 
 ---
@@ -11,7 +12,7 @@
 
 RestorOS is a field-first web application for water restoration contractors. It replaces fragmented paper/spreadsheet workflows with a guided, AI-assisted digital process that produces Xactimate-ready documentation.
 
-**Core value proposition:** A restoration tech with a phone can arrive at a water-damaged property, document everything through voice and photos, and produce insurance-grade scope notes and moisture reports -- without touching a keyboard.
+**Core value proposition:** A restoration tech with a phone can arrive at a water-damaged property, document everything through photos and guided input, and produce insurance-grade scope notes and moisture reports -- faster than paper, with AI doing the heavy lifting.
 
 **V1 Personas:**
 
@@ -21,10 +22,11 @@ RestorOS is a field-first web application for water restoration contractors. It 
 | Company Owner | Business manager | Desktop + Phone | Job oversight, QA review, report generation, team management |
 
 **Input Mode Philosophy:**
-- **Voice-first** for field data capture (Tech persona, phone)
+- **Photo-first** for field damage documentation (Tech persona, phone) -- photos are "the biggest one to get paid"
+- **Keyboard + voice** for field data capture (keyboard is primary, voice is enhancement for V1)
 - **Keyboard-first** for office/review tasks (Owner persona, desktop)
 - **AI-assisted** at every step where it reduces manual work
-- **Offline-capable** for field workflows (sync when connected)
+- **Online-first** with graceful degradation (photos save locally, sync when connected)
 
 ---
 
@@ -32,21 +34,39 @@ RestorOS is a field-first web application for water restoration contractors. It 
 
 ### Offline Strategy
 
-| Capability | Offline | Online Required |
-|-----------|---------|-----------------|
-| Create/edit job (local) | Yes | Sync on reconnect |
-| Moisture readings | Yes | Sync on reconnect |
-| Photo capture | Yes (stored locally) | Upload on reconnect |
-| Voice recording | Yes (stored locally) | Transcription on reconnect |
-| AI Photo Scope | No | Requires API call |
-| AI voice scoping | No | Requires API call |
-| Report generation | No | Requires API + data |
-| Team management | No | Requires API |
-| Push notifications | No | Requires connectivity |
+> **Contractor feedback (Brett Sodders):** "Offline is not a must-have right off the bat. Most people in metro Detroit have cell reception." Offline is a nice-to-have, not a core V1 requirement.
 
-### Data Sync Model
+**V1 (ship):** Minimal offline support
+- Show "No connection" banner when offline
+- Photos save locally and auto-upload when back online
+- Everything else requires connectivity
 
-All offline-capable workflows follow this pattern:
+**V1.1 (ship soon after):** Read-only offline cache
+- Cached view of assigned jobs (read-only)
+- Moisture readings can be entered offline, sync on reconnect
+
+**V2:** Full offline mutations + sync
+- Create/edit jobs offline
+- Full offline data entry with conflict resolution
+- Background sync with merge strategies
+
+| Capability | V1 Offline | V1.1 Offline | Online Required |
+|-----------|------------|--------------|-----------------|
+| Photo capture | Yes (stored locally, auto-upload) | Yes | Upload on reconnect |
+| View assigned jobs | No | Yes (read-only cache) | Full data |
+| Create/edit job | No | No | Yes |
+| Moisture readings | No | Yes (sync on reconnect) | Sync on reconnect |
+| Voice recording | No | No | Yes |
+| AI Photo Scope | No | No | Requires API call |
+| AI voice scoping | No | No | Requires API call |
+| Report generation | No | No | Requires API + data |
+| Team management | No | No | Requires API |
+| Push notifications | No | No | Requires connectivity |
+| Scheduling/Dispatch | No | No | Requires API |
+
+### Data Sync Model (V1.1+)
+
+When offline capabilities are added, all offline-capable workflows follow this pattern:
 1. Data saved to local IndexedDB with `syncStatus: "pending"`
 2. Background sync attempts when connectivity detected
 3. Conflict resolution: last-write-wins with server timestamp, user notified of conflicts
@@ -56,11 +76,12 @@ All offline-capable workflows follow this pattern:
 
 ```
 [Bottom Tab Bar - Mobile]
-  Home (Dashboard)  |  Jobs  |  + New  |  Equipment  |  More
+  Home (Dashboard)  |  Jobs  |  + New  |  Schedule  |  More
 
 [Sidebar - Desktop]
   Dashboard
   Jobs
+  Schedule
   Equipment
   Team
   Reports
@@ -242,9 +263,13 @@ Tech arrives at the job site and begins the documentation process. This is the g
          Hallway, Closet, Office, Basement, Utility Room, Attic,
          Custom (free text)
          |
-    [7b] Room dimensions (optional at this stage):
-         Length x Width (feet)
+    [7b] Room dimensions (important for payment -- adjusters need sq footage):
+         Length x Width (feet) -- minimum: wall lengths
          Ceiling height (default 8')
+         Room shape (rectangular default, L-shaped, custom)
+         Note: "You could submit a scope without dimensions -- it just
+         might not get paid very quickly."
+         V2: LiDAR integration (like MagicPlan) for automatic measurement
          |
     [7c] Affected materials checklist:
          [ ] Carpet   [ ] Pad   [ ] Hardwood   [ ] Laminate
@@ -285,6 +310,7 @@ Tech arrives at the job site and begins the documentation process. This is the g
 | room_length_ft | float | rooms table |
 | room_width_ft | float | rooms table |
 | room_ceiling_height_ft | float | rooms table |
+| room_shape | enum (rectangular, l_shaped, custom) | rooms table |
 | affected_materials | string[] | rooms table |
 
 ### Outputs
@@ -307,20 +333,23 @@ Tech arrives at the job site and begins the documentation process. This is the g
 ### Dependencies
 - **Requires:** Job exists (#1)
 - **Feeds into:** All field workflows (#3-#8)
-- **Referenced by:** Dry Log (#9), Report Generation (#10)
+- **Referenced by:** Dry Log (#9), Report Generation (#10), Auto Adjuster Reports (#10b)
 
 ---
 
 ## Workflow 3: Guided Voice Scoping
 
 ### Overview
-The flagship feature. A tech narrates their damage assessment and the system structures it into Xactimate-ready scope notes. The AI guides the tech through a step-by-step process, asking for specific information in sequence.
+A tech narrates their damage assessment and the system structures it into Xactimate-ready scope notes. The AI guides the tech through a step-by-step process, asking for specific information in sequence.
+
+> **Contractor feedback (Brett Sodders):** "Job sites can get noisy. Homeowners can get annoying. It needs to be really accurate or it won't be utilized." Voice is an **enhancement, not the primary input** for V1. Keyboard/manual entry must be equally fast and always available. Voice works best in empty rooms during monitoring visits (no homeowner, less noise) vs. initial assessment (homeowner present, noisy). Do not lead with voice in marketing until accuracy is proven in real field conditions.
 
 **Trigger:** Tech taps "Voice Scope" from job detail or room detail
 **Actor:** Tech
-**Primary input:** Voice (100%)
+**Primary input:** Voice with keyboard fallback (keyboard must be equally fast)
 **AI assistance:** Real-time transcription, structured extraction, Xactimate line item suggestion
 **Offline:** Recording only. Transcription + AI processing requires connectivity.
+**V1 Priority:** V1.1 feature (ship soon after core). Manual/keyboard scoping (#4) is the V1 primary path.
 
 ### Steps
 
@@ -462,7 +491,7 @@ The flagship feature. A tech narrates their damage assessment and the system str
 
 ### Dependencies
 - **Requires:** Job exists (#1), Room(s) defined (#2)
-- **Feeds into:** Report Generation (#10), Job Review (#12)
+- **Feeds into:** Report Generation (#10), Job Review (#13)
 - **AI services:** Speech-to-text API, Claude API for extraction + line item suggestion
 - **Reference data:** Xactimate line item database (codes, descriptions, units)
 
@@ -515,14 +544,35 @@ Keyboard-based entry for scope data. Used when voice is impractical (quiet envir
 [4] User can also paste scope notes from another source
          -> AI parses pasted text into structured line items
          |
-[5] Review and save
+[5] S500/OSHA Compliance Justifications (auto-suggested):
+         - When a line item is added (manually, via voice, or via AI photo scope),
+           the system auto-suggests industry standard justifications:
+         - Examples:
+           "Structural drying required per IICRC S500 Section 10.3.2"
+           "Category 2 water requires antimicrobial application per IICRC S500 Section 12.4"
+           "PPE required per OSHA 29 CFR 1910.134 for Category 3 water"
+         - Justifications attached to each line item in the scope
+         - Owner can accept, edit, or remove justifications before report generation
+         - Purpose: Adjusters cannot reject line items backed by industry standards
+         |
+[6] Review and save
 ```
 
 ### Data Captured
 Same schema as Voice Scoping (#3) -- `scope_line_items` table, but with `source: "manual"`.
 
+Additional fields for compliance justifications:
+
+| Field | Type | Storage |
+|-------|------|---------|
+| justification_text | string | scope_line_items table |
+| justification_standard | string (e.g., "IICRC S500", "OSHA") | scope_line_items table |
+| justification_section | string (e.g., "Section 10.3.2") | scope_line_items table |
+| justification_accepted | boolean | scope_line_items table |
+
 ### Outputs
 - Same as Voice Scoping: structured line items per room
+- S500/OSHA compliance justifications attached to each applicable line item
 
 ### Edge Cases
 
@@ -557,9 +607,11 @@ Core field data collection. Tech takes atmospheric readings for each room and po
 [2] System shows reading entry screen:
          |
     [2a] SELECT METER
-         - Choose from equipment library:
+         - Choose from equipment library (preference setting, not connectivity):
            Protimeter | Delmhorst | Flir | Wagner | Tramex
          - Meter saved as default for session
+         - Input method: Tech reads the meter display, types the number manually
+         - No Bluetooth/wireless connectivity -- manual entry only
          |
     [2b] ATMOSPHERIC READINGS (per room, per visit)
          +-----------------------------------------+
@@ -661,7 +713,7 @@ Core field data collection. Tech takes atmospheric readings for each room and po
 ### Dependencies
 - **Requires:** Job exists (#1), Room(s) defined (#2), Equipment library has meters (#6)
 - **Feeds into:** Dry Log (#9), Report Generation (#10)
-- **Referenced by:** Job Review (#12)
+- **Referenced by:** Job Review (#13)
 
 ---
 
@@ -783,7 +835,7 @@ Tech logs what drying equipment is placed in each room. This is essential for bi
 ### Dependencies
 - **Requires:** Job exists (#1), Room(s) defined (#2)
 - **Feeds into:** Dry Log (#9), Report Generation (#10)
-- **Related:** Equipment Library in Settings (#15)
+- **Related:** Equipment Library in Settings (#16)
 
 ---
 
@@ -809,13 +861,16 @@ Tech captures photos of damage, progress, and equipment. Photos are geotagged an
          |
 [4] Photo captured with automatic metadata:
          - Timestamp
-         - GPS coordinates
+         - GPS coordinates (auto-logged)
          - Device info
+         - Auto-association: GPS matches to active job/location
+           (like CompanyCam -- photo auto-logs to the job based on GPS proximity)
          |
 [5] Post-capture tagging screen:
          +-----------------------------------------+
          |  [Photo Preview]                         |
          |                                          |
+         |  Job: [JOB-042 - 123 Main St] (auto)    |
          |  Room: [Kitchen  v]                      |
          |                                          |
          |  Category:                               |
@@ -833,6 +888,8 @@ Tech captures photos of damage, progress, and equipment. Photos are geotagged an
          +-----------------------------------------+
          |
 [6] Photo saved and associated with job + room
+         - If GPS matches a job address (within 0.1 miles), auto-associate
+         - If no match, prompt tech to select job manually
          |
 [7] Tech can continue taking more photos (rapid capture mode)
          - Batch tagging available after capture session
@@ -841,7 +898,15 @@ Tech captures photos of damage, progress, and equipment. Photos are geotagged an
          - Filterable by room, category, date
          - Grid view with thumbnails
          - Tap to view full-size with metadata overlay
+         |
+[9] Job Photo Archive (cross-job):
+         - All company photos searchable by location on a map view
+         - Click a map pin to see all photos taken at that address
+         - Reference library for past work ("at that job we did X")
+         - Replaces contractor's current iCloud workaround for photo organization
 ```
+
+> **Contractor feedback (Brett Sodders):** Photo documentation with auto-location is "the biggest one to get paid." CompanyCam's auto-location feature is the gold standard to match. Photos must geo-tag automatically and log to the correct job without manual selection when possible.
 
 ### Data Captured
 
@@ -953,6 +1018,8 @@ Tech uploads damage photos, and AI analyzes them to suggest Xactimate line items
 [7] User reviews, toggles, edits quantities
          |
 [8] Accepted items added to job scope (merged with voice scope items)
+         - S500/OSHA compliance justifications auto-suggested per line item
+           (same as Manual Entry #4, step 5)
          |
 [9] If duplicates detected with existing scope items:
          -> "DRY RMBASBD already in scope (24 LF from voice scope).
@@ -994,7 +1061,7 @@ Tech uploads damage photos, and AI analyzes them to suggest Xactimate line items
 - **Requires:** Job exists (#1), Photos taken (#7)
 - **AI service:** Claude Vision API
 - **Merges with:** Voice Scope (#3) and Manual Entry (#4) line items
-- **Feeds into:** Report Generation (#10), Job Review (#12)
+- **Feeds into:** Report Generation (#10), Job Review (#13)
 
 ---
 
@@ -1101,7 +1168,7 @@ Same as Moisture Reading Collection (#5), plus:
 ### Dependencies
 - **Requires:** Initial moisture readings exist (#5), Equipment placed (#6)
 - **Builds on:** Each previous visit's data
-- **Feeds into:** Report Generation (#10), Job Review (#12)
+- **Feeds into:** Report Generation (#10), Job Review (#13)
 
 ---
 
@@ -1153,7 +1220,7 @@ Generates professional reports for insurance adjusters, company records, and cus
          - Include/exclude specific rooms
          - Date range for readings
          - Include photos (and which categories)
-         - Format: PDF | CSV (for Xactimate import)
+         - Format: PDF (default, non-editable) | ESX (Xactimate import file, optional)
          |
 [5] Generation:
          |
@@ -1206,10 +1273,12 @@ Generates professional reports for insurance adjusters, company records, and cus
 | share_link_expires_at | timestamp | reports table |
 
 ### Outputs
-- PDF report documents
-- CSV export for Xactimate import
+- PDF report documents (default -- non-editable, adjusters prefer this)
+- ESX export for Xactimate import (optional -- use with caution)
 - Shareable links
 - Email delivery
+
+> **Contractor feedback (Brett Sodders):** "It feels weird to send an ESX file because once they get it they can manipulate it. Like handing off a Word document where they can rewrite it." PDF is the default and preferred format. ESX is available but secondary.
 
 ### Edge Cases
 
@@ -1228,10 +1297,260 @@ Generates professional reports for insurance adjusters, company records, and cus
 
 ---
 
-## Workflow 11: Team Management
+## Workflow 10b: Auto Adjuster Reports
 
 ### Overview
-Company owner invites technicians to their company, manages roles, and assigns techs to jobs.
+System automatically compiles job progress and sends limited-access reports to insurance adjusters and customers. Reduces phone calls, keeps adjusters informed, and speeds up payment.
+
+> **Contractor feedback (Brett Sodders):** Adjusters constantly call asking for updates. An automated daily report keeps them informed without the contractor having to stop working and make calls.
+
+**Trigger:** Daily (automated, configurable time) or on-demand by owner
+**Actor:** System (automated) or Owner (on-demand)
+**Primary input:** Configuration (one-time setup per job), then automated
+**AI assistance:** Narrative summary generation for progress updates
+**Offline:** No -- requires server-side processing and email delivery
+
+### Steps
+
+```
+[1] Owner enables "Adjuster Updates" on a job:
+         +-----------------------------------------+
+         |  Adjuster Updates - JOB-042              |
+         |                                          |
+         |  Auto-send daily report: [ON]            |
+         |  Send time: [6:00 PM v]                  |
+         |                                          |
+         |  Adjuster email: adj@insurance.com       |
+         |  (pre-filled from job insurance info)     |
+         |                                          |
+         |  Include in report:                      |
+         |  [x] Selected photos (owner picks which) |
+         |  [x] Latest moisture readings             |
+         |  [x] Equipment status                     |
+         |  [x] Drying progress summary              |
+         |  [ ] Full scope line items                |
+         |                                          |
+         |  Customer portal: [ON]                    |
+         |  Customer sees: Status + selected photos  |
+         |  (no moisture data, no scope, no pricing) |
+         |                                          |
+         |  [Save Settings] [Send Now]               |
+         +-----------------------------------------+
+         |
+[2] At scheduled time (or on "Send Now"), system compiles report:
+         |
+    [2a] Gathers latest data:
+         - Selected photos from most recent visit
+         - Current moisture readings with trend
+         - Equipment still deployed (count + days)
+         - Overall drying progress percentage
+         - AI-generated narrative summary of progress
+         |
+    [2b] Generates limited-access report:
+         - Secure, time-limited link (not full app access)
+         - Adjuster sees read-only view: photos, readings, progress
+         - Adjuster does NOT see: all photos, raw data, pricing, internal notes
+         |
+[3] Email sent to adjuster:
+         +-----------------------------------------+
+         |  Subject: Job Update - 123 Main St       |
+         |  JOB-042 | Day 3 of Drying               |
+         |                                          |
+         |  Progress: 62% dry (4 of 6 rooms)        |
+         |  Equipment: 2 dehus, 6 air movers active  |
+         |  Est. completion: 2 more days              |
+         |                                          |
+         |  [View Full Report]                       |
+         |  (link expires in 30 days)                |
+         +-----------------------------------------+
+         |
+[4] Adjuster clicks link -> secure read-only report page
+         |
+[5] Customer portal (if enabled):
+         - Even more limited view: job status + selected photos only
+         - No moisture data, no scope, no pricing
+         - Reduces "when will you be done?" calls
+```
+
+### Data Captured
+
+| Field | Type | Storage |
+|-------|------|---------|
+| adjuster_report_id | UUID | adjuster_reports table |
+| job_id | UUID (FK) | adjuster_reports table |
+| report_type | enum (adjuster, customer) | adjuster_reports table |
+| recipient_email | string | adjuster_reports table |
+| sent_at | timestamp | adjuster_reports table |
+| secure_link | string | adjuster_reports table |
+| secure_link_expires_at | timestamp | adjuster_reports table |
+| included_photo_ids | UUID[] | adjuster_reports table |
+| include_moisture | boolean | adjuster_reports table |
+| include_equipment | boolean | adjuster_reports table |
+| include_scope | boolean | adjuster_reports table |
+| ai_summary | text | adjuster_reports table |
+| viewed_at | timestamp | adjuster_reports table |
+| auto_send_enabled | boolean | job_adjuster_settings table |
+| auto_send_time | time | job_adjuster_settings table |
+
+### Outputs
+- Daily automated email to adjuster with secure report link
+- Optional customer portal with status-only view
+- Read-only report page (no login required, link-based access)
+- View tracking (owner can see if adjuster opened the report)
+
+### Edge Cases
+
+| Scenario | Handling |
+|----------|----------|
+| No new data since last report | Skip sending, or send "No update today -- drying continues" |
+| Adjuster email bounces | Notify owner: "Report email to adj@insurance.com failed" |
+| Secure link shared with unauthorized party | Link is read-only with limited data, acceptable risk |
+| Job completed but auto-send still on | Auto-disable when job status changes to "Completed" |
+| Multiple adjusters on same job | Allow multiple recipient emails |
+
+### Dependencies
+- **Requires:** Job exists (#1), some data captured (photos, readings, etc.)
+- **Consumes:** Photos (#7), Moisture readings (#5), Equipment (#6)
+- **Related to:** Report Generation (#10) -- full reports vs. these limited progress updates
+
+---
+
+## Workflow 11: Job Scheduling & Dispatch
+
+### Overview
+Owner sets up the week's schedule, assigns techs to jobs with specific dates and times, and techs receive automatic notifications. This replaces the current workflow of texting employees late at night about next-day assignments.
+
+> **Contractor feedback (Brett Sodders, #1 pain point):** "I'm texting my guys at 11pm telling them where to go tomorrow." This workflow must eliminate late-night text messages by letting owners batch-schedule the week and have techs notified automatically.
+
+**Trigger:** Owner assigns techs to jobs or creates/updates schedule
+**Actor:** Owner (creates schedule), Tech (views and acts on schedule)
+**Primary input:** Keyboard + taps (Owner, desktop or phone), View-only + check-in (Tech, phone)
+**AI assistance:** Suggested scheduling based on tech proximity to job sites, workload balancing
+**Offline:** No -- requires connectivity for schedule sync and notifications
+
+### Steps
+
+```
+[1] Owner navigates to "Schedule" view (calendar/list hybrid)
+         |
+[2] Schedule management screen:
+         +-----------------------------------------+
+         |  Schedule          [Week v]  [+ Assign] |
+         |                                          |
+         |  Mon Jan 19                              |
+         |  +------------------------------------+  |
+         |  | 8:00 AM  JOB-042 | 123 Main St    |  |
+         |  | Tech: Mike J.    | Monitoring      |  |
+         |  +------------------------------------+  |
+         |  | 1:00 PM  JOB-047 | 456 Oak Ave    |  |
+         |  | Tech: Mike J.    | Initial Assess  |  |
+         |  +------------------------------------+  |
+         |                                          |
+         |  Tue Jan 20                              |
+         |  +------------------------------------+  |
+         |  | 9:00 AM  JOB-042 | 123 Main St    |  |
+         |  | Tech: Sarah K.   | Monitoring      |  |
+         |  +------------------------------------+  |
+         |                                          |
+         |  Unscheduled Jobs:                       |
+         |  JOB-048 - No tech, no date assigned     |
+         |  JOB-049 - Tech assigned, no date        |
+         +-----------------------------------------+
+         |
+[3] Owner taps "+ Assign" or taps an empty slot:
+         |
+    [3a] Select job (from active jobs list)
+    [3b] Select tech(s) (from team roster)
+    [3c] Select date
+    [3d] Select time (optional -- can be "AM" / "PM" / specific time)
+    [3e] Add notes (optional, e.g., "Bring extra air movers")
+         |
+[4] Assignment saved
+         |
+[5] Push notification sent to assigned tech(s):
+         "New assignment: JOB-042 at 123 Main St
+          Mon Jan 19, 8:00 AM - Monitoring visit
+          Notes: Bring extra air movers"
+         |
+[6] Tech sees "My Schedule" on their phone:
+         +-----------------------------------------+
+         |  My Schedule                             |
+         |                                          |
+         |  TODAY - Mon Jan 19                      |
+         |  +------------------------------------+  |
+         |  | 8:00 AM  JOB-042                   |  |
+         |  | 123 Main St - Monitoring            |  |
+         |  | Notes: Bring extra air movers       |  |
+         |  | [Navigate] [Check In]               |  |
+         |  +------------------------------------+  |
+         |  | 1:00 PM  JOB-047                   |  |
+         |  | 456 Oak Ave - Initial Assessment    |  |
+         |  | [Navigate] [Check In]               |  |
+         |  +------------------------------------+  |
+         |                                          |
+         |  TOMORROW - Tue Jan 20                   |
+         |  (No assignments)                        |
+         +-----------------------------------------+
+         |
+[7] Tech taps "Check In" when arriving at job site
+         -> Triggers Site Visit workflow (#2)
+         -> GPS recorded, timestamp logged
+         -> Status updates back to owner's dashboard
+         |
+[8] Owner can view real-time status:
+         - Scheduled (not yet checked in)
+         - En route (tapped Navigate)
+         - On site (checked in)
+         - Completed (ended site visit)
+```
+
+### Data Captured
+
+| Field | Type | Required | Storage |
+|-------|------|----------|---------|
+| schedule_id | UUID | auto | job_schedules table |
+| job_id | UUID (FK) | yes | job_schedules table |
+| user_id | UUID (FK) | yes | job_schedules table |
+| scheduled_date | date | yes | job_schedules table |
+| scheduled_time | time | no | job_schedules table |
+| time_slot | enum (morning, afternoon, specific) | no | job_schedules table |
+| notes | text | no | job_schedules table |
+| status | enum (scheduled, en_route, on_site, completed, no_show) | auto | job_schedules table |
+| assigned_by | UUID (FK) | auto | job_schedules table |
+| assigned_at | timestamp | auto | job_schedules table |
+| checked_in_at | timestamp | no | job_schedules table |
+| notification_sent | boolean | auto | job_schedules table |
+| notification_sent_at | timestamp | no | job_schedules table |
+
+### Outputs
+- Tech receives push notification with assignment details
+- Tech sees daily/weekly schedule on phone
+- Owner sees schedule overview with real-time status
+- Check-in triggers site visit workflow
+- Eliminates late-night text messages for next-day assignments
+
+### Edge Cases
+
+| Scenario | Handling |
+|----------|----------|
+| Double-booking a tech (two jobs, same time) | Warning: "Mike is already scheduled for JOB-042 at 8:00 AM. Schedule anyway?" |
+| Tech not available (sick, day off) | Owner can reassign to another tech. Original tech notified of cancellation. |
+| Schedule changed after notification sent | New notification: "Schedule updated: JOB-042 moved to 10:00 AM" |
+| Tech doesn't check in by scheduled time | Alert to owner: "Mike hasn't checked in for JOB-042 (scheduled 8:00 AM, now 8:30 AM)" |
+| Weekend/after-hours emergency | Allow scheduling at any time. Emergency flag bypasses quiet hours for notifications. |
+| Owner wants to set up entire week at once | Batch scheduling mode: select multiple days, assign same tech to recurring jobs |
+
+### Dependencies
+- **Requires:** Jobs exist (#1), Team members exist (#12)
+- **Feeds into:** Site Arrival (#2), Dashboard (#14)
+- **Navigation:** "Schedule" tab added to bottom nav (mobile) and sidebar (desktop)
+
+---
+
+## Workflow 12: Team Management
+
+### Overview
+Company owner invites technicians to their company, manages roles, and assigns techs to jobs. Basic invite/assign functionality ships in V1; full team management (availability, skills, workload tracking) is V1.1.
 
 **Trigger:** Owner needs to add team members or assign jobs
 **Actor:** Owner
@@ -1311,12 +1630,12 @@ Company owner invites technicians to their company, manages roles, and assigns t
 | Company has only one owner, tries to remove self | Prevented: "You are the only owner. Transfer ownership first." |
 
 ### Dependencies
-- **Requires:** Company setup complete (Onboarding #14)
-- **Feeds into:** Job assignment in New Job Creation (#1), Job Site Arrival (#2)
+- **Requires:** Company setup complete (Onboarding #15)
+- **Feeds into:** Job assignment in New Job Creation (#1), Scheduling (#11), Job Site Arrival (#2)
 
 ---
 
-## Workflow 12: Job Review & QA
+## Workflow 13: Job Review & QA
 
 ### Overview
 Owner reviews a tech's completed work before sending documentation to the insurance adjuster. This is the quality gate.
@@ -1429,7 +1748,7 @@ Owner reviews a tech's completed work before sending documentation to the insura
 
 ---
 
-## Workflow 13: Dashboard / Job Overview
+## Workflow 14: Dashboard / Job Overview
 
 ### Overview
 The central hub showing all jobs, their statuses, and key metrics. Different views for Owner vs Tech.
@@ -1530,7 +1849,7 @@ Dashboard is read-only. No new data captured.
 
 ---
 
-## Workflow 14: User Onboarding
+## Workflow 15: User Onboarding
 
 ### Overview
 New user signs up, creates their company, and is guided through first job creation.
@@ -1649,7 +1968,7 @@ New user signs up, creates their company, and is guided through first job creati
 
 ---
 
-## Workflow 15: Settings & Profile
+## Workflow 16: Settings & Profile
 
 ### Overview
 Configuration screens for user profile, company settings, and equipment library.
@@ -1736,6 +2055,9 @@ Documented in individual table schemas above. Settings are stored in:
   ASSIGNED ------> CANCELLED
      |
      v
+  SCHEDULED (tech + date assigned)
+     |
+     v
   IN PROGRESS
      |
      +----> SCOPING
@@ -1770,6 +2092,7 @@ Documented in individual table schemas above. Settings are stored in:
 |--------|-------------|--------|
 | New | Job created, no activity yet | System (on creation) |
 | Assigned | Tech(s) assigned | Owner or System |
+| Scheduled | Tech assigned with specific date/time | Owner (via Scheduling #11) |
 | In Progress | Tech has started site visit | System (on first visit) |
 | Scoping | Active scope documentation | System (on first scope entry) |
 | Drying | Equipment placed, monitoring readings | System (on first moisture reading with equipment) |
@@ -1792,6 +2115,12 @@ Documented in individual table schemas above. Settings are stored in:
                         +--------+---------+
                                  |
                         +--------v---------+
+                        | SCHEDULING (#11) |
+                        | assign tech+date |
+                        | push notification|
+                        +--------+---------+
+                                 |
+                        +--------v---------+
                         | SITE ARRIVAL (#2)|
                         | timestamp, GPS,  |
                         | rooms, checklist  |
@@ -1801,12 +2130,12 @@ Documented in individual table schemas above. Settings are stored in:
               |                  |                  |
      +--------v------+  +-------v-------+  +-------v--------+
      | VOICE SCOPE   |  | MOISTURE      |  | PHOTOS (#7)    |
-     | (#3)          |  | READINGS (#5) |  | capture, tag,  |
-     | OR MANUAL (#4)|  | atmo + points |  | geolocate      |
+     | (#3, V1.1)    |  | READINGS (#5) |  | geo-tagged,    |
+     | OR MANUAL (#4)|  | atmo + points |  | auto-location  |
      | -> line items |  | per room      |  +-------+--------+
-     +--------+------+  +-------+-------+          |
-              |                  |          +-------v--------+
-              |                  |          | AI PHOTO       |
+     | + S500/OSHA   |  |               |          |
+     | justifications|  |               |  +-------v--------+
+     +--------+------+  +-------+-------+  | AI PHOTO       |
               |                  |          | SCOPE (#8)     |
               |                  |          | -> line items  |
               |                  |          +-------+--------+
@@ -1819,18 +2148,55 @@ Documented in individual table schemas above. Settings are stored in:
               |                  |                  |
               +------------------+------------------+
                                  |
-                        +--------v---------+
-                        | REPORTS (#10)    |
-                        | scope, moisture, |
-                        | photos, summary  |
-                        +--------+---------+
-                                 |
-                        +--------v---------+
-                        | JOB REVIEW (#12) |
-                        | QA, approve,     |
-                        | send to adjuster |
-                        +------------------+
+                   +-------------+-------------+
+                   |                           |
+          +--------v---------+      +----------v-----------+
+          | REPORTS (#10)    |      | AUTO ADJUSTER        |
+          | scope, moisture, |      | REPORTS (#10b)       |
+          | photos, summary  |      | daily progress,      |
+          | PDF default      |      | secure link,         |
+          +--------+---------+      | limited access       |
+                   |                +----------------------+
+          +--------v---------+
+          | JOB REVIEW (#13) |
+          | QA, approve,     |
+          | send to adjuster |
+          +------------------+
 ```
+
+---
+
+## Feature Priority (Updated per Brett Sodders Interview)
+
+### V1 Core (Must Ship)
+
+| Priority | Feature | Workflow | Notes |
+|----------|---------|----------|-------|
+| 1 | AI Photo Scope | #8 | Core differentiator -- photo-based damage scoping |
+| 2 | Site Log (moisture + equipment tracking) | #5, #6, #9 | Critical for insurance documentation |
+| 3 | Reports (PDF default) | #10 | PDF as default format, ESX optional |
+| 4 | Room Sketching (basic) | #2 (room dimensions) | Adjusters need dimensions/sq footage for payment. Minimum: room shape + wall lengths + ceiling height. "You could submit a scope without one -- it just might not get paid very quickly." |
+| 5 | Job Management + Scheduling/Dispatch | #1, #11 | Owner's #1 pain point is late-night texting for next-day assignments |
+| 6 | Photo Documentation (geo-tagged, auto-location) | #7 | "Biggest one to get paid" -- auto-log to job based on GPS like CompanyCam |
+| 7 | Auto Adjuster Reports | #10b | Reduces phone calls, keeps adjuster informed, speeds up payment |
+
+### V1.1 (Ship Soon After)
+
+| Priority | Feature | Notes |
+|----------|---------|-------|
+| 1 | Voice Scoping | #3 -- "Needs to be really accurate or won't be utilized." Keyboard fallback must be equally fast. |
+| 2 | Team Management (full) | Basic invite/assign in V1, full management (availability, skills, workload) in V1.1 |
+| 3 | Hazmat Scanner | Nice-to-have, not day-one |
+| 4 | Offline read-only cache | Read-only view of assigned jobs when offline |
+
+### V2+ (Future)
+
+| Feature | Notes |
+|---------|-------|
+| LiDAR room scanning | Integration like MagicPlan -- strong differentiator for room dimensions |
+| Full offline mutations + sync | Complete offline mode with conflict resolution |
+| Customer portal (self-service) | Status + selected photos view for customers |
+| Bluetooth meter connectivity | Auto-read from meters -- no contractor demand yet |
 
 ---
 
@@ -1840,16 +2206,17 @@ The following are explicitly NOT included in V1 but may be considered for future
 
 | Feature | Rationale |
 |---------|-----------|
-| Room sketching / floor plan | Complex to build, low MVP value vs. text descriptions |
-| Customer portal | Customers don't need self-service in V1 |
+| LiDAR room scanning | V2 differentiator. V1 uses manual dimension entry (room shape + wall lengths + ceiling height) |
+| Full offline mode | Contractor feedback: "Not a must-have right off the bat." V1 only: photos save locally. |
+| Bluetooth meter connectivity | No contractor demand. Techs read the meter, type the number. |
+| Customer self-service portal | Limited customer view via Auto Adjuster Reports (#10b) covers V1 needs |
 | Invoicing / billing | Separate system (QuickBooks, etc.) |
 | Multi-company accounts | One company per user in V1 |
 | Real-time collaboration | Not needed when 1-2 techs per job |
-| Xactimate direct API integration | Manual CSV import sufficient for V1 |
+| Xactimate direct API integration | ESX file export sufficient for V1 |
 | Custom report templates | Standard templates cover 90% of needs |
-| Chat / messaging between team | Push notifications sufficient for V1 |
+| Chat / messaging between team | Push notifications + scheduling (#11) sufficient for V1 |
 | Inventory management | Equipment tracking (deployed/available) covers V1 needs |
-| Calendar view of jobs | List view with dates sufficient for V1 |
 | Third-party TPA integrations | Manual data entry from TPA assignments |
 | Advanced analytics / BI | Simple metrics on dashboard sufficient |
 | White-labeling | Single brand in V1 |
