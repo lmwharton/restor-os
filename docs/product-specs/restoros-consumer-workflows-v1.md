@@ -349,7 +349,7 @@ A tech narrates their damage assessment and the system structures it into Xactim
 **Primary input:** Voice with keyboard fallback (keyboard must be equally fast)
 **AI assistance:** Real-time transcription, structured extraction, Xactimate line item suggestion
 **Offline:** Recording only. Transcription + AI processing requires connectivity.
-**V1 Priority:** V1.1 feature (ship soon after core). Manual/keyboard scoping (#4) is the V1 primary path.
+**Note:** Voice needs high accuracy per contractor feedback. Keyboard/manual entry is the reliable fallback.
 
 ### Steps
 
@@ -1550,7 +1550,7 @@ Owner sets up the week's schedule, assigns techs to jobs with specific dates and
 ## Workflow 12: Team Management
 
 ### Overview
-Company owner invites technicians to their company, manages roles, and assigns techs to jobs. Basic invite/assign functionality ships in V1; full team management (availability, skills, workload tracking) is V1.1.
+Company owner invites technicians to their company, manages roles, and assigns techs to jobs. Includes invite, role management, and job assignment. Full team management (availability, skills, workload tracking) in later phases.
 
 **Trigger:** Owner needs to add team members or assign jobs
 **Actor:** Owner
@@ -2166,40 +2166,25 @@ Documented in individual table schemas above. Settings are stored in:
 
 ---
 
-## Feature Priority (Updated per Brett Sodders Interview)
+## Feature Set
 
-### V1 Core (Must Ship)
+All features are in scope. Implementation roadmap and phasing to be determined after spec review.
 
-| Priority | Feature | Workflow | Notes |
-|----------|---------|----------|-------|
-| 1 | AI Photo Scope | #8 | Core differentiator -- photo-based damage scoping |
-| 2 | Site Log (moisture + equipment tracking) | #5, #6, #9 | Critical for insurance documentation |
-| 3 | Reports (PDF default) | #10 | PDF as default format, ESX optional |
-| 4 | Room Sketching (basic) | #2 (room dimensions) | Adjusters need dimensions/sq footage for payment. Minimum: room shape + wall lengths + ceiling height. "You could submit a scope without one -- it just might not get paid very quickly." |
-| 5 | Job Management + Scheduling/Dispatch | #1, #11 | Owner's #1 pain point is late-night texting for next-day assignments |
-| 6 | Photo Documentation (geo-tagged, auto-location) | #7 | "Biggest one to get paid" -- auto-log to job based on GPS like CompanyCam |
-| 7 | Auto Adjuster Reports | #10b | Reduces phone calls, keeps adjuster informed, speeds up payment |
-
-### V1.1 (Ship Soon After)
-
-| Priority | Feature | Notes |
-|----------|---------|-------|
-| 1 | Voice Scoping | #3 -- "Needs to be really accurate or won't be utilized." Keyboard fallback must be equally fast. |
-| 2 | Team Management (full) | Basic invite/assign in V1, full management (availability, skills, workload) in V1.1 |
-| 3 | Hazmat Scanner | Nice-to-have, not day-one |
-| 4 | Offline read-only cache | Read-only view of assigned jobs when offline |
-
-### V2+ (Future)
-
-| Feature | Notes |
-|---------|-------|
-| LiDAR room scanning | Integration like MagicPlan -- strong differentiator for room dimensions |
-| Full offline mutations + sync | Complete offline mode with conflict resolution |
-| Customer portal (self-service) | Status + selected photos view for customers |
-| Bluetooth meter connectivity | Auto-read from meters -- no contractor demand yet |
-
----
-
+| # | Feature | Notes |
+|---|---------|-------|
+| 1 | AI Photo Scope | With S500/OSHA auto-justifications |
+| 2 | Site Log (moisture + equipment) | Atmospheric, points, dehu output, equipment placement |
+| 3 | Reports | PDF default, ESX optional |
+| 4 | Room Sketching | Dimensions required for payment; LiDAR integration future |
+| 5 | Voice Scoping | Needs high accuracy; keyboard fallback equally important |
+| 6 | Photo Documentation | GPS auto-tagging, job photo archive |
+| 7 | Job Management | Full CRUD with customer, insurance, loss details |
+| 8 | Team Management | Invite, roles, assignment |
+| 9 | Hazmat Scanner | Asbestos + lead paint detection |
+| 10 | Report Generation | Scope notes, moisture reports, job summaries |
+| 11 | Job Scheduling & Dispatch | Calendar, tech assignment, push notifications |
+| 12 | Auto Adjuster Reports | Limited-access daily updates to adjusters |
+| 13 | S500/OSHA Justifications | Auto-attach compliance citations to line items |
 ## Out of Scope for V1
 
 The following are explicitly NOT included in V1 but may be considered for future versions:
