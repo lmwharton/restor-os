@@ -14,7 +14,7 @@
 
 **Key numbers:**
 - **$180-360M** addressable market (50,000+ small/mid restoration shops)
-- **$500-1,600/mo** what contractors pay today across 4-6 tools
+- **$700-1,900/mo** what contractors pay today across 4-6 tools (Xactimate alone is $350/mo)
 - **$149/mo** Crewmatic replaces all of them — validated as "no-brainer" pricing
 - **3 hours/day** saved per contractor — tool pays for itself in 1 day
 - **0 competitors** offer AI photo-to-Xactimate line items
@@ -45,10 +45,10 @@ Water restoration contractors today juggle **4-6 separate tools** to document a 
 | Document damage | Encircle | $270-650 |
 | Log moisture readings | Paper/Excel or DryBook | $55-85/user |
 | Draw floor plans | magicplan or pen & paper | $40/project |
-| Write the estimate | Xactimate (required by insurance) | $100-149 |
+| Write the estimate | Xactimate (required by insurance) | $350/mo ($2,690/yr) |
 | Manage jobs & team | DASH or PSA or Albi | $55-650 |
 
-**Total: $500-1,600+/month** for a small restoration company — before they've restored a single property.
+**Total: $700-1,900+/month** for a small restoration company — before they've restored a single property.
 
 And even with all these tools, the core workflow is still painfully manual:
 1. Tech walks the job site with a clipboard
@@ -101,16 +101,17 @@ The most popular field documentation app for restoration. Photos, floor plans, m
 |---|---|
 | **Pricing** | Small: $270/mo, Medium: $455/mo, Large: $650/mo — flat rate, unlimited users |
 | **Mobile** | Native iOS + Android |
-| **AI** | Auto photo labeling, voice-to-text notes — no AI scoping |
+| **AI** | **Encircle Scope is LIVE (as of March 2026)** — AI-generated mitigation scopes from field documentation. Free trial through March 31, 2026. Additional AI features previewed: video summarization, smart moisture readings from photos, auto contents descriptions, full AI scoping (coming later 2026). Also acquired The Edge (ROM estimating tool) in Nov 2025. |
 | **Xactimate** | Floor plan import into Xactimate sketches |
-| **Strengths** | Brand recognition, comprehensive documentation, unlimited users, Xactimate sketch integration |
-| **Weaknesses** | No AI-generated line items, no voice-guided scoping, $270/mo minimum is steep for small shops, documentation only (not job management) |
+| **Strengths** | Brand recognition, comprehensive documentation, unlimited users, Xactimate sketch integration, **actively shipping AI features** |
+| **Weaknesses** | $270/mo minimum is steep for small shops, documentation only (not job management), AI is embedded in existing workflow (not standalone) |
 
 **What this means for Crewmatic:**
 - Encircle is the benchmark for field documentation quality
 - Their $270/mo floor creates a pricing opportunity — Crewmatic at $149/mo with MORE features
-- They could add AI, so speed-to-market matters
-- **Threat level: HIGH**
+- **Encircle AI is no longer hypothetical — Encircle Scope is live and shipping.** Speed-to-market is critical.
+- Their AI approach is "disruption without interruption" — embedded into existing docs workflow, not a standalone AI tool. Crewmatic's advantage: AI-first from day one, not bolted on.
+- **Threat level: CRITICAL** (upgraded from HIGH — they are actively shipping AI)
 
 ---
 
@@ -127,11 +128,20 @@ The most comprehensive all-in-one platform. Job management, compliance automatio
 | **Strengths** | Most comprehensive features, SOC 2 certified, compliance automation |
 | **Weaknesses** | 20-year-old infrastructure, dated UI, expensive, overkill for small shops |
 
+**Mitigate (formerly MICA) — Field Documentation Companion to DASH:**
+- MICA = Mitigation Industry Control Application — not an industry standard itself, but enforces ANSI/IICRC S500 compliance in the documentation workflow.
+- **2 insurance carriers mandate MICA/Mitigate** for water mitigation program work. Contractors use it because carriers require it, not by choice.
+- **LiDAR floor plan scanning** (Mitigate Scan) — iOS LiDAR generates instant measured floor plans. Reduces 4-5 hours of manual sketching to ~30 minutes.
+- Real-time drying data audits validate psychrometric and moisture readings against carrier program rules.
+- DASH is the business OS; Mitigate is the specialized field tool for water jobs. They work together.
+
 **What this means for Crewmatic:**
 - DASH is the incumbent to displace at the enterprise level (later)
 - Their legacy tech is a liability — modern mobile-first UX is a real differentiator
 - Small shops actively avoid DASH due to cost and complexity
-- **Threat level: MEDIUM** (slow to innovate, but deep pockets)
+- **The MICA carrier mandate is a barrier** — contractors on those 2 carriers must use Mitigate regardless. Focus on the other 98% of carriers first.
+- Mitigate's LiDAR scanning is a strong feature — consider LiDAR integration in V2.
+- **Threat level: MEDIUM** (slow to innovate, but carrier mandates create lock-in)
 
 ---
 
@@ -331,6 +341,8 @@ AI returns:
 You review, edit if needed, approve. Done in minutes instead of hours.
 ```
 
+**Video Submission (V2):** In addition to photos, contractors can submit short video walkthroughs of damage. AI extracts frames and analyzes the full walkthrough to generate more comprehensive Xactimate line items — capturing angles and context a single photo might miss. Identified as high-value by Brett during early prototyping.
+
 ### Feature 2: Voice-Guided Scoping
 
 Instead of typing, the app walks you through the scope step by step via voice:
@@ -392,12 +404,12 @@ Every photo automatically scanned for asbestos-risk materials and lead paint. Fl
 
 | Tool | Monthly Cost |
 |------|-------------|
-| Xactimate (required) | $100-149/user |
+| Xactimate (required) | $350/mo per user ($2,690/yr) |
 | Encircle (documentation) | $270-455 |
 | Job management (Albi or PSA) | $165-325 |
 | CompanyCam (photos) | $57-135 |
 | magicplan (floor plans) | ~$400 (per project) |
-| **Total** | **$592 - $1,464/month** |
+| **Total** | **$792 - $1,660+/month** |
 
 ### What Crewmatic Will Charge
 
@@ -422,9 +434,9 @@ Crewmatic replaces Encircle + job management + CompanyCam + magicplan. Contracto
 
 | Scenario | Before Crewmatic | With Crewmatic | Monthly Savings |
 |----------|----------------|---------------|----------------|
-| Solo contractor | $492-714/mo | $149 (Team) | **$343-565/mo** |
-| 5-person shop | $692-1,164/mo | $149 (Team) | **$543-1,015/mo** |
-| 15-person company | $1,100-2,000+/mo | $299 (Pro) | **$801-1,701/mo** |
+| Solo contractor | $692-914/mo | $149 (Team) | **$543-765/mo** |
+| 5-person shop | $892-1,364/mo | $149 (Team) | **$743-1,215/mo** |
+| 15-person company | $1,400-2,300+/mo | $299 (Pro) | **$1,101-2,001/mo** |
 
 ---
 
@@ -490,12 +502,52 @@ From Brett: *"We need to make them feel like they're missing out and their compe
 | Risk | Our Plan |
 |------|----------|
 | **AI scope accuracy** | All suggestions are human-verified. Contractors approve/edit/reject every item |
-| **Encircle adds AI** | Ship first, build data moat, establish brand |
+| **Encircle AI is live** | Encircle Scope shipped March 2026. Our advantage: AI-first architecture vs. their bolt-on approach. Ship fast, differentiate on photo-to-line-items (they don't have this yet) |
 | **Xactimate blocks integration** | Multiple export formats. We make Xactimate more valuable |
 | **Contractor tech resistance** | Voice-first eliminates keyboard. Founder credibility |
 | **Insurance pushback on AI** | "AI-assisted, human-verified." Contractor is the professional |
 | **Speed to market** | Brett's #1 concern. Ship fast, iterate. First mover with AI scoping builds data moat |
 | **magicplan ships AI Capture** | They've announced but not shipped. We need to be live before they are |
+| **MICA carrier mandates** | 2 carriers mandate MICA/Mitigate. Focus on the other 98% of carriers first. Long-term: match MICA compliance features to compete for mandated contractors |
+
+---
+
+## Strategic Intelligence: Verisk & the Xactimate Moat
+
+### Verisk (Xactimate's Parent Company)
+
+- **Market cap:** ~$31B (NASDAQ: VRSK). Stock down ~37% from 52-week high.
+- **Revenue:** ~$3B/year, ~55% adjusted EBITDA margins. Incredibly profitable.
+- **Xactimate pricing is $350/mo** per user ($2,690/yr) — significantly higher than previously estimated.
+- **Attempted AccuLynx acquisition** ($2.35B, July 2025) for roofing contractor SaaS — terminated Dec 2025 when FTC didn't complete antitrust review. Shows Verisk's strategic intent to own the contractor software layer.
+- **Property estimating volumes fell 6.5%** in Q4 2025. The core business is softening.
+
+### How Xactimate's Pricing Database Works
+
+Xactimate's moat is its pricing data, collected through:
+1. **Anonymous contractor surveys** — 345,000+ data points/year from 50,000+ providers
+2. **Completed estimate analysis** — 5M+ completed Xactimate estimates analyzed annually (13M+ data points). Every contractor using Xactimate unknowingly feeds Verisk's pricing engine.
+3. **Monthly updates** by ZIP code using cluster analysis designed by economists.
+
+**Key insight:** The real moat is the feedback loop — contractors paying $350/mo are also the data source. This creates a network effect that's hard to break head-on.
+
+### Long-Term Strategic Option: Crowdsourced Pricing Engine
+
+An untapped market opportunity exists for a contractor-owned pricing database:
+
+| Data Source | What It Provides | Cost |
+|-------------|-----------------|------|
+| **RS Means API** (Gordian) | 92,000+ line items, materials/equipment/labor, 970+ locations, geographic adjustment factors | $396-$5,973/yr licensable via API |
+| **BLS Wage Data** (OEWS) | Actual trade wage rates for 830+ occupations across 600+ metro areas | Free (public domain) |
+| **Crewmatic User Data** | Every completed job becomes a pricing data point — actual costs, not estimates | Built-in (the flywheel) |
+
+**No one is doing crowdsourced pricing in restoration.** This is genuine white space. The strategy:
+1. Start with RS Means + BLS as the pricing foundation (Michigan first)
+2. Every Crewmatic job that records actual costs feeds the engine
+3. Over time, Crewmatic's pricing becomes more accurate than Xactimate's in active markets — because it's based on what contractors actually charge, not what Verisk surveys say
+4. This is not a V1 play — it's the long-term moat that makes Crewmatic defensible
+
+**This does NOT replace Xactimate in V1.** 99% of carriers require Xactimate-formatted estimates. But as the data grows, Crewmatic could become the pricing authority that contractors trust — and eventually offer an alternative to Xactimate's $350/mo pricing monopoly.
 
 ---
 
