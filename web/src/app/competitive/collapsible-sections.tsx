@@ -73,6 +73,42 @@ const SECTION_SUMMARIES: Record<string, string> = {
     "30 Q&As · Feature priorities · Pricing validation · Competitive insights",
   "appendix-b-workflow-review--validation-questions":
     "16 workflow descriptions with 35+ validation questions for Brett",
+  "workflow-1-new-job-creation":
+    "Cat/class NOT needed on first call · Two-phase create: quick dispatch → full details on site",
+  "workflow-2-job-site-arrival":
+    "Empathy first, documentation second · Sketch on first visit · Safety checklist NOT needed in V1",
+  "workflow-3-voice-guided-scoping":
+    "Voice hugely desired — hands occupied with gloves/mask · Accuracy is the hard gate",
+  "workflow-4-manual-scoping-keyboard":
+    "Keyboard fallback for noisy environments · Room-by-room entry",
+  "workflow-5-moisture-reading-collection":
+    "Atmospheric + point readings · Compare to yesterday's readings · Drying progress tracking",
+  "workflow-6-equipment-placement--tracking":
+    "Dehu/fan placement · Equipment logs for billing · Move/swap tracking",
+  "workflow-7-photo-documentation":
+    "Techs take photos while owner scopes · Before/during/after required · Auto-tag to rooms",
+  "workflow-8-ai-photo-scope":
+    "Non-obvious line items are the real value · Must find what techs miss · Game changer if accurate",
+  "workflow-9-daily-monitoring-dry-log":
+    "1-3 days monitoring after day-1 work · Check readings, adjust equipment · Quick in/out visits",
+  "workflow-10-report-generation":
+    "PDF is default · Must match what adjusters expect · Auto-generate from collected data",
+  "workflow-10b-auto-adjuster-reports":
+    "Auto-send daily updates to adjusters · Speeds payment · Builds trust",
+  "workflow-11-job-scheduling--dispatch":
+    "Scheduling is #1 pain · Right vehicle + equipment to right job · Replace 11pm texting",
+  "workflow-12-team-management":
+    "Roles: owner > admin > tech · Tech permissions · Activity tracking",
+  "workflow-13-job-review--qa":
+    "Owner reviews tech work · Catch missing line items · Quality gate before submission",
+  "workflow-14-dashboard":
+    "Guided workflow > feature dashboard · 3 KPIs: jobs/month, revenue, days to payment",
+  "workflow-15-the-whole-job--end-to-end":
+    "Full job walkthrough · TPA vs independent paths · Post-job payment fight · Supply inventory gap",
+  "workflow-16-what-we-havent-thought-of":
+    "Contents is separate business · Digital contracts expected · 50-50 mitigation vs rebuild split",
+  "thank-you":
+    "W15 end-to-end walkthrough is the most valuable single answer",
 };
 
 function getSummary(id: string): string {
@@ -128,7 +164,7 @@ export function CollapsibleDocument({
     <div className="lg:grid lg:grid-cols-[300px_1fr] lg:gap-8">
       {/* Sidebar TOC — grouped */}
       <aside className="hidden lg:block print:hidden">
-        <nav className="sticky top-6">
+        <nav className="sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
           <div className="flex items-center justify-between mb-5">
             <h2 className="text-[11px] font-semibold uppercase tracking-[0.15em] text-slate-400">
               Contents

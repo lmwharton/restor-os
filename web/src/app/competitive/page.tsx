@@ -15,6 +15,7 @@ export default async function CompetitiveAnalysisPage() {
     process.cwd(),
     "..",
     "docs",
+    "research",
     "competitive-analysis.md"
   );
   const markdown = await readFile(filePath, "utf-8");

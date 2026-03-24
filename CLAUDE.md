@@ -23,19 +23,41 @@ Crewmatic/
 │   ├── pyproject.toml
 │   └── CLAUDE.md
 ├── docs/
-│   ├── competitive-analysis.md          # Full competitive analysis + co-founder interview
-│   └── product-specs/
-│       ├── README.md                    # Product overview, tech stack, V1 scope, timeline
-│       ├── restoros-architecture.md     # Full technical architecture (DB schema, APIs, frontend structure)
-│       └── restoros-consumer-workflows-v1.md  # 15 end-to-end user workflows
+│   ├── design.md                        # Master PRD — product vision, V1 scope, architecture, AI pipeline
+│   ├── research/                        # Evidence base (do not modify during implementation)
+│   │   ├── competitive-analysis.md      # Market analysis + Brett's full interview (W1-W16) + insights
+│   │   ├── xactimate-codes-water.md     # 50+ Xactimate WTR codes with selectors and units
+│   │   ├── tpa-carrier-guidelines.md    # TPA rules, rejection triggers, carrier requirements
+│   │   └── product-specs/               # Original product specifications
+│   │       ├── README.md                # Product overview, tech stack, V1 scope
+│   │       ├── restoros-architecture.md # Full technical architecture (18 DB tables, 50+ APIs)
+│   │       └── restoros-consumer-workflows-v1.md  # 15 end-to-end user workflows
+│   └── specs/                           # Implementation specs (one per feature)
+│       ├── draft/                       # Specs being written
+│       ├── in-progress/                 # Specs currently being implemented
+│       └── implemented/                 # Completed specs
+├── environment.md                       # Staging/production URLs and service dashboard links
 └── web/                                 # Next.js 16 frontend (Vercel-hosted)
     └── src/app/
         ├── layout.tsx                   # Root layout (Geist fonts, metadata)
-        ├── page.tsx                     # Homepage (default Next.js starter)
-        └── competitive/page.tsx         # /competitive — renders competitive-analysis.md as styled page
+        ├── page.tsx                     # Homepage
+        ├── competitive/page.tsx         # /competitive — renders competitive analysis
+        ├── research/page.tsx            # /research — market research, interviews, evidence
+        └── product/page.tsx             # /product — what we're building, specs, roadmap
 ```
 
-**Note:** The database (Supabase PostgreSQL) is not set up yet. The `docs/product-specs/restoros-architecture.md` contains the full planned architecture including 19 database tables, 50+ API endpoints, and AI pipelines.
+## Document Hierarchy
+
+```
+Research (docs/research/)  →  Design (docs/design.md)  →  Specs (docs/specs/)  →  Code
+  what we know                 what we're building         how we build each piece
+```
+
+- **Research** — raw evidence: competitive analysis, Brett's interview, Xactimate codes, TPA rules
+- **Design** — ONE document: product vision, V1 scope, architecture, schema, AI pipeline rules
+- **Specs** — one per feature, with checklist. Move between draft/ → in-progress/ → implemented/
+
+**Note:** The database (Supabase PostgreSQL) is not set up yet. `docs/design.md` contains the V1 schema and API endpoints.
 
 ## Planned Tech Stack (from specs)
 
