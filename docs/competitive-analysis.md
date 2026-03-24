@@ -964,10 +964,43 @@ These are gaps identified after reviewing the initial 30 answers. Brett — voic
 ### Questions
 
 > **W1.1** Is this the right info to capture on the first call? Is there anything you ask the customer that we're not capturing here (e.g., how long ago the water started, number of stories, is there a basement, do they have a plumber)?
->
+
+**Brett's answer (March 2026):**
+
+> For me specifically I'm just a one-man crew — I'm the owner taking the calls and I'm usually always on site. That's not gonna be typical with most restoration companies, I'm just so small. But any restoration company with 20 employees or less, they're probably getting these calls and finding out the homeowner's name, their address, whether they have insurance, who the insurance carrier is, and then trying to get details on the job. They don't need to know the category. They don't need to know the class. They need to know like hey do we have to send a vehicle there that has an extraction unit on it because there's 2 feet of water in the basement, or do we need a wood floor drying piece of equipment because the hardwood floors got soaking wet. That's really important because not all vans have the exact same things — or even who you send, like who's better at handling certain situations.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Category/class NOT needed on first call — what matters is operational: "do we need extraction? Wood floor drying equipment?" | Job creation form should have equipment/situation fields, not force Cat/Class upfront |
+| Dispatching the right vehicle with right equipment is the critical first-call decision | V2 scheduling: vehicle/equipment matching to job requirements |
+
 > **W1.2** Who usually creates the job — you (the owner) or the tech? Does it depend on how the call comes in (direct call vs. insurance referral vs. TPA)?
->
+
+**Brett's answer (March 2026):**
+
+> As far as input of most of the fields, that's done on site. I could see a situation where the person taking the call is inputting the address and their name and the insurance claim number for them, but it could go either way — it all depends on how each company does it. 100% if it's a TPA then that's gonna be an office thing most likely because they're gonna see that information first — someone in the office is gonna input that information. A direct call could depend — is it a call to the main number or directly to a tech because he's developed the relationship with a plumber or whatever.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Job setup is split: basic info (name, address, insurance) before dispatch, detailed fields on site | Two-phase job creation: quick create (dispatch) → full details (on site) |
+| TPA calls → office person inputs it. Direct calls → could be tech or owner | Multiple roles need job creation access |
+
 > **W1.3** Do you always know the insurance info on the first call, or does that come later? How often is a job cash/out-of-pocket with no insurance involved?
+
+**Brett's answer (March 2026):**
+
+> You can get that information but you gotta do it in a comfortable tone — you don't want to come off aggressively like "hey who's your insurance carrier and what's your coverage." But you also kinda need to know that. If it's a basement, a lot of people don't have coverage on their basement. They'll have fully finished basements and that's a problem because they have no coverage — everything you do down there, whether it's drying or reconstruction, is coming straight out of pocket and that can get astronomical. So it's important to know that information in certain scenarios. If someone calls and says they have a water supply line that burst — 99% of insurance policies are gonna cover that. But if they have a sewer backup in their basement, that could be a problem.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Insurance info needs tact — especially basements (many policies don't cover them) | Don't make insurance fields mandatory on create; flag "basement + no insurance = out-of-pocket risk" |
+| Sewer backup vs supply line burst = different coverage implications | Loss source field matters for insurance risk flagging |
 
 ---
 
@@ -983,10 +1016,44 @@ These are gaps identified after reviewing the initial 30 answers. Brett — voic
 ### Questions
 
 > **W2.1** What's the FIRST thing you do when you walk in the door? Do you talk to the homeowner first, or go straight to assessing damage?
->
+
+**Brett's answer (March 2026):**
+
+> These people, it's like the worst moment in their life. They probably have 2 feet of water in their basement and stuff floating around that's sentimental to them. The first thing you do is talk to them and let them know that you're here for them and you're gonna do whatever you can to salvage whatever you can. Honestly just act like you care — hopefully you actually do care. Once you get that out of the way, then you start assessing damage. Sometimes it's a huge deal — if they're devastated, you gotta spend some time with them. You can't just ignore them cause that's not gonna go well for you. The smaller jobs where it's just a little bit of water, it's a lot easier to get past the homeowner.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| First interaction is emotional, not technical — contractor acts as first responder | The app should never interrupt the human moment. No "fill out this form before starting" gates. |
+| Small jobs → quick past homeowner. Big jobs → significant time with customer first | Two-phase workflow: empathy/assessment first, documentation second |
+
 > **W2.2** Do you measure room dimensions on the first visit, or does that happen later? How do you measure — tape measure, laser, or eyeball it?
->
+
+**Brett's answer (March 2026):**
+
+> Yeah, I generally always get the sketch done — it's one of the first things I do. That's just the way I do things. I don't think you have to do that but it's definitely helpful. I just use a laser most of the time, sometimes I forget and then I have a measuring tape on me, but the laser's way faster.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Brett does sketch/dimensions on first visit but not everyone does | Room dimensions should be optional on first visit, not required |
+| Laser measuring tool is primary, tape measure as backup | V2 room sketching could integrate LiDAR (iPhone) to replace laser |
+| Sketching is one of the FIRST things he does | Spatial layout informs everything else — sketch before scope |
+
 > **W2.3** Is there a safety assessment you do first? (PPE check, electrical hazards, structural concerns, asbestos visual check?) Should the app prompt for this?
+
+**Brett's answer (March 2026):**
+
+> Not really. Electrical hazard maybe. Structurally I've only had one time where I actually was worried structurally because we had a crawlspace I had to worry about caving in. I don't think that's important to be honest with you to actually include that in the app.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Safety checklist is NOT needed in V1** — Brett says skip it | Drop the safety assessment prompt from any workflow design |
+| Electrical hazard is the only one worth noting occasionally | If we ever add safety, it's a single optional toggle, not a checklist |
 
 ---
 
@@ -1008,10 +1075,46 @@ AI converts spoken descriptions into structured Xactimate line items.
 ### Questions
 
 > **W3.1** You said voice needs to be really accurate or it won't get used. What's your realistic expectation — would you use voice for the initial walkthrough, for return monitoring visits, or both? When is it most useful?
->
+
+**Brett's answer (March 2026):**
+
+> I would use voice all the time if it actually accurately tracked everything I said. If I could just talk, not type, cause then I can actually do stuff while I'm working. If it got so good, I would be one of those losers that had a Bluetooth thing — if it was that accurate I think it would be pretty awesome. You'd love to have gloves on and stuff when you're doing this job and you have a mask on — for smaller companies you might be in the mix and if you're in the mix you might have rubber gloves on, not wanting to take them on and off just to type this stuff in. The more the merrier with voice — you just don't want to try to type and hit enter and backspace and everything else. It'd be way easier if it actually worked.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Voice is hugely desired** — Brett would use it "all the time" if accurate | Voice scoping should be prioritized higher than originally planned |
+| Hands literally occupied (gloves, mask, working) — typing is a physical problem | Voice isn't a nice-to-have UX — it's an **accessibility issue** for techs actively working |
+| Bluetooth earpiece mentioned — willing to look silly if it works | Hands-free mode is a real use case and potential differentiator |
+| Accuracy is the hard gate — "if it actually worked" repeated multiple times | Better to launch voice late and accurate than early and frustrating |
+
 > **W3.2** When you dictate damage, do you think room-by-room or do you describe the whole house at once? What's the natural way you'd talk about it?
->
+
+**Brett's answer (March 2026):**
+
+> I do room by room. You can do the whole — like the loss cause, say "hey we got a roof leak and then it did damage to the whole upstairs" and then you go room by room and say "the master bedroom had this, this bedroom had this, yada yada." I think that's easier.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Room-by-room is the natural workflow** with an optional loss-cause overview first | AI Photo Scope and voice should both support room-by-room scoping |
+| Loss cause is house-level, damage is room-level | Schema: `jobs.loss_cause` (house-level) + `line_items` per room |
+
 > **W3.3** Are there standard phrases or terms you always use when describing damage? (e.g., "affected up to 24 inches," "wet to the touch," "visible staining") — if we knew these, we could make the AI much more accurate.
+
+**Brett's answer (March 2026):**
+
+> There's some standard phrases. Generally you want to see how far — if there's wet drywall, say 2 inches of water, you need to wick up the drywall which means the drywall will show moisture readings for like 12 or 15 inches. You basically gotta determine that point and that's where you're gonna do your flood cut. That could be like the whole basement, so that's the height. "Affected up to 24 inches" — yeah that's definitely one of them. "Visible staining" — yeah you use that a lot because **mold is like such a forbidden word in the insurance world. You never say mold.** You might be referring to actual mold as "visible staining" cause you don't want to cause any issues, especially when it comes to the scope insurance reviews.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **"Mold" is a forbidden word** — contractors say "visible staining," "microbial growth," or "suspect organic growth" | **CRITICAL for AI pipeline:** The AI must NEVER use the word "mold" in generated line items or justifications |
+| "Flood cut" is standard terminology — cutting drywall at moisture wicking height | AI needs restoration-specific vocabulary |
+| Moisture wicking goes 6-8x higher than water line (2" water → 12-15" moisture) | AI should know this physics — photo shows 2" water line → suggest flood cut at 12-15" |
 
 ---
 
@@ -1027,10 +1130,46 @@ AI converts spoken descriptions into structured Xactimate line items.
 ### Questions
 
 > **W4.1** When you scope manually today, do you work from memory, a mental checklist, or do you reference something (a cheat sheet, past scopes, Xactimate directly)?
->
+
+**Brett's answer (March 2026):**
+
+> I've done it so many times that it's just basically memory. If I feel like I might be missing a couple things, I'll pull up my previous ones — I'll think of a job that's similar to the one I'm doing and occasionally I'll find one or two items like "oh yeah that's right." I don't think I necessarily do it the right way. A cheat sheet or having past scopes as references on deck ready to go every time would probably be better. Having said that, having to type in the word "drywall" just to get all the drywall line items to pop up can be kind of annoying because it's hard to find exactly what you're looking for. I don't really love their directory of line items.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Scoping from memory + referencing past similar jobs** | AI Photo Scope replaces the memory gap. V2: "similar past jobs" reference feature |
+| **Xactimate's line item search is bad** — browsing results by keyword is annoying | Manual line item entry needs better search than Xactimate: fuzzy search, category grouping, "most used" shortcuts |
+
 > **W4.2** How many line items does a typical water job have? A small job vs. a big job?
->
+
+**Brett's answer (March 2026):**
+
+> Small job has 10, big job has like 30.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **10-30 line items per job** | AI should generate 8-25 items. Under 8 feels incomplete, over 30 feels like noise |
+| Manageable review size | Screen 3 doesn't need pagination — a scrollable list works fine |
+
 > **W4.3** For the S500/OSHA justifications you built in the prototype — can you give us 3-5 examples of specific line items and what justification you'd attach? (e.g., "antimicrobial application — justified by S500 Section 12.4 for Cat 2 water")
+
+**Brett's answer (March 2026):**
+
+> The whole reason I put that on there is because a lot of times adjusters will come back and say "no we're not gonna pay you for an air scrubber on this job — it was a Category 1 loss, clean water loss." But the problem is you want to get paid for an air scrubber cause if I'm cutting wet drywall it's creating dust in the air. It's really annoying because it's hard to contain, so the more containment I can do on that dust the better. If I have an air scrubber and I'm putting a HEPA filter that costs like $200 in it, I want to get paid for it. These people pay for insurance for us to come do the work and we should get paid for the equipment we're using.
+>
+> **OSHA has a rule that if you're putting aerosols into the air as you're working, you're required to have an air filtration device — an air filtration device is an air scrubber.** So we should be getting paid for it. That was the whole point — finding those line items where OSHA or S500 justifies it because then the adjuster is reading through and like "oh no I'm not paying for an air scrubber" and it's gonna say below it "OSHA requires this" — they're gonna say "oh shit I guess I am paying for an air scrubber."
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **S500/OSHA justifications are a REVENUE tool, not a compliance checkbox** — they win payment disputes with adjusters | This is the core monetization thesis. The AI doesn't just document — it **makes contractors more money**. |
+| **Concrete example:** Air scrubber on Cat 1 loss → adjuster denies → OSHA aerosol regulation → adjuster pays | First test case: "cutting wet drywall" → air scrubber + OSHA aerosol filtration citation |
+| Every AI-generated line item MUST have a justification — no justification = easy denial | Justifications are not optional formatting — they're the product's value |
 
 ---
 
@@ -1047,12 +1186,57 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W5.1** How many moisture points do you typically take per room? Is there a standard pattern (e.g., every 4 feet along the wall) or do you pick spots based on visible damage?
->
+
+**Brett's answer (March 2026):**
+
+> It's not a certain amount of moisture points you need to do. Just a wall, I would say probably 5 seems like a reasonable amount. No one's ever came back at me and said "hey you didn't take enough moisture points" — that's never an issue. You kinda wanna try to get one of like a bottom plate, one of like another piece of material in the room — not all the same things and same locations. The whole point is you want the whole room dry.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| ~5 points per wall, across different materials and locations | Default moisture point template: bottom plate, mid-wall, different materials |
+| No one pushes back on point count | Don't over-engineer the point tracking UI — simple input |
+
 > **W5.2** Do you record atmospheric readings once per room or once per floor/zone? How do you currently calculate GPP — in your head, a chart, or an app?
->
+
+**Brett's answer (March 2026):**
+
+> Atmospheric readings — definitely once per room or once per dry chamber or area. GPP — no, I can't figure that on my own. I always rely on an app. I find the temperature and humidity and then when I go home if I need to put that into a dry log, I'll just find an app to do it for me.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| One atmospheric reading per room/zone | Schema: atmospheric readings tied to room, not individual moisture points |
+| **GPP calculation done manually with a separate app** — can't do it in his head | Auto-calculate GPP from temp + humidity is a clear value-add. Simple formula, big time saver. |
+| He does GPP calculation at home later, not on site | The app doing GPP in real-time on site removes a whole "homework" step |
+
 > **W5.3** How do you track readings over time today? Paper log? Spreadsheet? Do you compare today's readings to yesterday's to see if things are drying?
->
+
+**Brett's answer (March 2026):**
+
+> Paper log. I can compare to yesterday — I just kind of know, it's a mental thing for me. But you can always reference it. If I had to send somebody else out to do a reading for me, I would let him know like "hey I was at all 180s so hopefully we're not at like 130 today" and they would know. There's a lot of communication back and forth. The way I do it — I know, but we're so small, not that big of a deal for us. But for those guys, I'm sure they have apps or use spreadsheets.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Paper log + memory** — readings communicated verbally between techs | Trend charts showing readings over time per room replaces paper + verbal communication |
+| Brett communicates thresholds verbally: "I was at 180s, hopefully not 130 today" | App should surface yesterday's readings when entering today's. Show delta: "Yesterday: 180 → Today: ___" |
+
 > **W5.4** When you take a dehu reading, what exactly are you measuring — the output air, the input air, or both? What meter do you use for atmospheric (separate from the moisture meter)?
+
+**Brett's answer (March 2026):**
+
+> What I'm measuring on a dehu is the outlet. A dehu is gonna be pulling the atmospheric reading — it's gonna be pulling whatever the atmosphere is and then extracting water from that and pushing that out of the machine. So if you were to take your atmospheric reading with your scanner or moisture meter, you would set it in front of the dehu as it's pushing air out of the machine — it's gonna show significantly lower than what's in the atmosphere because it's basically processing the vapor in the air.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Dehu reading = outlet air (post-processing), significantly drier than atmospheric | Schema: dehu readings need `reading_type: "outlet"` vs atmospheric `reading_type: "ambient"` |
+| Delta between atmospheric and dehu outlet indicates how hard the dehu is working | V2: auto-flag when dehu outlet ≈ atmospheric (machine failing or room is dry) |
 
 ---
 
@@ -1068,10 +1252,44 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W6.1** How many pieces of equipment does a typical water job need? What's the usual mix (e.g., 1 dehu per room + 2 air movers)?
->
+
+**Brett's answer (March 2026):**
+
+> You're gonna need your moisture meter as a tool, air scrubber most jobs, air movers, dehumidifiers. You might have a cavity dryer or wood floor drying system occasionally but that's not that common. Pieces of equipment on the average job — maybe 5 air movers, one dehu, that's like the smaller side. Maybe 8 air movers and 2 dehus, something like that.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Typical equipment: 5-8 air movers + 1-2 dehus + air scrubber + moisture meter | Equipment library defaults: small set, not hundreds of types |
+| 7-11 total pieces per job | Equipment tracking UI can be a simple list |
+
 > **W6.2** Do you track equipment by serial number, or just by type/count? Does the adjuster care about specific serial numbers, or just the number of units and days?
->
+
+**Brett's answer (March 2026):**
+
+> A lot of people track them by serial number or put QR codes — little stickers on the machines. We're so small, doesn't matter. But other companies yeah, they have asset tags and stuff. **Adjusters do not care about specific serial numbers** — they have no idea, doesn't matter whatsoever to them. But they do care about how many pieces you're using and how many days cause you're getting charged for it. If you put in "used 10 air movers" and then you sent a bunch of pictures and only show 3 air movers, they're gonna be asking questions.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Adjusters care about count x days, not serial numbers** | Schema: `equipment_type`, `quantity`, `placed_date`, `removed_date`. Serial number optional. |
+| Photos must corroborate equipment count — adjusters cross-reference | V2: AI could count equipment in photos and flag discrepancies |
+
 > **W6.3** Is there a standard formula for how many air movers per square foot, or is it judgment? Does the app need to suggest equipment placement based on room size?
+
+**Brett's answer (March 2026):**
+
+> There is a standard formula for air movers. I always use the app called Psychrometric Chart but I think they deleted it. **I think the app should suggest equipment placement based on the room size** cause there's calculations out there. Usually every room gets one air mover and a second air mover is added as soon as certain conditions are met — that's a guaranteed. Then based on square footage and other factors you add one per wall or something. There is a calculation.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Brett explicitly wants the app to suggest equipment** based on room size | V2: auto-suggest equipment count from room dimensions |
+| The app he used for this (Psychrometric Chart) was deleted | Market gap — we can absorb this dead app's functionality |
+| Equipment count + S500 formula citation = adjuster can't deny payment | Links back to W4.3 revenue thesis |
 
 ---
 
@@ -1087,12 +1305,56 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W7.1** How many photos do you take on a typical job? First visit vs. return visits?
->
+
+**Brett's answer (March 2026):**
+
+> I take a ton of photos. On a typical job I'll probably take **60 photos** because if you don't have evidence of what happened and where it happened or what you did, you're kind of screwed. I feel like I'm a freaking professional photographer — it's ridiculous.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **60 photos per job** — way more than originally assumed | Photo limit needs to be 60-100 per job, not 20. AI pipeline processes a subset (damage photos only). |
+| Photos are defensive evidence | Photo management (browse, organize, tag by room) becomes important at this volume |
+
 > **W7.2** Do you take specific types of photos that adjusters expect? (e.g., "wide shot of affected area," "close-up of damage," "moisture meter reading on screen," "equipment in place") Is there a standard shot list?
->
+
+**Brett's answer (March 2026):**
+
+> 100%. I always take a picture of the front of the house. I always take a picture of all floor protection. I always take a picture of any containment that's built. I always take a picture of any equipment placed — I usually try to set the equipment in the house, not set up, like all in one room, stay in the foyer and take a picture of all of it so I can say "hey that is all in the house, this is all dispersed everywhere." So that way if I didn't include it in a picture by accident — dude, do you think I really carried that in the house and then carried it back to my truck? I try to show any damaged areas and **I take pictures of my moisture readings** — some people do, people don't. I just think that's more transparent and it's almost easier to remember your moisture readings when you're literally holding the moisture meter taking a picture near where you took the reading.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Standard shot list:** front of house, floor protection, containment, equipment staged, equipment placed, damage areas, moisture meter readings | V2: photo checklist/prompt system. Auto-tag photos by type. |
+| Equipment staged in foyer = proof all equipment entered the house | The "foyer staging shot" is a pro move the app could suggest to new techs |
+| **Photos of moisture meter screens** — holding meter at the reading location | AI opportunity: OCR the moisture meter reading from photos. Auto-populate moisture log. |
+
 > **W7.3** Do you ever take video? Would short video clips (30 seconds) be useful for documentation, or is it always photos?
->
+
+**Brett's answer (March 2026):**
+
+> I hardly ever take video cause I hate how much storage it takes. But if AI was able to decipher things on there, maybe it could be potentially useful. I don't know.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Video not used due to storage concerns | Not needed for V1. Future: video walkthrough → AI auto-scope is V3+. |
+
 > **W7.4** When you're done with a job, do you take "after" photos? Do adjusters require before/after comparison?
+
+**Brett's answer (March 2026):**
+
+> I definitely take after photos. They don't require it — they never say anything about before or after. They just want justification for what you did. They do care about the "before" because they want to know what are we walking into. But the "after" — they don't really care.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Before photos matter (what damage looked like), after photos less important | Photo tagging: "before" tag matters for adjuster reports. "After" is nice-to-have. |
+| Adjusters want justification, not visual proof of completion | Reinforces that S500/OSHA citations > pretty before/after comparisons |
 
 ---
 
@@ -1109,12 +1371,79 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W8.1** If you upload a photo of a water-damaged room, what line items would YOU expect to see? Walk us through a specific example — what's in the photo, what should the scope include?
->
+
+**Brett's answer (March 2026):**
+
+> If I walked into a water damage room — a roof leak. I walk in, saw a wet ceiling, went down the wall and got onto the floor. The line items I would expect to see: removal of wet damaged drywall — Category 2 or however categories affected — drywall bagged for disposal, a containment barrier set up, an air mover set up, floor protection set up, heavy PPE. The removal of the drywall in the wall, the ceiling, the baseboard, any flooring if it needed to come out — if it was carpet, pull the carpet, bag it, pull the carpet pad. Apply antimicrobial — clean the stud cavities with a HEPA vac. Bring antimicrobial on any affected areas. Set drying equipment and monitor that equipment each day. Clean all of that equipment by decontaminating it. That's about it off the top of my head.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Brett's mental model for a roof leak = ~15-18 line items** — matches the 10-30 range from W4.2 | This is our first complete ground truth test case for the AI pipeline |
+| Workflow follows a logical sequence: assess → demo → protect → clean → dry → monitor → decon | AI should output items in this logical order, not alphabetically |
+| Floor protection, containment barrier, PPE = billable line items, not just "setup" | AI must include prep work items — many contractors forget to bill for these |
+
+**Brett's roof leak test case (ground truth):**
+1. Drywall removal - ceiling (wet/damaged)
+2. Drywall removal - wall (wet/damaged)
+3. Drywall - bag for disposal
+4. Baseboard removal
+5. Carpet removal (if applicable)
+6. Carpet pad removal (if applicable)
+7. Containment barrier setup
+8. Floor protection setup
+9. Air mover setup
+10. Dehumidifier setup
+11. Air scrubber setup
+12. Heavy PPE
+13. HEPA vacuuming - stud cavities
+14. Antimicrobial application - affected areas
+15. Equipment monitoring (daily)
+16. Equipment decontamination
+17. HEPA filter replacement
+
 > **W8.2** What are the "non-obvious line items" you mentioned? The ones a less experienced tech might miss? Give us 3-5 examples.
->
+
+**Brett's answer (March 2026):**
+
+> **Equipment decontamination** — people forget you actually get paid for cleaning your own equipment. **HEPA filter** is a good one — you're using an air scrubber but people won't remember to put a line item in for the HEPA filter they're paying for. You're supposed to change these out every 2-3 jobs but a lot of guys don't change them for like 30 jobs. But you should be getting paid for a filter because you should be replacing it. There's a lot of little ones in there that add up if you try to remember to include them.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Equipment decontamination** = non-obvious, billable | AI rule: "used equipment" → add decontamination line item |
+| **HEPA filter replacement** = non-obvious, tied to air scrubber | AI rule: air scrubber in scope → auto-add HEPA filter line item |
+| "A lot of little ones that add up" — revenue is in the details | This IS the product thesis. Every forgotten $50 item x 20 jobs/month = $1,000/month left on the table. |
+
 > **W8.3** Would you upload one photo per room, or multiple angles of the same room? What gives AI the best chance of catching everything?
->
+
+**Brett's answer (March 2026):**
+
+> I would include like 5 pictures of every room. We always had a mentality that we would take a picture of the floor, the walls, and the ceiling. That way we could capture everything. Cause if you had a wet ceiling and you only take a picture of the walls, you're missing like "oh we had to take down the ceiling fan to get to the drywall cause it was in the way" — and if we didn't take a picture of the ceiling fan, how do we prove that we did it? It was always helpful to have that when you're writing up your scope.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **5 photos per room: floor, walls (multiple), ceiling** — systematic coverage | AI Photo Scope guidance: "Take photos of floor, each wall, and ceiling for best results" |
+| Ceiling fan example = exactly the kind of non-obvious item AI should catch | If AI sees a ceiling fan in photo of damaged ceiling → generate "remove & reset ceiling fan" line item |
+| ~5 photos x ~5 rooms = 25 damage photos per job (subset of 60 total) | AI pipeline processes ~25 photos for scoping. Aligns with batch design (2-3 batches of 10). |
+
 > **W8.4** What would make you NOT trust the AI output? What kind of error would make you stop using the feature?
+
+**Brett's answer (March 2026):**
+
+> I don't know that there's anything. The only thing I would say is if it was inaccurate. But I don't think — it's been pretty accurate. I don't think there's anything on the AI output that would definitely scare me. Some of them are maybe slightly off on the line item they would use in that situation, but from my experience just using it, it's been pretty good.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **High trust threshold already met** — Brett has used AI scoping and found it "pretty good" | Accuracy bar is achievable. Brett expects helpful suggestions he can edit, not perfection. |
+| "Slightly off on the line item" = wrong Xactimate code but right concept | Present items with both code AND plain description so Brett can spot wrong codes |
+| No dealbreaker identified — just accuracy | The review/edit flow (Screen 3) is the trust mechanism |
 
 ---
 
@@ -1130,10 +1459,45 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W9.1** How many days does a typical water job take to dry? What's short vs. long?
->
+
+**Brett's answer (March 2026):**
+
+> Two days is probably fast. Three days is probably the most accurate. Four days has been a longer one.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **2-4 days typical drying time** | Equipment days billing is 2-4 days. Sets monitoring workflow expectations. |
+
 > **W9.2** How do you decide when the job is done (dry enough to remove equipment)? Is there a target moisture reading, or is it based on comparison to unaffected areas?
->
+
+**Brett's answer (March 2026):**
+
+> We hit dry standard — but really close to dry standard I usually just pull equipment because it's not worth drawing it out another day. If I go into a house and I find an area that was dry — say I cut back some drywall and I take a reading and it's 85 — then I know every other area of the same material I want to be at 85. If I go hit another stud and it's at 287, I want to get that to 85 — I'll make that a moisture point and that's my goal. But if I get it to 90, I just pull the equipment. It's gonna air dry by the time we put drywall back. It's not worth leaving it there risking pissing the insurance adjuster off. It can't be like 20 off — it's gonna be pretty close.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Dry standard = comparison to unaffected area of same material**, not absolute number | App needs a "reference reading" per material type — the dry baseline |
+| "Close enough" judgment — within ~5 points of reference, pull equipment | V2: auto-suggest "ready to pull equipment" when readings within threshold |
+| Leaving equipment too long pisses off adjusters (they pay for equipment days) | App should help prove dry standard reached to justify pulling equipment |
+
 > **W9.3** What happens when something ISN'T drying? What do you do — add more equipment, reposition, tear out material? Does the app need to suggest corrective actions?
+
+**Brett's answer (March 2026):**
+
+> You gotta figure out another way to do it. A lot of times I go on Facebook and go on the restoration groups and ask and see what other people are doing. I think it's very rare. But sometimes crawlspaces can be issues — if it's cold out and you put an LGR refrigerant dehumidifier down there, they don't run efficiently when it's less than 70 degrees. So you're screwed — not really drying anything. Then you might have to go get a desiccant dehumidifier or figure out another way. A lot of times I just ask around. Otherwise you just tell the adjuster "I gotta pull the whole subfloor out because I can't get it dry."
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Facebook restoration groups are the troubleshooting resource** | V2+: AI troubleshooting ("readings plateau in crawlspace at <70°F → suggest desiccant dehu") |
+| LGR dehus don't work below 70°F | AI knowledge: equipment performance limits by temperature |
+| Last resort: tear out material — need documentation trail to justify to adjuster | App should document "we tried everything" trail |
+| Rare problem — most jobs dry fine in 2-4 days | Don't over-engineer the "not drying" workflow |
 
 ---
 
@@ -1149,10 +1513,42 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W10.1** What does your current report/scope look like when you send it to an adjuster? Can you share a sample (redacted)?
->
+
+**Brett's answer (March 2026):**
+
+> I can show you what one Encircle report looks like — which is in the software we use. I only use that when I do work for my front company, which is Rainbow Building. But I can show you what I send. When I have my own personal one, I honestly just use a spreadsheet showing my dry log and then attach pictures on my Xactimate send-over.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Brett uses Encircle reports for franchise work (Rainbow Building), spreadsheets for independent work | Our MVP PDF is already better than his independent workflow |
+| Franchise work has different reporting standards | May need to support multiple report templates in V2 |
+
 > **W10.2** Do you send one combined report or separate documents (scope separate from moisture log separate from photos)?
->
+
+**Brett's answer (March 2026):**
+
+> I try to send separate documents when I do it independently. But no matter what, I'll have the dry log and then I'll have the estimate, so there'll be multiple documents.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Multiple separate documents:** dry log + estimate + photos sent individually | Crewmatic's "one combined PDF" is a clear upgrade. Bundling everything = less adjuster friction. |
+
 > **W10.3** Do adjusters ever ask for specific formatting? Or do they just want the data and don't care how it looks?
+
+**Brett's answer (March 2026):**
+
+> Sometimes adjusters will ask for the ESX — they'll literally say "hey send me your ESX file" and I think it's kind of weird because they're basically telling you like hey you have to use Xactimate at that point. So it's kind of weird.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Adjusters sometimes request ESX files directly** — Xactimate's native editable format | **ESX export is a V2 must-have.** PDF is sufficient for V1, but some adjusters will explicitly ask for the Xactimate file. This is a higher-priority V2 feature than previously assumed. |
+| Requesting ESX = adjuster forcing Xactimate usage | Validates that Xactimate compatibility is non-negotiable. Our line item codes must be accurate enough that an ESX export would be accepted. |
 
 ---
 
@@ -1163,10 +1559,45 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W10b.1** How often do adjusters call you for status updates? Would daily auto-reports actually reduce those calls?
->
+
+**Brett's answer (March 2026):**
+
+> I never get calls from adjusters for status updates. Generally it's just such a short period of time they don't really get involved in it. That is the one nice thing about mitigation work — especially if you calm the customer down. If the customer is not freaking out and calling the adjuster nonstop, the adjusters are happy. A big part of it is keeping the customer calm. If you get the customer calm, the adjuster is happy and they don't even care. I literally never get called by some insurance adjusters — very rarely. I think an auto report would make them happy though because then they would feel more involved. I think that would probably put you on their good side.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Adjusters rarely call** — drying period is short, they stay hands-off | Auto reports aren't solving a pain, they're creating goodwill |
+| Keeping the homeowner calm = keeping the adjuster happy | Homeowner-facing status features indirectly improve adjuster relationships |
+| **Auto reports = relationship builder, not pain reliever** — "put you on their good side" | V2: frame as competitive advantage / trust signal, not a required feature |
+
 > **W10b.2** What should the adjuster see vs. NOT see? Should they see individual moisture readings, or just a summary ("drying on track")?
->
+
+**Brett's answer (March 2026):**
+
+> I think the adjuster should only really see maybe initial photos, progress photos, and the moisture readings — the progress you've made. I wouldn't put anything to do with the insurance scope, like how much you're charging or anything like that. You don't wanna put that on there off the bat. Maybe just a summary of drying being on track and showing where you're at. I don't know that they need to know every individual moisture reading — maybe the atmospheric readings, that would probably be good. Showing that it's on track and just leave it at that. Not individual moisture points.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Include:** initial photos, progress photos, atmospheric readings, drying status summary | Auto report template: photos + atmospheric + "on track" summary |
+| **Exclude:** scope/pricing, individual moisture points | Hard rule: never expose pricing data in status reports |
+| Atmospheric readings yes, individual moisture points no | Summary view: "Atmosphere: 65°F / 45% RH / 52 GPP — drying on track" |
+
 > **W10b.3** Would the homeowner want this too? How much information do you share with the homeowner during the job?
+
+**Brett's answer (March 2026):**
+
+> I think the homeowner would want that too, yes. We could probably share the exact same things with the homeowner and keep it the same to be honest with you.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Same report for homeowner and adjuster** — no separate templates needed | V2: one auto-report template serves both audiences |
+| Homeowner wants to feel informed, same as adjuster | Status updates reduce "is my house okay?" anxiety calls |
 
 ---
 
@@ -1182,12 +1613,56 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W11.1** How many jobs are active simultaneously right now on a typical week? How many techs across how many jobs?
->
+
+**Brett's answer (March 2026):**
+
+> For me, I don't have any simultaneously. Pretty much very rarely do I have maybe two going at the same time. But I also have remodeling jobs — I'm a different case than typical. As far as other companies that are more established, I would say they have between 3 and 10 techs. You probably want to pair somebody — you're not gonna send one person to one job most of the time, that's not reasonable because of carrying stuff. I'd say teams of two is most likely. And then the big job, you might have four or six people at that job.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Teams of 2 is the standard unit** — solo techs unusual due to equipment | V2 scheduling: assign pairs ("teams"), not individual techs |
+| Established companies: 3-10 techs, multiple simultaneous jobs | Build scheduling for 3-5 concurrent jobs with 3-10 techs |
+
 > **W11.2** Do techs go to multiple jobs per day, or one job per day? Do some jobs need multiple techs at the same time?
->
+
+**Brett's answer (March 2026):**
+
+> Multiple jobs per day — yeah, for sure. But just a lot of drive time. You try to map things out. If you're busy and established, you're definitely going to more than one job in a day most likely, unless it's a big one. A lot of times you'll hit two jobs for sure.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **2+ jobs per day per tech is normal** | V2: route optimization / map view for daily schedule |
+| Drive time is significant | Show drive time estimates between jobs |
+
 > **W11.3** What info does the tech need to know for tomorrow's job? Just the address, or also what to bring (equipment, materials, PPE)?
->
+
+**Brett's answer (March 2026):**
+
+> Basically what they're walking into — the equipment they need, not a scope but like "hey this is a dishwasher leak" or "do we have 2 feet of water in the basement." And then just the address and the customer's name. That's pretty much it.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Tech needs:** address, customer name, situation description, equipment to bring | Job card for techs: address + customer + situation + equipment list. No scope/pricing. |
+| "What they're walking into" is the key phrase | Matches W1.1 — operational info, not categorical |
+
 > **W11.4** Do you ever have last-minute emergency calls that blow up the schedule? How often? What do you do — pull a tech from another job?
+
+**Brett's answer (March 2026):**
+
+> Yeah, there's definitely last-minute emergency calls that blow up the schedule. And they always come on Friday evening — pretty sweet. I would say it's probably once a month at least. Then you get to split up and do more work independently, which isn't ideal, but it works.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Emergency calls ~once/month**, worst possible timing (Friday evening) | V2: "emergency override" mode to reshuffle next day's schedule |
+| Teams split up for emergencies — pairs become solo | App should handle "split the team" scenario |
 
 ---
 
@@ -1198,8 +1673,31 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W12.1** Do your techs need to see ALL jobs or just the ones they're assigned to? Is there anything a tech should NOT see (pricing, profit margins, customer complaints)?
->
+
+**Brett's answer (March 2026):**
+
+> I don't think they need to see all the jobs but it's kind of nice to know just in case they get diverted. I would say the tech does not need to see profit margins — you know how that can go, I feel like that can go bad. They might be able to see pricing a little bit to understand the scope — you want your techs to make sure they're getting all the line items they need to do, doing the most amount of work but not overdoing it. But if you also showed them how much money you're making, there might be some resentment. I think it's kind of a touchy subject to be honest with you.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Techs should see all jobs** (for diversion flexibility) but with limited data | Tech role: sees job list with address + status, not financial data |
+| **Show scope/pricing** so techs know what work to do | Techs see line items and pricing, but NOT profit margins or company markup |
+| **Hide profit margins** — creates resentment | Role-based visibility: owner = everything, tech = scope + pricing only |
+
 > **W12.2** Do you ever use subcontractors? Would they need limited access to the app for specific jobs?
+
+**Brett's answer (March 2026):**
+
+> I use subcontractors, yes. I've never been in a situation where they would need the app, but I could see other companies — if SERVPRO gets busy and they have connections at a cleaner, maybe they could put them on the app. That one's a tough one.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Subcontractors exist but don't need app access in Brett's case | V2+: subcontractor access is nice-to-have, not priority |
+| "That one's a tough one" — Brett isn't sure | Don't build until clear demand from multiple companies |
 
 ---
 
@@ -1210,10 +1708,45 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W13.1** How much do you actually review a tech's documentation before sending it? Line-by-line, or just a quick scan?
->
+
+**Brett's answer (March 2026):**
+
+> I would definitely probably check line by line. I mean it's not that hard — 10 lines, 30 lines, it's not that hard to look through. I think you're looking at everything.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Line-by-line review** — owner checks every item | Review/approval step matters in the workflow before export |
+| 10-30 items is reviewable in minutes | Confirms Screen 3 scrollable list design |
+
 > **W13.2** What are the most common mistakes techs make in their documentation? What do you have to fix?
->
+
+**Brett's answer (March 2026):**
+
+> Most common mistakes are just being lazy and doing the bare minimum — not identifying exactly what you did. Like if you just say "I removed 20 square feet of drywall" and then you don't include the baseboard you took off, or the PPE you wore. If you showed up and wore a Tyvek suit the whole time and paid $25 for the Tyvek and you don't tell the insurance company, they're not gonna pay you for it. That's just a loss. You can't have too many losses for sure.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **#1 mistake: missing billable line items** — techs forget to document everything | This is EXACTLY what AI Photo Scope solves |
+| Examples: baseboard removal, PPE (Tyvek suit), consumables | AI rules: drywall removal → auto-add baseboard. Cat 2+ → auto-add PPE/Tyvek. Every consumable = a line item. |
+| "You can't have too many losses" — every missed item = lost revenue | Core thesis reinforced: AI finds money techs leave on the table |
+
 > **W13.3** Is there a back-and-forth between you and the tech ("hey you missed the baseboard in the hallway") or do you just fix it yourself?
+
+**Brett's answer (March 2026):**
+
+> I do all the scoping so it's not really me going back and forth with the tech — I'm just reviewing pictures and assisting. But I think you would have to eventually say something because they'll just get lazier and lazier when it comes to their scopes.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Brett does scoping himself — techs primarily take photos | For small shops: owner = scoper, techs = photo-takers |
+| **Techs get lazier over time** without feedback | V2: "scope completeness score" to gamify thoroughness |
+| AI replaces the owner feedback loop — catches gaps automatically | AI = tireless reviewer that never gets lazy |
 
 ---
 
@@ -1224,8 +1757,33 @@ All readings are entered by typing the number (no Bluetooth). Data tracked over 
 ### Questions
 
 > **W14.1** What's the first thing you'd want to see when you open the app in the morning?
->
+
+**Brett's answer (March 2026):**
+
+> That's a really good question cause I feel like the flow of the app is horrible right now — it's got so many features packed in but you don't even know where to begin. I think it'd be important to maybe have the app guide you — like "hey this is where we're at, these are the active jobs, if you want to add a job quick, here" — and then it flows to the next thing. Remind you like "you need to get a contract signed, you need to take a sketch, you need to do this next" rather than everything just being in your face a click away. As far as the first thing I wanna see — something that shows me boom, this is where you are, this is what's going on, this is what you need to do.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Brett's own prototype feels overwhelming** — too many features, no flow | Our MVP's simplicity (Job List → Photos → AI Scope → Report) is a feature, not a limitation |
+| **Wants guided workflow, not a dashboard** — "show me what I need to do next" | Home screen should be task-oriented: "jobs that need action" not a menu of 12 features |
+| "Remind you — contract signed, sketch done, etc." | V2: job checklist / progress tracker per job |
+| "Rather than everything in your face" | Anti-pattern: don't build feature-packed dashboards. Build a guided to-do list. |
+
 > **W14.2** Are there any KPIs or metrics you track for your business? (Jobs per month, revenue, average job size, equipment utilization, days to payment?)
+
+**Brett's answer (March 2026):**
+
+> Jobs per month — yes. Revenue — yes. Days to payment — yes. I don't really track equipment at all. I have more than enough right now. Those are the big ones.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Three KPIs:** jobs/month, revenue, days to payment | V2 dashboard: just these 3. Nothing else. |
+| Equipment utilization NOT tracked | Deprioritize equipment analytics |
+| "Days to payment" ties directly to core thesis | If Crewmatic reduces days-to-payment, that's the provable ROI for sales |
 
 ---
 
@@ -1236,6 +1794,95 @@ This is the big one. Walk us through ONE real job from start to finish.
 ### Questions
 
 > **W15.1** Think of a recent water job. Walk us through EVERY step from the first phone call to getting paid. Don't skip anything — we want to hear about the parts that no software thinks about (the homeowner crying, moving furniture, the plumber who shows up, the adjuster who ghosts you).
+
+**Brett's answer (March 2026) — South Lyon, MI job (supply line burst, 3-day unattended):**
+
+> Customer had a recent remodel done and the valve on the supply line popped off while they were gone for three days. This thing ran for a while. They called, I went out there within a couple hours. But they'd been gone for three days so the damage was already done. They were nice but very panicked — "how bad how bad how bad" — literally following me around while I'm doing moisture readings, which can be very annoying.
+>
+> It was like 8 o'clock at night. All I did was identify the moisture points and told them how much damage I found. They don't want you in their house at 10 PM. So I set a couple dehumidifiers and said "this is gonna help take the moisture out of the air and hopefully prevent visible staining until the morning."
+>
+> Came back Saturday morning with 2 techs. I explained everything they needed to do. They cut all the drywall — whole living room, whole ceiling, ceiling fan down, the wall, pulled some carpet up, wet pad. They took all the pictures while I left for the day. They basically did the entire tear-out to get it to a drying stage. I returned Sunday and Monday again.
+>
+> That was for a TPA though — filled everything out, job contact documentation, turned it over and obviously immediately got rejected. They rejected everything — it's always like that. They have guidelines — ACE guidelines — but every carrier has specific rules. They call them like **Alacrity, Code Blue, Sedgwick** — when you're on those programs, it goes to a **third-party reviewer** and they can be a real pain. Once the third-party reviewer approves it, it gets sent to the adjuster — usually a thumbs up at that point cause adjusters are less strict than third-party reviewers.
+>
+> Once that's done, it's immediate payment — that's the nice thing. Third-party reviewers don't ghost you, they answer within the day. Once the adjuster on those programs gets it, they approve immediately.
+>
+> Other situations where I'm sending my scope independently to an adjuster — totally different ball game, takes way longer. I think it's because they don't trust what they're getting, where they have that trust built with third-party reviewers cause they know they're so strict.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Night call workflow:** Assess, set emergency dehus, calm customer, leave. Document tomorrow. | App must not pressure documentation on night calls |
+| **Techs do tear-out and take all the photos** while owner is off-site | Techs are photo-takers, owner is scoper. Camera flow must be dead simple for techs. |
+| **Two distinct payment paths:** TPA (strict but fast) vs independent (flexible but slow) | App should track which path a job is on — different expectations for each |
+| **TPA path: scope → third-party reviewer → adjuster → immediate payment** | Middle layer we didn't account for. Third-party reviewers (Alacrity, Code Blue, Sedgwick) are the real gatekeepers. |
+| **"Immediately got rejected — they reject everything"** | First TPA submission almost always rejected. S500/OSHA justifications even MORE critical for TPA work. |
+| **Each carrier has specific rules (ACE guidelines)** | V2+: carrier-specific rule sets in AI pipeline. Brett can provide guideline docs. |
+| **Independent path = "totally different ball game, way longer"** | Independent = 1-3 months. TPA = days/weeks but stricter review. |
+| **Trust is the key variable** — adjusters trust third-party reviewers because they're strict | If Crewmatic matches third-party reviewer standards, we build trust for independent submissions too |
+| **Brett can provide carrier guidelines (Alacrity, Code Blue, Sedgwick)** | **NEW DEPENDENCY:** carrier guideline docs for AI pipeline per-carrier customization |
+
+**Brett's follow-up (continued):**
+
+> The messaging is part of the job life cycle. It's not even during the job — it's after. It's proving everything you did and getting paid. A lot of it is just making sure you're communicating with the adjuster — letting them know you're on it, you're expecting to get paid, this is what you did. I can see messaging being important on the first day too cause the first day can be chaotic — you get there, you have no idea what you're walking into. People will be like "oh I just had a little bit of water" and then you find water everywhere. It travels due to gravity — could be anywhere. You gotta map it out and figure out where it migrated to. Sometimes you'll get surprises.
+>
+> If I had a new tech starting tomorrow, I would say: take 1 million photographs and think about everything you do and how you need to get paid for it. If you put on gloves — get paid for that. Floor protection — get paid. Building a containment — get paid. Using a zipper — get paid. Using equipment, vacuuming, leaving an air scrubber — all these line items you need to get paid for. Document everything you do. And know all the job information — you can't start a job and not know the claim number. Have all this written down.
+
+**Additional insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **Post-job follow-up is the real pain** — proving what you did to get paid | V2: adjuster communication log / follow-up tracker |
+| First day is chaotic — scope expands as you discover damage | AI scope needs iterative support: "re-run" as more damage is found |
+| **Brett's training speech IS the AI prompt:** "think about everything you do and get paid for it" | The AI should ask this exact question about every photo |
+| More non-obvious items: gloves, floor protection, containment, zipper doors | Additional AI rules for non-obvious line items |
+| "Can't start without the claim number" | Job creation should prompt for claim number early |
+
+**Brett's expanded lifecycle walkthrough (W15.1 continued, March 2026):**
+
+> Typically we just get their name, address, insurance carrier, and claim number. Try to be on site within 1-2 hours. Try to get them to sign a contract right away — within reason. Then determine what equipment, tools, and supplies are needed. Get a team over there and get to work. Most of the actual physical labor happens on day 1. The other days are just daily monitoring — checking moisture readings. Final day you're pulling equipment and cleaning up.
+>
+> Then reach out to insurance — let them know this is what took place. Sometimes you do the whole job and then start dealing with insurance cause it happened so fast. Send the PDF over and then it's a waiting game. Best case they accept it. But a lot of times they'll say "we want you to change this." Sometimes they fight about stupid things and it drags on. When they feel like you're taking advantage — they completely ghost you. Eventually you get paid. Usually I have an assignment of benefits — if I fill out a W-9 they send payment direct.
+>
+> One thing I didn't talk about — inventory of supplies and tools. We go to Home Depot like two or three times a week which is a complete waste of time if you're not prepared. If we could get some inventory tracking in there on a light scale, it might be appreciated. We're trying to be an all-in-one app, so if we had that feature it might not be a bad call.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| **8-step lifecycle:** Call → Contract → Assess → Work → Monitor → Pull Equipment → Submit → Get Paid | Maps to job status: New → Contracted → In Progress → Monitoring → Completed → Submitted → Paid |
+| 1-2 hour response time target | Job creation must be fast — no long forms on first call |
+| Most labor is day 1, rest is monitoring | 1 day heavy + 1-3 days monitoring confirmed |
+| Sometimes whole job done before contacting insurance | Status must support "completed but not submitted" |
+| Post-submission fight is real — adjusters push back, ghost, drag it out | V2: submission tracker with follow-up reminders |
+| Assignment of Benefits (AOB) + W-9 = direct payment | V2: AOB document management |
+| **Home Depot 2-3x/week** = wasted time from poor supply planning | V2: light supply inventory with low-stock alerts |
+| "We're trying to be an all-in-one app" — Brett's own words | Validates tool consolidation thesis |
+
+**Brett's extended follow-up (W16 + W15 continued, March 2026):**
+
+> **On his typical day:** A lot of my day is answering phone calls — customers, contractors, subcontractors. My phone's always ringing or texting.
+>
+> **On mitigation vs rebuild (billback):** I do both. I think it's gonna be like 50-50 between companies that do or don't do the billback. Rainbow International — the local franchise has no interest in doing billback because it's not as profitable.
+>
+> **On contents:** Probably 25% of restoration companies do contents in-house. I don't touch it. Contents companies send people to document every belonging, tag it, box it, store it, clean it, bring it back. They charge a ton. I think contents companies would pay a lot for AI software. But me personally — nothing to do with it. The contents line items for mitigation — like "contents move out large room" pays like $140. Sometimes you get 4 guys down there for 5 hours — 20 hours of labor — and get $140. It's not gonna work.
+>
+> **On digital contracts:** Yes, it would be way easier. I did that in the past with Encircle — they had it on our phone. Most contractors are gonna want that. They might still bring paper copies, but digital contract signing should be included.
+>
+> **On the emotional first hour:** A lot of times homeowners just found it — there's pandemonium. You're basically a counselor. I try to do the little things to get the job going before filling out paperwork. If they have 2 feet of water, I say "I'm gonna grab my pump and start pumping." I'll have a tech do that, then go inside for documentation. A big thing is calming customers down. As far as moving furniture — we're not movers. Our job is to dry structure. Sometimes you need a dumpster — gotta make a phone call, schedule it. A lot of times you don't know until you get there.
+
+**Insights:**
+
+| Insight | Impact |
+|---------|--------|
+| Owner's day = constant phone interruptions | App must be quick in, quick out. No long workflows. |
+| **50-50 split** between mitigation-only and mitigation+rebuild | V1 is mitigation-only. Rebuild/billback is a separate extension. |
+| **Contents is a separate business** (~25% in-house) | Not V1/V2. Separate market opportunity. |
+| Contents move-out is a money loser for mitigation ($140 for 20 labor-hours) | AI should NOT auto-generate "contents move out" — flag as "consider contents company" instead |
+| **Digital contract signing is expected** — Encircle had this | V2: e-signature. Not MVP but "should be included." |
+| **First hour: pump first, paperwork second.** Action calms customers. | App must never block immediate action. "Start job → add details later." |
+| Dumpster logistics discovered on-site | V2: job supplies/logistics checklist |
 >
 > **W15.2** What's the messiest part of the job lifecycle? Where do things fall through the cracks?
 >
