@@ -354,7 +354,16 @@ These rules are embedded in every AI Photo Scope prompt. They come directly from
 **Output Rules:**
 - Items in logical workflow order: assess → demo → protect → clean → dry → monitor → decon
 - Target 8-25 line items per job (small=10, large=30 per Brett)
-- Every line item MUST have an S500/OSHA justification — no justification = easy denial by adjuster
+- Every line item MUST have a justification from one of the supported standards — no justification = easy denial by adjuster
+- **Supported justification standards** (per Brett, March 2026):
+  - **IICRC S500** — Standard for Professional Water Damage Restoration (primary for mitigation)
+  - **IICRC S520** — Standard for Professional Mold Remediation
+  - **OSHA** — Occupational Safety & Health Administration (workplace safety, PPE, aerosol filtration)
+  - **EPA** — Environmental Protection Agency (lead paint, asbestos, environmental hazards)
+  - **IRC** — International Residential Code (residential building code — critical for build-backs/reconstruction)
+  - **IBC** — International Building Code (commercial building code)
+  - **NIOSH** — National Institute for Occupational Safety & Health (respiratory protection, exposure limits)
+- V1 focuses on S500 + OSHA (mitigation). V2 adds IRC/IBC (reconstruction/build-back), S520 (mold), EPA, NIOSH.
 - Flag non-obvious items with `is_non_obvious: true` and highlight them in the UI
 - Core instruction: *"Think about everything you do and how you need to get paid for it"*
 
@@ -500,6 +509,20 @@ The narrowest wedge. Ships first. Validates the core thesis.
 | Auto Adjuster Reports | Daily auto-send with limited access token |
 | Digital Contracts | E-signature for work authorization |
 | Room Sketching | Basic dimensions, equipment placement |
+| Document Vault | W-9, insurance certs, licenses — "on deck" for new carriers. Per Brett: "Anything to get paid faster." |
+| Expanded Justifications | Add IRC, IBC, S520, EPA, NIOSH standards — critical for build-back/reconstruction scoping |
+
+### V2.5: Supplement Engine (Brett's idea, March 2026)
+
+| Feature | Description |
+|---------|-------------|
+| Supplement Trigger | AI monitors new photos/readings against original scope, detects billable deviations automatically |
+| Supplement Draft | Auto-generates supplement request with new line items, Xactimate codes, S500 justifications, and photo evidence |
+| Scope Diff View | Side-by-side: original approved scope vs. proposed supplement, with delta highlighted |
+
+*"Monitors job documentation in real-time and auto-drafts a supplement request the moment it detects a billable deviation from the original scope."* — Brett
+
+V1 foundation: iterative scoping (re-run AI on new photos) + scope_runs tracking (multiple runs per job) = supplement detection primitive.
 
 ### V3: Intelligence Layer
 
