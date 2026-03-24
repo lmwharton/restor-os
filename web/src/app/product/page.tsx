@@ -3,13 +3,13 @@ import path from "path";
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ProductDesignSection, type DesignSection } from "./product-design-section";
-import { RoadmapSection } from "./roadmap-section";
+import { ProductFunctionalities } from "./product-functionalities";
 import { SpecCards, type SpecData } from "./spec-cards";
 
 export const metadata: Metadata = {
   title: "Product | Crewmatic",
   description:
-    "What we're building — product design, feature roadmap, and implementation specs for the AI operating system for restoration contractors.",
+    "The complete product vision — every functionality a restoration contractor needs, from first call to getting paid.",
 };
 
 const DETAILED_SECTIONS = new Set([
@@ -124,6 +124,71 @@ async function readSpecs(
   return specs.sort((a, b) => a.filename.localeCompare(b.filename));
 }
 
+const LIFECYCLE_STEPS = [
+  { label: "Call Comes In", sub: "Customer or TPA" },
+  { label: "Create Job", sub: "Name, address, insurance" },
+  { label: "Dispatch Tech", sub: "Schedule + notify" },
+  { label: "Arrive & Assess", sub: "Walk site, ID damage" },
+  { label: "Document", sub: "Photos, voice, sketches" },
+  { label: "AI Scope", sub: "Photos → line items" },
+  { label: "Demo & Dry", sub: "Equipment + monitoring" },
+  { label: "Daily Logs", sub: "Readings + progress" },
+  { label: "Review & QA", sub: "Owner checks work" },
+  { label: "Generate Report", sub: "PDF + justifications" },
+  { label: "Submit to Adjuster", sub: "Auto progress updates" },
+  { label: "Get Paid", sub: "Clean docs = faster pay" },
+];
+
+const MOAT_ITEMS = [
+  {
+    name: "AI Photo Scope",
+    desc: "Damage photos → Xactimate line items with S500/OSHA justifications. No competitor offers this.",
+  },
+  {
+    name: "AI Hazmat Scanner",
+    desc: "Auto-flags asbestos-risk materials and lead paint in every photo. No competitor offers this.",
+  },
+  {
+    name: "S500/OSHA Auto-Justifications",
+    desc: "Every line item auto-backed by industry standard citations. Adjusters can't deny what OSHA requires.",
+  },
+  {
+    name: "Auto Adjuster Reports",
+    desc: "Daily progress auto-sent to adjusters with limited-access secure link. No competitor automates this.",
+  },
+  {
+    name: "AI Completeness Check",
+    desc: "Before submission, AI reviews scope for missing items — baseboard removal, HEPA filters, consumables, PPE.",
+  },
+];
+
+const PLATFORM_BLOCKS = [
+  {
+    title: "Field Capture",
+    items: ["Photo Documentation", "Voice Scoping", "Manual Scoping", "Room Sketching", "Moisture Readings", "Equipment Logging"],
+    color: "border-[#2a9d5c]",
+    bg: "bg-[#f6faf7]",
+  },
+  {
+    title: "AI Engine",
+    items: ["Photo → Line Items", "Hazmat Detection", "S500/OSHA Citations", "Completeness Check", "Non-Obvious Items"],
+    color: "border-[#7c5cbf]",
+    bg: "bg-[#f8f5ff]",
+  },
+  {
+    title: "Operations",
+    items: ["Job Management", "Scheduling & Dispatch", "Team Management", "Daily Monitoring", "Job Review & QA"],
+    color: "border-[#e85d26]",
+    bg: "bg-[#fff8f5]",
+  },
+  {
+    title: "Output & Revenue",
+    items: ["PDF Reports", "ESX Export", "Auto Adjuster Reports", "Customer Portal", "Dashboard & Metrics"],
+    color: "border-[#3b82f6]",
+    bg: "bg-[#f5f8ff]",
+  },
+];
+
 export default async function ProductPage() {
   const designPath = path.join(process.cwd(), "..", "docs", "design.md");
   const designMarkdown = await readFile(designPath, "utf-8");
@@ -162,88 +227,134 @@ export default async function ProductPage() {
         </div>
       </nav>
 
-      {/* Header */}
-      <div className="max-w-[768px] w-full mx-auto px-6 pt-8 pb-4">
+      {/* Hero */}
+      <div className="max-w-[768px] w-full mx-auto px-6 pt-8 pb-2">
         <Link
           href="/research"
           className="inline-flex items-center gap-1 text-[13px] font-medium text-[#e85d26] hover:underline mb-4"
         >
-          Based on our research
+          Based on 16 validated workflows from co-founder interviews
           <span aria-hidden="true">&rarr;</span>
         </Link>
-        <h1 className="text-[32px] sm:text-[40px] font-bold tracking-[-1.5px] text-[#1a1a1a] mb-2">
-          Product
+        <h1 className="text-[32px] sm:text-[40px] font-bold tracking-[-1.5px] text-[#1a1a1a] mb-3">
+          The Complete Product
         </h1>
-        <p className="text-[16px] text-[#6b6560] leading-relaxed">
-          What we&apos;re building and where each piece stands.
+        <p className="text-[16px] text-[#171717] leading-relaxed mb-2">
+          Crewmatic replaces 4&ndash;6 fragmented tools with a single
+          field-first AI platform. A contractor opens one app to capture photos,
+          scope damage by voice, track moisture and equipment, generate
+          Xactimate-ready reports, and get paid faster.
+        </p>
+        <p className="text-[14px] text-[#8a847e] leading-relaxed">
+          13 functionalities covering all 16 validated workflows. From the first
+          emergency call to the final payment &mdash; nothing is left out.
         </p>
       </div>
 
       {/* Main content */}
       <main className="max-w-[768px] w-full mx-auto px-6 pb-16 flex-1">
-        {/* Vision */}
+        {/* Platform Block Diagram */}
         <section className="py-8 border-b border-[#eae6e1]">
-          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-3">
-            Vision
+          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-2">
+            Platform Overview
           </h2>
-          <p className="text-[15px] text-[#171717] leading-relaxed mb-3">
-            Crewmatic is a field-first AI platform for water restoration
-            contractors. It replaces 4&ndash;6 fragmented tools with a single
-            app that turns damage photos into Xactimate-ready estimates, guides
-            techs through scoping via voice, and automates insurance
-            documentation.
+          <p className="text-[14px] text-[#8a847e] mb-5">
+            Four pillars that make up the operating system for restoration contractors.
           </p>
-          <p className="text-[14px] text-[#8a847e] leading-relaxed">
-            The AI capabilities &mdash; photo-to-line-items, auto S500/OSHA
-            justifications &mdash; do not exist in any tool on the market today.
-            Crewmatic complements Xactimate, never competes with it.
-          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            {PLATFORM_BLOCKS.map((block) => (
+              <div
+                key={block.title}
+                className={`${block.bg} border-l-2 ${block.color} rounded-r-lg px-3 py-3`}
+              >
+                <h3 className="text-[13px] font-semibold text-[#1a1a1a] mb-2">
+                  {block.title}
+                </h3>
+                <ul className="space-y-1">
+                  {block.items.map((item) => (
+                    <li
+                      key={item}
+                      className="text-[11px] text-[#6b6560] leading-snug"
+                    >
+                      {item}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </section>
 
-        {/* V1 Scope */}
+        {/* End-to-End Lifecycle */}
         <section className="py-8 border-b border-[#eae6e1]">
-          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-3">
-            V1 Scope
+          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-2">
+            The Full Job Lifecycle
           </h2>
-          <p className="text-[14px] text-[#8a847e] mb-4">
-            AI Photo Scope wrapped in a minimal job management shell. The job
-            shell creates stickiness and a data moat.
+          <p className="text-[14px] text-[#8a847e] mb-5">
+            Every water damage job follows this arc. Crewmatic covers every step.
           </p>
+
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+            {LIFECYCLE_STEPS.map((step, i) => (
+              <div
+                key={step.label}
+                className="relative px-2.5 py-2.5 bg-[#faf9f7] rounded-lg border border-[#eae6e1]"
+              >
+                <span className="text-[10px] font-mono text-[#b5b0aa] block mb-0.5">
+                  {i + 1}
+                </span>
+                <p className="text-[12px] font-semibold text-[#1a1a1a] leading-snug">
+                  {step.label}
+                </p>
+                <p className="text-[10px] text-[#8a847e] leading-snug mt-0.5">
+                  {step.sub}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 px-3 py-2.5 bg-[#fff8f5] border-l-2 border-[#e85d26] rounded-r">
+            <p className="text-[12px] text-[#6b6560] leading-relaxed">
+              <span className="font-semibold text-[#1a1a1a]">Two payment paths:</span>{" "}
+              TPA path (Alacrity, Accuserve, Sedgwick) &mdash; stricter review, faster payment.
+              Independent path &mdash; less strict, but typical delay is January job &rarr; April payment.
+              Clean documentation with S500/OSHA justifications wins on both paths.
+            </p>
+          </div>
+        </section>
+
+        {/* All Functionalities */}
+        <section className="py-8 border-b border-[#eae6e1]">
+          <ProductFunctionalities />
+        </section>
+
+        {/* Competitive Moat */}
+        <section className="py-8 border-b border-[#eae6e1]">
+          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-2">
+            What No Competitor Has
+          </h2>
+          <p className="text-[14px] text-[#8a847e] mb-5">
+            Five capabilities that create a defensible moat. No tool on the market today offers any of these.
+          </p>
+
           <div className="space-y-0">
-            {[
-              {
-                name: "AI Photo Scope",
-                desc: "Upload damage photos, AI generates Xactimate line items with S500/OSHA justifications",
-              },
-              {
-                name: "Job Shell",
-                desc: "Create and manage jobs with customer, address, insurance, and loss details",
-              },
-              {
-                name: "PDF Reports",
-                desc: "Company-branded scope reports with line items, justifications, and photo grids",
-              },
-              {
-                name: "Auth",
-                desc: "Email + password signup. Single user per company in V1",
-              },
-            ].map((item, i) => (
+            {MOAT_ITEMS.map((item, i) => (
               <div
                 key={item.name}
                 className={`flex items-start gap-3 py-3 ${
-                  i < 3 ? "border-b border-[#eae6e1]" : ""
+                  i < MOAT_ITEMS.length - 1 ? "border-b border-[#eae6e1]" : ""
                 }`}
               >
-                <span className="w-5 h-5 rounded-full bg-[#edf7f0] text-[#2a9d5c] text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
+                <span className="w-5 h-5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[11px] font-bold flex items-center justify-center shrink-0 mt-0.5">
                   {i + 1}
                 </span>
                 <div>
                   <span className="text-[14px] font-semibold text-[#1a1a1a]">
                     {item.name}
                   </span>
-                  <span className="text-[14px] text-[#8a847e]">
-                    {" "}
-                    &mdash; {item.desc}
+                  <span className="text-[13px] text-[#6b6560]">
+                    {" "}&mdash; {item.desc}
                   </span>
                 </div>
               </div>
@@ -251,42 +362,83 @@ export default async function ProductPage() {
           </div>
         </section>
 
-        {/* Workflows */}
+        {/* The ROI Case */}
         <section className="py-8 border-b border-[#eae6e1]">
           <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-3">
-            Workflows
+            The ROI Case
           </h2>
-          <p className="text-[14px] text-[#8a847e] mb-4">
-            How contractors will use Crewmatic day-to-day.
-          </p>
-          <div className="space-y-0">
-            {[
-              "A contractor takes damage photos and gets Xactimate line items with justifications in seconds",
-              "A contractor creates a job from a phone call and tracks it from dispatch to payment",
-              "AI catches non-obvious line items the tech would have missed (HEPA filters, baseboard removal, PPE)",
-              "A contractor exports a branded PDF report for the adjuster with photos and S500 citations",
-              "A contractor re-runs AI scope as more damage is discovered over multiple days",
-            ].map((workflow, i) => (
-              <div
-                key={i}
-                className={`flex items-start gap-3 py-3 ${
-                  i < 4 ? "border-b border-[#eae6e1]" : ""
-                }`}
-              >
-                <span className="text-[14px] text-[#b5b0aa] shrink-0 mt-0.5 tabular-nums">
-                  {i + 1}.
-                </span>
-                <p className="text-[14px] text-[#171717] leading-relaxed">
-                  {workflow}
-                </p>
-              </div>
-            ))}
+          <div className="grid grid-cols-2 gap-3">
+            <div className="px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+              <p className="text-[22px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
+                30%
+              </p>
+              <p className="text-[12px] text-[#8a847e]">
+                of a contractor&apos;s day is documentation
+              </p>
+            </div>
+            <div className="px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+              <p className="text-[22px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
+                2&ndash;4 hrs
+              </p>
+              <p className="text-[12px] text-[#8a847e]">
+                per job for manual Xactimate entry
+              </p>
+            </div>
+            <div className="px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+              <p className="text-[22px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
+                $149/mo
+              </p>
+              <p className="text-[12px] text-[#8a847e]">
+                replaces $700&ndash;$1,900/mo in tools
+              </p>
+            </div>
+            <div className="px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+              <p className="text-[22px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
+                Day 1
+              </p>
+              <p className="text-[12px] text-[#8a847e]">
+                ROI payback &mdash; 3 hrs saved at $50/hr
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 px-3 py-2.5 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+            <p className="text-[12px] text-[#8a847e] italic leading-relaxed">
+              &ldquo;$149/mo is a no-brainer. I would absolutely pay it. I would
+              pay more than that.&rdquo;
+            </p>
+            <p className="text-[11px] text-[#b5b0aa] mt-1">
+              &mdash; Brett Sodders, Co-founder &amp; 15-year restoration veteran
+            </p>
           </div>
         </section>
 
-        {/* Roadmap */}
+        {/* Market Opportunity */}
         <section className="py-8 border-b border-[#eae6e1]">
-          <RoadmapSection />
+          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-3">
+            Market
+          </h2>
+          <div className="space-y-0">
+            {[
+              { label: "US restoration businesses", value: "62,582" },
+              { label: "US restoration services market", value: "$7.2B" },
+              { label: "Software TAM (US)", value: "$225M–$600M/yr" },
+              { label: "Current contractor tool spend", value: "$700–$1,900/mo" },
+              { label: "AI adoption in restoration", value: "Near zero" },
+              { label: "Competitors with photo-to-line-items", value: "Zero" },
+            ].map((item, i) => (
+              <div
+                key={item.label}
+                className={`flex items-center justify-between py-2.5 ${
+                  i < 5 ? "border-b border-[#f0ede9]" : ""
+                }`}
+              >
+                <span className="text-[13px] text-[#6b6560]">{item.label}</span>
+                <span className="text-[13px] font-semibold text-[#1a1a1a] tabular-nums">
+                  {item.value}
+                </span>
+              </div>
+            ))}
+          </div>
         </section>
 
         {/* Design Document */}
