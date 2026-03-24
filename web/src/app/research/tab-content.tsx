@@ -3,8 +3,8 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { CollapsibleDocument } from "../competitive/collapsible-sections";
-import type { Section } from "../competitive/parse-sections";
+import { CollapsibleDocument } from "./components/collapsible-sections";
+import type { Section } from "./components/parse-sections";
 
 interface Tab {
   id: string;

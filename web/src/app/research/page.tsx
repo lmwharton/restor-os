@@ -3,7 +3,7 @@ import path from "path";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ResearchTabs } from "./tab-content";
-import { parseSections } from "../competitive/parse-sections";
+import { parseSections } from "./components/parse-sections";
 
 export const metadata: Metadata = {
   title: "Research & Evidence | Crewmatic",
