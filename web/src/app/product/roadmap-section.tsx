@@ -42,7 +42,7 @@ const PHASES: Phase[] = [
       {
         name: "Auth",
         description:
-          "Email + password signup. Single user per company in V1.",
+          "Google OAuth signup. Single user per company in V1.",
       },
     ],
   },
@@ -88,6 +88,21 @@ const PHASES: Phase[] = [
         name: "Digital Contracts",
         description:
           "E-signature for work authorization on site.",
+      },
+      {
+        name: "Document Vault",
+        description:
+          "W-9, insurance certs, licenses — on deck for new carriers. Anything to get paid faster.",
+      },
+      {
+        name: "Expanded Justifications",
+        description:
+          "Add IRC, IBC, S520, EPA, NIOSH standards — critical for build-back and reconstruction scoping.",
+      },
+      {
+        name: "Supplement Trigger Engine",
+        description:
+          "AI monitors new photos against original scope, auto-drafts supplement requests when billable deviations detected.",
       },
     ],
   },
