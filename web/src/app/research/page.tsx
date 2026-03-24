@@ -1,21 +1,26 @@
 import { readFile } from "fs/promises";
 import path from "path";
 import type { Metadata } from "next";
+import Link from "next/link";
 import { ResearchTabs } from "./tab-content";
+import { parseSections } from "../competitive/parse-sections";
 
 export const metadata: Metadata = {
   title: "Research & Evidence | Crewmatic",
   description:
-    "The evidence base behind Crewmatic's product decisions — competitive analysis, Xactimate codes, and TPA guidelines.",
+    "The evidence base behind Crewmatic — competitive analysis, contractor interviews, Xactimate codes, and TPA guidelines.",
 };
 
 export default async function ResearchPage() {
   const docsDir = path.join(process.cwd(), "..", "docs", "research");
 
-  const [xactimateContent, tpaContent] = await Promise.all([
+  const [competitiveContent, xactimateContent, tpaContent] = await Promise.all([
+    readFile(path.join(docsDir, "competitive-analysis.md"), "utf-8"),
     readFile(path.join(docsDir, "xactimate-codes-water.md"), "utf-8"),
     readFile(path.join(docsDir, "tpa-carrier-guidelines.md"), "utf-8"),
   ]);
+
+  const competitiveSections = parseSections(competitiveContent);
 
   const contents: Record<string, string> = {
     xactimate: xactimateContent,
@@ -28,16 +33,19 @@ export default async function ResearchPage() {
       <header className="bg-slate-900 text-white">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-lg">
-              C
-            </div>
-            <span className="text-2xl font-bold tracking-tight">Crewmatic</span>
+            <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+              <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-lg">
+                C
+              </div>
+              <span className="text-2xl font-bold tracking-tight">Crewmatic</span>
+            </Link>
           </div>
           <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-3">
             Research &amp; Evidence
           </h1>
           <p className="text-slate-300 text-lg sm:text-xl max-w-2xl">
-            The evidence base behind Crewmatic&apos;s product decisions
+            Competitive analysis, contractor interviews, market data, and
+            industry reference material
           </p>
           <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
             <span className="bg-blue-500/20 text-blue-200 px-3 py-1 rounded-full">
@@ -52,7 +60,10 @@ export default async function ResearchPage() {
 
       {/* Main content */}
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-10">
-        <ResearchTabs contents={contents} />
+        <ResearchTabs
+          contents={contents}
+          competitiveSections={competitiveSections}
+        />
       </div>
 
       {/* CTA */}
@@ -65,13 +76,13 @@ export default async function ResearchPage() {
             Every feature decision traces back to contractor interviews, market
             data, and competitive gaps documented here.
           </p>
-          <a
+          <Link
             href="/product"
             className="inline-flex items-center gap-2 bg-blue-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors"
           >
             See what we&apos;re building
             <span aria-hidden="true">&rarr;</span>
-          </a>
+          </Link>
         </div>
       </div>
 

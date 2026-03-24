@@ -3,6 +3,8 @@
 import { useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { CollapsibleDocument } from "../competitive/collapsible-sections";
+import type { Section } from "../competitive/parse-sections";
 
 interface Tab {
   id: string;
@@ -14,17 +16,20 @@ const TABS: Tab[] = [
   {
     id: "competitive",
     label: "Market & Competition",
-    description: "Full competitive analysis, market sizing, and product strategy",
+    description:
+      "Full competitive analysis, market sizing, Brett's co-founder interview, and product strategy",
   },
   {
     id: "xactimate",
     label: "Xactimate Codes",
-    description: "Water damage line item codes, units, and scope ordering",
+    description:
+      "Water damage line item codes, units, and scope ordering reference",
   },
   {
     id: "tpa",
     label: "Insurance & TPA Rules",
-    description: "Third-party administrator guidelines and carrier-specific rules",
+    description:
+      "Third-party administrator guidelines, rejection triggers, and carrier-specific rules",
   },
 ];
 
@@ -82,18 +87,6 @@ function MarkdownContent({ content }: { content: string }) {
               </h3>
             );
           },
-          h4: ({ children }) => {
-            const text =
-              typeof children === "string"
-                ? children
-                : extractTextFromChildren(children);
-            const id = slugify(text);
-            return (
-              <h4 id={id} className="scroll-mt-8">
-                {children}
-              </h4>
-            );
-          },
           table: ({ children }) => (
             <div className="overflow-x-auto -mx-2 sm:mx-0 my-4 rounded-lg border border-slate-200">
               <table className="min-w-full">{children}</table>
@@ -109,16 +102,21 @@ function MarkdownContent({ content }: { content: string }) {
 
 export function ResearchTabs({
   contents,
+  competitiveSections,
 }: {
   contents: Record<string, string>;
+  competitiveSections: Section[];
 }) {
-  const [activeTab, setActiveTab] = useState("xactimate");
+  const [activeTab, setActiveTab] = useState("competitive");
 
   return (
     <div>
       {/* Tab navigation */}
       <div className="border-b border-slate-200 mb-8">
-        <nav className="flex gap-0 -mb-px overflow-x-auto" aria-label="Research tabs">
+        <nav
+          className="flex gap-0 -mb-px overflow-x-auto"
+          aria-label="Research tabs"
+        >
           {TABS.map((tab) => (
             <button
               key={tab.id}
@@ -144,25 +142,7 @@ export function ResearchTabs({
 
       {/* Tab content */}
       {activeTab === "competitive" ? (
-        <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8">
-          <div className="text-center py-8">
-            <h3 className="text-lg font-semibold text-slate-800 mb-2">
-              Full Competitive Analysis
-            </h3>
-            <p className="text-sm text-slate-500 max-w-md mx-auto mb-6">
-              The competitive analysis is rendered as an interactive document
-              with collapsible sections, sidebar navigation, and grouped
-              categories.
-            </p>
-            <a
-              href="/competitive"
-              className="inline-flex items-center gap-2 bg-slate-900 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-slate-800 transition-colors"
-            >
-              View Competitive Analysis
-              <span aria-hidden="true">&rarr;</span>
-            </a>
-          </div>
-        </div>
+        <CollapsibleDocument sections={competitiveSections} />
       ) : (
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-6 sm:p-8">
           <MarkdownContent content={contents[activeTab] || ""} />
