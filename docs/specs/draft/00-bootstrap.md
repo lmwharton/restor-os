@@ -23,18 +23,27 @@ DATA FLOW (everything else):
   Browser → FastAPI (JWT in Authorization header) → Supabase DB
   Browser ← FastAPI ← Supabase DB
 
-ONBOARDING:
-  Google sign-in → check user has company?
-  ├── NO  → "Create your workspace" screen (name + phone)
-  │         → creates company + links user → job list
-  └── YES → straight to job list
+ONBOARDING (from UX + Product expert reviews):
+  1. Landing page → "Sign in with Google"
+  2. Google OAuth → Supabase Auth → JWT
+  3. Check: does this user have a company?
+     ├── NO  → "Create your workspace" screen:
+     │         • Company name (required)
+     │         • Phone (optional)
+     │         → creates company + links user
+     │         → guided first scope flow (V1.1)
+     └── YES → job list (or guided first scope if no jobs yet)
 ```
 
 **Key decisions:**
-- Google OAuth only (no email/password) — simpler for contractors, no password reset flows
+- Supabase Auth with Google OAuth only (no email/password) — owns all data, no external dependency
 - All data access through FastAPI — frontend never touches Supabase directly (except auth)
 - Private storage bucket + signed URLs from day one — client property photos are sensitive
 - Upsert + unique constraint on user→company to prevent duplicate creation
+- Onboarding destination = guided first scope (not empty job list) — from expert reviews
+- Job creation = 2 required fields (address + loss type), everything else optional
+- 48px touch targets — field-readiness for gloves
+- Trust design on AI results: S500 citations inline, photo evidence per line item
 
 ---
 
