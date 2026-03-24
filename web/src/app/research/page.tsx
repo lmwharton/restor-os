@@ -2,8 +2,8 @@ import { readFile } from "fs/promises";
 import path from "path";
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ResearchTabs } from "./tab-content";
 import { parseSections } from "./components/parse-sections";
+import { ResearchContent } from "./research-content";
 
 export const metadata: Metadata = {
   title: "Research & Evidence | Crewmatic",
@@ -22,75 +22,59 @@ export default async function ResearchPage() {
 
   const competitiveSections = parseSections(competitiveContent);
 
-  const contents: Record<string, string> = {
-    xactimate: xactimateContent,
-    tpa: tpaContent,
-  };
-
   return (
-    <div className="min-h-screen bg-slate-50">
-      {/* Header */}
-      <header className="bg-slate-900 text-white">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-10">
-          <div className="flex items-center gap-3 mb-4">
-            <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-              <div className="w-10 h-10 rounded-lg bg-blue-500 flex items-center justify-center font-bold text-lg">
-                C
-              </div>
-              <span className="text-2xl font-bold tracking-tight">Crewmatic</span>
-            </Link>
-          </div>
-          <h1 className="text-3xl sm:text-4xl lg:text-5xl font-bold tracking-tight mb-3">
-            Research &amp; Evidence
-          </h1>
-          <p className="text-slate-300 text-lg sm:text-xl max-w-2xl">
-            Competitive analysis, contractor interviews, market data, and
-            industry reference material
-          </p>
-          <div className="mt-5 flex flex-wrap items-center gap-3 text-sm">
-            <span className="bg-blue-500/20 text-blue-200 px-3 py-1 rounded-full">
-              Confidential
-            </span>
-            <span className="bg-slate-700 text-slate-300 px-3 py-1 rounded-full">
-              Research Library
-            </span>
-          </div>
-        </div>
-      </header>
-
-      {/* Main content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:py-10">
-        <ResearchTabs
-          contents={contents}
-          competitiveSections={competitiveSections}
-        />
-      </div>
-
-      {/* CTA */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-8">
-        <div className="bg-slate-900 rounded-xl p-6 sm:p-8 text-center">
-          <h2 className="text-white text-lg font-semibold mb-2">
-            See how this research shaped the product
-          </h2>
-          <p className="text-slate-400 text-sm mb-5 max-w-md mx-auto">
-            Every feature decision traces back to contractor interviews, market
-            data, and competitive gaps documented here.
-          </p>
+    <div className="min-h-screen bg-white flex flex-col">
+      {/* Nav */}
+      <nav className="max-w-[768px] w-full mx-auto px-6 py-6 flex items-center justify-between">
+        <Link
+          href="/"
+          className="text-[17px] font-semibold tracking-[-0.45px] text-[#1a1a1a]"
+        >
+          crewmatic
+        </Link>
+        <div className="flex items-center gap-6">
+          <Link
+            href="/"
+            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
+          >
+            Home
+          </Link>
           <Link
             href="/product"
-            className="inline-flex items-center gap-2 bg-blue-500 text-white px-5 py-2.5 rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors"
+            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
           >
-            See what we&apos;re building
-            <span aria-hidden="true">&rarr;</span>
+            Product
           </Link>
         </div>
+      </nav>
+
+      {/* Header */}
+      <div className="max-w-[768px] w-full mx-auto px-6 pt-8 pb-8">
+        <h1 className="text-[32px] sm:text-[40px] font-bold tracking-[-1.5px] text-[#1a1a1a] mb-2">
+          Research &amp; Evidence
+        </h1>
+        <p className="text-[16px] text-[#6b6560] leading-relaxed">
+          Competitive analysis, contractor interviews, market data, and
+          industry reference material.
+        </p>
       </div>
 
+      {/* Main content */}
+      <main className="max-w-[768px] w-full mx-auto px-6 pb-16 flex-1">
+        <ResearchContent
+          competitiveSections={competitiveSections}
+          xactimateContent={xactimateContent}
+          tpaContent={tpaContent}
+        />
+      </main>
+
       {/* Footer */}
-      <footer className="border-t border-slate-200 bg-white mt-4">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 text-center text-sm text-slate-500">
-          <p className="font-semibold text-slate-700">Crewmatic</p>
-          <p className="mt-1">crewmatic.ai &mdash; Confidential</p>
+      <footer className="max-w-[768px] w-full mx-auto px-6 pb-10">
+        <div className="border-t border-[#eae6e1] pt-6 flex items-center gap-2 justify-center">
+          <span className="w-2 h-2 rounded-full bg-[#e85d26]" />
+          <span className="text-[13px] text-[#b5b0aa]">
+            crewmatic.ai &mdash; Confidential
+          </span>
         </div>
       </footer>
     </div>

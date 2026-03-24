@@ -14,21 +14,21 @@ const STATUS_STYLES: Record<
   { bg: string; text: string; dot: string; label: string }
 > = {
   draft: {
-    bg: "bg-slate-100",
-    text: "text-slate-600",
-    dot: "bg-slate-400",
+    bg: "bg-[#faf9f7]",
+    text: "text-[#8a847e]",
+    dot: "bg-[#b5b0aa]",
     label: "Draft",
   },
   "in-progress": {
-    bg: "bg-amber-50",
-    text: "text-amber-700",
-    dot: "bg-amber-400",
+    bg: "bg-[#fff3ed]",
+    text: "text-[#e85d26]",
+    dot: "bg-[#e85d26]",
     label: "In Progress",
   },
   implemented: {
-    bg: "bg-emerald-50",
-    text: "text-emerald-700",
-    dot: "bg-emerald-500",
+    bg: "bg-[#edf7f0]",
+    text: "text-[#2a9d5c]",
+    dot: "bg-[#2a9d5c]",
     label: "Implemented",
   },
 };
@@ -48,18 +48,16 @@ export function SpecCards({ specs }: { specs: SpecData[] }) {
 
   return (
     <div>
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-slate-900">
-          Implementation Specs
-        </h2>
-        <p className="text-sm text-slate-500 mt-1">
-          Technical specifications tracking what has been designed, what is being
-          built, and what is shipped
-        </p>
-      </div>
+      <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-3">
+        Implementation Specs
+      </h2>
+      <p className="text-[13px] text-[#8a847e] mb-5">
+        Technical specifications tracking what has been designed, what is being
+        built, and what is shipped.
+      </p>
 
       {/* Filter tabs */}
-      <div className="flex flex-wrap gap-2 mb-6">
+      <div className="flex flex-wrap gap-2 mb-5">
         {(
           [
             ["all", "All"],
@@ -71,10 +69,10 @@ export function SpecCards({ specs }: { specs: SpecData[] }) {
           <button
             key={key}
             onClick={() => setFilter(key)}
-            className={`text-xs px-3 py-1.5 rounded-lg font-medium transition-all ${
+            className={`text-[12px] px-3 py-1.5 rounded-full font-medium transition-all ${
               filter === key
-                ? "bg-slate-900 text-white"
-                : "bg-white text-slate-500 border border-slate-200 hover:border-slate-300"
+                ? "bg-[#1a1a1a] text-white"
+                : "bg-white text-[#8a847e] border border-[#eae6e1] hover:border-[#b5b0aa]"
             }`}
           >
             {label}
@@ -84,39 +82,36 @@ export function SpecCards({ specs }: { specs: SpecData[] }) {
       </div>
 
       {filtered.length === 0 ? (
-        <div className="bg-white rounded-xl border border-slate-100 p-8 text-center">
-          <p className="text-sm text-slate-400">
-            No specs in this category yet.
-          </p>
-        </div>
+        <p className="text-[13px] text-[#b5b0aa] py-6 text-center">
+          No specs in this category yet.
+        </p>
       ) : (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {filtered.map((spec) => {
+        <div className="space-y-0">
+          {filtered.map((spec, i) => {
             const style = STATUS_STYLES[spec.status];
             return (
               <div
                 key={spec.filename}
-                className="bg-white rounded-xl border border-slate-100 hover:border-slate-200 hover:shadow-sm transition-all p-5"
+                className={`flex items-start justify-between gap-4 py-3 ${
+                  i < filtered.length - 1 ? "border-b border-[#eae6e1]" : ""
+                }`}
               >
-                <div className="flex items-start justify-between gap-3 mb-3">
-                  <h3 className="text-sm font-semibold text-slate-800 leading-snug">
+                <div className="min-w-0">
+                  <h3 className="text-[14px] font-semibold text-[#1a1a1a] leading-snug">
                     {spec.title}
                   </h3>
-                  <span
-                    className={`shrink-0 inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}
-                  >
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full ${style.dot}`}
-                    />
-                    {style.label}
-                  </span>
+                  <p className="text-[12px] text-[#8a847e] leading-relaxed mt-0.5 line-clamp-2">
+                    {spec.description}
+                  </p>
                 </div>
-                <p className="text-[12px] text-slate-500 leading-relaxed line-clamp-3">
-                  {spec.description}
-                </p>
-                <p className="text-[10px] text-slate-300 mt-3 font-mono">
-                  {spec.filename}
-                </p>
+                <span
+                  className={`shrink-0 inline-flex items-center gap-1.5 text-[10px] font-medium px-2 py-0.5 rounded-full ${style.bg} ${style.text}`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${style.dot}`}
+                  />
+                  {style.label}
+                </span>
               </div>
             );
           })}

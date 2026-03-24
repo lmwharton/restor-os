@@ -35,15 +35,23 @@ function extractTextFromChildren(children: React.ReactNode): string {
   return "";
 }
 
+// Strip file path links from markdown content
+function stripFilePathLinks(content: string): string {
+  return content
+    .replace(/\[([^\]]+)\]\([^)]*\.md[^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(research\/[^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(competitive-analysis[^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\(https:\/\/github\.com\)/g, "$1");
+}
+
 const PROSE_CLASSES =
-  "prose prose-slate prose-sm max-w-none prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-table:text-xs prose-th:bg-slate-800 prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:text-slate-700 prose-td:border-slate-200 prose-tr:border-slate-200 even:prose-tr:bg-slate-50 prose-blockquote:border-blue-500 prose-blockquote:bg-blue-50/60 prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-slate-900 prose-a:text-blue-600 prose-a:no-underline hover:prose-a:underline prose-pre:bg-slate-50 prose-pre:text-slate-700 prose-pre:border prose-pre:border-slate-200 prose-pre:rounded-lg prose-pre:text-xs prose-code:bg-slate-100 prose-code:text-slate-700 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-slate-200 prose-hr:my-6 prose-li:marker:text-slate-400 prose-p:text-[13px] prose-p:leading-relaxed prose-li:text-[13px]";
+  "prose prose-sm max-w-none prose-headings:text-[#1a1a1a] prose-headings:scroll-mt-8 prose-h3:text-base prose-h3:font-semibold prose-h3:mt-8 prose-h3:mb-3 prose-h4:text-sm prose-h4:font-semibold prose-h4:mt-6 prose-h4:mb-2 prose-p:text-[13px] prose-p:leading-relaxed prose-p:text-[#171717] prose-li:text-[13px] prose-li:text-[#171717] prose-li:marker:text-[#b5b0aa] prose-table:text-xs prose-th:bg-[#1a1a1a] prose-th:text-white prose-th:font-semibold prose-th:px-3 prose-th:py-2 prose-td:px-3 prose-td:py-2 prose-td:text-[#171717] prose-td:border-[#eae6e1] prose-tr:border-[#eae6e1] even:prose-tr:bg-[#faf9f7] prose-blockquote:border-[#e85d26] prose-blockquote:bg-[#fff3ed] prose-blockquote:rounded-r-lg prose-blockquote:py-1 prose-blockquote:text-sm prose-blockquote:not-italic prose-strong:text-[#1a1a1a] prose-a:text-[#e85d26] prose-a:no-underline hover:prose-a:underline prose-pre:bg-[#faf9f7] prose-pre:text-[#171717] prose-pre:border prose-pre:border-[#eae6e1] prose-pre:rounded-lg prose-pre:text-xs prose-code:bg-[#faf9f7] prose-code:text-[#171717] prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-xs prose-code:before:content-none prose-code:after:content-none prose-hr:border-[#eae6e1] prose-hr:my-6";
 
 export function ProductDesignSection({
   sections,
 }: {
   sections: DesignSection[];
 }) {
-  // Show key sections open by default, detailed ones collapsed
   const [openSections, setOpenSections] = useState<Set<string>>(
     () =>
       new Set(
@@ -70,72 +78,69 @@ export function ProductDesignSection({
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h2 className="text-2xl font-bold text-slate-900">Product Design</h2>
-          <p className="text-sm text-slate-500 mt-1">
-            From the master design document — vision, scope, and architecture
-          </p>
-        </div>
-        <div className="flex gap-1">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
+          Design Document
+        </h2>
+        <div className="flex items-center gap-1">
           <button
             onClick={expandAll}
-            className="text-xs text-slate-400 hover:text-blue-500 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            className="text-[12px] text-[#b5b0aa] hover:text-[#e85d26] px-2 py-1 rounded hover:bg-[#fff3ed] transition-colors"
           >
             Expand all
           </button>
+          <span className="text-[#eae6e1]">|</span>
           <button
             onClick={collapseAll}
-            className="text-xs text-slate-400 hover:text-blue-500 px-3 py-1.5 rounded-lg hover:bg-slate-100 transition-colors"
+            className="text-[12px] text-[#b5b0aa] hover:text-[#e85d26] px-2 py-1 rounded hover:bg-[#fff3ed] transition-colors"
           >
             Collapse all
           </button>
         </div>
       </div>
+      <p className="text-[13px] text-[#8a847e] mb-5">
+        From the master design document &mdash; vision, scope, architecture, and domain rules.
+      </p>
 
-      <div className="space-y-3">
+      <div className="space-y-0">
         {sections.map((section) => {
           const isOpen = openSections.has(section.id);
 
           return (
             <div
               key={section.id}
-              className={`bg-white rounded-xl border transition-all duration-200 ${
-                isOpen
-                  ? "border-slate-200 shadow-sm"
-                  : "border-slate-100 hover:border-slate-200 hover:shadow-sm"
-              }`}
+              className="border-b border-[#eae6e1] last:border-b-0"
             >
               <button
                 onClick={() => toggleSection(section.id)}
-                className="w-full text-left px-5 py-4 flex items-center gap-3 group"
+                className="w-full text-left py-4 flex items-center gap-3 group"
               >
                 <span
-                  className={`text-[10px] text-slate-300 group-hover:text-slate-500 transition-all duration-200 ${
-                    isOpen ? "rotate-90 text-blue-500" : ""
+                  className={`text-[10px] text-[#b5b0aa] group-hover:text-[#e85d26] transition-all duration-200 ${
+                    isOpen ? "rotate-90 text-[#e85d26]" : ""
                   }`}
                 >
-                  {"\u25B6"}
+                  &#9654;
                 </span>
                 <h3
                   className={`text-[15px] font-semibold leading-snug transition-colors flex-1 ${
                     isOpen
-                      ? "text-slate-900"
-                      : "text-slate-700 group-hover:text-slate-900"
+                      ? "text-[#1a1a1a]"
+                      : "text-[#1a1a1a] group-hover:text-[#e85d26]"
                   }`}
                 >
                   {section.title}
                 </h3>
                 {section.isDetailed && !isOpen && (
-                  <span className="text-[10px] bg-slate-100 text-slate-400 px-2 py-0.5 rounded-full">
+                  <span className="text-[10px] bg-[#faf9f7] text-[#b5b0aa] px-2 py-0.5 rounded-full border border-[#eae6e1]">
                     Detailed
                   </span>
                 )}
               </button>
 
               {isOpen && (
-                <div className="px-5 pb-6 pt-0">
-                  <div className="border-t border-slate-100 pt-5">
+                <div className="pb-6 pl-7">
+                  <div className="border-t border-[#eae6e1] pt-5">
                     <div className={PROSE_CLASSES}>
                       <ReactMarkdown
                         remarkPlugins={[remarkGfm]}
@@ -165,15 +170,32 @@ export function ProductDesignSection({
                             );
                           },
                           table: ({ children }) => (
-                            <div className="overflow-x-auto -mx-2 sm:mx-0 my-4 rounded-lg border border-slate-200">
+                            <div className="overflow-x-auto my-4 rounded-lg border border-[#eae6e1]">
                               <table className="min-w-full">
                                 {children}
                               </table>
                             </div>
                           ),
+                          a: ({ href, children }) => {
+                            if (
+                              href &&
+                              (href.endsWith(".md") ||
+                                href.includes(".md#") ||
+                                href.startsWith("research/") ||
+                                href.startsWith("competitive-analysis") ||
+                                href === "https://github.com")
+                            ) {
+                              return <span>{children}</span>;
+                            }
+                            return (
+                              <a href={href} className="text-[#e85d26] hover:underline">
+                                {children}
+                              </a>
+                            );
+                          },
                         }}
                       >
-                        {section.content}
+                        {stripFilePathLinks(section.content)}
                       </ReactMarkdown>
                     </div>
                   </div>
