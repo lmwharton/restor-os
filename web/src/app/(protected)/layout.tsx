@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
+import AppShell from "@/components/app-shell";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -20,5 +21,5 @@ export default async function ProtectedLayout({
     redirect("/login");
   }
 
-  return <>{children}</>;
+  return <AppShell>{children}</AppShell>;
 }
