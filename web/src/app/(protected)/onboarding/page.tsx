@@ -56,15 +56,42 @@ export default function OnboardingPage() {
   const [companyName, setCompanyName] = useState("");
   const [phone, setPhone] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState("");
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!companyName.trim()) return;
-
     setIsSubmitting(true);
-    // TODO: Save company to Supabase, create workspace
-    // For now, just navigate to jobs
-    router.push("/jobs");
+    setError("");
+
+    try {
+      const { createClient } = await import("@/lib/supabase/client");
+      const supabase = createClient();
+      const { data: { session } } = await supabase.auth.getSession();
+
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const res = await fetch(`${API_URL}/v1/company`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${session?.access_token}`,
+        },
+        body: JSON.stringify({
+          name: companyName.trim(),
+          phone: phone.trim() || null,
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Failed to create company");
+      }
+
+      router.push("/jobs");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong");
+      setIsSubmitting(false);
+    }
   }
 
   return (
@@ -137,6 +164,11 @@ export default function OnboardingPage() {
                   className="w-full h-12 px-4 rounded-lg bg-surface-container-low text-on-surface text-[15px] placeholder:text-outline transition-all duration-200 outline-none focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest"
                 />
               </div>
+
+              {/* Error message */}
+              {error && (
+                <p className="text-sm text-red-500 text-center">{error}</p>
+              )}
 
               {/* Submit */}
               <button

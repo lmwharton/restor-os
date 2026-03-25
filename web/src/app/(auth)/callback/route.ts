@@ -45,9 +45,30 @@ export async function GET(request: NextRequest) {
     return errorResponse;
   }
 
-  // TODO: Check if user has a company via backend /v1/company
-  // If no company → return NextResponse.redirect(`${SITE_URL}/onboarding`)
-  // If has company → falls through to /jobs redirect above
+  // Check if user already has a company — determines onboarding vs jobs redirect
+  const { data: { session } } = await supabase.auth.getSession();
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
-  return response;
+  let destination = "/onboarding"; // safe default for new users
+
+  try {
+    const companyRes = await fetch(`${API_URL}/v1/company`, {
+      headers: { Authorization: `Bearer ${session?.access_token}` },
+      cache: "no-store",
+    });
+
+    if (companyRes.ok) {
+      destination = "/jobs";
+    }
+    // 404 or other non-ok → stay on /onboarding
+  } catch {
+    // Backend unreachable — fall through to onboarding (safe fallback)
+  }
+
+  // Transfer cookies from the Supabase exchange response to our redirect
+  const redirectResponse = NextResponse.redirect(`${SITE_URL}${destination}`);
+  response.cookies.getAll().forEach((cookie) => {
+    redirectResponse.cookies.set(cookie);
+  });
+  return redirectResponse;
 }

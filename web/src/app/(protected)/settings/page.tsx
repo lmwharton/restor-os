@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 import { SignOutButton } from "@/components/sign-out-button";
 
 /* ------------------------------------------------------------------ */
@@ -218,11 +219,42 @@ function ReadOnlyField({ label, value }: { label: string; value: string }) {
 export default function SettingsPage() {
   const [companyName, setCompanyName] = useState("");
   const [phone, setPhone] = useState("");
+  const [userName, setUserName] = useState("");
+  const [userEmail, setUserEmail] = useState("");
+  const [userRole, setUserRole] = useState("owner");
   const [isSaving, setIsSaving] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadProfile() {
+      try {
+        const supabase = createClient();
+        const { data: { session } } = await supabase.auth.getSession();
+        const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+        const res = await fetch(`${API_URL}/v1/me`, {
+          headers: { Authorization: `Bearer ${session?.access_token}` },
+          cache: "no-store",
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setCompanyName(data.company?.name || "");
+          setPhone(data.company?.phone || "");
+          setUserName(data.name || "");
+          setUserEmail(data.email || "");
+          setUserRole(data.role || "owner");
+        }
+      } catch {
+        // Backend unreachable — fields stay empty
+      } finally {
+        setIsLoading(false);
+      }
+    }
+    loadProfile();
+  }, []);
 
   function handleSave() {
     setIsSaving(true);
-    // TODO: Update company in Supabase
+    // TODO: PATCH /v1/company to update company details
     setTimeout(() => setIsSaving(false), 1000);
   }
 
@@ -293,13 +325,13 @@ export default function SettingsPage() {
             <SectionHeader>Your Profile</SectionHeader>
 
             <div className="space-y-5">
-              <ReadOnlyField label="Name" value="" />
-              <ReadOnlyField label="Email" value="" />
+              <ReadOnlyField label="Name" value={isLoading ? "Loading..." : userName} />
+              <ReadOnlyField label="Email" value={isLoading ? "Loading..." : userEmail} />
 
               <div>
                 <FieldLabel>Role</FieldLabel>
                 <div className="inline-flex items-center h-8 px-3 rounded-full bg-brand-accent/10 text-brand-accent text-[12px] font-semibold font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.06em]">
-                  Owner
+                  {userRole}
                 </div>
               </div>
             </div>

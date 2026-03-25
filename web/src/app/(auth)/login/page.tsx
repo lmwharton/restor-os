@@ -110,7 +110,7 @@ export default async function LoginPage() {
             className="mb-2 text-center text-[28px] font-bold leading-tight"
             style={{ color: "#1f1b17" }}
           >
-            Welcome Back
+            Sign In
           </h1>
           <p
             className="mb-8 text-center text-sm leading-relaxed"
