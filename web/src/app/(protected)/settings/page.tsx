@@ -82,7 +82,6 @@ function CameraIcon() {
 
 const navItems = [
   { href: "/jobs", label: "Jobs", Icon: JobsIcon },
-  { href: "/readings", label: "Readings", Icon: ReadingsIcon },
   { href: "/settings", label: "Settings", Icon: SettingsIcon },
 ];
 
@@ -188,7 +187,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const tabs = [
   { id: "organization", label: "Organization" },
-  { id: "profile", label: "Profile" },
+  { id: "profile", label: "My Profile" },
   { id: "team", label: "Team" },
 ] as const;
 
