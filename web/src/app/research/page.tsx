@@ -25,23 +25,23 @@ export default async function ResearchPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* Nav */}
-      <nav className="max-w-[768px] w-full mx-auto px-6 py-6 flex items-center justify-between">
+      <nav className="max-w-[768px] w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 flex items-center justify-between">
         <Link
           href="/"
-          className="text-[17px] font-semibold tracking-[-0.45px] text-[#1a1a1a]"
+          className="text-[15px] sm:text-[17px] font-semibold tracking-[-0.45px] text-[#1a1a1a]"
         >
           crewmatic
         </Link>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6">
           <Link
             href="/"
-            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
+            className="text-[13px] sm:text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
           >
             Home
           </Link>
           <Link
             href="/product"
-            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
+            className="text-[13px] sm:text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
           >
             Product
           </Link>
@@ -49,7 +49,7 @@ export default async function ResearchPage() {
       </nav>
 
       {/* Header */}
-      <div className="max-w-[768px] w-full mx-auto px-6 pt-8 pb-8">
+      <div className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-8">
         <h1 className="text-[32px] sm:text-[40px] font-bold tracking-[-1.5px] text-[#1a1a1a] mb-2">
           Research &amp; Evidence
         </h1>
@@ -60,7 +60,7 @@ export default async function ResearchPage() {
       </div>
 
       {/* Main content */}
-      <main className="max-w-[768px] w-full mx-auto px-6 pb-16 flex-1">
+      <main className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pb-16 flex-1">
         <ResearchContent
           competitiveSections={competitiveSections}
           xactimateContent={xactimateContent}
@@ -69,7 +69,7 @@ export default async function ResearchPage() {
       </main>
 
       {/* Footer */}
-      <footer className="max-w-[768px] w-full mx-auto px-6 pb-10">
+      <footer className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pb-10">
         <div className="border-t border-[#eae6e1] pt-6 flex items-center gap-2 justify-center">
           <span className="w-2 h-2 rounded-full bg-[#e85d26]" />
           <span className="text-[13px] text-[#b5b0aa]">

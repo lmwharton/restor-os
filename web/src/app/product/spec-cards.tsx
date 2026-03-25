@@ -92,7 +92,7 @@ export function SpecCards({ specs }: { specs: SpecData[] }) {
             return (
               <div
                 key={spec.filename}
-                className={`flex items-start justify-between gap-4 py-3 ${
+                className={`flex flex-col sm:flex-row sm:items-start sm:justify-between gap-1.5 sm:gap-4 py-3 ${
                   i < filtered.length - 1 ? "border-b border-[#eae6e1]" : ""
                 }`}
               >

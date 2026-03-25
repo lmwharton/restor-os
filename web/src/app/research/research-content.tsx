@@ -40,7 +40,7 @@ export function ResearchContent({
             Competitive Analysis
           </h2>
         </div>
-        <p className="text-[13px] text-[#8a847e] mb-4 pl-11">
+        <p className="text-[13px] text-[#8a847e] mb-4 pl-0 sm:pl-11">
           Full competitive analysis, market sizing, Brett&apos;s co-founder interview, and product strategy
         </p>
         <CollapsibleDocument sections={competitiveSections} />
@@ -97,7 +97,7 @@ export function ResearchContent({
           </span>
         </button>
         {xactimateOpen && (
-          <div className="mt-4 pl-11">
+          <div className="mt-4 pl-0 sm:pl-11">
             <MarkdownSection content={xactimateContent} />
           </div>
         )}
@@ -153,7 +153,7 @@ export function ResearchContent({
           </span>
         </button>
         {tpaOpen && (
-          <div className="mt-4 pl-11">
+          <div className="mt-4 pl-0 sm:pl-11">
             <MarkdownSection content={tpaContent} />
           </div>
         )}

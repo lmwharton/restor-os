@@ -408,12 +408,12 @@ export default function SettingsPage() {
         </h1>
 
         {/* Tabs */}
-        <div className="flex gap-1 mb-8 bg-surface-container rounded-lg p-1">
+        <div className="flex gap-1 mb-8 bg-surface-container rounded-lg p-1 overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-1 scrollbar-none">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 py-2.5 px-4 rounded-md text-[13px] font-medium transition-all cursor-pointer ${
+              className={`flex-1 min-w-0 py-2.5 px-3 sm:px-4 rounded-md text-[12px] sm:text-[13px] font-medium transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === tab.id
                   ? "bg-surface-container-lowest text-on-surface shadow-sm"
                   : "text-on-surface-variant hover:text-on-surface"
@@ -477,7 +477,7 @@ export default function SettingsPage() {
               </div>
 
               {/* City / State / ZIP */}
-              <div className="grid grid-cols-[1fr_80px_100px] gap-3">
+              <div className="grid grid-cols-2 sm:grid-cols-[1fr_80px_100px] gap-3">
                 <div>
                   <FieldLabel htmlFor="org-city">City</FieldLabel>
                   <TextInput
@@ -496,7 +496,7 @@ export default function SettingsPage() {
                     placeholder="CA"
                   />
                 </div>
-                <div>
+                <div className="col-span-2 sm:col-span-1">
                   <FieldLabel htmlFor="org-zip">ZIP</FieldLabel>
                   <TextInput
                     id="org-zip"
@@ -599,7 +599,7 @@ export default function SettingsPage() {
               </div>
 
               {/* First / Last Name row */}
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <FieldLabel htmlFor="profile-first">First Name</FieldLabel>
                   <TextInput

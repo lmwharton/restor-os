@@ -204,23 +204,23 @@ export default async function ProductPage() {
   return (
     <div className="min-h-screen bg-white flex flex-col">
       {/* Nav */}
-      <nav className="max-w-[768px] w-full mx-auto px-6 py-6 flex items-center justify-between">
+      <nav className="max-w-[768px] w-full mx-auto px-4 sm:px-6 py-4 sm:py-6 flex items-center justify-between">
         <Link
           href="/"
-          className="text-[17px] font-semibold tracking-[-0.45px] text-[#1a1a1a]"
+          className="text-[15px] sm:text-[17px] font-semibold tracking-[-0.45px] text-[#1a1a1a]"
         >
           crewmatic
         </Link>
-        <div className="flex items-center gap-6">
+        <div className="flex items-center gap-4 sm:gap-6">
           <Link
             href="/"
-            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
+            className="text-[13px] sm:text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
           >
             Home
           </Link>
           <Link
             href="/research"
-            className="text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
+            className="text-[13px] sm:text-[14px] font-medium text-[#6b6560] hover:text-[#1a1a1a] transition-colors"
           >
             Research
           </Link>
@@ -228,7 +228,7 @@ export default async function ProductPage() {
       </nav>
 
       {/* Hero */}
-      <div className="max-w-[768px] w-full mx-auto px-6 pt-8 pb-2">
+      <div className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pt-6 sm:pt-8 pb-2">
         <Link
           href="/research"
           className="inline-flex items-center gap-1 text-[13px] font-medium text-[#e85d26] hover:underline mb-4"
@@ -252,7 +252,7 @@ export default async function ProductPage() {
       </div>
 
       {/* Main content */}
-      <main className="max-w-[768px] w-full mx-auto px-6 pb-16 flex-1">
+      <main className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pb-16 flex-1">
         {/* Platform Block Diagram */}
         <section className="py-8 border-b border-[#eae6e1]">
           <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-2">
@@ -262,7 +262,7 @@ export default async function ProductPage() {
             Four pillars that make up the operating system for restoration contractors.
           </p>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {PLATFORM_BLOCKS.map((block) => (
               <div
                 key={block.title}
@@ -295,7 +295,7 @@ export default async function ProductPage() {
             Every water damage job follows this arc. Crewmatic covers every step.
           </p>
 
-          <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2">
             {LIFECYCLE_STEPS.map((step, i) => (
               <div
                 key={step.label}
@@ -428,12 +428,12 @@ export default async function ProductPage() {
             ].map((item, i) => (
               <div
                 key={item.label}
-                className={`flex items-center justify-between py-2.5 ${
+                className={`flex flex-col sm:flex-row sm:items-center sm:justify-between py-2.5 gap-0.5 sm:gap-4 ${
                   i < 5 ? "border-b border-[#f0ede9]" : ""
                 }`}
               >
-                <span className="text-[13px] text-[#6b6560]">{item.label}</span>
-                <span className="text-[13px] font-semibold text-[#1a1a1a] tabular-nums">
+                <span className="text-[12px] sm:text-[13px] text-[#6b6560]">{item.label}</span>
+                <span className="text-[13px] font-semibold text-[#1a1a1a] tabular-nums shrink-0">
                   {item.value}
                 </span>
               </div>
@@ -455,7 +455,7 @@ export default async function ProductPage() {
       </main>
 
       {/* Footer */}
-      <footer className="max-w-[768px] w-full mx-auto px-6 pb-10">
+      <footer className="max-w-[768px] w-full mx-auto px-4 sm:px-6 pb-10">
         <div className="border-t border-[#eae6e1] pt-6 flex items-center gap-2 justify-center">
           <span className="w-2 h-2 rounded-full bg-[#e85d26]" />
           <span className="text-[13px] text-[#b5b0aa]">

@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -25,4 +27,28 @@ app.include_router(auth_router, prefix="/v1")
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "version": "0.1.0"}
+    """Public health endpoint — no auth required.
+    Checks API + database connectivity. Never crashes."""
+    services = {
+        "api": {"status": "ok"},
+        "database": {"status": "unknown"},
+    }
+    overall = "healthy"
+
+    try:
+        from api.shared.database import get_supabase_client
+
+        client = get_supabase_client()
+        client.table("companies").select("id").limit(1).execute()
+        services["database"] = {"status": "connected"}
+    except Exception as e:
+        services["database"] = {"status": "disconnected", "error": type(e).__name__}
+        overall = "degraded"
+
+    return {
+        "status": overall,
+        "version": "0.1.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "environment": settings.environment,
+        "services": services,
+    }

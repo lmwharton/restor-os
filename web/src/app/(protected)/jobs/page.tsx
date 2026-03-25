@@ -73,16 +73,6 @@ export default function JobsPage() {
           </button>
         </div>
       </div>
-
-      {/* System status pill -- desktop only */}
-      <div className="hidden md:flex items-center justify-center pb-6">
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-surface-container">
-          <span className="w-1.5 h-1.5 rounded-full bg-brand-accent animate-pulse" />
-          <span className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.06em] text-outline">
-            System Status: Standby
-          </span>
-        </div>
-      </div>
     </>
   );
 }

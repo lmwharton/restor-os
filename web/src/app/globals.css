@@ -96,3 +96,12 @@ body {
 .primary-gradient {
   background: linear-gradient(135deg, #a63500 0%, #cc4911 100%);
 }
+
+/* Hide scrollbar but allow scrolling */
+.scrollbar-none {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}

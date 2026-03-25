@@ -119,7 +119,7 @@ export default function OnboardingPage() {
         <div className="w-full max-w-[480px]">
           {/* Card */}
           <div className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04),0_8px_32px_rgba(31,27,23,0.08)] p-8 sm:p-10">
-            <h1 className="text-[2.75rem] font-bold tracking-[-1.5px] leading-[1.05] text-on-surface mb-3">
+            <h1 className="text-[2rem] sm:text-[2.75rem] font-bold tracking-[-1.5px] leading-[1.05] text-on-surface mb-3">
               Create your workspace
             </h1>
             <p className="text-[15px] text-on-surface-variant leading-relaxed mb-8">
@@ -194,7 +194,7 @@ export default function OnboardingPage() {
           </p>
 
           {/* Decorative icons */}
-          <div className="flex items-center justify-center gap-10 mt-6">
+          <div className="flex items-center justify-center gap-6 sm:gap-10 mt-6">
             {[
               { icon: <AutomatedIcon />, label: "Automated" },
               { icon: <DataDrivenIcon />, label: "Data-Driven" },

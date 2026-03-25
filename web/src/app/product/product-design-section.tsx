@@ -139,7 +139,7 @@ export function ProductDesignSection({
               </button>
 
               {isOpen && (
-                <div className="pb-6 pl-7">
+                <div className="pb-6 pl-0 sm:pl-7">
                   <div className="border-t border-[#eae6e1] pt-5">
                     <div className={PROSE_CLASSES}>
                       <ReactMarkdown
