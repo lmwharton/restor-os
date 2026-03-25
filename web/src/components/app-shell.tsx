@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Clipboard, Gear } from "@/components/icons";
+import { HealthStatusBadge } from "@/components/health-status-badge";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -264,13 +265,17 @@ function AppHeader({ user }: { user: UserProfile | null }) {
           })}
         </nav>
 
-        {/* Right: User avatar + name menu */}
+        {/* Right: Status + User */}
         {user ? (
-          <div className="flex items-center gap-2.5">
-            <span className="hidden sm:block text-[13px] font-medium text-on-surface-variant">
-              {user.first_name || user.name?.split(" ")[0] || ""}
-            </span>
-            <UserMenu user={user} />
+          <div className="flex items-center gap-4">
+            <HealthStatusBadge />
+            <div className="hidden sm:block h-4 w-px bg-outline-variant/30" />
+            <div className="flex items-center gap-2.5">
+              <span className="hidden sm:block text-[13px] font-medium text-on-surface-variant">
+                {user.name || user.email}
+              </span>
+              <UserMenu user={user} />
+            </div>
           </div>
         ) : (
           <div className="flex items-center gap-2.5">
@@ -280,48 +285,6 @@ function AppHeader({ user }: { user: UserProfile | null }) {
         )}
       </div>
     </header>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  App Footer                                                         */
-/* ------------------------------------------------------------------ */
-
-function AppFooter({ user }: { user: UserProfile | null }) {
-  async function handleSignOut() {
-    const supabase = createClient();
-    await supabase.auth.signOut();
-    window.location.href = "/login";
-  }
-
-  return (
-    <footer className="border-t border-outline-variant/15 mt-auto">
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-        <span className="text-[12px] text-outline font-[family-name:var(--font-geist-mono)]">
-          Powered by{" "}
-          <a
-            href="https://crewmatic-website.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-on-surface-variant hover:text-brand-accent transition-colors"
-          >
-            Crewmatic
-          </a>
-        </span>
-        {user && (
-          <span className="text-[12px] text-outline font-[family-name:var(--font-geist-mono)] flex items-center gap-1.5">
-            {user.name || user.email}
-            <span className="text-outline-variant">·</span>
-            <button
-              onClick={handleSignOut}
-              className="text-on-surface-variant hover:text-error transition-colors cursor-pointer"
-            >
-              Sign out
-            </button>
-          </span>
-        )}
-      </div>
-    </footer>
   );
 }
 
@@ -405,11 +368,40 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <main className="flex-1 pb-20 md:pb-0">{children}</main>
 
-      <AppFooter user={user} />
+      <AppFooter />
       <MobileBottomNav />
     </div>
   );
 }
+
+/* ------------------------------------------------------------------ */
+/*  Footer                                                             */
+/* ------------------------------------------------------------------ */
+
+function AppFooter() {
+  return (
+    <footer className="hidden md:block border-t border-outline-variant/15 mt-auto">
+      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-3 flex items-center justify-between">
+        <span className="text-[11px] text-outline font-[family-name:var(--font-geist-mono)]">
+          Powered by{" "}
+          <a
+            href="https://crewmatic-website.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-on-surface-variant hover:text-brand-accent transition-colors"
+          >
+            Crewmatic
+          </a>
+        </span>
+        <span className="text-[11px] text-outline font-[family-name:var(--font-geist-mono)]">
+          v{APP_VERSION}
+        </span>
+      </div>
+    </footer>
+  );
+}
+
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION || "0.1.0";
 
 export { getAuthHeaders, API_URL };
 export type { Company };
