@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { getUser } from "@/lib/supabase/server";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -7,15 +9,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function ProtectedLayout({
+export default async function ProtectedLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // TODO: Check Supabase session, redirect to /login if not authenticated
-  // const supabase = createServerClient(...)
-  // const { data: { session } } = await supabase.auth.getSession()
-  // if (!session) redirect('/login')
+  const user = await getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
 
   return <>{children}</>;
 }

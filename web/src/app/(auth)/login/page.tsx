@@ -1,3 +1,5 @@
+import { redirect } from "next/navigation";
+import { getUser } from "@/lib/supabase/server";
 import SignInButton from "./sign-in-button";
 
 /**
@@ -55,7 +57,12 @@ function ShieldIcon() {
   );
 }
 
-export default function LoginPage() {
+export default async function LoginPage() {
+  const user = await getUser();
+  if (user) {
+    redirect("/jobs");
+  }
+
   return (
     <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden px-5 py-10 font-[family-name:var(--font-geist-sans)]" style={{ backgroundColor: "#fff8f4" }}>
       {/* ── Background decorative shapes ── */}

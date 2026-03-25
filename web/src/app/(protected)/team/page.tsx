@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SignOutButton } from "@/components/sign-out-button";
 
 /* ── Inline Icons ── */
 
@@ -97,7 +98,7 @@ function AppHeader() {
           })}
         </nav>
         <div className="flex items-center gap-4">
-          <button onClick={() => console.log("Sign out")} className="text-[13px] font-medium text-outline hover:text-on-surface transition-colors cursor-pointer">Sign Out</button>
+          <SignOutButton />
         </div>
       </div>
     </header>

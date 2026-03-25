@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { SignOutButton } from "@/components/sign-out-button";
 
 /* ------------------------------------------------------------------ */
 /*  Inline SVG Icons (same as jobs page — will be extracted later)     */
@@ -134,13 +135,7 @@ function AppHeader() {
         </nav>
 
         <div className="flex items-center gap-4">
-          {/* Company name — will be populated from auth context */}
-          <button
-            onClick={() => console.log("Sign out")}
-            className="text-[13px] font-medium text-outline hover:text-on-surface transition-colors cursor-pointer"
-          >
-            Sign Out
-          </button>
+          <SignOutButton />
         </div>
       </div>
     </header>
@@ -315,18 +310,7 @@ export default function SettingsPage() {
             <SectionHeader>Session</SectionHeader>
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-              <button
-                onClick={() => console.log("Sign out")}
-                className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-surface bg-surface-container-high hover:bg-surface-dim cursor-pointer transition-colors active:scale-[0.98]"
-              >
-                Sign Out
-              </button>
-              <button
-                onClick={() => console.log("Sign out all")}
-                className="text-[13px] text-outline hover:text-on-surface-variant transition-colors cursor-pointer"
-              >
-                Sign out of all devices
-              </button>
+              <SignOutButton className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-surface bg-surface-container-high hover:bg-surface-dim cursor-pointer transition-colors active:scale-[0.98]" />
             </div>
           </section>
         </div>
