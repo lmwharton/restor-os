@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>crewmatic | Sign In</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/npm/geist@1.3.0/dist/font/sans.css" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/npm/geist@1.3.0/dist/font/mono.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        body {
+            font-family: 'Geist Sans', sans-serif;
+            background-color: #fff8f4;
+        }
+        .font-mono {
+            font-family: 'Geist Mono', monospace;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary-container": "#cc4911",
+                        "surface-tint": "#aa3700",
+                        "on-primary": "#ffffff",
+                        "surface-container-high": "#f0e6e0",
+                        "on-primary-container": "#fffbff",
+                        "outline-variant": "#e1bfb4",
+                        "secondary-fixed": "#ffdbcf",
+                        "surface-bright": "#fff8f4",
+                        "surface-container-highest": "#eae1da",
+                        "tertiary-container": "#007cb3",
+                        "on-surface": "#1f1b17",
+                        "tertiary-fixed": "#c9e6ff",
+                        "secondary": "#924a30",
+                        "primary-fixed": "#ffdbcf",
+                        "on-tertiary-fixed": "#001e2f",
+                        "surface": "#fff8f4",
+                        "primary-fixed-dim": "#ffb59c",
+                        "on-secondary-fixed-variant": "#74341b",
+                        "on-surface-variant": "#594139",
+                        "surface-variant": "#eae1da",
+                        "on-secondary-fixed": "#380c00",
+                        "surface-container-low": "#fbf2eb",
+                        "on-error-container": "#93000a",
+                        "inverse-primary": "#ffb59c",
+                        "primary": "#a63500",
+                        "background": "#fff8f4",
+                        "on-tertiary": "#ffffff",
+                        "tertiary-fixed-dim": "#8bceff",
+                        "outline": "#8d7168",
+                        "on-tertiary-container": "#fcfcff",
+                        "secondary-fixed-dim": "#ffb59c",
+                        "on-tertiary-fixed-variant": "#004b6f",
+                        "on-secondary": "#ffffff",
+                        "error": "#ba1a1a",
+                        "on-primary-fixed-variant": "#822800",
+                        "surface-container": "#f5ece6",
+                        "on-background": "#1f1b17",
+                        "error-container": "#ffdad6",
+                        "tertiary": "#00628e",
+                        "surface-dim": "#e1d8d2",
+                        "on-primary-fixed": "#380c00",
+                        "on-secondary-container": "#77361d",
+                        "on-error": "#ffffff",
+                        "inverse-surface": "#34302b",
+                        "inverse-on-surface": "#f8efe8",
+                        "secondary-container": "#fea281",
+                        "surface-container-lowest": "#ffffff"
+                    },
+                    fontFamily: {
+                        "headline": ["Geist Sans"],
+                        "body": ["Geist Sans"],
+                        "label": ["Geist Mono"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.125rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-surface text-on-surface selection:bg-primary-fixed min-h-screen flex flex-col">
+<!-- Suppressed Navigation Shell for Login Journey per PRotocol -->
+<main class="flex-grow flex items-center justify-center p-6 bg-surface-dim">
+<div class="w-full max-w-[480px]">
+<!-- Logo Section -->
+<div class="flex flex-col items-center mb-12">
+<div class="flex items-center gap-2 mb-4">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="water_damage">water_damage</span>
+<h1 class="text-[24px] font-semibold tracking-[-0.45px] text-on-surface lowercase">crewmatic</h1>
+</div>
+<p class="text-on-surface-variant font-medium text-center tracking-tight">The Operating System for Restoration Contractors</p>
+</div>
+<!-- Login Card -->
+<div class="bg-surface-container-lowest rounded-xl shadow-[0_16px_32px_-12px_rgba(31,27,23,0.05)] p-10 relative overflow-hidden">
+<!-- Tonal Layering Accent -->
+<div class="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-primary-container"></div>
+<div class="mb-10">
+<h2 class="text-2xl font-bold text-on-surface tracking-tight mb-2">Welcome Back</h2>
+<p class="text-sm text-on-surface-variant font-mono uppercase tracking-wider">Authentication Required</p>
+</div>
+<div class="space-y-6">
+<!-- Google Sign In Button -->
+<button class="w-full h-14 bg-gradient-to-br from-[#e85d26] to-[#cc4911] text-white rounded-lg flex items-center justify-center gap-3 font-semibold transition-all active:scale-[0.98] shadow-sm hover:brightness-105">
+<svg class="w-5 h-5 fill-current" viewbox="0 0 24 24">
+<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"></path>
+<path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-1 .67-2.28 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"></path>
+<path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"></path>
+<path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"></path>
+</svg>
+<span>Sign in with Google</span>
+</button>
+<div class="relative flex items-center py-4">
+<div class="flex-grow border-t border-outline-variant/30"></div>
+<span class="flex-shrink mx-4 text-on-surface-variant text-[10px] font-mono font-medium uppercase tracking-[0.1em]">Internal Access Only</span>
+<div class="flex-grow border-t border-outline-variant/30"></div>
+</div>
+<div class="space-y-4">
+<div>
+<label class="block text-xs font-mono font-medium text-on-surface-variant uppercase mb-2 tracking-wide">Work Email</label>
+<input class="w-full h-12 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20 text-on-surface placeholder:text-on-surface-variant/40 px-4" placeholder="name@crewmatic.com" type="email"/>
+</div>
+<div>
+<label class="block text-xs font-mono font-medium text-on-surface-variant uppercase mb-2 tracking-wide">Password</label>
+<input class="w-full h-12 bg-surface-container-low border-none rounded-lg focus:ring-2 focus:ring-primary/20 text-on-surface placeholder:text-on-surface-variant/40 px-4" placeholder="••••••••" type="password"/>
+</div>
+</div>
+<div class="flex items-center justify-between pt-2">
+<label class="flex items-center gap-2 cursor-pointer group">
+<input class="w-4 h-4 rounded border-outline-variant text-primary focus:ring-primary/20 bg-surface-container-low transition-colors" type="checkbox"/>
+<span class="text-sm text-on-surface-variant group-hover:text-on-surface transition-colors">Remember device</span>
+</label>
+<a class="text-sm font-medium text-primary hover:underline" href="#">Forgot access?</a>
+</div>
+<button class="w-full h-12 bg-surface-container-high text-on-surface rounded-lg font-semibold transition-all active:scale-[0.98] hover:bg-surface-container-highest">
+                        Continue to Dashboard
+                    </button>
+</div>
+</div>
+<!-- Trust / Field Data Footer -->
+<div class="mt-8 grid grid-cols-3 gap-4">
+<div class="flex flex-col items-center p-4">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" data-icon="encrypted">encrypted</span>
+<span class="text-[10px] font-mono uppercase text-on-surface-variant text-center leading-tight">Secure Vault<br/>Data Protocol</span>
+</div>
+<div class="flex flex-col items-center p-4">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" data-icon="cloud_sync">cloud_sync</span>
+<span class="text-[10px] font-mono uppercase text-on-surface-variant text-center leading-tight">Real-time<br/>Field Sync</span>
+</div>
+<div class="flex flex-col items-center p-4">
+<span class="material-symbols-outlined text-on-surface-variant mb-1" data-icon="verified">verified</span>
+<span class="text-[10px] font-mono uppercase text-on-surface-variant text-center leading-tight">Certified<br/>Compliance</span>
+</div>
+</div>
+</div>
+</main>
+<!-- Footer Meta -->
+<footer class="p-8 flex justify-center items-center">
+<p class="text-xs text-on-surface-variant/50 font-mono text-center">crewmatic.ai</p>
+</footer>
+<!-- Background Decorative Elements -->
+<div class="fixed top-0 right-0 w-1/3 h-screen pointer-events-none z-[-1] opacity-40 overflow-hidden">
+<img class="w-full h-full object-cover grayscale brightness-125" data-alt="close-up of professional technical equipment with brushed metal textures and orange indicator lights in a clean workspace" src="https://lh3.googleusercontent.com/aida-public/AB6AXuAxDQQqBeh1Q218ldXvCC5gyBnD34bqWm4X8n2hWru_fKDU1pFPtC-JtEw8nbzArOrxDGOJeQA3rc1b_0WWVqn8gCbdWMfhsYeT6bjZ4Q1aT-HOKByZ8eIcFmqkAUAzKTCTmba6HxqePTmX0P05bYVZ4MPV5cMsp563IJ9f4vqwTwOdgLAuKEtIE68LfXSKvIz1YBKqZWJPtI47293VN4BFwNIA8RPiNYQM-7pzUJ0Ueq2y_lP_zNcU4FHq4fXIpYwofGvugpT9Bl8"/>
+<div class="absolute inset-0 bg-gradient-to-l from-surface via-surface/80 to-transparent"></div>
+</div>
+</body></html>

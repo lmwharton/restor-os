@@ -2,8 +2,37 @@
 @plugin "@tailwindcss/typography";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #fff8f4;
+  --foreground: #1f1b17;
+
+  /* Crewmatic Design System — Stitch color tokens */
+  --primary: #a63500;
+  --primary-container: #cc4911;
+  --on-primary: #ffffff;
+  --on-primary-container: #fffbff;
+  --secondary: #924a30;
+  --secondary-container: #fea281;
+  --on-secondary: #ffffff;
+  --tertiary: #00628e;
+  --tertiary-container: #007cb3;
+  --surface: #fff8f4;
+  --surface-dim: #e1d8d2;
+  --surface-bright: #fff8f4;
+  --surface-container-lowest: #ffffff;
+  --surface-container-low: #fbf2eb;
+  --surface-container: #f5ece6;
+  --surface-container-high: #f0e6e0;
+  --surface-container-highest: #eae1da;
+  --on-surface: #1f1b17;
+  --on-surface-variant: #594139;
+  --outline: #8d7168;
+  --outline-variant: #e1bfb4;
+  --error: #ba1a1a;
+  --error-container: #ffdad6;
+  --on-error: #ffffff;
+  --inverse-surface: #34302b;
+  --inverse-on-surface: #f8efe8;
+  --brand-accent: #e85d26;
 }
 
 @theme inline {
@@ -11,10 +40,59 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
+
+  /* Primary */
+  --color-primary: var(--primary);
+  --color-primary-container: var(--primary-container);
+  --color-on-primary: var(--on-primary);
+  --color-on-primary-container: var(--on-primary-container);
+
+  /* Secondary */
+  --color-secondary: var(--secondary);
+  --color-secondary-container: var(--secondary-container);
+  --color-on-secondary: var(--on-secondary);
+
+  /* Tertiary */
+  --color-tertiary: var(--tertiary);
+  --color-tertiary-container: var(--tertiary-container);
+
+  /* Surfaces */
+  --color-surface: var(--surface);
+  --color-surface-dim: var(--surface-dim);
+  --color-surface-bright: var(--surface-bright);
+  --color-surface-container-lowest: var(--surface-container-lowest);
+  --color-surface-container-low: var(--surface-container-low);
+  --color-surface-container: var(--surface-container);
+  --color-surface-container-high: var(--surface-container-high);
+  --color-surface-container-highest: var(--surface-container-highest);
+
+  /* On-surface */
+  --color-on-surface: var(--on-surface);
+  --color-on-surface-variant: var(--on-surface-variant);
+
+  /* Outline */
+  --color-outline: var(--outline);
+  --color-outline-variant: var(--outline-variant);
+
+  /* Error */
+  --color-error: var(--error);
+  --color-error-container: var(--error-container);
+  --color-on-error: var(--on-error);
+
+  /* Inverse */
+  --color-inverse-surface: var(--inverse-surface);
+  --color-inverse-on-surface: var(--inverse-on-surface);
+
+  /* Brand accent */
+  --color-brand-accent: var(--brand-accent);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
+
+.primary-gradient {
+  background: linear-gradient(135deg, #a63500 0%, #cc4911 100%);
 }

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/npm/geist@1.3.0/dist/fonts/geist-sans/style.css" rel="stylesheet"/>
+<link href="https://cdn.jsdelivr.net/npm/geist@1.3.0/dist/fonts/geist-mono/style.css" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+        body {
+            font-family: 'Geist Sans', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+        .font-mono {
+            font-family: 'Geist Mono', monospace;
+        }
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        /* Custom scrollbar for premium feel */
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #f5ece6;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #e1bfb4;
+            border-radius: 10px;
+        }
+    </style>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "tertiary-fixed": "#c9e6ff",
+                        "secondary-fixed": "#ffdbcf",
+                        "surface-container": "#f5ece6",
+                        "surface-container-low": "#fbf2eb",
+                        "inverse-primary": "#ffb59c",
+                        "secondary-fixed-dim": "#ffb59c",
+                        "surface-tint": "#aa3700",
+                        "outline-variant": "#e1bfb4",
+                        "on-tertiary-fixed-variant": "#004b6f",
+                        "error-container": "#ffdad6",
+                        "on-secondary-fixed": "#380c00",
+                        "tertiary-container": "#007cb3",
+                        "surface-variant": "#eae1da",
+                        "on-tertiary": "#ffffff",
+                        "on-tertiary-container": "#fcfcff",
+                        "inverse-on-surface": "#f8efe8",
+                        "on-secondary": "#ffffff",
+                        "surface-dim": "#e1d8d2",
+                        "on-primary-container": "#fffbff",
+                        "on-primary": "#ffffff",
+                        "on-error-container": "#93000a",
+                        "primary-fixed-dim": "#ffb59c",
+                        "on-surface": "#1f1b17",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed": "#ffdbcf",
+                        "error": "#ba1a1a",
+                        "tertiary": "#00628e",
+                        "surface-container-highest": "#eae1da",
+                        "surface-bright": "#fff8f4",
+                        "on-primary-fixed": "#380c00",
+                        "outline": "#8d7168",
+                        "surface": "#fff8f4",
+                        "on-surface-variant": "#594139",
+                        "on-secondary-fixed-variant": "#74341b",
+                        "inverse-surface": "#34302b",
+                        "on-tertiary-fixed": "#001e2f",
+                        "primary-container": "#cc4911",
+                        "on-secondary-container": "#77361d",
+                        "secondary": "#924a30",
+                        "surface-container-high": "#f0e6e0",
+                        "tertiary-fixed-dim": "#8bceff",
+                        "primary": "#a63500",
+                        "secondary-container": "#fea281",
+                        "on-error": "#ffffff",
+                        "on-background": "#1f1b17",
+                        "on-primary-fixed-variant": "#822800",
+                        "background": "#fff8f4"
+                    },
+                    borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+                },
+            },
+        }
+    </script>
+</head>
+<body class="bg-surface text-on-surface min-h-screen flex flex-col">
+<!-- Header Suppression: As per rules, TopAppBar is not rendered for Onboarding/Transactional flows -->
+<main class="flex-grow flex items-center justify-center p-6 md:p-12 relative overflow-hidden">
+<!-- Subtle background texture -->
+<div class="absolute inset-0 z-0 opacity-40 pointer-events-none">
+<div class="absolute top-[-10%] right-[-5%] w-[500px] h-[500px] bg-secondary-fixed blur-[120px] rounded-full"></div>
+<div class="absolute bottom-[-10%] left-[-5%] w-[400px] h-[400px] bg-surface-container-highest blur-[100px] rounded-full"></div>
+</div>
+<!-- Onboarding Container -->
+<div class="z-10 w-full max-w-[480px]">
+<!-- Brand Identity Anchor -->
+<div class="flex items-center gap-2 mb-12 justify-center">
+<span class="material-symbols-outlined text-primary text-3xl" data-icon="water_damage">water_damage</span>
+<span class="text-[20px] font-semibold tracking-[-0.45px] text-on-surface lowercase">crewmatic</span>
+</div>
+<!-- Precision Card -->
+<div class="bg-surface-container-lowest shadow-[0_16px_32px_-12px_rgba(31,27,23,0.05)] rounded-xl p-8 md:p-10 border border-outline-variant/15">
+<header class="mb-8">
+<h1 class="text-[32px] font-bold leading-tight tracking-[-0.04em] text-on-surface mb-3">
+                        Create your workspace
+                    </h1>
+<p class="text-on-surface-variant body-lg leading-relaxed">
+                        Customize how our AI handles field scoping and equipment tracking for your team.
+                    </p>
+</header>
+<form class="space-y-6">
+<!-- Form Field: Company Name -->
+<div class="space-y-2">
+<label class="font-mono text-[11px] uppercase tracking-wider text-on-surface-variant font-medium flex items-center gap-2" for="company_name">
+<span class="material-symbols-outlined text-[14px]" data-icon="business">business</span>
+                            Company Name
+                        </label>
+<input class="w-full h-14 px-4 bg-surface-container-low border border-outline-variant/20 rounded-lg text-on-surface placeholder:text-on-surface-variant/40 focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200 outline-none" id="company_name" placeholder="e.g. Rapid Dry Restoration" type="text"/>
+</div>
+<!-- Form Field: Phone Number -->
+<div class="space-y-2">
+<label class="font-mono text-[11px] uppercase tracking-wider text-on-surface-variant font-medium flex items-center gap-2" for="phone">
+<span class="material-symbols-outlined text-[14px]" data-icon="phone">phone</span>
+                            Phone Number
+                        </label>
+<input class="w-full h-14 px-4 bg-surface-container-low border border-outline-variant/20 rounded-lg text-on-surface placeholder:text-on-surface-variant/40 focus:ring-1 focus:ring-primary focus:border-primary transition-all duration-200 outline-none font-mono" id="phone" placeholder="(555) 000-0000" type="tel"/>
+</div>
+<!-- Action Button -->
+<button class="w-full h-14 bg-gradient-to-br from-primary to-primary-container text-on-primary font-semibold rounded-lg shadow-sm active:scale-[0.98] transition-all duration-200 flex items-center justify-center gap-2 group" type="submit">
+<span>Continue</span>
+<span class="material-symbols-outlined text-[18px] group-hover:translate-x-1 transition-transform" data-icon="arrow_forward">arrow_forward</span>
+</button>
+</form>
+<!-- Step Indicator (Visual Only) -->
+<div class="mt-10 flex items-center gap-1 justify-center">
+<div class="h-1 w-8 rounded-full bg-primary"></div>
+<div class="h-1 w-2 rounded-full bg-surface-container-highest"></div>
+<div class="h-1 w-2 rounded-full bg-surface-container-highest"></div>
+</div>
+</div>
+<!-- Footer Utility -->
+<p class="text-center mt-8 text-on-surface-variant text-sm">
+                Already have an account? 
+                <a class="text-primary font-medium hover:underline underline-offset-4 decoration-primary/30" href="#">Sign in</a>
+</p>
+</div>
+<!-- Contextual Visual Element (Floating Reading Chip Style) -->
+<div class="hidden lg:block absolute right-24 top-1/3 rotate-3 pointer-events-none">
+<div class="bg-tertiary-container text-on-tertiary-container p-4 rounded-lg shadow-lg max-w-[200px] border border-white/10 backdrop-blur-sm">
+<div class="font-mono text-[10px] uppercase opacity-80 mb-1">AI Moisture Analysis</div>
+<div class="font-mono text-2xl font-bold tracking-tight">42.8%</div>
+<div class="flex items-center gap-1 mt-2">
+<span class="material-symbols-outlined text-[12px]" style="font-variation-settings: 'FILL' 1;">warning</span>
+<span class="text-[10px] font-mono">Saturation Alert</span>
+</div>
+</div>
+</div>
+<div class="hidden lg:block absolute left-24 bottom-1/4 -rotate-2 pointer-events-none">
+<div class="bg-surface-container-high p-4 rounded-lg shadow-md max-w-[220px] border border-outline-variant/10">
+<div class="flex items-center gap-3 mb-3">
+<div class="w-8 h-8 rounded-full bg-secondary-container flex items-center justify-center">
+<span class="material-symbols-outlined text-[16px] text-on-secondary-container" data-icon="engineering">engineering</span>
+</div>
+<div>
+<div class="text-[12px] font-bold">Field Sync</div>
+<div class="text-[10px] text-on-surface-variant">Real-time update active</div>
+</div>
+</div>
+<div class="h-1.5 w-full bg-surface-container rounded-full overflow-hidden">
+<div class="h-full w-[85%] bg-primary"></div>
+</div>
+</div>
+</div>
+</main>
+<!-- Navigation Shell Suppression: BottomNavBar is not rendered for Onboarding -->
+</body></html>
