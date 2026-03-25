@@ -100,8 +100,6 @@ function PlusIcon() {
 
 const navItems = [
   { href: "/jobs", label: "Jobs", Icon: JobsIcon },
-  { href: "/readings", label: "Readings", Icon: ReadingsIcon },
-  { href: "/team", label: "Team", Icon: TeamIcon },
   { href: "/settings", label: "Settings", Icon: SettingsIcon },
 ];
 

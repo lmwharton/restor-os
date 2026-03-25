@@ -4,7 +4,7 @@ import string
 from datetime import UTC, datetime
 from uuid import UUID
 
-from api.auth.schemas import CompanyResponse, JobResponse, UserResponse
+from api.auth.schemas import CompanyResponse, CompanyUpdate, JobResponse, UserResponse, UserUpdate
 from api.shared.database import get_supabase_admin_client
 from api.shared.exceptions import AppException
 
@@ -226,6 +226,73 @@ async def list_jobs(company_id: UUID) -> list[JobResponse]:
         )
         for job in result.data
     ]
+
+
+async def update_user_profile(user_id: UUID, body: UserUpdate) -> UserResponse:
+    """Update user name/phone."""
+    client = get_supabase_admin_client()
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
+
+    # Split name into first/last if name is provided
+    if "name" in updates:
+        name_parts = updates["name"].strip().split(" ", 1)
+        updates["first_name"] = name_parts[0]
+        updates["last_name"] = name_parts[1] if len(name_parts) > 1 else None
+
+    result = (
+        client.table("users")
+        .update(updates)
+        .eq("id", str(user_id))
+        .execute()
+    )
+    if not result.data:
+        raise AppException(status_code=404, detail="User not found", error_code="USER_NOT_FOUND")
+    return _parse_user(result.data[0])
+
+
+async def update_company(company_id: UUID, body: CompanyUpdate) -> CompanyResponse:
+    """Update company name/phone."""
+    client = get_supabase_admin_client()
+    updates = {k: v for k, v in body.model_dump().items() if v is not None}
+    if not updates:
+        raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
+
+    result = (
+        client.table("companies")
+        .update(updates)
+        .eq("id", str(company_id))
+        .execute()
+    )
+    if not result.data:
+        raise AppException(status_code=404, detail="Company not found", error_code="COMPANY_NOT_FOUND")
+    return _parse_company(result.data[0])
+
+
+async def update_company_logo(company_id: UUID, file) -> str:
+    """Upload logo to Supabase Storage and update company.logo_url."""
+    client = get_supabase_admin_client()
+
+    # Read file content
+    content = await file.read()
+    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png"
+    path = f"{company_id}/logo.{ext}"
+
+    # Upload to logos bucket (upsert replaces existing)
+    client.storage.from_("logos").upload(
+        path,
+        content,
+        file_options={"content-type": file.content_type or "image/png", "upsert": "true"},
+    )
+
+    # Get public URL
+    public_url = client.storage.from_("logos").get_public_url(path)
+
+    # Update company record
+    client.table("companies").update({"logo_url": public_url}).eq("id", str(company_id)).execute()
+
+    return public_url
 
 
 async def update_last_login(user_id: UUID) -> None:

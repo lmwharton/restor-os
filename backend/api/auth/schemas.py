@@ -9,6 +9,16 @@ class CompanyCreate(BaseModel):
     phone: str | None = None
 
 
+class CompanyUpdate(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+
+
+class UserUpdate(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+
+
 class CompanyResponse(BaseModel):
     id: UUID
     name: str
