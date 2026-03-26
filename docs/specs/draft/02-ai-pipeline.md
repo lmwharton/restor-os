@@ -23,7 +23,7 @@
 ## Done When
 - [ ] User selects damage photos → taps "Analyze with AI" → sees Xactimate line items stream in within 15-30 seconds
 - [ ] Line items grouped by trade category (Mitigation, Insulation, Drywall, Painting, Structural, General) with colored headers
-- [ ] Every line item has an S500/OSHA citation inline (no item without justification)
+- [ ] Every line item has an S500/OSHA citation inline (no item without citation)
 - [ ] Non-obvious items highlighted with "AI found this — you might have missed it"
 - [ ] User can edit any line item inline (code, description, quantity, unit, room)
 - [ ] User can add manual line items and delete AI-generated ones
@@ -32,7 +32,7 @@
 - [ ] Hazmat Scanner: "Hazard Scan" button scans photos for asbestos + lead paint risk
 - [ ] AI Scope Auditor: "Audit Scope" reviews scope for missed items before submission (AI real-time source)
 - [ ] Scope Intelligence: "Train AI" accepts uploaded past scope PDFs to learn contractor patterns
-- [ ] Accuracy tracking: scope_runs records AI accuracy per job
+- [ ] Accuracy tracking: event_history records AI accuracy per job
 - [ ] AI pipeline works on Brett's first 5 real jobs at 80%+ accuracy
 - [ ] All backend endpoints have pytest coverage
 - [ ] Code review approved
@@ -44,11 +44,12 @@
 **Solution:** Three AI capabilities that work together:
 1. **AI Photo Scope** — select damage photos → AI generates Xactimate line items with S500/OSHA citations, grouped by trade category. Contractor reviews, edits, approves, pushes to report.
 2. **AI Hazmat Scanner** — scans photos for asbestos-containing materials and lead paint risk. Flags findings with severity, next steps, and local contractor referrals.
-3. **AI Scope Auditor** — "second expert" that reviews the scope before submission. Catches missed items, validates data quality, suggests additions with one-click add + auto-justification.
+3. **AI Scope Auditor** — "second expert" that reviews the scope before submission. Catches missed items, validates data quality, suggests additions with one-click add + auto-citation.
 
 **Scope:**
-- IN: Claude Vision integration, Xactimate code matching, S500/OSHA/EPA justification generation, structured output parsing, batch processing, iterative scoping, line item CRUD, trade category grouping, scope review UI, accuracy tracking, hazmat scanning (asbestos + lead paint), scope auditing, scope intelligence (Train AI with past PDFs), Push to Report flow
-- OUT: Voice scoping (Spec 01 Phase 7), network intelligence (V3/Spec 03), carrier-specific rules (V3), supplement detection (V2.5)
+- IN: Claude Vision integration, Xactimate code matching, S500/OSHA/EPA citation generation, per-photo analysis, agentic retry (auto + manual), thumbs up/down feedback, line item CRUD, trade category grouping, scope review UI, accuracy tracking (via event_history from Spec 01), hazmat scanning (asbestos + lead paint), scope auditing, scope intelligence (Train AI with past PDFs), Push to Report flow
+- OUT: Voice scoping (Spec 03), network intelligence (V3/Spec 05), carrier-specific rules (V3), supplement detection (V2.5)
+- NOTE: Accuracy tracking uses event_history table (from Spec 01), not a separate event_history table. Events: ai_photo_analysis, line_item_accepted/edited/deleted, ai_feedback_thumbs_up/down. Accuracy = (thumbs_up + accepted) / (total generated).
 
 ## Database Schema Updates
 
@@ -99,12 +100,18 @@ CREATE TABLE scope_intelligence (
 - [ ] Create `api/ai/parser.py` — parse Claude's structured output into line items
 - [ ] Integrate Claude Vision API (anthropic Python SDK)
 - [ ] Use Claude tool-use/function-calling mode for structured JSON output (not raw prompt-based JSON)
-- [ ] Structured output schema: xactimate_code, description, unit, quantity, category, room, justifications[], is_non_obvious, confidence
+- [ ] Structured output schema: xactimate_code, description, unit, quantity, category, room, citations[], is_non_obvious
+- [ ] Per-photo analysis: each photo analyzed individually by AI (not batched). AI returns what it sees in THAT photo + line items.
 - [ ] Photo preprocessing: fetch from Supabase Storage, resize to 1920px max before sending
-- [ ] Batch processing: max 10 photos per API call, split larger sets into batches
-- [ ] Batch merging: deduplicate on xactimate_code + description, keep higher quantity
-- [ ] Timeout handling: 60-second timeout per batch, return partial results on timeout
-- [ ] Cost tracking: calculate AI cost per job, store in scope_runs.ai_cost_cents
+- [ ] Cross-photo deduplication: after all photos analyzed, deduplicate line items (same xactimate_code + description = merge, keep higher quantity)
+- [ ] Timeout handling: 30-second timeout per photo analysis, skip and flag on timeout
+- [ ] Cost tracking: calculate AI cost per photo, log in event_history
+- [ ] **Agentic retry flow:**
+  - [ ] After AI generates line items for a photo, if user gives thumbs-down or deletes items → auto-retry with feedback context
+  - [ ] Retry prompt includes: "User rejected these items: [list]. Re-analyze the photo considering this feedback."
+  - [ ] Max 2 auto-retries per photo. After that, accept what AI returns.
+  - [ ] User can also manually trigger "Re-analyze" on any photo
+  - [ ] Each retry logged as `ai_photo_analysis_retry` event with feedback context
 - [ ] Include room context: pass room assignments from photo tags so AI generates per-room line items
 - [ ] Include job context: loss_cause, water_category, water_class, room dimensions (for SF/LF calculations)
 
@@ -146,15 +153,17 @@ CREATE TABLE scope_intelligence (
 - [ ] `PATCH /v1/jobs/:id/scope/items/:iid` — edit line item (code, description, qty, unit, room, category)
 - [ ] `DELETE /v1/jobs/:id/scope/items/:iid` — delete line item
 - [ ] `POST /v1/jobs/:id/scope/push-to-report` — mark items as approved, transition to report
-- [ ] On scope run: create scope_runs record with photo_count, ai_items_generated, duration_ms
-- [ ] On user edits: update scope_runs with items_kept, items_edited, items_deleted, items_added_manually
-- [ ] Calculate accuracy: (items kept unchanged) / (total items in final scope)
+- [ ] Alembic migration: create line_items table (with category TEXT field, citation JSONB)
+- [ ] Log `ai_photo_analysis` event to event_history on each photo analysis (photo_id, duration_ms, ai_cost_cents, line_items_generated)
+- [ ] Log `line_item_generated` event for each AI-generated line item
+- [ ] Log `line_item_accepted` / `line_item_edited` / `line_item_deleted` events on user actions
+- [ ] Calculate accuracy from events: (accepted + thumbs_up) / (total generated) per job
 - [ ] Iterative scoping: POST /v1/jobs/:id/scope with additional photos → merge new items with existing
-- [ ] Update job status to "scoped" after first successful scope run
+- [ ] Update job status to "scoped" after first successful analysis
 - [ ] pytest: scope endpoint triggers AI pipeline and returns line items
 - [ ] pytest: manual line item CRUD (add, edit, delete)
 - [ ] pytest: iterative scoping merges without duplicates
-- [ ] pytest: scope_runs accuracy calculation
+- [ ] pytest: event_history accuracy calculation
 - [ ] pytest: push-to-report marks items as approved
 
 ### Phase 4: Scope Review UI — ❌
@@ -177,10 +186,13 @@ CREATE TABLE scope_intelligence (
 - [ ] Inline editing: tap any field to edit in place
 - [ ] "+ Add Line Item" button at bottom of each category (or at bottom of all items)
 - [ ] Delete line item: x button per item
+- [ ] **Thumbs up / thumbs down per line item:** small icons next to each AI-generated item. Thumbs up = "correct, good job." Thumbs down = "wrong" → triggers agentic retry for that photo. Logs ai_feedback_thumbs_up/down event.
+- [ ] **Thumbs up / thumbs down on hazmat findings and scope audit items too** — same pattern, different context
 - [ ] Non-obvious items: highlighted with special styling + "AI found this — you might have missed it"
 - [ ] Streaming: line items appear progressively as AI generates them (SSE)
 - [ ] Processing state: "Analyzing 12 photos... this takes 15-30 seconds"
 - [ ] Failure state: "We couldn't analyze these photos. Try taking clearer photos." with retry
+- [ ] Photo quality feedback: before AI analysis, check for blurry/dark/overexposed photos. Flag with "This photo may be too dark/blurry for accurate analysis — retake?" Allow user to proceed anyway or remove.
 - [ ] "Re-run AI" button: select additional photos → run scope again → merge results
 - [ ] Collapse/expand categories (x button on category header to collapse)
 
@@ -192,7 +204,7 @@ CREATE TABLE scope_intelligence (
 - [ ] `POST /v1/jobs/:id/hazmat-findings/:fid/add-to-report` — add finding to PDF report
 - [ ] Asbestos Risk Scan: AI analyzes photos for ACMs (vermiculite insulation, pipe wrap, 9x9 floor tiles, popcorn ceiling, transite siding)
 - [ ] Lead Paint Risk Scan: AI analyzes photos for lead paint indicators (alligatoring pattern, chalking, multi-layer peeling)
-- [ ] Lead paint risk check: use job.year_built — pre-1978 = lead risk (EPA RRP rule)
+- [ ] Lead paint risk check: use property.year_built (via job.property_id) — pre-1978 = lead risk (EPA RRP rule)
 - [ ] Per-finding output: material_name, location, risk_level (HIGH/MEDIUM/LOW), description ("What I see: ..."), next_steps ("Do not disturb. Have certified inspector...")
 - [ ] Alembic migration: create hazmat_findings table
 
@@ -224,7 +236,7 @@ CREATE TABLE scope_intelligence (
   3. Domain logic rules (Cat 2 → antimicrobial, affected rooms need equipment, source appliance disconnect, Class 2 → flood cut, etc.)
   4. Data quality (impossible moisture readings = data entry error)
 - [ ] Output: list of flagged items with severity, title, room tag, Xactimate code badges, explanation
-- [ ] Each flagged item has: one-click "Add to Scope" with auto-generated justification
+- [ ] Each flagged item has: one-click "Add to Scope" with auto-generated citation
 - [ ] Severity levels: critical (alarm icon), warning (triangle icon), suggestion (lightbulb icon)
 
 **Frontend:**
@@ -249,6 +261,7 @@ CREATE TABLE scope_intelligence (
 - [ ] `POST /v1/company/scope-intelligence/upload` — upload past scope PDFs (up to 10)
 - [ ] `GET /v1/company/scope-intelligence` — list uploaded scopes + extraction status
 - [ ] PDF parsing: extract line items, pricing patterns, category distribution from uploaded scopes
+- [ ] Alembic migration: create scope_intelligence table
 - [ ] Store extracted data in scope_intelligence table
 - [ ] Feed extracted patterns into Scope Auditor prompts for personalized suggestions
 
@@ -269,7 +282,7 @@ CREATE TABLE scope_intelligence (
 - [ ] End-to-end test: push to report → audit scope → add flagged items → re-audit → submit
 - [ ] Test with public water damage photos (3-5 different scenarios: roof leak, basement flood, pipe burst, dishwasher leak)
 - [ ] Verify AI produces real Xactimate codes (not made-up codes)
-- [ ] Verify every line item has a justification
+- [ ] Verify every line item has a citation
 - [ ] Verify non-obvious items are flagged
 - [ ] Verify output is in correct workflow order
 - [ ] Verify trade categories assigned correctly
@@ -302,7 +315,7 @@ CREATE TABLE scope_intelligence (
 10. Stream results to client via SSE
 11. Client renders line items grouped by trade category
 12. User reviews → edits → "Push to Report →"
-13. Create scope_runs record for accuracy tracking
+13. Create event_history record for accuracy tracking
 ```
 
 **Three AI actions on Photos tab:**
@@ -372,9 +385,9 @@ cd /Users/lakshman/Workspaces/Crewmatic
 - **"Mold" is forbidden:** Insurance industry forbidden word. AI must NEVER use it. Use "visible staining" etc.
 - **Activation metric:** User approves at least 1 non-obvious item. This is the "holy shit" moment.
 - **Accuracy target:** 80%+ on Brett's first 5 real jobs. Accuracy = (kept unchanged) / (total final items).
-- **V1 justification standards:** S500 + OSHA. V2 adds: S520, EPA, IRC, IBC, NIOSH (per Brett's feedback).
+- **V1 citation standards:** S500 + OSHA. V2 adds: S520, EPA, IRC, IBC, NIOSH (per Brett's feedback).
 - **Iterative scoping:** Damage discovery is progressive. AI must support re-running on new photos and merging results.
-- **Cost budget:** ~$0.15-0.30 per job. Track in scope_runs.ai_cost_cents.
+- **Cost budget:** ~$0.15-0.30 per job. Track in event_history.ai_cost_cents.
 - **The Assignment:** Test AI pipeline with real photos before building full UI. A 2-hour exercise that validates the entire product thesis.
 - **Trade category grouping (from Brett's ScopeFlow demo):** Line items grouped by category with colored headers: Mitigation (blue), Insulation (yellow), Drywall (orange), Painting (yellow), Structural (gray), General (green). Categories drive which report items appear in (mitigation invoice vs full report). Categories are billing-critical — mitigation items get invoiced first for faster payment.
 - **Citations inline:** Justifications show below the line item row, not in a separate column. "Citation: OSHA General Duty Clause 5(a)(1); IICRC S500 Sec 13.5.6.1 — AFDs required when particulates are aerosolized during demolition." Citations are the revenue tool — adjusters cannot argue with S500/OSHA citations.

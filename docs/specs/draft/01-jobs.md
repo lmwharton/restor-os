@@ -3,7 +3,7 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% (0/7 phases) |
+| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% (0/6 phases) |
 | **State** | ❌ Not Started |
 | **Blocker** | Spec 00 (bootstrap) must be complete |
 | **Branch** | TBD |
@@ -22,7 +22,7 @@
 
 ## Done When
 - [ ] User can create a job with address + loss type (2 required fields, rest optional)
-- [ ] User can create a job by speaking (voice-to-form fills all fields progressively)
+- [ ] User can create a job by typing (voice-to-form in Spec 03)
 - [ ] User can view job list with status badges (Needs Scope / Scoped / Submitted)
 - [ ] User can view job detail with all fields editable (grouped: Customer, Loss Info, Insurance)
 - [ ] User can add floor plans (one per floor) and rooms to a job
@@ -42,7 +42,7 @@
 - [ ] User can export job as branded PDF (company header, line items, photos, floor plan, moisture log)
 - [ ] User can share job via a link (read-only view)
 - [ ] User can delete a job
-- [ ] Voice input works across all forms (job creation, room setup, moisture readings, tech notes)
+- [ ] All forms work with manual input (voice overlay added in Spec 03)
 - [ ] All backend endpoints have pytest coverage
 - [ ] Code review approved
 
@@ -61,7 +61,8 @@
 This is the container that the AI Pipeline (Spec 02) plugs into.
 
 **Scope:**
-- IN: Job CRUD, floor plans + room sketches, room management (dimensions, category, class, equipment, notes), photo upload/organize/tag/delete, moisture readings (daily atmospheric + points + dehu output), GPP auto-calc, tech field notes, PDF export, share link, voice input across all forms
+- IN: Job CRUD, floor plans + room sketches, room management (dimensions, category, class, equipment, notes), photo upload/organize/tag/delete, moisture readings (daily atmospheric + points + dehu output), GPP auto-calc, tech field notes, PDF Report + Mitigation Invoice, share link
+- Voice input is Spec 03. Drying Certificate is Spec 04.
 - OUT: AI Photo Scope / line item generation (Spec 02), AI Hazmat Scanner (Spec 02), scheduling/dispatch, team management, offline mode
 
 ## Database Schema
@@ -71,45 +72,71 @@ This is the container that the AI Pipeline (Spec 02) plugs into.
 CREATE TYPE loss_type AS ENUM ('water', 'fire', 'mold', 'storm', 'other');
 CREATE TYPE water_category AS ENUM ('1', '2', '3');
 CREATE TYPE water_class AS ENUM ('1', '2', '3', '4');
+
+CREATE TYPE event_type AS ENUM (
+    -- Job lifecycle
+    'job_created', 'job_updated', 'job_status_changed', 'job_deleted',
+    -- Property
+    'property_created', 'property_updated',
+    -- Rooms & Floor Plans
+    'room_added', 'room_updated', 'room_deleted',
+    'floor_plan_created', 'floor_plan_updated', 'floor_plan_sketch_cleaned',
+    -- Photos
+    'photo_uploaded', 'photo_updated', 'photo_deleted', 'photo_tagged_to_room',
+    'photos_bulk_tagged',
+    -- AI Analysis
+    'ai_photo_analysis', 'ai_photo_analysis_retry', 'ai_sketch_cleanup', 'ai_sketch_chat',
+    'ai_hazmat_scan', 'ai_scope_audit',
+    -- Line Items
+    'line_item_generated', 'line_item_accepted', 'line_item_edited',
+    'line_item_deleted', 'line_item_added_manual',
+    -- AI Feedback
+    'ai_feedback_thumbs_up', 'ai_feedback_thumbs_down',
+    -- Moisture & Equipment
+    'moisture_reading_added', 'moisture_reading_updated', 'moisture_reading_deleted',
+    'equipment_updated',
+    -- Reports
+    'report_generated', 'report_downloaded', 'report_shared',
+    -- Company
+    'settings_updated', 'team_member_invited', 'team_member_joined'
+);
 ```
 
 ### Tables
 
-**jobs** (from design.md — already defined)
+**properties** (NEW — one per physical address, shared across jobs)
 ```sql
-CREATE TABLE jobs (
+CREATE TABLE properties (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    job_number      TEXT NOT NULL,  -- format: JOB-YYYYMMDD-XXX
     address_line1   TEXT NOT NULL,
-    city            TEXT,
-    state           TEXT,
-    zip             TEXT,
+    address_line2   TEXT,
+    city            TEXT NOT NULL,
+    state           TEXT NOT NULL,
+    zip             TEXT NOT NULL,
     latitude        DOUBLE PRECISION,
     longitude       DOUBLE PRECISION,
-    claim_number    TEXT,
-    carrier         TEXT,
-    adjuster_name   TEXT,
-    adjuster_phone  TEXT,
-    adjuster_email  TEXT,
-    loss_type       loss_type NOT NULL DEFAULT 'water',
-    loss_category   water_category,
-    loss_class      water_class,
-    loss_cause      TEXT,           -- e.g., "dishwasher leak", "pipe burst"
-    loss_date       DATE,
-    status          TEXT NOT NULL DEFAULT 'needs_scope',  -- needs_scope | scoped | submitted
-    customer_name   TEXT,
-    customer_phone  TEXT,
-    customer_email  TEXT,
-    year_built      INTEGER,        -- property age; pre-1978 = lead paint risk. Auto-fill from property API, confirm with homeowner.
-    room_count      INTEGER DEFAULT 0,
-    tech_notes      TEXT,           -- free-text field, voice-fillable, AI reads during scope
-    notes           TEXT,
-    created_by      UUID NOT NULL REFERENCES auth.users(id),
+    usps_standardized TEXT,          -- USPS-standardized full address for dedup/matching
+    year_built      INTEGER,         -- pre-1978 = lead paint risk. Auto-fill from property API, confirm with homeowner.
+    property_type   TEXT,            -- residential, commercial, multi-family
+    total_sqft      INTEGER,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(company_id, job_number)
+    UNIQUE(company_id, usps_standardized)  -- prevent duplicate properties per company
 );
+-- Note: usps_standardized enables matching across jobs ("this address had a previous job")
+-- Future (V3 network): cross-company matching to see if another contractor worked here
+```
+
+**jobs** (ALTER TABLE — jobs table already exists from Spec 00 bootstrap)
+```sql
+-- Jobs table was created in Spec 00 with most fields already present (loss_type, loss_category,
+-- loss_class, loss_cause, loss_date, claim_number, carrier, adjuster_*, customer_*, notes, etc.)
+-- This migration only adds NEW columns not in the original Spec 00 migration:
+ALTER TABLE jobs ADD COLUMN property_id UUID REFERENCES properties(id) ON DELETE SET NULL;
+ALTER TABLE jobs ADD COLUMN tech_notes TEXT;           -- free-text, voice-fillable, AI reads during scope
+-- room_count is DERIVED (COUNT of job_rooms), not stored. Query with subquery or view.
+-- address fields remain on jobs for display. property_id links to canonical property record.
 ```
 
 **floor_plans** (NEW — one per floor)
@@ -145,6 +172,7 @@ CREATE TABLE job_rooms (
     dry_standard    DECIMAL(6,2),    -- target reading for "dry" (reading of unaffected area)
     equipment_air_movers  INTEGER DEFAULT 0,
     equipment_dehus       INTEGER DEFAULT 0,
+    room_sketch_data JSONB,          -- per-room sketch: damage wall markings, equipment placement, moisture point locations
     notes           TEXT,            -- per-room notes, voice-fillable
     sort_order      INTEGER NOT NULL DEFAULT 0,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -215,11 +243,79 @@ CREATE TABLE dehu_outputs (
 );
 ```
 
+**reports** (NEW — tracks generated PDFs/documents)
+```sql
+CREATE TABLE reports (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    report_type     TEXT NOT NULL,    -- 'full_report' | 'mitigation_invoice' | 'drying_certificate'
+    status          TEXT NOT NULL DEFAULT 'draft',  -- draft | generating | ready | failed
+    storage_url     TEXT,             -- Supabase Storage URL of generated PDF
+    share_token     TEXT,             -- time-limited share token for public access
+    share_expires   TIMESTAMPTZ,     -- share token expiry (7 days default)
+    generated_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
+**event_history** (NEW — full audit trail for jobs + company)
+```sql
+CREATE TABLE event_history (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    job_id          UUID REFERENCES jobs(id) ON DELETE CASCADE,  -- nullable: null for company-level events
+    event_type      event_type NOT NULL,
+    user_id         UUID,             -- users(id) for human actions, NULL for AI actions
+    is_ai           BOOLEAN DEFAULT false,  -- true when AI performed the action
+    event_data      JSONB NOT NULL DEFAULT '{}',  -- flexible payload per event type
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Index for fast job timeline queries
+CREATE INDEX idx_event_history_job ON event_history(job_id, created_at DESC);
+-- Index for company-wide activity feed
+CREATE INDEX idx_event_history_company ON event_history(company_id, created_at DESC);
+```
+
+**event_data examples by event_type:**
+```jsonc
+// ai_photo_analysis
+{ "photo_id": "abc", "duration_ms": 3200, "ai_cost_cents": 3,
+  "line_items_generated": 4 }
+
+// ai_photo_analysis_retry (agentic retry with feedback)
+{ "photo_id": "abc", "retry_reason": "auto",  // or "user_requested"
+  "feedback": "user rejected 2 items", "line_items_generated": 3 }
+
+// line_item_accepted
+{ "line_item_id": "xyz", "source": "ai" }
+
+// line_item_edited
+{ "line_item_id": "xyz", "source": "ai",
+  "changes": { "quantity": { "from": 3, "to": 5 } } }
+
+// ai_feedback_thumbs_up / ai_feedback_thumbs_down
+{ "line_item_id": "xyz", "context": "photo_analysis" }
+// or { "finding_id": "abc", "context": "hazmat_scan" }
+// or { "audit_item_id": "def", "context": "scope_audit" }
+
+// ai_scope_audit
+{ "items_flagged": 10, "severity_breakdown": { "critical": 4, "warning": 4, "suggestion": 2 } }
+
+// report_generated
+{ "report_type": "mitigation_invoice", "report_id": "..." }
+```
+
 ### Data Relationships
 
 ```
-job
-├── floor_plans (1 per floor — visual sketches)
+property (physical address — shared across jobs)
+├── year_built, property_type, total_sqft, USPS-standardized address
+├── Multiple jobs can reference the same property
+│
+job (references property_id)
+├── floor_plans (1 per floor — spatial overview of room positions)
 │   ├── Floor 1 (canvas_data: walls, doors, windows as geometry)
 │   │   ├── Room drawn on sketch → creates job_room with floor_plan_id
 │   │   └── Room drawn on sketch → dimensions auto-populated from sketch
@@ -227,6 +323,7 @@ job
 │
 ├── job_rooms (data about each room)
 │   ├── Master Bedroom (floor_plan_id: Floor 1, 10.5x15ft, Cat 2, 3 air movers, 1 dehu)
+│   │   ├── room_sketch_data (per-room detail: damage walls, equipment placement, moisture points)
 │   │   ├── moisture_readings (daily)
 │   │   │   ├── Day 1: atmospheric + moisture_points + dehu_outputs
 │   │   │   └── Day 2: ...
@@ -240,7 +337,7 @@ job
 │   └── photo_type → damage | equipment | protection | before | after
 │
 ├── line_items (generated by AI in Spec 02 — referenced here for PDF)
-└── scope_runs (AI tracking in Spec 02 — referenced here for PDF)
+└── event_history (AI tracking in Spec 02 — referenced here for PDF)
 ```
 
 **Floor plan ↔ Room relationship:**
@@ -288,9 +385,13 @@ job
 
 **Database migration:**
 - [ ] Alembic migration: create enums (loss_type, water_category, water_class)
-- [ ] Alembic migration: create jobs table
+- [ ] Alembic migration: create properties table
+- [ ] Alembic migration: ALTER jobs table (add property_id FK, loss fields, customer fields, insurance fields, tech_notes — jobs table already exists from Spec 00)
 - [ ] Alembic migration: create floor_plans table
-- [ ] Alembic migration: create job_rooms table
+- [ ] Alembic migration: create job_rooms table (with room_sketch_data JSONB)
+- [ ] Alembic migration: create reports table
+- [ ] Alembic migration: create event_type enum
+- [ ] Alembic migration: create event_history table (with indexes)
 - [ ] Enable RLS on all tables with company_id isolation
 
 **Tests:**
@@ -300,10 +401,25 @@ job
 - [ ] pytest: update job fields
 - [ ] pytest: delete job
 - [ ] pytest: create floor plan for job
+- [ ] pytest: update floor plan canvas_data
+- [ ] pytest: delete floor plan (sets room floor_plan_id to null)
 - [ ] pytest: create room linked to floor plan
 - [ ] pytest: create room without floor plan (standalone)
 - [ ] pytest: update room equipment counts
 - [ ] pytest: auto-calculate square_footage
+
+**Event History:**
+- [ ] Create `api/events/schemas.py` — Pydantic models
+- [ ] Create `api/events/service.py` — event logging + querying
+- [ ] Create `api/events/router.py` — route handlers
+- [ ] `GET /v1/jobs/:id/events` — job timeline (all events for this job, chronological)
+- [ ] `GET /v1/events` — company-wide activity feed (all events, paginated, filterable by event_type)
+- [ ] `POST /v1/events` — log an event (internal — called by other services, not directly by frontend)
+- [ ] Helper: `log_event(company_id, job_id, event_type, user_id, is_ai, event_data)` — used throughout all services
+- [ ] All CRUD operations in jobs/rooms/photos/moisture services call `log_event` automatically
+- [ ] pytest: event logged on job creation
+- [ ] pytest: job timeline returns events in chronological order
+- [ ] pytest: company activity feed filters by event_type
 
 ### Phase 2: Photo + Moisture Backend — ❌
 **Photos:**
@@ -326,6 +442,7 @@ job
 - [ ] Create `api/moisture/router.py` — route handlers
 - [ ] `POST /v1/jobs/:jid/rooms/:rid/readings` — create daily moisture reading (date, atmospheric)
 - [ ] `GET /v1/jobs/:jid/rooms/:rid/readings` — list readings for room (chronological, with points + dehu)
+- [ ] `GET /v1/jobs/:jid/readings` — list ALL readings across ALL rooms for this job (needed for PDF report + Drying Certificate)
 - [ ] `PATCH /v1/jobs/:jid/readings/:mid` — update reading (atmospheric values)
 - [ ] `DELETE /v1/jobs/:jid/readings/:mid` — delete reading
 - [ ] `POST /v1/jobs/:jid/readings/:mid/points` — add moisture point (location, value, meter photo)
@@ -366,12 +483,14 @@ job
   - **Customer:** customer_name, customer_phone, customer_email, address (line1, city, state, zip)
   - **Loss Info:** loss_date, loss_cause (loss source), water_category (Cat 1/2/3), water_class (Class 1-4)
   - **Insurance:** carrier, claim_number, adjuster_name, adjuster_email, adjuster_phone
+  - **Property:** year_built (optional — for lead paint risk, auto-fill from property API if available)
 - [ ] 2 required fields: address_line1 + loss_type. Everything else optional.
 - [ ] Loss type selector: water/fire/mold — 3 large tap targets, default water
 - [ ] "Create Job" button at bottom
 - [ ] Job detail page (`/jobs/[id]`): all fields editable inline
 - [ ] Job detail tabs: Overview | Site Log | Photos | Report
 - [ ] Overview tab: all job fields grouped (Customer, Loss Info, Insurance), editable
+- [ ] Job activity timeline: chronological list of all events for this job (from event_history). Shows: who did what, when. "Brett uploaded 5 photos to Master Bedroom" / "AI analyzed photo — generated 4 line items" / "Report generated and shared with adjuster"
 - [ ] Delete job: confirmation dialog → delete
 - [ ] Mobile-responsive: 48px touch targets, stacked layout on small screens
 - [ ] Loading states, error states, empty states for each view
@@ -469,7 +588,7 @@ job
 - [ ] **Multiple report types:**
   - **PDF Report** — full scope (all categories): company header, job info, floor plan, rooms, ALL line items with citations, photos, moisture log, tech notes
   - **Mitigation Invoice** — mitigation-category items ONLY. Sent first to adjuster for fast payment. Same layout but filtered to mitigation line items.
-  - **Drying Certificate** — generated from moisture readings. Shows: initial readings → daily progress → final readings at dry standard. Proves equipment days were justified. Includes atmospheric data + GPP trends.
+  - **Drying Certificate** — deferred to Spec 04. Generated from moisture readings data collected here.
 - [ ] PDF sections (full report):
   - Company-branded header (logo + name + phone)
   - Job address, date, homeowner name, insurance info
@@ -487,64 +606,6 @@ job
 - [ ] pytest: PDF generation produces valid PDF file
 - [ ] pytest: share token generates and resolves to correct job
 - [ ] pytest: expired share token returns 403
-
-### Phase 7: Voice Everywhere — ❌
-**Voice infrastructure (cross-cutting — applies to all forms):**
-- [ ] Deepgram Nova-2 streaming integration (WebSocket from browser → Deepgram cloud → transcripts back)
-- [ ] Backend: `POST /v1/voice/extract-fields` — accepts transcript + context (which form), returns structured field JSON via Claude
-- [ ] Frontend: Voice input component (reusable across all forms)
-  - "Hold to Speak" button (press-and-hold for push-to-talk)
-  - "Tap Mic for Continuous" mode (tap to start, tap to stop)
-  - Live transcript display below the button (shows words as spoken, ~300ms latency)
-  - Progress indicator: "Got 1 field — keep talking" style feedback
-  - Field validation indicators: green checkmark when field is filled, orange warning triangle for uncertain values
-
-**Voice-to-form (job creation):**
-- [ ] Speak customer info: "customer name Jane Doe, phone 586-555-9600, email janedoe@yahoo.com"
-- [ ] Speak address: "her address is 27851 Gilbert Drive, Warren Michigan 48093"
-- [ ] Speak loss info: "loss source is dishwasher leak, cat 1, class 2, date of loss March 13th"
-- [ ] Speak insurance: "insurance carrier State Farm, claim number 9742.34, adjuster Alex Garnapudi"
-- [ ] Progressive field filling: fields update as user speaks (on Deepgram utterance-end events)
-- [ ] Corrections: "I'm sorry, the loss source is a dishwasher leak" → updates previous value
-- [ ] LLM sees full accumulated transcript, not just latest chunk → corrections work naturally
-
-**Voice-to-form (room setup):**
-- [ ] "Speak Room Names" button → speak room names sequentially, auto-create room records
-- [ ] Speak per-room: "Master bedroom, 10.5 by 15 feet, cat 2, class 1, 3 air movers, 1 dehu"
-- [ ] Each room's "Speak" button → voice input for that room's fields
-
-**Voice-to-form (moisture readings):**
-- [ ] Per-day "Speak" button → "temperature 72, humidity 45, basement reading 100, kitchen wall 150"
-
-**Voice-to-text (tech field notes):**
-- [ ] Speak button → continuous transcription mode → fills text area directly
-- [ ] "Listening — describe what was done today..." indicator
-- [ ] Stop button ends recording, transcript becomes the note text
-
-**Technical approach:**
-```
-┌─────────────┐     audio chunks      ┌──────────────┐
-│  Browser Mic │ ──────────────────►   │  Deepgram    │
-│  (MediaStream)│                      │  Nova-2      │
-└─────────────┘                        │  WebSocket   │
-                                       └──────┬───────┘
-                                              │ interim + final transcripts
-                                              ▼
-                                     ┌────────────────┐
-                                     │  Frontend      │
-                                     │  - Show live   │
-                                     │    transcript  │
-                                     │  - On utterance│
-                                     │    end: call   │──► Claude API (field extraction)
-                                     │    backend     │◄── { structured fields JSON }
-                                     │  - Merge into  │
-                                     │    form state  │
-                                     └────────────────┘
-```
-- Deepgram handles STT (speech-to-text) — ~300ms latency, streams interim + final transcripts
-- Claude handles field extraction — parses natural speech into structured form data
-- Cost per job creation: ~$0.01 (30s speech = ~$0.002 Deepgram + ~$0.003 Claude × 3-4 calls)
-- For tech field notes: Deepgram only (pure transcription, no LLM extraction needed)
 
 ## Technical Approach
 
@@ -682,24 +743,24 @@ cd /Users/lakshman/Workspaces/Crewmatic
   - **Share Portal** — read-only link for adjuster/homeowner to view job documentation
   - **Close Job** — marks job as complete/submitted
 - **Line item categories are billing-critical, not just display.** They determine: (1) which PDF report the item appears in, (2) which invoice goes out first, (3) payment timeline. Mitigation items = fast payment. Reconstruction items = slower payment. This is a core domain rule.
-- **Certificate of Dryness (Spec 01 — auto-generated from moisture data):** Professional document: cert number, property address, claim number, loss type, drying period, days of drying, adjuster, technician, contractor. Room-by-room drying summary table: room name, dimensions, drying period, dry standard, final readings (color-coded: orange if above std, green if at/below), equipment used, status (IN PROGRESS / COMPLETE). Statement of Compliance citing IICRC S500. Technician signature line + date. Footer: "Generated by Crewmatic | IICRC S500 Compliant Documentation". Auto-generated entirely from moisture_readings + job_rooms data — no manual work.
+- **Certificate of Dryness → Spec 04 Phase 7.** Full spec captured there. Auto-generated from moisture_readings + job_rooms data collected in Spec 01.
 - **AI Scope Auditor (Spec 02 — the "second expert"):** "Reviews your scope like a 10-year veteran — flags missed line items before it goes to the adjuster." Runs AFTER Push to Report, BEFORE submitting to adjuster. Cross-references: (1) line items in scope vs photos/rooms/readings, (2) S500/OSHA standards for what SHOULD be present given damage type, (3) domain logic rules (Cat 2 → antimicrobial required, affected rooms need equipment, source appliance needs disconnect/reconnect line item, Class 2 → flood cut needed, etc.), (4) data quality (impossible moisture readings = data entry error). Output: list of flagged items with severity (critical/warning/suggestion), title, room tag, specific Xactimate code badges to add, explanation of WHY it's needed. Examples from Brett's demo: missing water extraction, no moisture inspection, missing equipment in affected rooms, no antimicrobial for Cat 2, unrealistic drying log data, missing flooring assessment, no drywall flood cut, missing source appliance disconnect, no deodorization, missing content manipulation. Each finding is one-click "Add to Scope" with auto-justification. "Re-Audit" button after changes. "Train AI" button to teach contractor preferences. This is the moat — it catches $50 line items humans miss and backs them with citations so adjusters can't deny.
 - **AI as second expert before submission:** The flow is: AI Photo Scope (generate items) → Contractor review/edit → Push to Report → AI Scope Auditor (catch what's missing) → Add flagged items → Submit to adjuster. Two AI passes: one to generate, one to audit. This is the "second expert overseeing before submitting" pattern.
 - **Scope Intelligence / Train AI (Spec 02 or onboarding):** "Train AI on your past scopes" — upload up to 10 most recent insurance scopes (PDF). AI extracts line items, pricing patterns, and identifies where contractor has been leaving money on the table. Makes Scope Auditor smarter on every future job. Could be part of onboarding flow (first-time setup) or accessible from the AI Scope Auditor screen via "Train AI" button.
-- **Network effects / crowdsourced scope intelligence (V3 — the platform moat):** Across all contractors using Crewmatic, aggregate anonymized scope data. When one contractor scopes a Cat 2 dishwasher leak, AI can suggest: "Other contractors typically also add these line items for this type of loss." This is the network effect — every contractor's data makes every other contractor's scopes better. Increases profit per job for the entire network. Examples: "87% of contractors add antimicrobial treatment for Cat 2 losses", "Contractors who add content manipulation for kitchen losses get paid 23% more on average." This is the crowdsourced pricing database from the V3 roadmap — but the data collection starts in V1 with scope_runs tracking. Privacy: all suggestions are aggregate/anonymized, never revealing individual contractor data.
+- **Network effects / crowdsourced scope intelligence (V3 — the platform moat):** Across all contractors using Crewmatic, aggregate anonymized scope data. When one contractor scopes a Cat 2 dishwasher leak, AI can suggest: "Other contractors typically also add these line items for this type of loss." This is the network effect — every contractor's data makes every other contractor's scopes better. Increases profit per job for the entire network. Examples: "87% of contractors add antimicrobial treatment for Cat 2 losses", "Contractors who add content manipulation for kitchen losses get paid 23% more on average." This is the crowdsourced pricing database from the V3 roadmap — but the data collection starts in V1 with event_history tracking. Privacy: all suggestions are aggregate/anonymized, never revealing individual contractor data.
   - **Technical architecture for network effects:**
-    1. **Normalize:** Every completed job becomes a "scope signature" — loss profile (loss_type, category, class, source) + final line items (kept/edited/deleted/added manually from scope_runs).
+    1. **Normalize:** Every completed job becomes a "scope signature" — loss profile (loss_type, category, class, source) + final line items (kept/edited/deleted/added manually from event_history).
     2. **Co-occurrence matrix:** Build lookup table: `(loss_type, category, class, source) → [{xactimate_code, frequency_pct, approval_rate_pct}]`. Example: Cat 2 dishwasher leak → antimicrobial 92%, content manipulation 87%, baseboard R&R 78%, deodorization 34%.
     3. **Surface suggestions:** During Scope Auditor (before submission), add "Community Insights" section alongside rule-based flags: "Based on 450 similar jobs, contractors who added deodorization got paid for it 89% of the time. [+ Add with citation]"
     4. **Privacy model:** Minimum 20+ jobs of same profile before showing suggestions. Percentages only, never company names. Contractors can opt out of contributing but still receive suggestions.
-    5. **Implementation:** Background job (nightly/weekly) aggregates scope_runs + line_items into co-occurrence tables. No real-time computation needed. The Scope Auditor already runs before submission — just add community insights data source.
+    5. **Implementation:** Background job (nightly/weekly) aggregates event_history + line_items into co-occurrence tables. No real-time computation needed. The Scope Auditor already runs before submission — just add community insights data source.
     6. **Moat:** Every contractor who uses Crewmatic contributes to the intelligence pool. More contractors = better suggestions. Competitors can't replicate without the user base. Contractors who leave lose access. This is "Waze for restoration scoping."
-    7. **V1 foundation:** scope_runs table already tracks AI items generated / kept / edited / deleted / added manually. This is the raw data that feeds the network intelligence in V3. No additional V1 work needed — just keep collecting.
+    7. **V1 foundation:** event_history table already tracks AI items generated / kept / edited / deleted / added manually. This is the raw data that feeds the network intelligence in V3. No additional V1 work needed — just keep collecting.
     8. **Three audit sources (shipped progressively):**
        - **(a) AI REAL-TIME (Spec 02 / V1):** Analyzes current job's photos, room data, moisture readings, tech notes against S500/OSHA/EPA standards. Reasons from first principles. Works from job #1 with zero history. This is the AI Scope Auditor as shown in Brett's demo.
-       - **(b) AI PAST HISTORY (V2):** Learns from contractor's own past jobs — uploaded scope PDFs (onboarding) + Crewmatic scope_runs. "You had a similar Cat 2 dishwasher job at 123 Oak St last month — you added content manipulation there but it's missing here." Acts as a coach: reinforces good catches, flags regressions.
+       - **(b) AI PAST HISTORY (V2):** Learns from contractor's own past jobs — uploaded scope PDFs (onboarding) + Crewmatic event_history. "You had a similar Cat 2 dishwasher job at 123 Oak St last month — you added content manipulation there but it's missing here." Acts as a coach: reinforces good catches, flags regressions.
        - **(c) AI NETWORK (V3):** Anonymized aggregate from all contractors on the platform. "92% of contractors add antimicrobial for Cat 2 losses." Co-occurrence matrix, 20+ job minimum, percentages only. The network effect moat.
-    9. **Progressive intelligence timeline:** Jobs 1-10: AI learns from uploaded past scope PDFs (onboarding). Jobs 11-20: AI learns from contractor's own Crewmatic scope_runs. Job 21+: suggestions from BOTH personal history AND network. More contractors = stronger network suggestions. Personal suggestions are always available regardless of network size.
+    9. **Progressive intelligence timeline:** Jobs 1-10: AI learns from uploaded past scope PDFs (onboarding). Jobs 11-20: AI learns from contractor's own Crewmatic event_history. Job 21+: suggestions from BOTH personal history AND network. More contractors = stronger network suggestions. Personal suggestions are always available regardless of network size.
     10. **Board & People (V2 — from Brett's demo):** Per-job message board for communication between techs, owner, customer, adjuster. Simple threaded messages (name + text + timestamp). Contacts section with Customers and Adjusters tabs — each with name, phone, email, share link, remove. Team Members section links to Company Settings. Not in Spec 01 but informs V2 team management spec.
     11. **Company Settings expanded (from Brett's demo):** Profile tab: logo upload, company name, city/region, phone, email, website URL, app URL, Google Review link. Inventory tab (V2 — equipment library). Our `companies` table already has name, phone, email, logo_url from bootstrap. Need to add: `city TEXT`, `region TEXT` (or state), `website_url TEXT`, `google_review_url TEXT`, `yelp_url TEXT`, and a general `social_links JSONB` for other profiles (Facebook, BBB, Angi, HomeAdvisor, etc.). These show on branded PDF reports, portals, and emails. Future: SEO/AEO audit — analyze contractor's online presence (Google Business, Yelp, website) and suggest improvements to rank better for local restoration searches. Value-add that deepens platform stickiness.
     12. **Daily auto-report to adjuster/customer (V2):** Auto-generate daily progress email from today's moisture readings + photos uploaded + tech field notes. Send to adjuster + customer via email with limited-access Share Portal link. This is the "Auto Adjuster Reports" feature from the V2 roadmap. Keeps adjuster informed proactively → faster approvals → faster payment.

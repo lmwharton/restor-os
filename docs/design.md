@@ -223,7 +223,7 @@ CREATE TABLE jobs (
     customer_email  TEXT,
     room_count      INTEGER DEFAULT 0,
     notes           TEXT,
-    created_by      UUID NOT NULL REFERENCES auth.users(id),
+    created_by      UUID NOT NULL REFERENCES users(id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE(company_id, job_number)
@@ -264,33 +264,30 @@ CREATE TABLE line_items (
     is_non_obvious  BOOLEAN DEFAULT false,
     source          scope_source NOT NULL DEFAULT 'manual',  -- ai | manual
     sort_order      INTEGER NOT NULL DEFAULT 0,
-    created_by      UUID NOT NULL REFERENCES auth.users(id),
+    created_by      UUID NOT NULL REFERENCES users(id),
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-**scope_runs** (AI accuracy tracking)
+**event_history** (replaces scope_runs — full audit trail + AI accuracy tracking)
 ```sql
-CREATE TABLE scope_runs (
-    id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    job_id                UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-    company_id            UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    photo_count           INTEGER NOT NULL,
-    ai_items_generated    INTEGER NOT NULL,
-    items_kept            INTEGER DEFAULT 0,
-    items_edited          INTEGER DEFAULT 0,
-    items_deleted         INTEGER DEFAULT 0,
-    items_added_manually  INTEGER DEFAULT 0,
-    duration_ms           INTEGER,
-    ai_cost_cents         INTEGER,    -- track per-job AI cost
-    created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE event_history (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    job_id          UUID REFERENCES jobs(id) ON DELETE CASCADE,
+    event_type      TEXT NOT NULL,    -- enum: job_created, photo_uploaded, ai_photo_analysis, line_item_accepted, etc.
+    user_id         UUID,             -- NULL for AI actions
+    is_ai           BOOLEAN DEFAULT false,
+    event_data      JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+-- AI accuracy is derived from events: ai_photo_analysis + line_item_accepted/edited/deleted + ai_feedback_thumbs_up/down
 ```
 
 #### V2+ Tables (defined in architecture doc)
 
-The full architecture defines 18 tables including: `company_members`, `company_invites`, `job_rooms`, `job_schedules`, `moisture_readings`, `equipment_library`, `equipment_placements`, `voice_notes`, `ai_scope_results`, `reports`, `adjuster_reports`, `room_sketches`, `audit_log`. See [`docs/research/product-specs/restoros-architecture.md`, Part 3](research/product-specs/restoros-architecture.md) for complete SQL.
+The full architecture defines 18 tables including: `company_members`, `company_invites`, `job_rooms`, `job_schedules`, `moisture_readings`, `equipment_library`, `equipment_placements`, `voice_notes`, `event_history`, `line_items`, `reports`, `adjuster_reports`, `floor_plans`, `audit_log`. See [`docs/research/product-specs/restoros-architecture.md`, Part 3](research/product-specs/restoros-architecture.md) for complete SQL.
 
 ### V1 API Endpoints
 
@@ -342,7 +339,7 @@ This is the core product capability. No competitor has it.
 9. Streams results to client via SSE
 10. Contractor reviews, edits, approves
 11. Approved items saved to line_items table
-12. scope_runs record created for accuracy tracking
+12. event_history records created for accuracy tracking
 ```
 
 #### Batch Processing
@@ -356,7 +353,7 @@ This is the core product capability. No competitor has it.
 
 - ~$0.15-0.30 per job analysis (10 photos x Claude vision pricing after resize)
 - Monthly limits by tier: Solo: 50, Team: 200, Pro: 1,000
-- Track per-job AI cost in `scope_runs.ai_cost_cents`
+- Track per-job AI cost in event_history (ai_photo_analysis events)
 
 #### Hard Rules
 
@@ -434,7 +431,7 @@ Complete water damage code database: [`docs/research/xactimate-codes-water.md`](
 
 ### Auth
 
-**V1:** Supabase Auth with email + password. No social login. Single user per company (Brett). Application-level `WHERE company_id = :user_company_id` on all queries. No database-level RLS in V1.
+**V1:** Supabase Auth with Google OAuth. Single user per company (Brett). Application-level `WHERE company_id = :user_company_id` on all queries. No database-level RLS in V1.
 
 **V2:** Multi-user with roles (`owner` > `admin` > `tech`). Google OAuth. Full PostgreSQL RLS policies. Team invites. See [`docs/research/product-specs/restoros-architecture.md`, Parts 4 and 8](research/product-specs/restoros-architecture.md) for complete RLS implementation.
 
@@ -552,7 +549,7 @@ The narrowest wedge. Ships first. Validates the core thesis.
 
 *"Monitors job documentation in real-time and auto-drafts a supplement request the moment it detects a billable deviation from the original scope."* — Brett
 
-V1 foundation: iterative scoping (re-run AI on new photos) + scope_runs tracking (multiple runs per job) = supplement detection primitive.
+V1 foundation: iterative scoping (re-run AI on new photos) + event_history tracking (ai_photo_analysis events per job) = supplement detection primitive.
 
 ### V3: Intelligence Layer
 
