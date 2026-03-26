@@ -8,8 +8,8 @@ See root `../CLAUDE.md` for project overview and domain context.
 cd backend
 python -m venv .venv
 source .venv/bin/activate
-pip install -e ".[dev]"
-uvicorn api.main:app --reload --port 8000
+pip install -r requirements-dev.txt
+uvicorn api.main:app --reload --port 5174
 ```
 
 Set `DEBUG=true` in `.env` to enable Swagger UI at `/docs`.

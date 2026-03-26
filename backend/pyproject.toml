@@ -1,27 +1,4 @@
-[project]
-name = "crewmatic-api"
-version = "0.1.0"
-description = "Crewmatic API — backend for restoration contractors"
-requires-python = ">=3.12"
-dependencies = [
-    "fastapi>=0.115.0",
-    "uvicorn[standard]>=0.34.0",
-    "pydantic-settings>=2.7.0",
-    "supabase>=2.13.0",
-    "httpx>=0.28.0",
-    "PyJWT>=2.8.0",
-    "python-multipart>=0.0.9",
-]
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0.0",
-    "pytest-asyncio>=0.25.0",
-    "ruff>=0.9.0",
-]
-
-[tool.setuptools.packages.find]
-include = ["api*"]
+# Tool configuration only. Dependencies are in requirements.txt.
 
 [tool.ruff]
 target-version = "py312"
