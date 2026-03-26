@@ -26,6 +26,29 @@ CORS_ORIGINS=["http://localhost:3000"]
 DEBUG=true
 ```
 
+## Database Migrations (Alembic)
+
+Alembic is used **only** for schema migrations via raw SQL. We do NOT use SQLAlchemy ORM -- all queries go through the Supabase Python client.
+
+```bash
+# Check current migration state
+alembic current
+
+# Run all pending migrations
+alembic upgrade head
+
+# Create a new migration (manual SQL, not autogenerate)
+alembic revision -m "add_rooms_table"
+
+# Stamp a migration as applied without running it
+alembic stamp <revision>
+
+# View migration history
+alembic history
+```
+
+`DATABASE_URL` is loaded from `.env` / `.env.local` by `alembic/env.py`. On Railway, set `alembic upgrade head` as the pre-deploy command.
+
 ## Conventions
 
 - Feature modules go in `api/{feature}/` with `router.py`, `service.py`, `schemas.py`

@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Database (used by Alembic migrations — not by app queries)
+    database_url: str = ""
+
     # Server
     port: int = 8000
 

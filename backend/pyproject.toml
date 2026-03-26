@@ -7,5 +7,8 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*.py" = ["E501"]  # SQL strings in migrations exceed line length
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

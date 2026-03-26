@@ -43,7 +43,7 @@ npm run dev -- --port 5173
 | Service | URL |
 |---------|-----|
 | Frontend (Vercel) | https://crewmaticai.vercel.app |
-| Backend (Railway) | TBD |
+| Backend (Railway) | https://crewmatic-staging.up.railway.app |
 | Supabase | https://wewxtwentwcqcpyghqhf.supabase.co |
 | Supabase Studio | https://supabase.com/dashboard/project/wewxtwentwcqcpyghqhf |
 
