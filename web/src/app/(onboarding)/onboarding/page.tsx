@@ -69,12 +69,18 @@ export default function OnboardingPage() {
       const supabase = createClient();
       const { data: { session } } = await supabase.auth.getSession();
 
+      if (!session?.access_token) {
+        setError("Your session has expired. Please sign in again.");
+        setIsSubmitting(false);
+        return;
+      }
+
       const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
       const res = await fetch(`${API_URL}/v1/company`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${session?.access_token}`,
+          Authorization: `Bearer ${session.access_token}`,
         },
         body: JSON.stringify({
           name: companyName.trim(),
@@ -123,7 +129,7 @@ export default function OnboardingPage() {
               Create your workspace
             </h1>
             <p className="text-[15px] text-on-surface-variant leading-relaxed mb-8">
-              Tell us about your company so we can customize AI scoping for your business.
+              Tell us about your company so we can customize Crewmatic for you.
             </p>
 
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -190,7 +196,10 @@ export default function OnboardingPage() {
 
           {/* Footer text */}
           <p className="text-center text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-outline mt-8">
-            Precision Scoping Powered by Crewmatic AI
+            Precision Scoping Powered by{" "}
+            <Link href="/" className="text-primary hover:underline underline-offset-2">
+              Crewmatic
+            </Link>
           </p>
 
           {/* Decorative icons */}
@@ -211,12 +220,6 @@ export default function OnboardingPage() {
             ))}
           </div>
 
-          {/* Step indicator */}
-          <div className="flex items-center justify-center gap-2 mt-8">
-            <span className="w-2 h-2 rounded-full bg-brand-accent" />
-            <span className="w-2 h-2 rounded-full bg-surface-container-high" />
-            <span className="w-2 h-2 rounded-full bg-surface-container-high" />
-          </div>
         </div>
       </main>
     </div>
