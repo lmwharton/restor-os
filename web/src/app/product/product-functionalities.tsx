@@ -205,32 +205,37 @@ const FUNCTIONALITIES: Functionality[] = [
     number: 6,
     name: "Scoping (Voice & Manual)",
     tagline:
-      "Two ways to build your scope: AI-guided voice (hands-free in the field) or manual keyboard entry with smart Xactimate code search. Every line item auto-backed by S500/OSHA.",
+      "Speak naturally in any order \u2014 AI extracts and maps to the right fields in real-time. Or use manual keyboard entry with smart Xactimate code search. Every line item auto-backed by S500/OSHA.",
     painPoint:
-      "Contractors can't type with gloves on in a wet basement, but voice must be accurate or it won't be used. Xactimate's native search is terrible.",
+      "Contractors can\u2019t type with gloves on in a wet basement. A guided form approach (field-by-field prompts) doesn\u2019t match how techs actually talk \u2014 they jump between rooms, backtrack, and describe things out of order. Voice input must handle free-form speech or it won\u2019t be used.",
     aiPowered: true,
     steps: [
       {
-        text: "Voice mode: AI asks structured questions — 'What room?' → 'Describe damage' → 'Flooring material?' → 'Affected area?'",
+        text: "Voice mode: speak naturally in any order \u2014 AI extracts and maps to the correct fields automatically",
+        detail:
+          "No rigid question sequence. Describe damage, rooms, materials in whatever order comes naturally. AI handles the structure.",
       },
       {
-        text: "Contractor speaks naturally — AI structures into Xactimate line items in real-time",
+        text: "Two input modes: Continuous (mic stays hot, hands-free) and Push-to-Talk (for noisy job sites)",
       },
       {
-        text: "Voice commands: 'next room,' 'go back,' 'done' — fully hands-free",
+        text: "Fields lock green when AI confirms the capture; yellow with flag when ambiguous for review",
+      },
+      {
+        text: "Spelling recognition: say \u2018spelled K-O-V-I-N-A-C-K\u2019 and AI applies it to the last captured name",
+      },
+      {
+        text: "Session log shows everything captured so the tech can track what\u2019s been processed",
       },
       {
         text: "Manual mode: search Xactimate codes by keyword with fuzzy matching and category grouping",
         detail:
-          "50+ water damage codes organized by workflow: tear-out → protect → clean → dry → monitor → decon",
-      },
-      {
-        text: "Select code, enter quantity and unit — works room-by-room or house level",
+          "50+ water damage codes organized by workflow: tear-out \u2192 protect \u2192 clean \u2192 dry \u2192 monitor \u2192 decon",
       },
       {
         text: "S500/OSHA justification auto-attached to every line item",
         detail:
-          "This is a revenue tool: 'OSHA requires this' wins payment disputes with adjusters",
+          "This is a revenue tool: \u2018OSHA requires this\u2019 wins payment disputes with adjusters",
       },
       {
         text: "Typical job: 10-30 line items total",

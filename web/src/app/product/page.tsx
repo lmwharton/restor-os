@@ -420,6 +420,7 @@ export default async function ProductPage() {
           <div className="space-y-0">
             {[
               { label: "US restoration businesses", value: "62,582" },
+              { label: "With <50 employees (Census 2022)", value: "94.6%" },
               { label: "US restoration services market", value: "$7.2B" },
               { label: "Software TAM (US)", value: "$225M–$600M/yr" },
               { label: "Current contractor tool spend", value: "$700–$1,900/mo" },
@@ -439,6 +440,119 @@ export default async function ProductPage() {
               </div>
             ))}
           </div>
+        </section>
+
+        {/* Platform Roadmap */}
+        <section className="py-8 border-b border-[#eae6e1]">
+          <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] mb-2">
+            Platform Roadmap
+          </h2>
+          <p className="text-[14px] text-[#8a847e] mb-5">
+            Crewmatic starts with water restoration, then expands into adjacent
+            trades. Each vertical shares the same core engine &mdash; what
+            changes is the data model, AI prompts, and document outputs.
+          </p>
+
+          <div className="space-y-3">
+            {[
+              {
+                phase: "V1",
+                label: "Now",
+                title: "Water Restoration",
+                desc: "AI Photo Scope, job management, moisture tracking, PDF reports, adjuster portal. The foundation everything else builds on.",
+                color: "bg-[#2a9d5c]",
+                border: "border-[#2a9d5c]",
+                bg: "bg-[#f6faf7]",
+              },
+              {
+                phase: "V2",
+                label: "Next",
+                title: "Insurance Repair (Reconstruction)",
+                desc: "Post-mitigation rebuild scoping. Same adjusters, same Xactimate language. Supplement management, code upgrade tracking, O&P monitoring, ACV/RCV holdback tracking. Turns Crewmatic from a mitigation tool into a full-lifecycle claim tool.",
+                color: "bg-[#e85d26]",
+                border: "border-[#e85d26]",
+                bg: "bg-[#fff8f5]",
+              },
+              {
+                phase: "V3",
+                label: "Future",
+                title: "Remodeling",
+                desc: "Proposal generator (voice to line-item), change order workflows, permit/inspection tracking, subcontractor coordination, punch lists, lien waiver management. No adjuster \u2014 customer is the decision-maker.",
+                color: "bg-[#7c5cbf]",
+                border: "border-[#7c5cbf]",
+                bg: "bg-[#f8f5ff]",
+              },
+              {
+                phase: "V4",
+                label: "Future",
+                title: "Plumbing",
+                desc: "Photo diagnostic engine, water heater EOL detection, whole-house repipe trigger, source-of-loss referrals back to restoration. Service call + project modes.",
+                color: "bg-[#3b82f6]",
+                border: "border-[#3b82f6]",
+                bg: "bg-[#f5f8ff]",
+              },
+              {
+                phase: "V5",
+                label: "Future",
+                title: "Electrical",
+                desc: "Panel photo diagnosis (flags Federal Pacific, Zinsco, double-taps, heat damage), load calculation assistant, EV charger and generator install workflows, hazard documentation.",
+                color: "bg-[#eab308]",
+                border: "border-[#eab308]",
+                bg: "bg-[#fefce8]",
+              },
+              {
+                phase: "V6",
+                label: "Future",
+                title: "HVAC",
+                desc: "Symptom-to-diagnosis engine, system replacement triggers, maintenance visit autopilot, contract management, equipment EOL alerts. Most unique data model \u2014 recurring visits and maintenance contracts.",
+                color: "bg-[#ec4899]",
+                border: "border-[#ec4899]",
+                bg: "bg-[#fdf2f8]",
+              },
+            ].map((item) => (
+              <div
+                key={item.phase}
+                className={`${item.bg} border-l-2 ${item.border} rounded-r-lg px-3 py-3`}
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span
+                    className={`${item.color} text-white text-[10px] font-bold px-1.5 py-0.5 rounded`}
+                  >
+                    {item.phase}
+                  </span>
+                  <span className="text-[10px] font-medium text-[#8a847e] uppercase tracking-wider">
+                    {item.label}
+                  </span>
+                </div>
+                <h3 className="text-[14px] font-semibold text-[#1a1a1a] mb-1">
+                  {item.title}
+                </h3>
+                <p className="text-[12px] text-[#6b6560] leading-relaxed">
+                  {item.desc}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          {/* Cross-Trade Network */}
+          <div className="mt-5 px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
+            <h3 className="text-[13px] font-semibold text-[#1a1a1a] mb-1">
+              The Network Effect
+            </h3>
+            <p className="text-[12px] text-[#6b6560] leading-relaxed">
+              Every trade on the platform becomes a lead source for every other
+              trade. Plumber finds a burst pipe &rarr; one-tap refers restoration
+              job. HVAC tech finds condensate damage &rarr; refers restoration.
+              Electrician finds moisture near wiring &rarr; refers restoration.
+              The more trades, the more valuable the platform becomes for
+              everyone on it.
+            </p>
+          </div>
+
+          <p className="text-[11px] text-[#b5b0aa] mt-3 italic">
+            Source: Co-founder product vision session, March 2026.
+            Full research in docs/research/multi-trade-expansion.md
+          </p>
         </section>
 
         {/* Design Document */}

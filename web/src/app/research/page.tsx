@@ -14,10 +14,12 @@ export const metadata: Metadata = {
 export default async function ResearchPage() {
   const docsDir = path.join(process.cwd(), "..", "docs", "research");
 
-  const [competitiveContent, xactimateContent, tpaContent] = await Promise.all([
+  const [competitiveContent, xactimateContent, tpaContent, multiTradeContent, prototypeSessionsContent] = await Promise.all([
     readFile(path.join(docsDir, "competitive-analysis.md"), "utf-8"),
     readFile(path.join(docsDir, "xactimate-codes-water.md"), "utf-8"),
     readFile(path.join(docsDir, "tpa-carrier-guidelines.md"), "utf-8"),
+    readFile(path.join(docsDir, "multi-trade-expansion.md"), "utf-8"),
+    readFile(path.join(docsDir, "brett-prototype-sessions.md"), "utf-8"),
   ]);
 
   const competitiveSections = parseSections(competitiveContent);
@@ -65,6 +67,8 @@ export default async function ResearchPage() {
           competitiveSections={competitiveSections}
           xactimateContent={xactimateContent}
           tpaContent={tpaContent}
+          multiTradeContent={multiTradeContent}
+          prototypeSessionsContent={prototypeSessionsContent}
         />
       </main>
 

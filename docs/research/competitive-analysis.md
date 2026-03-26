@@ -13,7 +13,7 @@
 **Validated by:** Brett Sodders, co-founder, water restoration contractor (DryPros, Michigan). Full interview and workflow validation in Appendices A and B.
 
 **Key numbers:**
-- **$180-360M** addressable market (50,000+ small/mid restoration shops)
+- **$180-360M** addressable market (75%+ of 62,500 restoration businesses are small shops with <25 employees)
 - **$700-1,900/mo** what contractors pay today across 4-6 tools (Xactimate alone is $350/mo)
 - **$149/mo** Crewmatic replaces all of them — validated as "no-brainer" pricing
 - **3 hours/day** saved per contractor — tool pays for itself in 1 day
@@ -66,6 +66,9 @@ And even with all these tools, the core workflow is still painfully manual:
 | Metric | Value |
 |--------|-------|
 | US restoration businesses | 62,582 (IBISWorld 2025) |
+| Remediation services establishments (NAICS 562910) | 5,852 (US Census CBP 2022) |
+| Establishments with <50 employees | 5,534 — **94.6% of all** (Census CBP 2022) |
+| RIA estimate of pure restoration companies | ~10,000 |
 | Market growth rate | 4.3% YoY |
 | US restoration services market | $7.2 billion (2025) |
 | Water damage market (2026 to 2032) | $5.97B to $8.97B (6.93% CAGR) |
@@ -73,6 +76,12 @@ And even with all these tools, the core workflow is still painfully manual:
 | IICRC certified firms | 6,500+ |
 | Software TAM (US) | **$225M - $600M/year** |
 | Addressable (small/mid shops) | **$180M - $360M/year** |
+
+**Note on counting:** Restoration companies don't have their own NAICS code (the RIA submitted a request for code 624231 in the 2027 NAICS review). Companies are currently fragmented across 562910 (Remediation Services), 236118 (Residential Remodelers), and 561790 (Other Services to Buildings). The IBISWorld figure of 62,582 uses the broadest damage restoration definition. Home Service Base counted 29,129 water-damage-specific companies via Google Business Profiles. R&R Magazine surveys show **75%+ have fewer than 25 employees** and **>50% have fewer than 10**. Census CBP 2022 data confirms 94.6% of NAICS 562910 establishments have <50 employees. This is overwhelmingly a market of small shops.
+
+**Recommended pitch citation:** "62,500+ damage restoration businesses in the US (IBISWorld, 2025), with over 75% employing fewer than 25 people (R&R Magazine industry survey)."
+
+Sources: [IBISWorld](https://www.ibisworld.com/united-states/number-of-businesses/damage-restoration-services/6278/), [Home Service Base](https://homeservicebase.com/water-damage-restoration-business), [R&R Magazine](https://www.randrmagonline.com/articles/90210-restoration-contractors-seeing-more-residential-work-seeking-more-workers), [C&R Magazine / RIA](https://www.candrmagazine.com/fragmented-naics-codes-and-their-negative-impact-on-the-restoration-industry/), [US Census CBP](https://www.census.gov/programs-surveys/cbp.html)
 
 The market is large, growing, and **underserved by modern software.** The dominant players (DASH, Xactimate) are 15-20+ years old. AI adoption in restoration is near zero.
 
@@ -483,7 +492,7 @@ The AI Photo Scope demo sells itself. Upload a photo of water-damaged drywall. W
 
 ### 3. Win on Price for Small Shops
 
-50,000+ restoration businesses can't afford $500-1,500/month in software. Crewmatic at $49-149/month replaces 3-4 tools.
+The vast majority of restoration businesses (94.6% have <50 employees per Census data) can't afford $500-1,500/month in software. Crewmatic at $49-149/month replaces 3-4 tools.
 
 ### 4. Voice-First for Field Credibility
 

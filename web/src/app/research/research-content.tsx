@@ -11,13 +11,19 @@ export function ResearchContent({
   competitiveSections,
   xactimateContent,
   tpaContent,
+  multiTradeContent,
+  prototypeSessionsContent,
 }: {
   competitiveSections: Section[];
   xactimateContent: string;
   tpaContent: string;
+  multiTradeContent: string;
+  prototypeSessionsContent: string;
 }) {
   const [xactimateOpen, setXactimateOpen] = useState(false);
   const [tpaOpen, setTpaOpen] = useState(false);
+  const [multiTradeOpen, setMultiTradeOpen] = useState(false);
+  const [prototypeOpen, setPrototypeOpen] = useState(false);
 
   return (
     <div className="space-y-10">
@@ -155,6 +161,113 @@ export function ResearchContent({
         {tpaOpen && (
           <div className="mt-4 pl-0 sm:pl-11">
             <MarkdownSection content={tpaContent} />
+          </div>
+        )}
+      </section>
+
+      {/* Divider */}
+      <div className="h-px bg-[#eae6e1]" />
+
+      {/* Section 4: Multi-Trade Expansion */}
+      <section>
+        <button
+          onClick={() => setMultiTradeOpen(!multiTradeOpen)}
+          className="w-full text-left flex items-center gap-3 group"
+        >
+          <div className="w-8 h-8 rounded-[10px] bg-[#fef3c7] flex items-center justify-center">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M8 2v12M2 8h12"
+                stroke="#d97706"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+              />
+              <circle cx="8" cy="8" r="5.5" stroke="#d97706" strokeWidth="1.5" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] group-hover:text-[#d97706] transition-colors">
+              Multi-Trade Expansion
+            </h2>
+            <p className="text-[13px] text-[#8a847e] mt-0.5">
+              Platform expansion vision &mdash; insurance repair, remodeling, plumbing, electrical, HVAC, and the pricing database strategy
+            </p>
+          </div>
+          <span
+            className={`text-[10px] text-[#b5b0aa] group-hover:text-[#d97706] transition-all duration-200 ${
+              multiTradeOpen ? "rotate-90" : ""
+            }`}
+          >
+            &#9654;
+          </span>
+        </button>
+        {multiTradeOpen && (
+          <div className="mt-4 pl-0 sm:pl-11">
+            <MarkdownSection content={multiTradeContent} />
+          </div>
+        )}
+      </section>
+
+      {/* Divider */}
+      <div className="h-px bg-[#eae6e1]" />
+
+      {/* Section 5: Brett's Prototype Sessions */}
+      <section>
+        <button
+          onClick={() => setPrototypeOpen(!prototypeOpen)}
+          className="w-full text-left flex items-center gap-3 group"
+        >
+          <div className="w-8 h-8 rounded-[10px] bg-[#fce4ec] flex items-center justify-center">
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              xmlns="http://www.w3.org/2000/svg"
+            >
+              <path
+                d="M4 12l2-4 3 2 3-6"
+                stroke="#e91e63"
+                strokeWidth="1.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+              <rect
+                x="2.5"
+                y="2.5"
+                width="11"
+                height="11"
+                rx="2"
+                stroke="#e91e63"
+                strokeWidth="1.5"
+              />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h2 className="text-[20px] font-bold text-[#1a1a1a] tracking-[-0.5px] group-hover:text-[#e91e63] transition-colors">
+              Brett&apos;s Product Sessions
+            </h2>
+            <p className="text-[13px] text-[#8a847e] mt-0.5">
+              Market sizing, AI feature ideas, voice UX findings, sketch tool requirements, and iOS direction
+            </p>
+          </div>
+          <span
+            className={`text-[10px] text-[#b5b0aa] group-hover:text-[#e91e63] transition-all duration-200 ${
+              prototypeOpen ? "rotate-90" : ""
+            }`}
+          >
+            &#9654;
+          </span>
+        </button>
+        {prototypeOpen && (
+          <div className="mt-4 pl-0 sm:pl-11">
+            <MarkdownSection content={prototypeSessionsContent} />
           </div>
         )}
       </section>

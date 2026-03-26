@@ -53,6 +53,36 @@ Full co-founder interview (30 questions + 16 workflow validation answers): [`doc
 
 ---
 
+## Platform Roadmap
+
+Crewmatic starts with water restoration, then expands into adjacent trades that share the same core engine. Each vertical changes the data model, AI prompts, and document outputs — the platform layer (job management, photo AI, voice input, portals) stays the same.
+
+| Phase | Vertical | Status | Key Differentiator |
+|-------|----------|--------|-------------------|
+| V1 | Water Restoration | **Building now** | AI Photo Scope + S500/OSHA justifications |
+| V2 | Insurance Repair (Reconstruction) | Next | Post-mitigation rebuild — supplements, code upgrades, O&P, holdback tracking |
+| V3 | Remodeling | Future | Voice-to-proposal, change orders, permit tracking, punch lists |
+| V4 | Plumbing | Future | Photo diagnostics, repipe triggers, water heater EOL, source-of-loss referrals |
+| V5 | Electrical | Future | Panel photo diagnosis, load calc, EV charger workflows, hazard docs |
+| V6 | HVAC | Future | Symptom-to-diagnosis, maintenance contracts, equipment EOL alerts |
+
+**Cross-trade referral network:** Every trade becomes a lead source for every other trade on the platform. This is the network effect moat.
+
+Full research: [`docs/research/multi-trade-expansion.md`](research/multi-trade-expansion.md)
+
+### iOS-Forward Design
+
+Brett's directive: *"I want to operate under the impression that this will one day soon be an app on iOS. So let's not make decisions based on the fact we're web-based."*
+
+**Current strategy:** Build web-first, but make design decisions that translate to native iOS. This means:
+- Camera integration patterns that map to native camera APIs
+- GPS/location patterns that map to Core Location
+- Offline-capable data architecture (local-first sync)
+- Touch-first UI (no hover-dependent interactions)
+- Future: LiDAR/RoomPlan for auto-generated room sketches with dimensions (iOS native only)
+
+---
+
 ## V1 Scope — AI Scope + Job Shell
 
 **Source:** [Approved MVP design doc from office hours](https://github.com) | Status: APPROVED
@@ -534,6 +564,8 @@ V1 foundation: iterative scoping (re-run AI on new photos) + scope_runs tracking
 | Hazmat Scanner | Auto-flag asbestos/lead in photos |
 | Video Scoping | Walkthrough video → frame extraction → comprehensive line items |
 | Crowdsourced Pricing | RS Means + BLS + user data → contractor-owned pricing engine |
+| Scope Intelligence Network | Aggregate anonymized scope data across all contractors. Co-occurrence matrix: "92% of contractors add antimicrobial for Cat 2 losses." Surfaces suggestions during Scope Auditor: "Based on 450 similar jobs, contractors who added deodorization got paid 89% of the time." Privacy: 20+ job minimum, percentages only, opt-out available. **This is the network effect moat — every contractor makes every other contractor's scope better.** |
+| Scope Intelligence Onboarding | Upload 10 past scope PDFs → AI extracts line items, pricing patterns, identifies where contractor left money on the table → trains Scope Auditor for future jobs |
 
 ---
 
