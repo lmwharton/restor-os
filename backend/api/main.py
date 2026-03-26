@@ -9,7 +9,10 @@ from api.shared.exceptions import AppException, app_exception_handler
 
 app = FastAPI(
     title="Crewmatic API",
-    version="0.1.0",
+    description="The Operating System for Restoration Contractors",
+    version="26.3.1",
+    docs_url="/docs" if settings.debug else None,
+    redoc_url="/redoc" if settings.debug else None,
 )
 
 app.add_middleware(
@@ -23,6 +26,19 @@ app.add_middleware(
 app.add_exception_handler(AppException, app_exception_handler)
 
 app.include_router(auth_router, prefix="/v1")
+
+
+@app.get("/")
+async def root():
+    """API root — shows version and available endpoints."""
+    return {
+        "name": "Crewmatic API",
+        "version": "26.3.1",
+        "description": "The Operating System for Restoration Contractors",
+        "docs": "/docs" if settings.debug else "Docs disabled in production. Set DEBUG=true to enable.",
+        "health": "/health",
+        "api": "/v1",
+    }
 
 
 @app.get("/health")
@@ -47,7 +63,7 @@ async def health_check():
 
     return {
         "status": overall,
-        "version": "0.1.0",
+        "version": "26.3.1",
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "environment": settings.environment,
         "services": services,
