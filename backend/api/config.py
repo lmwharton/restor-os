@@ -10,7 +10,6 @@ class Settings(BaseSettings):
 
     # Environment
     environment: str = "development"
-    debug: bool = False
 
     # Supabase
     supabase_url: str = ""
