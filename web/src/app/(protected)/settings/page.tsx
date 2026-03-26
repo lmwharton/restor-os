@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 
@@ -133,17 +133,19 @@ function StatusMessage({ message }: { message: string }) {
 function SaveButton({
   onClick,
   isSaving,
+  disabled = false,
   label = "Save Changes",
 }: {
   onClick: () => void;
   isSaving: boolean;
+  disabled?: boolean;
   label?: string;
 }) {
   return (
     <button
       onClick={onClick}
-      disabled={isSaving}
-      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      disabled={isSaving || disabled}
+      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {isSaving ? (
         <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -221,6 +223,26 @@ export default function SettingsPage() {
   // Loading
   const [isLoading, setIsLoading] = useState(true);
 
+  // Track original values for dirty detection
+  const orgOriginal = useRef({ name: "", phone: "", email: "", address: "", city: "", state: "", zip: "" });
+  const profileOriginal = useRef({ name: "", firstName: "", lastName: "", phone: "", title: "" });
+
+  const orgDirty =
+    companyName !== orgOriginal.current.name ||
+    companyPhone !== orgOriginal.current.phone ||
+    companyEmail !== orgOriginal.current.email ||
+    companyAddress !== orgOriginal.current.address ||
+    companyCity !== orgOriginal.current.city ||
+    companyState !== orgOriginal.current.state ||
+    companyZip !== orgOriginal.current.zip;
+
+  const profileDirty =
+    userName !== profileOriginal.current.name ||
+    firstName !== profileOriginal.current.firstName ||
+    lastName !== profileOriginal.current.lastName ||
+    userPhone !== profileOriginal.current.phone ||
+    userTitle !== profileOriginal.current.title;
+
   useEffect(() => {
     async function loadProfile() {
       try {
@@ -232,24 +254,30 @@ export default function SettingsPage() {
         if (res.ok) {
           const data = await res.json();
           // Company
-          setCompanyName(data.company?.name || "");
-          setCompanyPhone(data.company?.phone || "");
-          setCompanyEmail(data.company?.email || "");
-          setCompanyAddress(data.company?.address || "");
-          setCompanyCity(data.company?.city || "");
-          setCompanyState(data.company?.state || "");
-          setCompanyZip(data.company?.zip || "");
+          const cn = data.company?.name || "";
+          const cp = data.company?.phone || "";
+          const ce = data.company?.email || "";
+          const ca = data.company?.address || "";
+          const cc = data.company?.city || "";
+          const cs = data.company?.state || "";
+          const cz = data.company?.zip || "";
+          setCompanyName(cn); setCompanyPhone(cp); setCompanyEmail(ce);
+          setCompanyAddress(ca); setCompanyCity(cc); setCompanyState(cs); setCompanyZip(cz);
           setLogoUrl(data.company?.logo_url || "");
           setSubscriptionTier(data.company?.subscription_tier || "free");
+          orgOriginal.current = { name: cn, phone: cp, email: ce, address: ca, city: cc, state: cs, zip: cz };
           // Profile
-          setUserName(data.name || "");
-          setFirstName(data.first_name || "");
-          setLastName(data.last_name || "");
-          setUserPhone(data.phone || "");
+          const un = data.name || "";
+          const fn = data.first_name || "";
+          const ln = data.last_name || "";
+          const up = data.phone || "";
+          const ut = data.title || "";
+          setUserName(un); setFirstName(fn); setLastName(ln);
+          setUserPhone(up); setUserTitle(ut);
           setUserEmail(data.email || "");
-          setUserTitle(data.title || "");
           setUserRole(data.role || "owner");
           setAvatarUrl(data.avatar_url || "");
+          profileOriginal.current = { name: un, firstName: fn, lastName: ln, phone: up, title: ut };
         }
       } catch {
         // Backend unreachable
@@ -282,8 +310,9 @@ export default function SettingsPage() {
         body: JSON.stringify(body),
       });
       if (res.ok) {
+        orgOriginal.current = { name: companyName.trim(), phone: companyPhone.trim(), email: companyEmail.trim(), address: companyAddress.trim(), city: companyCity.trim(), state: companyState.trim(), zip: companyZip.trim() };
         setOrgMessage("Saved");
-        setTimeout(() => setOrgMessage(""), 2000);
+        setTimeout(() => setOrgMessage(""), 3000);
       } else {
         const data = await res.json().catch(() => ({}));
         setOrgMessage(data.error || "Failed to save");
@@ -349,8 +378,9 @@ export default function SettingsPage() {
         body: JSON.stringify(body),
       });
       if (res.ok) {
+        profileOriginal.current = { name: userName.trim(), firstName: firstName.trim(), lastName: lastName.trim(), phone: userPhone.trim(), title: userTitle.trim() };
         setProfileMessage("Profile updated");
-        setTimeout(() => setProfileMessage(""), 2000);
+        setTimeout(() => setProfileMessage(""), 3000);
       } else {
         const data = await res.json().catch(() => ({}));
         setProfileMessage(data.error || "Failed to save");
@@ -543,7 +573,7 @@ export default function SettingsPage() {
 
               <StatusMessage message={orgMessage} />
 
-              <SaveButton onClick={handleSaveOrg} isSaving={isSaving} />
+              <SaveButton onClick={handleSaveOrg} isSaving={isSaving} disabled={!orgDirty} />
             </div>
           </section>
         )}
@@ -660,6 +690,7 @@ export default function SettingsPage() {
               <SaveButton
                 onClick={handleSaveProfile}
                 isSaving={isSavingProfile}
+                disabled={!profileDirty}
                 label="Save Profile"
               />
             </div>
