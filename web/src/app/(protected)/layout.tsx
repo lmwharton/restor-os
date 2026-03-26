@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 import AppShell from "@/components/app-shell";
 import type { Metadata } from "next";
 
@@ -9,8 +10,6 @@ export const metadata: Metadata = {
     default: "Crewmatic",
   },
 };
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 export default async function ProtectedLayout({
   children,
@@ -33,16 +32,9 @@ export default async function ProtectedLayout({
   } = await supabase.auth.getSession();
 
   if (session?.access_token) {
-    try {
-      const res = await fetch(`${API_URL}/v1/company`, {
-        headers: { Authorization: `Bearer ${session.access_token}` },
-        cache: "no-store",
-      });
-      if (res.status === 404) {
-        redirect("/onboarding");
-      }
-    } catch {
-      // Backend unreachable — let it through, AppShell will show skeleton
+    const destination = await getAuthenticatedRedirect(session.access_token);
+    if (destination !== "/jobs") {
+      redirect(destination);
     }
   }
 

@@ -1,12 +1,18 @@
 import { redirect } from "next/navigation";
-import { getUser } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 
 export default async function Home() {
-  const user = await getUser();
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
 
-  if (user) {
-    redirect("/jobs");
-  } else {
+  if (!user) {
     redirect("/login");
   }
+
+  const { data: { session } } = await supabase.auth.getSession();
+  const destination = session?.access_token
+    ? await getAuthenticatedRedirect(session.access_token)
+    : "/onboarding";
+  redirect(destination);
 }

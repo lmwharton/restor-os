@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { getUser } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
+import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 import SignInButton from "./sign-in-button";
 
 /**
@@ -58,9 +59,15 @@ function ShieldIcon() {
 }
 
 export default async function LoginPage() {
-  const user = await getUser();
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
   if (user) {
-    redirect("/jobs");
+    const { data: { session } } = await supabase.auth.getSession();
+    const destination = session?.access_token
+      ? await getAuthenticatedRedirect(session.access_token)
+      : "/onboarding";
+    redirect(destination);
   }
 
   return (

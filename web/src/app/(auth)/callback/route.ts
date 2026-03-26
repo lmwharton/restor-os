@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL || "http://localhost:3000";
 
@@ -47,23 +48,9 @@ export async function GET(request: NextRequest) {
 
   // Check if user already has a company — determines onboarding vs jobs redirect
   const { data: { session } } = await supabase.auth.getSession();
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-  let destination = "/onboarding"; // safe default for new users
-
-  try {
-    const companyRes = await fetch(`${API_URL}/v1/company`, {
-      headers: { Authorization: `Bearer ${session?.access_token}` },
-      cache: "no-store",
-    });
-
-    if (companyRes.ok) {
-      destination = "/jobs";
-    }
-    // 404 or other non-ok → stay on /onboarding
-  } catch {
-    // Backend unreachable — fall through to onboarding (safe fallback)
-  }
+  const destination = session?.access_token
+    ? await getAuthenticatedRedirect(session.access_token)
+    : "/onboarding";
 
   // Transfer cookies from the Supabase exchange response to our redirect
   const redirectResponse = NextResponse.redirect(`${SITE_URL}${destination}`);
