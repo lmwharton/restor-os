@@ -1,7 +1,8 @@
 "use client";
 
-import { use, useState, useCallback } from "react";
+import { use, useState, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import FloorPlanCanvas from "@/components/sketch/floor-plan-canvas";
 import {
   useFloorPlans,
@@ -9,10 +10,8 @@ import {
   useUpdateFloorPlan,
   useCleanupSketch,
 } from "@/lib/hooks/use-jobs";
-
-/* ------------------------------------------------------------------ */
-/*  Page                                                               */
-/* ------------------------------------------------------------------ */
+import { apiPost, apiPatch } from "@/lib/api";
+import type { FloorPlan } from "@/lib/types";
 
 export default function FloorPlanPage({
   params,
@@ -21,58 +20,109 @@ export default function FloorPlanPage({
 }) {
   const { id: jobId } = use(params);
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
   const updateFloorPlan = useUpdateFloorPlan(jobId);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
+  // Track the active floor plan ID separately to survive refetches
+  const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
 
-  const activeFloor = floorPlans?.[activeFloorIdx] ?? null;
-  const cleanupMutation = useCleanupSketch(
-    jobId,
-    activeFloor?.id ?? ""
-  );
+  // Sync activeFloorId when floor plans load
+  useEffect(() => {
+    if (floorPlans && floorPlans.length > 0 && !activeFloorId) {
+      setActiveFloorId(floorPlans[0].id);
+    }
+  }, [floorPlans, activeFloorId]);
+
+  const activeFloor = floorPlans?.find((fp) => fp.id === activeFloorId)
+    ?? floorPlans?.[activeFloorIdx]
+    ?? null;
+
+  const cleanupMutation = useCleanupSketch(jobId, activeFloor?.id ?? "");
 
   /* ---------------------------------------------------------------- */
-  /*  Handlers                                                         */
+  /*  Save — create or update, handle 409 gracefully                   */
   /* ---------------------------------------------------------------- */
 
   const handleSave = useCallback(
     async (canvasData: Record<string, unknown>) => {
-      if (activeFloor) {
-        updateFloorPlan.mutate({
-          floorPlanId: activeFloor.id,
-          canvas_data: canvasData,
-        });
-      } else {
-        try {
-          await createFloorPlan.mutateAsync({
-            floor_number: (floorPlans?.length ?? 0) + 1,
-            floor_name: `Floor ${(floorPlans?.length ?? 0) + 1}`,
+      try {
+        if (activeFloor) {
+          // Update existing floor plan
+          await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${activeFloor.id}`, {
             canvas_data: canvasData,
           });
-          // After create, the query invalidation will refetch and set activeFloor
-        } catch {
-          // 409 = floor plan already exists, refetch and try update
-          // The query invalidation from the hook will refresh floorPlans
+          queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+        } else {
+          // Create new floor plan
+          const floorNum = (floorPlans?.length ?? 0) + 1;
+          try {
+            const created = await apiPost<FloorPlan>(`/v1/jobs/${jobId}/floor-plans`, {
+              floor_number: floorNum,
+              floor_name: `Floor ${floorNum}`,
+              canvas_data: canvasData,
+            });
+            setActiveFloorId(created.id);
+            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+          } catch (err: unknown) {
+            // 409 = floor plan already exists — refetch and update instead
+            const apiErr = err as { status?: number };
+            if (apiErr.status === 409) {
+              await queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+              // Wait for refetch, then try update on floor 1
+              const refetched = await queryClient.fetchQuery<FloorPlan[]>({
+                queryKey: ["floor-plans", jobId],
+              });
+              if (refetched && refetched.length > 0) {
+                const fp = refetched[0];
+                setActiveFloorId(fp.id);
+                await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${fp.id}`, {
+                  canvas_data: canvasData,
+                });
+                queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+              }
+            } else {
+              throw err;
+            }
+          }
         }
+      } catch (err) {
+        console.error("Failed to save floor plan:", err);
       }
     },
-    [activeFloor, floorPlans, updateFloorPlan, createFloorPlan]
+    [activeFloor, floorPlans, jobId, queryClient]
   );
+
+  /* ---------------------------------------------------------------- */
+  /*  Cleanup — send to Shapely backend                                */
+  /* ---------------------------------------------------------------- */
 
   const handleCleanup = useCallback(
     async (canvasData: Record<string, unknown>): Promise<Record<string, unknown>> => {
+      // If no floor plan saved yet, save first then cleanup
       if (!activeFloor) {
-        // Save first, then cleanup
+        await handleSave(canvasData);
+        // After save, activeFloor should be set — but we need the ID
+        // For now, return the data as-is and let user click cleanup again
         return canvasData;
       }
-      const result = await cleanupMutation.mutateAsync(canvasData);
-      return result.canvas_data;
+      try {
+        const result = await cleanupMutation.mutateAsync(canvasData);
+        return result.canvas_data;
+      } catch (err) {
+        console.error("Cleanup failed:", err);
+        return canvasData;
+      }
     },
-    [activeFloor, cleanupMutation]
+    [activeFloor, cleanupMutation, handleSave]
   );
+
+  /* ---------------------------------------------------------------- */
+  /*  Add Floor                                                        */
+  /* ---------------------------------------------------------------- */
 
   const handleAddFloor = useCallback(() => {
     const nextNumber = (floorPlans?.length ?? 0) + 1;
@@ -82,7 +132,8 @@ export default function FloorPlanPage({
         floor_name: `Floor ${nextNumber}`,
       },
       {
-        onSuccess: () => {
+        onSuccess: (data) => {
+          setActiveFloorId(data.id);
           setActiveFloorIdx(nextNumber - 1);
         },
       }
@@ -90,7 +141,7 @@ export default function FloorPlanPage({
   }, [floorPlans, createFloorPlan]);
 
   /* ---------------------------------------------------------------- */
-  /*  Loading state                                                    */
+  /*  Loading                                                          */
   /* ---------------------------------------------------------------- */
 
   if (isLoading) {
@@ -120,13 +171,7 @@ export default function FloorPlanPage({
           className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
         >
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-            <path
-              d="M15 18l-6-6 6-6"
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
+            <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
           Back to Job
         </button>
@@ -137,9 +182,12 @@ export default function FloorPlanPage({
             <button
               key={fp.id}
               type="button"
-              onClick={() => setActiveFloorIdx(idx)}
+              onClick={() => {
+                setActiveFloorIdx(idx);
+                setActiveFloorId(fp.id);
+              }}
               className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
-                idx === activeFloorIdx
+                fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId)
                   ? "bg-on-surface text-surface"
                   : "text-on-surface-variant hover:bg-surface-container-high"
               }`}
