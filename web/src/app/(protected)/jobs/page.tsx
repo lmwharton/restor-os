@@ -42,31 +42,31 @@ const statusConfig: Record<
 > = {
   new: {
     label: "New",
-    className: "bg-surface-container-high text-on-surface-variant",
+    className: "bg-red-500/15 text-red-600",
   },
   contracted: {
     label: "Contracted",
-    className: "bg-amber-100 text-amber-700",
+    className: "bg-amber-500/15 text-amber-700",
   },
   mitigation: {
     label: "Mitigation",
-    className: "bg-orange-100 text-orange-700",
+    className: "bg-brand-accent/15 text-brand-accent",
   },
   drying: {
     label: "Drying",
-    className: "bg-blue-100 text-blue-700",
+    className: "bg-blue-500/15 text-blue-600",
   },
   completed: {
     label: "Complete",
-    className: "bg-teal-100 text-teal-700",
+    className: "bg-slate-400/15 text-slate-600",
   },
   submitted: {
     label: "Submitted",
-    className: "bg-cyan-100 text-cyan-700",
+    className: "bg-cyan-600/15 text-cyan-700",
   },
   collected: {
     label: "Collected",
-    className: "bg-emerald-100 text-emerald-700",
+    className: "bg-emerald-500/15 text-emerald-700",
   },
 };
 
