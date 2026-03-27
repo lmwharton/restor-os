@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 import AppShell from "@/components/app-shell";
+import { GoogleMapsProvider } from "@/components/google-maps-provider";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -38,5 +39,9 @@ export default async function ProtectedLayout({
     }
   }
 
-  return <AppShell>{children}</AppShell>;
+  return (
+    <GoogleMapsProvider>
+      <AppShell>{children}</AppShell>
+    </GoogleMapsProvider>
+  );
 }

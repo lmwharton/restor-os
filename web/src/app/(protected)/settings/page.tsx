@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { AddressAutocomplete } from "@/components/address-autocomplete";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -498,11 +499,17 @@ export default function SettingsPage() {
               {/* Address row */}
               <div>
                 <FieldLabel htmlFor="org-address">Address</FieldLabel>
-                <TextInput
-                  id="org-address"
+                <AddressAutocomplete
                   value={companyAddress}
                   onChange={setCompanyAddress}
-                  placeholder="123 Main St"
+                  onSelect={(parts) => {
+                    setCompanyAddress(parts.address_line1);
+                    setCompanyCity(parts.city);
+                    setCompanyState(parts.state);
+                    setCompanyZip(parts.zip);
+                  }}
+                  placeholder="Start typing an address..."
+                  className="w-full h-12 px-4 rounded-lg bg-surface-container-low text-on-surface text-[15px] placeholder:text-outline transition-all duration-200 outline-none focus:ring-2 focus:ring-primary/20 focus:bg-surface-container-lowest"
                 />
               </div>
 

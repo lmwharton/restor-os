@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { LossType, WaterCategory, WaterClass } from "@/lib/types";
+import { AddressAutocomplete, type AddressParts } from "@/components/address-autocomplete";
 
 /* ------------------------------------------------------------------ */
 /*  Inline Icons                                                       */
@@ -236,6 +237,7 @@ export default function NewJobPage() {
   // Core fields
   const [lossType, setLossType] = useState<LossType>("water");
   const [address, setAddress] = useState("");
+  const [addressParts, setAddressParts] = useState<AddressParts | null>(null);
 
   // Expanded details
   const [showDetails, setShowDetails] = useState(false);
@@ -306,13 +308,31 @@ export default function NewJobPage() {
         </div>
 
         {/* Address */}
-        <FormInput
-          label="Address"
-          required
-          placeholder="123 Main St, City, MI"
-          value={address}
-          onChange={setAddress}
-        />
+        <div>
+          <label className="flex items-center gap-2 mb-2">
+            <span className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">
+              Address
+            </span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-brand-accent font-semibold">
+              Required
+            </span>
+          </label>
+          <AddressAutocomplete
+            value={address}
+            onChange={setAddress}
+            onSelect={(parts) => {
+              setAddress(parts.address_line1);
+              setAddressParts(parts);
+            }}
+            placeholder="Start typing an address..."
+            className="w-full h-14 px-4 rounded-lg bg-surface-container-lowest text-on-surface text-[15px] placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+          />
+          {addressParts && (
+            <p className="mt-1.5 text-[12px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+              {addressParts.city}{addressParts.state ? `, ${addressParts.state}` : ""}{addressParts.zip ? ` ${addressParts.zip}` : ""}
+            </p>
+          )}
+        </div>
 
         {/* ── Collapsible Details ──────────────────────────────── */}
         <div>
