@@ -207,121 +207,132 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
   }
 
   const days = daysSince(job.created_at);
-  const padTwo = (n: number) => String(n).padStart(2, "0");
 
   return (
-    <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-4">
-      {/* Status badge */}
-      <StatusBadge status={job.status} />
+    <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden flex flex-col">
+      {/* Hero Photo placeholder */}
+      <div className="relative w-full h-48 bg-surface-container-high rounded-xl overflow-hidden">
+        <div
+          className="absolute inset-0"
+          style={{
+            background:
+              "linear-gradient(to bottom, transparent 40%, rgba(31,27,23,0.55) 100%)",
+          }}
+          aria-hidden="true"
+        />
+        <div className="absolute inset-0 flex items-center justify-center">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant/40">
+            <rect x="2" y="4" width="20" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+            <circle cx="8" cy="10" r="2" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M2 17l5-5 3 3 4-4 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+      </div>
 
-      {/* Full address — large, bold */}
-      <div>
-        <h2 className="text-lg font-bold text-on-surface leading-tight">{job.address_line1}</h2>
-        <p className="text-sm text-on-surface-variant mt-0.5">
-          {job.city}, {job.state} {job.zip}
+      {/* Content area */}
+      <div className="p-5 space-y-4">
+        {/* JOB PREVIEW label */}
+        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.14em] text-on-surface-variant font-semibold">
+          Job Preview
+        </span>
+
+        {/* Address */}
+        <h2 className="text-lg font-bold text-on-surface leading-tight -mt-1">
+          {job.address_line1}{job.city || job.state ? `, ${[job.city, job.state].filter(Boolean).join(" ")}` : ""}
+        </h2>
+
+        {/* Quick stats line */}
+        <p className="text-xs text-on-surface-variant">
+          {job.room_count} {job.room_count === 1 ? "room" : "rooms"} &middot; {job.photo_count} photos &middot; Day {days}
         </p>
-      </div>
 
-      {/* Stats row — mono style */}
-      <div className="flex items-center gap-4 py-2.5 px-3 bg-surface-container rounded-lg">
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Rooms:</span>
-          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{padTwo(job.room_count)}</span>
-        </div>
-        <div className="w-px h-4 bg-outline-variant/40" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Photos:</span>
-          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{padTwo(job.photo_count)}</span>
-        </div>
-        <div className="w-px h-4 bg-outline-variant/40" />
-        <div className="flex items-center gap-1.5">
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Progress:</span>
-          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">Day {padTwo(days)}</span>
-        </div>
-      </div>
-
-      {/* Customer, Carrier, Claim */}
-      <div className="space-y-2 pt-1">
-        {job.customer_name && (
+        {/* Customer & Insurance compact section */}
+        <div className="space-y-2 py-2 border-t border-outline-variant/20">
           <div className="flex items-center justify-between">
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Customer</span>
-            <span className="text-xs font-medium text-on-surface">{job.customer_name}</span>
+            <span className="text-xs font-medium text-on-surface">{job.customer_name || "\u2014"}</span>
           </div>
-        )}
-        {job.carrier && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Carrier</span>
-            <span className="text-xs font-medium text-on-surface">{job.carrier}</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Insurance</span>
+            <span className="text-xs font-medium text-on-surface">{job.carrier || "\u2014"}</span>
           </div>
-        )}
-        {job.claim_number && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Claim #</span>
-            <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
-          </div>
-        )}
-        {job.loss_category && (
-          <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Category</span>
-            <span className="text-xs font-medium text-on-surface">{categoryLabel(job.loss_category)}</span>
-          </div>
-        )}
-      </div>
-
-      {/* Primary action — Open Job */}
-      <Link
-        href={`/jobs/${job.id}`}
-        className="w-full h-11 rounded-xl text-sm font-semibold text-on-primary primary-gradient flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
-      >
-        Open Job
-        <span aria-hidden="true">&rarr;</span>
-      </Link>
-
-      {/* Secondary actions — side by side */}
-      <div className="flex gap-2">
-        <button
-          type="button"
-          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center gap-1.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
-            <circle cx="8.5" cy="15.5" r="1.5" fill="currentColor" />
-            <circle cx="15" cy="10" r="2" fill="currentColor" />
-            <path d="M3 17l4-4 3 3 4-5 7 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-          Add Photo
-        </button>
-        <button
-          type="button"
-          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center gap-1.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 3v18M3 12h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-          Log Reading
-        </button>
-      </div>
-
-      {/* Field Technicians */}
-      <div className="pt-2">
-        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold">Field Technicians</span>
-        <div className="flex items-center gap-2 mt-2">
-          {/* Avatar placeholders */}
-          <div className="w-8 h-8 rounded-full bg-brand-accent/15 flex items-center justify-center text-[11px] font-bold text-brand-accent">
-            {job.customer_name ? job.customer_name.charAt(0).toUpperCase() : "T"}
-          </div>
-          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-[11px] font-bold text-on-surface-variant">
-            +
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Claim ID</span>
+            <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface">
+              {job.claim_number ? `#${job.claim_number}` : "Pending"}
+            </span>
           </div>
         </div>
-      </div>
 
-      {/* Location Map placeholder */}
-      <div className="pt-1">
-        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold">Location Map</span>
-        <div className="mt-2 h-28 rounded-xl bg-surface-container flex items-center justify-center border border-outline-variant/30">
-          <span className="text-xs text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)]">Map preview</span>
+        {/* Open Job button */}
+        <Link
+          href={`/jobs/${job.id}`}
+          className="w-full h-11 rounded-xl text-sm font-semibold text-on-primary primary-gradient flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
+        >
+          Open Job
+          <span aria-hidden="true">&rarr;</span>
+        </Link>
+
+        {/* Three stacked action buttons */}
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+              <rect x="2" y="4" width="20" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="8" cy="10" r="2" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M2 17l5-5 3 3 4-4 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Add Photo
+          </button>
+          <button
+            type="button"
+            className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+              <path d="M3 20V8l4 4 4-6 4 4 6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M3 20h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            Log Reading
+          </button>
+          <button
+            type="button"
+            className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+              <path d="M12 2a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M12 18v4M9 22h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            Voice Note
+          </button>
+        </div>
+
+        {/* Footer row — Share & Export */}
+        <div className="flex items-center justify-center gap-6 pt-2 border-t border-outline-variant/20">
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold hover:text-on-surface transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M4 12v6a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M12 3v12M8 7l4-4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Share
+          </button>
+          <span className="text-on-surface-variant/40 text-xs" aria-hidden="true">&middot;</span>
+          <button
+            type="button"
+            className="flex items-center gap-1.5 text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold hover:text-on-surface transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M6 2h9l5 5v15H6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+              <path d="M15 2v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M9 13h6M9 17h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            Export
+          </button>
         </div>
       </div>
     </div>
