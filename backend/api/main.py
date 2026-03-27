@@ -1,6 +1,8 @@
+import logging
+import time
 from datetime import UTC, datetime
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth.router import router as auth_router
@@ -15,6 +17,8 @@ from api.reports.router import router as reports_router
 from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
 from api.sharing.router import router as sharing_router
+
+logger = logging.getLogger("api.timing")
 
 app = FastAPI(
     title="Crewmatic API",
@@ -31,6 +35,41 @@ app.add_middleware(
 )
 
 app.add_exception_handler(AppException, app_exception_handler)
+
+
+@app.middleware("http")
+async def log_request_timing(request: Request, call_next):
+    """Log every request with method, path, status, and duration in ms."""
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+
+    status = response.status_code
+    method = request.method
+    path = request.url.path
+
+    # Skip noisy OPTIONS preflight
+    if method == "OPTIONS":
+        return response
+
+    # Color-code by status for terminal readability
+    if status < 400:
+        level = logging.INFO
+    elif status < 500:
+        level = logging.WARNING
+    else:
+        level = logging.ERROR
+
+    logger.log(
+        level,
+        "%s %s → %s (%sms)",
+        method,
+        path,
+        status,
+        duration_ms,
+    )
+    return response
+
 
 app.include_router(auth_router, prefix="/v1")
 app.include_router(events_router, prefix="/v1")
