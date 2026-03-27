@@ -10,7 +10,7 @@ export interface PaginatedResponse<T> {
 export type LossType = "water" | "fire" | "mold" | "storm" | "other";
 export type WaterCategory = "1" | "2" | "3";
 export type WaterClass = "1" | "2" | "3" | "4";
-export type JobStatus = "needs_scope" | "scoped" | "submitted";
+export type JobStatus = "new" | "contracted" | "mitigation" | "drying" | "completed" | "submitted" | "collected";
 export type PhotoType = "damage" | "equipment" | "protection" | "containment" | "moisture_reading" | "before" | "after";
 export type ReportType = "full_report" | "mitigation_invoice";
 export type ReportStatus = "draft" | "generating" | "ready" | "failed";
@@ -18,12 +18,13 @@ export type ShareScope = "full" | "mitigation_only" | "photos_only";
 
 // ─── Pipeline stages (for dashboard) ─────────────────────────────────
 export type PipelineStage =
-  | "emergency"
-  | "scoping"
+  | "new"
+  | "contracted"
+  | "mitigation"
   | "drying"
-  | "documentation"
-  | "invoiced"
-  | "paid";
+  | "completed"
+  | "submitted"
+  | "collected";
 
 // ─── Properties ───────────────────────────────────────────────────────
 export interface Property {

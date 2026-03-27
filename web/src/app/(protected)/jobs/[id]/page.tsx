@@ -23,12 +23,20 @@ function daysSinceLoss(lossDate: string | null): number {
 
 function statusLabel(status: string): string {
   switch (status) {
-    case "needs_scope":
-      return "Needs Scope";
-    case "scoped":
-      return "Scoped";
+    case "new":
+      return "New";
+    case "contracted":
+      return "Contracted";
+    case "mitigation":
+      return "Mitigation";
+    case "drying":
+      return "Drying";
+    case "completed":
+      return "Complete";
     case "submitted":
       return "Submitted";
+    case "collected":
+      return "Collected";
     default:
       return status;
   }

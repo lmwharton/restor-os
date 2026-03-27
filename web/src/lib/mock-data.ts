@@ -39,7 +39,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: "2",
     loss_cause: "Dishwasher supply line failure",
     loss_date: dateStr(3),
-    status: "needs_scope",
+    status: "mitigation",
     assigned_to: null,
     notes: null,
     tech_notes: "Lifted carpet and pad in master bedroom. Flood cut drywall 2ft from floor. Applied antimicrobial treatment to all exposed surfaces. Wore N95 respirator and Tyvek suit.",
@@ -76,7 +76,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: "2",
     loss_cause: "Frozen pipe burst — second floor bathroom",
     loss_date: dateStr(5),
-    status: "scoped",
+    status: "drying",
     assigned_to: null,
     notes: null,
     tech_notes: null,
@@ -150,7 +150,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: "1",
     loss_cause: "Water heater leak",
     loss_date: dateStr(2),
-    status: "needs_scope",
+    status: "new",
     assigned_to: null,
     notes: null,
     tech_notes: null,
@@ -187,7 +187,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: "1",
     loss_cause: "Ice dam roof leak",
     loss_date: dateStr(6),
-    status: "scoped",
+    status: "drying",
     assigned_to: null,
     notes: null,
     tech_notes: "Minor attic leak from ice dam. Affected ceiling drywall in master bedroom and hallway. Set 2 air movers and 1 dehu.",
@@ -224,7 +224,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: "2",
     loss_cause: "Washing machine overflow",
     loss_date: dateStr(7),
-    status: "scoped",
+    status: "drying",
     assigned_to: null,
     notes: null,
     tech_notes: null,
@@ -261,7 +261,7 @@ export const mockJobs: JobDetail[] = [
     loss_class: null,
     loss_cause: "Toilet overflow — commercial property",
     loss_date: dateStr(0),
-    status: "needs_scope",
+    status: "new",
     assigned_to: null,
     notes: "Emergency call — dispatched immediately",
     tech_notes: null,
@@ -966,13 +966,13 @@ export const mockEvents: Event[] = [
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "moisture_reading_added", user_id: "user2", is_ai: false, event_data: { room_name: "Bathroom", day_number: 2 }, created_at: daysAgo(1) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "ai_photo_analysis", user_id: null, is_ai: true, event_data: { line_items_generated: 12, duration_ms: 4200 }, created_at: daysAgo(1) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "photo_uploaded", user_id: "user2", is_ai: false, event_data: { count: 10, room_name: "Basement" }, created_at: daysAgo(2) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "needs_scope", to: "scoped" }, created_at: daysAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "new", to: "drying" }, created_at: daysAgo(2) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "room_added", user_id: "user2", is_ai: false, event_data: { room_name: "Basement" }, created_at: daysAgo(3) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(5) },
 
   // Job 3 events
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "report_generated", user_id: "user1", is_ai: false, event_data: { report_type: "mitigation_invoice" }, created_at: hoursAgo(6) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "scoped", to: "submitted" }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "completed", to: "submitted" }, created_at: daysAgo(1) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 14, room_name: "Basement" }, created_at: daysAgo(3) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Utility Room" }, created_at: daysAgo(4) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(5) },
@@ -984,7 +984,7 @@ export const mockEvents: Event[] = [
 
   // Job 5 events
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "moisture_reading_added", user_id: "user1", is_ai: false, event_data: { room_name: "Master Bedroom", day_number: 3 }, created_at: hoursAgo(5) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "needs_scope", to: "scoped" }, created_at: daysAgo(3) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "new", to: "drying" }, created_at: daysAgo(3) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 8, room_name: "Master Bedroom" }, created_at: daysAgo(5) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(6) },
 
@@ -1011,25 +1011,26 @@ export const mockDashboardKPIs: DashboardKPIs = {
 };
 
 export const mockPipeline: PipelineStageData[] = [
-  { stage: "emergency", label: "Emergency", count: 1, amount: 0, color: "#dc2626" },
-  { stage: "scoping", label: "Scoping", count: 2, amount: 0, color: "#e85d26" },
-  { stage: "drying", label: "Drying", count: 3, amount: 8400, color: "#2563eb" },
-  { stage: "documentation", label: "Docs", count: 0, amount: 0, color: "#7c3aed" },
-  { stage: "invoiced", label: "Invoiced", count: 1, amount: 12600, color: "#0891b2" },
-  { stage: "paid", label: "Paid", count: 4, amount: 18900, color: "#16a34a" },
+  { stage: "new", label: "New", count: 2, amount: 0, color: "#dc2626" },
+  { stage: "contracted", label: "Contracted", count: 0, amount: 0, color: "#f59e0b" },
+  { stage: "mitigation", label: "Mitigation", count: 1, amount: 4200, color: "#e85d26" },
+  { stage: "drying", label: "Drying", count: 3, amount: 28500, color: "#2563eb" },
+  { stage: "completed", label: "Job Complete", count: 0, amount: 0, color: "#6b7280" },
+  { stage: "submitted", label: "Submitted", count: 1, amount: 12600, color: "#0891b2" },
+  { stage: "collected", label: "Collected", count: 4, amount: 41200, color: "#16a34a" },
 ];
 
 export const mockPriorityTasks: PriorityTask[] = [
-  // Emergency
+  // New
   { id: "t1", job_id: mockJobs[6].id, address: "450 Walnut Court", description: "Emergency dispatch, toilet overflow — ETA 2:30 PM", priority: "critical" },
-  // Scoping
-  { id: "t2", job_id: mockJobs[0].id, address: "123 Oak Street", description: "Day 3, needs scope — 42 photos ready for AI", priority: "warning" },
-  { id: "t3", job_id: mockJobs[3].id, address: "202 Cedar Way", description: "Day 2, needs scope — 12 photos, 1 room", priority: "warning" },
-  // Active Drying
+  { id: "t3", job_id: mockJobs[3].id, address: "202 Cedar Way", description: "Day 2, just got the call — heading to site", priority: "warning" },
+  // Mitigation
+  { id: "t2", job_id: mockJobs[0].id, address: "123 Oak Street", description: "Day 3, on site — equipment set, taking photos", priority: "warning" },
+  // Drying
   { id: "t4", job_id: mockJobs[1].id, address: "842 Maple Avenue", description: "Day 5, drying in progress — readings overdue 24h", priority: "normal" },
   { id: "t5", job_id: mockJobs[4].id, address: "315 Elm Boulevard", description: "Day 6, drying — equipment pickup scheduled tomorrow", priority: "normal" },
   { id: "t6", job_id: mockJobs[5].id, address: "777 Birch Lane", description: "Day 7, drying — 3 rooms monitored", priority: "normal" },
-  // Invoiced
+  // Submitted
   { id: "t7", job_id: mockJobs[2].id, address: "519 Pine Ridge Drive", description: "Submitted to adjuster — awaiting payment", priority: "low" },
 ];
 

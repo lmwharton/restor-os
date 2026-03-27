@@ -30,38 +30,40 @@ const MONO = "font-[family-name:var(--font-geist-mono)]";
 const LABEL_STYLE = `text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline`;
 
 const STAGE_LABEL: Record<PipelineStage, { label: string; dot: string }> = {
-  emergency: { label: "Emergency", dot: "bg-red-500" },
-  scoping: { label: "Scoping & Mitigation", dot: "bg-amber-500" },
-  drying: { label: "Active Drying Ops", dot: "bg-blue-500" },
-  documentation: { label: "Documentation Review", dot: "bg-slate-400" },
-  invoiced: { label: "Invoiced & Sent", dot: "bg-slate-400" },
-  paid: { label: "Paid (Settled)", dot: "bg-emerald-500" },
+  new: { label: "New", dot: "bg-red-500" },
+  contracted: { label: "Contracted", dot: "bg-amber-500" },
+  mitigation: { label: "Mitigation", dot: "bg-brand-accent" },
+  drying: { label: "Drying", dot: "bg-blue-500" },
+  completed: { label: "Job Complete", dot: "bg-slate-400" },
+  submitted: { label: "Submitted", dot: "bg-cyan-600" },
+  collected: { label: "Collected", dot: "bg-emerald-500" },
 };
 
 // ---------------------------------------------------------------------------
 //  Stage-to-jobs mapping
 // ---------------------------------------------------------------------------
 
-function getJobStage(job: typeof mockJobs[number]): PipelineStage {
-  const today = new Date().toISOString().split("T")[0];
-  // Job 7: emergency dispatch (created today, no rooms yet)
-  if (job.loss_date === today && job.room_count === 0) return "emergency";
-  // Submitted to adjuster → invoiced
-  if (job.status === "submitted") return "invoiced";
-  // Scoped jobs with rooms + line items → active drying
-  if (job.status === "scoped" && job.room_count > 0) return "drying";
-  // needs_scope → scoping
-  if (job.status === "needs_scope") return "scoping";
-  return "scoping";
+function getJobStage(job: { status: string }): PipelineStage {
+  switch (job.status) {
+    case "new": return "new";
+    case "contracted": return "contracted";
+    case "mitigation": return "mitigation";
+    case "drying": return "drying";
+    case "completed": return "completed";
+    case "submitted": return "submitted";
+    case "collected": return "collected";
+    default: return "new";
+  }
 }
 
 const PIN_COLOR: Record<PipelineStage, string> = {
-  emergency: "#dc2626",
-  scoping: "#f59e0b",
+  new: "#dc2626",
+  contracted: "#f59e0b",
+  mitigation: "#e85d26",
   drying: "#2563eb",
-  documentation: "#6b7280",
-  invoiced: "#6b7280",
-  paid: "#9ca3af",
+  completed: "#6b7280",
+  submitted: "#0891b2",
+  collected: "#9ca3af",
 };
 
 // Map pin positions spread within the map area
@@ -81,7 +83,7 @@ const MAP_PIN_POSITIONS: { top: string; left: string }[] = [
 
 function getTaskStage(task: PriorityTask): PipelineStage {
   const job = mockJobs.find((j) => j.id === task.job_id);
-  if (!job) return "scoping";
+  if (!job) return "new";
   return getJobStage(job);
 }
 
@@ -191,14 +193,14 @@ function PriorityTaskList({
   tasks: PriorityTask[];
   selectedStage: PipelineStage | null;
 }) {
-  // Filter out paid tasks and group by stage
+  // Filter out collected tasks and group by stage
   const activeTasks = tasks.filter((t) => {
     const stage = getTaskStage(t);
-    return stage !== "paid";
+    return stage !== "collected";
   });
 
   // Group tasks by stage, preserving stage order
-  const stageOrder: PipelineStage[] = ["emergency", "scoping", "drying", "documentation", "invoiced"];
+  const stageOrder: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "completed", "submitted"];
   const grouped = stageOrder
     .map((stage) => ({
       stage,
@@ -276,12 +278,13 @@ const PIPELINE_DISPLAY: {
   text: string;
   amount: string;
 }[] = [
-  { stage: "emergency", label: "Emergency Call-outs", bg: "bg-red-500/10", text: "text-red-600", amount: "$4,200 Est." },
-  { stage: "scoping", label: "Scoping & Mitigation", bg: "bg-amber-500/10", text: "text-amber-700", amount: "$12,800 Est." },
-  { stage: "drying", label: "Active Drying Ops", bg: "bg-blue-500/10", text: "text-blue-600", amount: "$28,500 Est." },
-  { stage: "documentation", label: "Documentation Review", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$5,400 Est." },
-  { stage: "invoiced", label: "Invoiced & Sent", bg: "bg-slate-400/10", text: "text-slate-600", amount: "$13,200 Est." },
-  { stage: "paid", label: "Paid (Settled)", bg: "bg-surface-container-high", text: "text-emerald-600", amount: "$41,200 Total" },
+  { stage: "new", label: "New Leads", bg: "bg-red-500/10", text: "text-red-600", amount: "$0" },
+  { stage: "contracted", label: "Contracted", bg: "bg-amber-500/10", text: "text-amber-700", amount: "$0" },
+  { stage: "mitigation", label: "Mitigation", bg: "bg-brand-accent/10", text: "text-brand-accent", amount: "$4,200 Est." },
+  { stage: "drying", label: "Drying", bg: "bg-blue-500/10", text: "text-blue-600", amount: "$28,500 Est." },
+  { stage: "completed", label: "Job Complete", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$0" },
+  { stage: "submitted", label: "Submitted", bg: "bg-cyan-600/10", text: "text-cyan-700", amount: "$12,600 Est." },
+  { stage: "collected", label: "Collected", bg: "bg-surface-container-high", text: "text-emerald-600", amount: "$41,200 Total" },
 ];
 
 function PipelineMetrics({
@@ -322,10 +325,10 @@ function PipelineMetrics({
           const data = stageMap.get(p.stage);
           const count = data?.count ?? 0;
           const isSelected = selectedStage === p.stage;
-          const isPaid = p.stage === "paid";
+          const isCollected = p.stage === "collected";
 
-          if (isPaid) {
-            // Paid bar: not clickable, no ring, informational only
+          if (isCollected) {
+            // Collected bar: not clickable, no ring, informational only
             return (
               <div
                 key={p.stage}
@@ -384,8 +387,8 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     });
   }
 
-  // Build pins from mock jobs — exclude paid/settled jobs
-  const activeJobs = mockJobs.filter((job) => getJobStage(job) !== "paid");
+  // Build pins from mock jobs — exclude collected jobs
+  const activeJobs = mockJobs.filter((job) => getJobStage(job) !== "collected");
   const pins = activeJobs.map((job, i) => {
     const stage = getJobStage(job);
     const pos = MAP_PIN_POSITIONS[i % MAP_PIN_POSITIONS.length];
@@ -733,7 +736,7 @@ export default function DashboardPage() {
   const taskData = tasks.data ?? [];
 
   function handleStageClick(stage: PipelineStage) {
-    if (stage === "paid") return; // Paid is informational only
+    if (stage === "collected") return; // Collected is informational only
     setSelectedStage((prev) => (prev === stage ? null : stage));
   }
 

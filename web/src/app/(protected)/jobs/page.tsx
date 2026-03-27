@@ -40,17 +40,33 @@ const statusConfig: Record<
   JobStatus,
   { label: string; className: string }
 > = {
-  needs_scope: {
-    label: "Needs Scope",
+  new: {
+    label: "New",
     className: "bg-surface-container-high text-on-surface-variant",
   },
-  scoped: {
-    label: "Scoped",
-    className: "bg-emerald-100 text-emerald-700",
+  contracted: {
+    label: "Contracted",
+    className: "bg-amber-100 text-amber-700",
+  },
+  mitigation: {
+    label: "Mitigation",
+    className: "bg-orange-100 text-orange-700",
+  },
+  drying: {
+    label: "Drying",
+    className: "bg-blue-100 text-blue-700",
+  },
+  completed: {
+    label: "Complete",
+    className: "bg-teal-100 text-teal-700",
   },
   submitted: {
     label: "Submitted",
-    className: "bg-blue-100 text-blue-700",
+    className: "bg-cyan-100 text-cyan-700",
+  },
+  collected: {
+    label: "Collected",
+    className: "bg-emerald-100 text-emerald-700",
   },
 };
 
