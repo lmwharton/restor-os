@@ -522,16 +522,6 @@ export default function JobDetailPage() {
             <span className="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant text-[11px] font-semibold font-[family-name:var(--font-geist-mono)]">
               {statusLabel(job.status)}
             </span>
-            <button
-              type="button"
-              aria-label="Notifications"
-              className="w-9 h-9 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer hidden sm:flex"
-            >
-              <BellIcon size={18} />
-            </button>
-            <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-[12px] font-bold text-on-surface-variant hidden sm:flex">
-              BM
-            </div>
           </div>
         </div>
       </header>
