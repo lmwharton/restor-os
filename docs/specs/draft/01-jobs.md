@@ -249,15 +249,30 @@ CREATE TABLE reports (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    report_type     TEXT NOT NULL,    -- 'full_report' | 'mitigation_invoice' | 'drying_certificate'
-    status          TEXT NOT NULL DEFAULT 'draft',  -- draft | generating | ready | failed
+    report_type     TEXT NOT NULL CHECK (report_type IN ('full_report', 'mitigation_invoice')),
+    status          TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'generating', 'ready', 'failed')),
     storage_url     TEXT,             -- Supabase Storage URL of generated PDF
-    share_token     TEXT,             -- time-limited share token for public access
-    share_expires   TIMESTAMPTZ,     -- share token expiry (7 days default)
     generated_at    TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+```
+
+**share_links** (NEW — job-level sharing, separate from reports)
+```sql
+CREATE TABLE share_links (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    token_hash      TEXT NOT NULL UNIQUE,  -- SHA-256 hash of token (never store raw)
+    scope           TEXT NOT NULL DEFAULT 'full' CHECK (scope IN ('full', 'mitigation_only', 'photos_only')),
+    expires_at      TIMESTAMPTZ NOT NULL,  -- 7 days default
+    revoked_at      TIMESTAMPTZ,          -- set to revoke access without deleting
+    created_by      UUID REFERENCES users(id),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+-- Lookup index for public access (hash the token from URL, find the record)
+CREATE INDEX idx_share_links_token ON share_links(token_hash) WHERE revoked_at IS NULL;
 ```
 
 **event_history** (NEW — full audit trail for jobs + company)
@@ -265,7 +280,7 @@ CREATE TABLE reports (
 CREATE TABLE event_history (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    job_id          UUID REFERENCES jobs(id) ON DELETE CASCADE,  -- nullable: null for company-level events
+    job_id          UUID REFERENCES jobs(id) ON DELETE SET NULL,  -- nullable: null for company-level events. SET NULL (not CASCADE) so audit trail survives job deletion.
     event_type      event_type NOT NULL,
     user_id         UUID,             -- users(id) for human actions, NULL for AI actions
     is_ai           BOOLEAN DEFAULT false,  -- true when AI performed the action
@@ -358,9 +373,9 @@ job (references property_id)
 - [ ] Create `api/jobs/router.py` — route handlers
 - [ ] `POST /v1/jobs` — create job (required: address_line1, loss_type; optional: everything else)
 - [ ] `GET /v1/jobs` — list jobs for company (filter by status, search by address/customer, paginate)
-- [ ] `GET /v1/jobs/:id` — get job detail (with room count, photo count, line item count)
-- [ ] `PATCH /v1/jobs/:id` — update job fields (including tech_notes)
-- [ ] `DELETE /v1/jobs/:id` — soft delete job
+- [ ] `GET /v1/jobs/{job_id}` — get job detail (with room count, photo count, line item count)
+- [ ] `PATCH /v1/jobs/{job_id}` — update job fields (including tech_notes)
+- [ ] `DELETE /v1/jobs/{job_id}` — soft delete job
 - [ ] Auto-generate job_number format: `JOB-YYYYMMDD-XXX`
 - [ ] Filter company_id from auth context on all queries
 
@@ -368,19 +383,19 @@ job (references property_id)
 - [ ] Create `api/floor_plans/schemas.py` — Pydantic models
 - [ ] Create `api/floor_plans/service.py` — floor plan business logic
 - [ ] Create `api/floor_plans/router.py` — route handlers
-- [ ] `POST /v1/jobs/:id/floor-plans` — create floor plan (floor_number, floor_name)
-- [ ] `GET /v1/jobs/:id/floor-plans` — list floor plans for job
-- [ ] `PATCH /v1/jobs/:jid/floor-plans/:fpid` — update floor plan (canvas_data, floor_name)
-- [ ] `DELETE /v1/jobs/:jid/floor-plans/:fpid` — delete floor plan (sets room floor_plan_id to null)
+- [ ] `POST /v1/jobs/{job_id}/floor-plans` — create floor plan (floor_number, floor_name)
+- [ ] `GET /v1/jobs/{job_id}/floor-plans` — list floor plans for job
+- [ ] `PATCH /v1/jobs/{job_id}/floor-plans/{floor_plan_id}` — update floor plan (canvas_data, floor_name)
+- [ ] `DELETE /v1/jobs/{job_id}/floor-plans/{floor_plan_id}` — delete floor plan (sets room floor_plan_id to null)
 
 **Rooms CRUD:**
 - [ ] Create `api/rooms/schemas.py` — Pydantic models
 - [ ] Create `api/rooms/service.py` — room business logic
 - [ ] Create `api/rooms/router.py` — route handlers
-- [ ] `POST /v1/jobs/:id/rooms` — create room (room_name required; dimensions, category, class, equipment optional)
-- [ ] `GET /v1/jobs/:id/rooms` — list rooms for job (with equipment counts, reading summary)
-- [ ] `PATCH /v1/jobs/:jid/rooms/:rid` — update room fields (dimensions, category, class, dry_standard, equipment, notes)
-- [ ] `DELETE /v1/jobs/:jid/rooms/:rid` — delete room
+- [ ] `POST /v1/jobs/{job_id}/rooms` — create room (room_name required; dimensions, category, class, equipment optional)
+- [ ] `GET /v1/jobs/{job_id}/rooms` — list rooms for job (with equipment counts, reading summary)
+- [ ] `PATCH /v1/jobs/{job_id}/rooms/{room_id}` — update room fields (dimensions, category, class, dry_standard, equipment, notes)
+- [ ] `DELETE /v1/jobs/{job_id}/rooms/{room_id}` — delete room
 - [ ] Auto-calculate square_footage on create/update: length_ft * width_ft
 
 **Database migration:**
@@ -390,7 +405,7 @@ job (references property_id)
 - [ ] Alembic migration: create floor_plans table
 - [ ] Alembic migration: create job_rooms table (with room_sketch_data JSONB)
 - [ ] Alembic migration: create reports table
-- [ ] Alembic migration: create event_type enum
+- [ ] Alembic migration: create share_links table (with token_hash index)
 - [ ] Alembic migration: create event_history table (with indexes)
 - [ ] Enable RLS on all tables with company_id isolation
 
@@ -412,9 +427,9 @@ job (references property_id)
 - [ ] Create `api/events/schemas.py` — Pydantic models
 - [ ] Create `api/events/service.py` — event logging + querying
 - [ ] Create `api/events/router.py` — route handlers
-- [ ] `GET /v1/jobs/:id/events` — job timeline (all events for this job, chronological)
+- [ ] `GET /v1/jobs/{job_id}/events` — job timeline (all events for this job, chronological)
 - [ ] `GET /v1/events` — company-wide activity feed (all events, paginated, filterable by event_type)
-- [ ] `POST /v1/events` — log an event (internal — called by other services, not directly by frontend)
+- [ ] Event logging is INTERNAL ONLY — no public POST endpoint. All services call `log_event()` helper directly. This prevents audit log forgery.
 - [ ] Helper: `log_event(company_id, job_id, event_type, user_id, is_ai, event_data)` — used throughout all services
 - [ ] All CRUD operations in jobs/rooms/photos/moisture services call `log_event` automatically
 - [ ] pytest: event logged on job creation
@@ -426,12 +441,12 @@ job (references property_id)
 - [ ] Create `api/photos/schemas.py` — Pydantic models
 - [ ] Create `api/photos/service.py` — photo business logic
 - [ ] Create `api/photos/router.py` — route handlers
-- [ ] `POST /v1/jobs/:id/photos/upload-url` — generate presigned upload URL for Supabase Storage
-- [ ] `POST /v1/jobs/:id/photos/confirm` — confirm upload, create photo record, resize to 1920px max
-- [ ] `GET /v1/jobs/:id/photos` — list photos for job (with signed URLs, grouped by room)
-- [ ] `PATCH /v1/jobs/:jid/photos/:pid` — update photo metadata (room_id, room_name, photo_type, caption, selected_for_ai)
-- [ ] `DELETE /v1/jobs/:jid/photos/:pid` — delete photo (remove from storage + DB)
-- [ ] `POST /v1/jobs/:id/photos/bulk-select` — mark multiple photos as selected_for_ai
+- [ ] `POST /v1/jobs/{job_id}/photos/upload-url` — generate presigned upload URL for Supabase Storage
+- [ ] `POST /v1/jobs/{job_id}/photos/confirm` — confirm upload, create photo record, resize to 1920px max
+- [ ] `GET /v1/jobs/{job_id}/photos` — list photos for job (with signed URLs, grouped by room)
+- [ ] `PATCH /v1/jobs/{job_id}/photos/{photo_id}` — update photo metadata (room_id, room_name, photo_type, caption, selected_for_ai)
+- [ ] `DELETE /v1/jobs/{job_id}/photos/{photo_id}` — delete photo (remove from storage + DB)
+- [ ] `POST /v1/jobs/{job_id}/photos/bulk-select` — mark multiple photos as selected_for_ai
 - [ ] Photo resize on upload: max 1920px longest edge (reduces AI token cost ~4x)
 - [ ] Enforce limits: max 100 photos per job, max 10MB per upload, JPEG/PNG only
 - [ ] Generate signed URLs with 15-minute expiry for photo access
@@ -440,17 +455,17 @@ job (references property_id)
 - [ ] Create `api/moisture/schemas.py` — Pydantic models
 - [ ] Create `api/moisture/service.py` — moisture business logic + GPP calculation
 - [ ] Create `api/moisture/router.py` — route handlers
-- [ ] `POST /v1/jobs/:jid/rooms/:rid/readings` — create daily moisture reading (date, atmospheric)
-- [ ] `GET /v1/jobs/:jid/rooms/:rid/readings` — list readings for room (chronological, with points + dehu)
-- [ ] `GET /v1/jobs/:jid/readings` — list ALL readings across ALL rooms for this job (needed for PDF report + Drying Certificate)
-- [ ] `PATCH /v1/jobs/:jid/readings/:mid` — update reading (atmospheric values)
-- [ ] `DELETE /v1/jobs/:jid/readings/:mid` — delete reading
-- [ ] `POST /v1/jobs/:jid/readings/:mid/points` — add moisture point (location, value, meter photo)
-- [ ] `PATCH /v1/jobs/:jid/readings/:mid/points/:mpid` — update point
-- [ ] `DELETE /v1/jobs/:jid/readings/:mid/points/:mpid` — delete point
-- [ ] `POST /v1/jobs/:jid/readings/:mid/dehus` — add dehu output (model, rh_out, temp_out)
-- [ ] `PATCH /v1/jobs/:jid/readings/:mid/dehus/:did` — update dehu output
-- [ ] `DELETE /v1/jobs/:jid/readings/:mid/dehus/:did` — delete dehu output
+- [ ] `POST /v1/jobs/{job_id}/rooms/{room_id}/readings` — create daily moisture reading (date, atmospheric)
+- [ ] `GET /v1/jobs/{job_id}/rooms/{room_id}/readings` — list readings for room (chronological, with points + dehu)
+- [ ] `GET /v1/jobs/{job_id}/readings` — list ALL readings across ALL rooms for this job (needed for PDF report + Drying Certificate)
+- [ ] `PATCH /v1/jobs/{job_id}/readings/{reading_id}` — update reading (atmospheric values)
+- [ ] `DELETE /v1/jobs/{job_id}/readings/{reading_id}` — delete reading
+- [ ] `POST /v1/jobs/{job_id}/readings/{reading_id}/points` — add moisture point (location, value, meter_photo_url). Meter photo upload reuses the same photos upload pipeline (upload-url → confirm), then pass the resulting URL as meter_photo_url.
+- [ ] `PATCH /v1/jobs/{job_id}/readings/{reading_id}/points/{point_id}` — update point
+- [ ] `DELETE /v1/jobs/{job_id}/readings/{reading_id}/points/{point_id}` — delete point
+- [ ] `POST /v1/jobs/{job_id}/readings/{reading_id}/dehus` — add dehu output (model, rh_out, temp_out)
+- [ ] `PATCH /v1/jobs/{job_id}/readings/{reading_id}/dehus/{dehu_id}` — update dehu output
+- [ ] `DELETE /v1/jobs/{job_id}/readings/{reading_id}/dehus/{dehu_id}` — delete dehu output
 - [ ] Auto-calculate GPP from temperature + relative humidity (psychrometric formula)
 - [ ] Auto-calculate day_number from job.loss_date
 
@@ -528,7 +543,9 @@ job (references property_id)
 - [ ] Grid background for scale reference
 - [ ] Touch-optimized: finger-friendly on mobile, mouse on desktop
 - [ ] "Clean up sketch" button → sends canvas_data to Claude API → returns cleaned geometry (straightened walls, aligned corners, snapped dimensions to nearest 0.25ft)
+  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{fp_id}/ai-cleanup` — accepts canvas_data, returns cleaned canvas_data. Logs event: `ai_sketch_cleanup`.
 - [ ] Chat refinement: text input below sketch to tell AI "move the door to the corner", "make room 2 be 10x10" → AI updates canvas_data
+  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{fp_id}/ai-chat` — accepts canvas_data + user message, returns modified canvas_data. Logs event: `ai_sketch_chat`.
 - [ ] When rooms are created from sketch, auto-create job_room records with dimensions
 - [ ] Rooms from sketch show "2 rooms loaded from sketch — tap to edit" indicator
 - [ ] Canvas library: research best option (Konva.js/react-konva, Fabric.js, or Excalidraw fork)
@@ -579,12 +596,20 @@ job (references property_id)
 - [ ] "Tag Rooms" button → modal: shows all photos with room dropdown per photo (from job_rooms). Bulk-assign photos to rooms before AI analysis. Cancel / Save buttons.
 
 ### Phase 6: PDF Export + Share Link — ❌
+**Reports:**
 - [ ] Create `api/reports/service.py` — PDF generation logic
 - [ ] Create `api/reports/router.py` — route handlers
-- [ ] `POST /v1/jobs/:id/report` — generate PDF (WeasyPrint on Railway)
-- [ ] `GET /v1/jobs/:id/report/download` — download generated PDF
-- [ ] `POST /v1/jobs/:id/share` — generate share token (time-limited, read-only)
-- [ ] `GET /v1/shared/:token` — public read-only job view (no auth required)
+- [ ] `POST /v1/jobs/{job_id}/reports` — generate PDF (report_type: full_report | mitigation_invoice)
+- [ ] `GET /v1/jobs/{job_id}/reports` — list reports for job (shows status: draft/generating/ready/failed — used for polling)
+- [ ] `GET /v1/jobs/{job_id}/reports/{report_id}/download` — download generated PDF (signed URL, 15-min expiry)
+
+**Share Links (job-level, not tied to reports):**
+- [ ] Create `api/sharing/service.py` — share link logic
+- [ ] Create `api/sharing/router.py` — route handlers
+- [ ] `POST /v1/jobs/{job_id}/share` — create share link (scope: full | mitigation_only | photos_only, expires_days: 7 default). Generates random token, stores SHA-256 hash in DB (never raw token). Returns public URL.
+- [ ] `GET /v1/jobs/{job_id}/share` — list active share links for this job
+- [ ] `DELETE /v1/jobs/{job_id}/share/{link_id}` — revoke share link (sets revoked_at, does not delete)
+- [ ] `GET /v1/shared/{token}` — public read-only job view (no auth). Hashes incoming token, looks up share_links by token_hash. Validates not expired and not revoked. Returns job data scoped by share link scope. Redacts sensitive fields (customer_phone, customer_email hidden from adjuster view). Rate limited.
 - [ ] **Multiple report types:**
   - **PDF Report** — full scope (all categories): company header, job info, floor plan, rooms, ALL line items with citations, photos, moisture log, tech notes
   - **Mitigation Invoice** — mitigation-category items ONLY. Sent first to adjuster for fast payment. Same layout but filtered to mitigation line items.
@@ -621,10 +646,10 @@ job (references property_id)
 
 **Photo upload pattern (presigned URLs):**
 ```
-1. Frontend calls POST /v1/jobs/:id/photos/upload-url
+1. Frontend calls POST /v1/jobs/{job_id}/photos/upload-url
 2. Backend generates presigned upload URL from Supabase Storage
 3. Frontend uploads directly to Supabase Storage using presigned URL
-4. Frontend calls POST /v1/jobs/:id/photos/confirm with storage path
+4. Frontend calls POST /v1/jobs/{job_id}/photos/confirm with storage path
 5. Backend creates photo record, triggers resize (1920px max)
 6. Backend returns photo record with signed access URL
 ```
@@ -663,8 +688,8 @@ def calculate_gpp(temp_f: float, rh_pct: float) -> float:
 
 **Share link:**
 - Generate random token, store in DB with expiry (7 days default)
-- Public route `/v1/shared/:token` returns job data without auth
-- Frontend renders a read-only job view at `/shared/:token`
+- Public route `/v1/shared/{token}` — hashes token, looks up share_links by token_hash, validates not expired/revoked, returns scoped job data
+- Frontend renders a read-only job view at `/shared/[token]`
 
 **Key Files:**
 - `backend/api/jobs/` — job CRUD (router, service, schemas)
