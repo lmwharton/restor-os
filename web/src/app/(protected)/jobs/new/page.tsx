@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { LossType, WaterCategory, WaterClass } from "@/lib/types";
+import { useCreateJob } from "@/lib/hooks/use-jobs";
 import { AddressAutocomplete, type AddressParts } from "@/components/address-autocomplete";
 
 /* ------------------------------------------------------------------ */
@@ -233,6 +234,7 @@ const classOptions: { value: WaterClass; label: string }[] = [
 
 export default function NewJobPage() {
   const router = useRouter();
+  const createJob = useCreateJob();
 
   // Core fields
   const [lossType, setLossType] = useState<LossType>("water");
@@ -260,9 +262,35 @@ export default function NewJobPage() {
   const [adjusterEmail, setAdjusterEmail] = useState("");
   const [adjusterPhone, setAdjusterPhone] = useState("");
 
-  const handleCreate = () => {
-    // Mock -- no API call yet
-    router.push("/jobs");
+  // Error state
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCreate = async () => {
+    setError(null);
+    try {
+      const result = await createJob.mutateAsync({
+        address_line1: address.trim(),
+        loss_type: lossType,
+        city: addressParts?.city || undefined,
+        state: addressParts?.state || undefined,
+        zip: addressParts?.zip || undefined,
+        customer_name: customerName.trim() || undefined,
+        customer_phone: customerPhone.trim() || undefined,
+        customer_email: customerEmail.trim() || undefined,
+        loss_category: category || undefined,
+        loss_class: waterClass || undefined,
+        loss_cause: lossCause.trim() || undefined,
+        loss_date: lossDate || undefined,
+        claim_number: claimNumber.trim() || undefined,
+        carrier: carrier.trim() || undefined,
+        adjuster_name: adjusterName.trim() || undefined,
+        adjuster_phone: adjusterPhone.trim() || undefined,
+        adjuster_email: adjusterEmail.trim() || undefined,
+      });
+      router.push(`/jobs/${result.id}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create job");
+    }
   };
 
   return (
@@ -449,6 +477,13 @@ export default function NewJobPage() {
           )}
         </div>
 
+        {/* ── Error Message ────────────────────────────────────── */}
+        {error && (
+          <div className="rounded-lg bg-error-container/20 border border-error/20 px-4 py-3 text-sm text-error">
+            {error}
+          </div>
+        )}
+
         {/* ── Create Button ────────────────────────────────────── */}
         <div className="lg:flex lg:items-center lg:justify-between lg:gap-4">
           <Link
@@ -460,10 +495,10 @@ export default function NewJobPage() {
           <button
             type="button"
             onClick={handleCreate}
-            disabled={!address.trim()}
+            disabled={!address.trim() || createJob.isPending}
             className="w-full lg:w-auto lg:px-12 h-14 rounded-xl text-[16px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none disabled:active:scale-100"
           >
-            Create Job &rarr;
+            {createJob.isPending ? "Creating..." : "Create Job \u2192"}
           </button>
         </div>
 

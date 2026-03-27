@@ -4,9 +4,8 @@ import { useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowBack, Camera, Plus } from "@/components/icons";
-import { useRooms } from "@/lib/hooks/use-jobs";
-import { mockReadings } from "@/lib/mock-data";
-import type { MoisturePoint, DehuOutput } from "@/lib/types";
+import { useRooms, useReadings } from "@/lib/hooks/use-jobs";
+import type { MoisturePoint } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  GPP Calculation (psychrometric formula)                            */
@@ -51,17 +50,21 @@ export default function MoistureReadingsPage() {
   const [roomIndex, setRoomIndex] = useState(0);
   const currentRoom = rooms[roomIndex];
 
-  // Day number — use latest reading's day_number + 1, or fallback to 3
+  // Fetch real readings for current room
+  const { data: roomReadings = [] } = useReadings(jobId, currentRoom?.id ?? "");
+
+  // Day number — use latest reading's day_number + 1, or fallback to 1
   const dayNumber = useMemo(() => {
-    const roomReadings = mockReadings.filter(
-      (r) => r.room_id === currentRoom?.id
-    );
     if (roomReadings.length === 0) return 1;
     const maxDay = Math.max(
       ...roomReadings.map((r) => r.day_number ?? 0)
     );
-    return maxDay > 0 ? maxDay : 3;
-  }, [currentRoom?.id]);
+    return maxDay > 0 ? maxDay + 1 : 1;
+  }, [roomReadings]);
+
+  // Saving state
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   // Atmospheric state
   const [tempF, setTempF] = useState("72");
@@ -74,50 +77,38 @@ export default function MoistureReadingsPage() {
     return calculateGPP(t, r).toFixed(1);
   }, [tempF, rhPct]);
 
-  // Moisture points state
-  const [points, setPoints] = useState<PointEntry[]>(() => {
-    // Pre-populate from the latest reading for this room
-    const roomReadings = mockReadings.filter(
-      (r) => r.room_id === rooms[0]?.id
-    );
-    const latest = roomReadings[roomReadings.length - 1];
-    if (latest) {
-      return latest.points.map((p: MoisturePoint) => ({
-        id: p.id,
-        location_name: p.location_name,
-        reading_value: "",
-      }));
+  // Moisture points state — pre-populate from latest reading's point names
+  const [points, setPoints] = useState<PointEntry[]>([
+    { id: crypto.randomUUID(), location_name: "South wall base", reading_value: "" },
+    { id: crypto.randomUUID(), location_name: "North wall base", reading_value: "" },
+    { id: crypto.randomUUID(), location_name: "Subfloor center", reading_value: "" },
+  ]);
+
+  // Update points when room readings load (pre-populate location names from latest reading)
+  const latestReadingId = roomReadings.length > 0 ? roomReadings[roomReadings.length - 1].id : null;
+  useMemo(() => {
+    if (roomReadings.length > 0) {
+      const latest = roomReadings[roomReadings.length - 1];
+      if (latest.points.length > 0) {
+        setPoints(latest.points.map((p: MoisturePoint) => ({
+          id: crypto.randomUUID(),
+          location_name: p.location_name,
+          reading_value: "",
+        })));
+      }
     }
-    return [
-      { id: crypto.randomUUID(), location_name: "South wall base", reading_value: "" },
-      { id: crypto.randomUUID(), location_name: "North wall base", reading_value: "" },
-      { id: crypto.randomUUID(), location_name: "Subfloor center", reading_value: "" },
-    ];
-  });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [latestReadingId]);
 
   // Dehu state
-  const [dehus, setDehus] = useState<DehuEntry[]>(() => {
-    const roomReadings = mockReadings.filter(
-      (r) => r.room_id === rooms[0]?.id
-    );
-    const latest = roomReadings[roomReadings.length - 1];
-    if (latest && latest.dehus.length > 0) {
-      return latest.dehus.map((d: DehuOutput) => ({
-        id: d.id,
-        dehu_model: d.dehu_model ?? "Dri-Eaz LGR 3500i",
-        rh_out_pct: "",
-        temp_out_f: "",
-      }));
-    }
-    return [
-      {
-        id: crypto.randomUUID(),
-        dehu_model: "Dri-Eaz LGR 3500i",
-        rh_out_pct: "",
-        temp_out_f: "",
-      },
-    ];
-  });
+  const [dehus, setDehus] = useState<DehuEntry[]>([
+    {
+      id: crypto.randomUUID(),
+      dehu_model: "Dri-Eaz LGR 3500i",
+      rh_out_pct: "",
+      temp_out_f: "",
+    },
+  ]);
 
   const dryStandard = currentRoom?.dry_standard ?? 16;
 
@@ -164,8 +155,61 @@ export default function MoistureReadingsPage() {
     ]);
   }, []);
 
+  // Helper to save current room's reading via API
+  const saveCurrentRoom = useCallback(async () => {
+    if (!currentRoom) return;
+    setSaveError(null);
+    setIsSaving(true);
+    try {
+      // 1. Create the reading
+      const readingPayload = {
+        reading_date: new Date().toISOString().slice(0, 10),
+        atmospheric_temp_f: parseFloat(tempF) || undefined,
+        atmospheric_rh_pct: parseFloat(rhPct) || undefined,
+      };
+      const { apiPost } = await import("@/lib/api");
+      type ReadingResult = { id: string };
+      const reading = await apiPost<ReadingResult>(
+        `/v1/jobs/${jobId}/rooms/${currentRoom.id}/readings`,
+        readingPayload
+      );
+
+      // 2. Create points
+      for (let i = 0; i < points.length; i++) {
+        const pt = points[i];
+        if (!pt.location_name.trim() && !pt.reading_value.trim()) continue;
+        await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/points`, {
+          location_name: pt.location_name.trim() || `Point ${i + 1}`,
+          reading_value: parseFloat(pt.reading_value) || 0,
+          sort_order: i,
+        });
+      }
+
+      // 3. Create dehus
+      for (const dehu of dehus) {
+        if (!dehu.dehu_model.trim() && !dehu.rh_out_pct.trim() && !dehu.temp_out_f.trim()) continue;
+        await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/dehus`, {
+          dehu_model: dehu.dehu_model.trim() || undefined,
+          rh_out_pct: parseFloat(dehu.rh_out_pct) || undefined,
+          temp_out_f: parseFloat(dehu.temp_out_f) || undefined,
+        });
+      }
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save reading");
+      throw err;
+    } finally {
+      setIsSaving(false);
+    }
+  }, [currentRoom, jobId, tempF, rhPct, points, dehus]);
+
   // Save & next room
-  const handleSaveAndNext = useCallback(() => {
+  const handleSaveAndNext = useCallback(async () => {
+    try {
+      await saveCurrentRoom();
+    } catch {
+      return; // error already set
+    }
+
     if (roomIndex < rooms.length - 1) {
       setRoomIndex((prev) => prev + 1);
       // Reset form for next room
@@ -184,20 +228,26 @@ export default function MoistureReadingsPage() {
           temp_out_f: "",
         },
       ]);
+      setSaveError(null);
       // Scroll to top
       window.scrollTo({ top: 0, behavior: "smooth" });
     } else {
       // Last room — navigate back to job
       router.push(`/jobs/${jobId}`);
     }
-  }, [roomIndex, rooms.length, router, jobId]);
+  }, [roomIndex, rooms.length, router, jobId, saveCurrentRoom]);
 
   const isLastRoom = roomIndex === rooms.length - 1;
 
   // Save all rooms handler (desktop)
-  const handleSaveAll = useCallback(() => {
-    router.push(`/jobs/${jobId}`);
-  }, [router, jobId]);
+  const handleSaveAll = useCallback(async () => {
+    try {
+      await saveCurrentRoom();
+      router.push(`/jobs/${jobId}`);
+    } catch {
+      // error already set
+    }
+  }, [router, jobId, saveCurrentRoom]);
 
   return (
     <div className="min-h-screen bg-surface">
@@ -226,9 +276,10 @@ export default function MoistureReadingsPage() {
           <button
             type="button"
             onClick={handleSaveAll}
-            className="hidden lg:flex h-10 px-6 primary-gradient text-on-primary font-semibold rounded-xl text-sm items-center transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer"
+            disabled={isSaving}
+            className="hidden lg:flex h-10 px-6 primary-gradient text-on-primary font-semibold rounded-xl text-sm items-center transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
           >
-            Save All Rooms
+            {isSaving ? "Saving..." : "Save All Rooms"}
           </button>
         </div>
 
@@ -453,11 +504,16 @@ export default function MoistureReadingsPage() {
           </section>
         </div>
 
+        {/* ── Error message ──────────────────────────────────── */}
+        {saveError && (
+          <div className="rounded-lg bg-error-container/20 border border-error/20 px-4 py-3 text-sm text-error mb-4">
+            {saveError}
+          </div>
+        )}
+
         {/* ── Desktop: all rooms side-by-side ──────────────────── */}
         <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6">
           {rooms.map((room) => {
-            const roomReadings = mockReadings.filter((r) => r.room_id === room.id);
-            const latestMockReading = roomReadings[roomReadings.length - 1];
             const roomDryStandard = room.dry_standard ?? 16;
 
             return (
@@ -483,8 +539,13 @@ export default function MoistureReadingsPage() {
                     Moisture Points
                   </label>
                   <div className="space-y-2">
-                    {(latestMockReading?.points ?? []).map((point, i) => {
-                      const isWet = point.reading_value > roomDryStandard;
+                    {(room.id === currentRoom?.id ? points : [
+                      { id: "1", location_name: "South wall base", reading_value: "" },
+                      { id: "2", location_name: "North wall base", reading_value: "" },
+                      { id: "3", location_name: "Subfloor center", reading_value: "" },
+                    ]).map((point, i) => {
+                      const val = parseFloat(point.reading_value);
+                      const isWet = !isNaN(val) && val > roomDryStandard;
                       return (
                         <div
                           key={point.id}
@@ -559,12 +620,16 @@ export default function MoistureReadingsPage() {
 
       {/* ── Bottom CTA (mobile only) ──────────────────────────── */}
       <div className="fixed bottom-0 inset-x-0 p-4 bg-surface/95 backdrop-blur-sm lg:hidden">
+        {saveError && (
+          <p className="text-sm text-error text-center mb-2">{saveError}</p>
+        )}
         <button
           type="button"
           onClick={handleSaveAndNext}
-          className="w-full h-14 primary-gradient text-on-primary font-semibold rounded-xl text-base active:opacity-90 transition-opacity"
+          disabled={isSaving}
+          className="w-full h-14 primary-gradient text-on-primary font-semibold rounded-xl text-base active:opacity-90 transition-opacity disabled:opacity-50"
         >
-          {isLastRoom ? "Save & Finish" : "Save & Next Room \u2192"}
+          {isSaving ? "Saving..." : isLastRoom ? "Save & Finish" : "Save & Next Room \u2192"}
         </button>
       </div>
     </div>

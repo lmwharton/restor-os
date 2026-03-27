@@ -8,6 +8,7 @@ import {
   useReadings,
   usePhotos,
   useJobEvents,
+  useDeleteJob,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
 
@@ -405,6 +406,7 @@ export default function JobDetailPage() {
   const { data: rooms } = useRooms(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
+  const deleteJob = useDeleteJob();
 
   // Use first room for readings
   const firstRoomId = rooms?.[0]?.id ?? "";
@@ -923,10 +925,17 @@ export default function JobDetailPage() {
             </button>
             <button
               type="button"
-              className="flex items-center gap-1.5 text-[12px] font-medium text-error hover:text-error/80 transition-colors cursor-pointer ml-auto"
+              onClick={async () => {
+                if (window.confirm("Are you sure you want to delete this job?")) {
+                  await deleteJob.mutateAsync(jobId);
+                  router.push("/jobs");
+                }
+              }}
+              disabled={deleteJob.isPending}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-error hover:text-error/80 transition-colors cursor-pointer ml-auto disabled:opacity-50"
             >
               <TrashIcon size={14} />
-              Delete Job
+              {deleteJob.isPending ? "Deleting..." : "Delete Job"}
             </button>
           </div>
         </div>

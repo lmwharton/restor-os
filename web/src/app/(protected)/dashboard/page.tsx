@@ -7,9 +7,10 @@ import {
   usePipeline,
   usePriorityTasks,
   useTeamMembers,
+  useCompanyEvents,
 } from "@/lib/hooks/use-dashboard";
-import { mockJobs, mockEvents } from "@/lib/mock-data";
-import type { PipelineStage, PipelineStageData, PriorityTask, Event } from "@/lib/types";
+import { useJobs } from "@/lib/hooks/use-jobs";
+import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -87,8 +88,8 @@ function getJobStage(job: { status: string }): PipelineStage {
   }
 }
 
-function getTaskStage(task: PriorityTask): PipelineStage {
-  const job = mockJobs.find((j) => j.id === task.job_id);
+function getTaskStage(task: PriorityTask, jobs: JobDetail[]): PipelineStage {
+  const job = jobs.find((j) => j.id === task.job_id);
   if (!job) return "new";
   return getJobStage(job);
 }
@@ -213,15 +214,17 @@ function JobsList({
   tasks,
   selectedStage,
   now,
+  jobs,
 }: {
   tasks: PriorityTask[];
   selectedStage: PipelineStage | null;
   now: number;
+  jobs: JobDetail[];
 }) {
-  const activeTasks = tasks.filter((t) => getTaskStage(t) !== "collected");
+  const activeTasks = tasks.filter((t) => getTaskStage(t, jobs) !== "collected");
 
   const filteredTasks = selectedStage
-    ? activeTasks.filter((t) => getTaskStage(t) === selectedStage)
+    ? activeTasks.filter((t) => getTaskStage(t, jobs) === selectedStage)
     : activeTasks;
 
   return (
@@ -244,9 +247,9 @@ function JobsList({
           </p>
         ) : (
           filteredTasks.map((t) => {
-            const stage = getTaskStage(t);
+            const stage = getTaskStage(t, jobs);
             const meta = STAGE_META[stage];
-            const job = mockJobs.find((j) => j.id === t.job_id);
+            const job = jobs.find((j) => j.id === t.job_id);
             const subtitle = job
               ? `Day ${Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000))}, ${job.photo_count} photos, ${job.room_count} rooms`
               : t.description;
@@ -295,7 +298,7 @@ function JobsList({
 //  Row 2 Right: Live Operations Map
 // ---------------------------------------------------------------------------
 
-function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | null }) {
+function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineStage | null; jobs: JobDetail[] }) {
   const [zoomLevel, setZoomLevel] = useState(1);
   const ZOOM_STEPS = [0.8, 1, 1.2, 1.5];
 
@@ -313,7 +316,7 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     });
   }
 
-  const activeJobs = mockJobs.filter((job) => getJobStage(job) !== "collected");
+  const activeJobs = jobs.filter((job) => getJobStage(job) !== "collected");
   const pins = activeJobs.map((job, i) => {
     const stage = getJobStage(job);
     const pos = MAP_PIN_POSITIONS[i % MAP_PIN_POSITIONS.length];
@@ -459,9 +462,11 @@ function OperationsTeam() {
 //  Row 3 Center: Latest Activity
 // ---------------------------------------------------------------------------
 
-function LatestActivity() {
+function LatestActivity({ jobs }: { jobs: JobDetail[] }) {
+  const { data: companyEvents } = useCompanyEvents();
+
   // Get 4 most recent events
-  const recentEvents = [...mockEvents]
+  const recentEvents = [...(companyEvents ?? [])]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, 4);
 
@@ -469,22 +474,26 @@ function LatestActivity() {
     <Card>
       <h3 className={`${LABEL_STYLE} mb-3`}>Latest Activity</h3>
       <div className="space-y-2.5">
-        {recentEvents.map((event, i) => {
-          const job = mockJobs.find((j) => j.id === event.job_id);
-          return (
-            <div key={`${event.event_type}-${i}`} className="flex gap-2.5 items-start">
-              <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${event.is_ai ? "bg-brand-accent" : "bg-outline-variant"}`} />
-              <div className="min-w-0 flex-1">
-                <p className="text-[12px] text-on-surface leading-snug">
-                  {eventLabel(event)}
-                </p>
-                <p className={`text-[10px] ${MONO} text-outline mt-0.5`}>
-                  {job ? `${job.address_line1} ` : ""}{timeAgo(event.created_at)}
-                </p>
+        {recentEvents.length === 0 ? (
+          <p className="text-[13px] text-outline py-4 text-center">No recent activity</p>
+        ) : (
+          recentEvents.map((event, i) => {
+            const job = jobs.find((j) => j.id === event.job_id);
+            return (
+              <div key={`${event.event_type}-${i}`} className="flex gap-2.5 items-start">
+                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${event.is_ai ? "bg-brand-accent" : "bg-outline-variant"}`} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[12px] text-on-surface leading-snug">
+                    {eventLabel(event)}
+                  </p>
+                  <p className={`text-[10px] ${MONO} text-outline mt-0.5`}>
+                    {job ? `${job.address_line1} ` : ""}{timeAgo(event.created_at)}
+                  </p>
+                </div>
               </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
       <Link
         href="/jobs"
@@ -582,6 +591,7 @@ export default function DashboardPage() {
   const pipeline = usePipeline();
   const tasks = usePriorityTasks();
   const team = useTeamMembers();
+  const { data: jobs = [] } = useJobs();
   const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null);
   const [now] = useState(() => Date.now());
 
@@ -611,15 +621,15 @@ export default function DashboardPage() {
 
       {/* -- Row 2: Jobs List (55%) + Map (45%) ----------------------------- */}
       <div className="grid lg:grid-cols-[55fr_45fr] gap-5">
-        <JobsList tasks={taskData} selectedStage={selectedStage} now={now} />
-        <LiveOperationsMap selectedStage={selectedStage} />
+        <JobsList tasks={taskData} selectedStage={selectedStage} now={now} jobs={jobs} />
+        <LiveOperationsMap selectedStage={selectedStage} jobs={jobs} />
       </div>
 
       {/* -- Row 3: Team + Activity + KPIs ---------------------------------- */}
       <div className="grid md:grid-cols-3 gap-5">
         <OperationsTeam />
-        <LatestActivity />
-        <KPIMiniGrid kpis={kpis.data} />
+        <LatestActivity jobs={jobs} />
+        <KPIMiniGrid kpis={kpis.data ?? undefined} />
       </div>
     </div>
   );

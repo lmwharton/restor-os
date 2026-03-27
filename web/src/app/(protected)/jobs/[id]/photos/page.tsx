@@ -3,7 +3,7 @@
 import { useState, useMemo } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { usePhotos, useRooms } from "@/lib/hooks/use-jobs";
+import { usePhotos, useRooms, useUpdatePhoto, useDeletePhoto } from "@/lib/hooks/use-jobs";
 import {
   ArrowBack,
   Shield,
@@ -92,6 +92,8 @@ export default function PhotosPage() {
   const { id: jobId } = useParams<{ id: string }>();
   const { data: photos = [] } = usePhotos(jobId);
   const { data: rooms = [] } = useRooms(jobId);
+  const updatePhoto = useUpdatePhoto(jobId);
+  const deletePhoto = useDeletePhoto(jobId);
 
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
@@ -269,10 +271,22 @@ export default function PhotosPage() {
                   <label className="block text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1.5 font-semibold">
                     Room
                   </label>
-                  <select className="w-full h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface outline-none focus:ring-2 focus:ring-brand-accent/30">
+                  <select
+                    className="w-full h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface outline-none focus:ring-2 focus:ring-brand-accent/30"
+                    value={selectedPhoto.room_id ?? ""}
+                    onChange={(e) => {
+                      const roomId = e.target.value || undefined;
+                      const roomName = rooms.find((r) => r.id === roomId)?.room_name;
+                      updatePhoto.mutate({
+                        photoId: selectedPhoto.id,
+                        room_id: roomId,
+                        room_name: roomName,
+                      });
+                    }}
+                  >
                     <option value="">Untagged</option>
                     {rooms.map((r) => (
-                      <option key={r.id} value={r.id} selected={selectedPhoto.room_id === r.id}>
+                      <option key={r.id} value={r.id}>
                         {r.room_name}
                       </option>
                     ))}
@@ -286,7 +300,13 @@ export default function PhotosPage() {
                   </label>
                   <select
                     className="w-full h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface outline-none focus:ring-2 focus:ring-brand-accent/30"
-                    defaultValue={selectedPhoto.photo_type}
+                    value={selectedPhoto.photo_type}
+                    onChange={(e) => {
+                      updatePhoto.mutate({
+                        photoId: selectedPhoto.id,
+                        photo_type: e.target.value,
+                      });
+                    }}
                   >
                     <option value="damage">Damage</option>
                     <option value="equipment">Equipment</option>
@@ -307,6 +327,15 @@ export default function PhotosPage() {
                     rows={3}
                     placeholder="Add a caption..."
                     defaultValue={selectedPhoto.caption ?? ""}
+                    key={selectedPhoto.id}
+                    onBlur={(e) => {
+                      if (e.target.value !== (selectedPhoto.caption ?? "")) {
+                        updatePhoto.mutate({
+                          photoId: selectedPhoto.id,
+                          caption: e.target.value,
+                        });
+                      }
+                    }}
                     className="w-full px-3 py-2 rounded-lg bg-surface-container-low text-sm text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 resize-none"
                   />
                 </div>
@@ -314,7 +343,14 @@ export default function PhotosPage() {
                 {/* AI selection toggle */}
                 <div className="flex items-center justify-between">
                   <span className="text-[12px] font-medium text-on-surface">Include in AI Scope</span>
-                  <div
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updatePhoto.mutate({
+                        photoId: selectedPhoto.id,
+                        selected_for_ai: !selectedPhoto.selected_for_ai,
+                      });
+                    }}
                     className={`w-10 h-6 rounded-full flex items-center px-1 cursor-pointer transition-colors ${
                       selectedPhoto.selected_for_ai ? "bg-brand-accent" : "bg-surface-dim"
                     }`}
@@ -324,15 +360,22 @@ export default function PhotosPage() {
                         selectedPhoto.selected_for_ai ? "translate-x-4" : "translate-x-0"
                       }`}
                     />
-                  </div>
+                  </button>
                 </div>
 
                 {/* Delete */}
                 <button
                   type="button"
-                  className="text-[12px] text-error hover:underline cursor-pointer"
+                  onClick={async () => {
+                    if (window.confirm("Delete this photo?")) {
+                      await deletePhoto.mutateAsync(selectedPhoto.id);
+                      setSelectedPhotoId(null);
+                    }
+                  }}
+                  disabled={deletePhoto.isPending}
+                  className="text-[12px] text-error hover:underline cursor-pointer disabled:opacity-50"
                 >
-                  Delete photo
+                  {deletePhoto.isPending ? "Deleting..." : "Delete photo"}
                 </button>
               </div>
             ) : (
