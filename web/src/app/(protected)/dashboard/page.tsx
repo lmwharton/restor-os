@@ -32,7 +32,7 @@ const LABEL_STYLE = `text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline
 const STAGE_LABEL: Record<PipelineStage, { label: string; dot: string }> = {
   emergency: { label: "Emergency", dot: "bg-red-500" },
   scoping: { label: "Scoping & Mitigation", dot: "bg-amber-500" },
-  drying: { label: "Active Drying Ops", dot: "bg-brand-accent" },
+  drying: { label: "Active Drying Ops", dot: "bg-blue-500" },
   documentation: { label: "Documentation Review", dot: "bg-slate-400" },
   invoiced: { label: "Invoiced & Sent", dot: "bg-slate-400" },
   paid: { label: "Paid (Settled)", dot: "bg-emerald-500" },
@@ -276,12 +276,12 @@ const PIPELINE_DISPLAY: {
   text: string;
   amount: string;
 }[] = [
-  { stage: "emergency", label: "Emergency Call-outs", bg: "bg-red-50", text: "text-red-700", amount: "$4,200 Est." },
-  { stage: "scoping", label: "Scoping & Mitigation", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$12,800 Est." },
-  { stage: "drying", label: "Active Drying Ops", bg: "bg-brand-accent/10", text: "text-brand-accent", amount: "$28,500 Est." },
+  { stage: "emergency", label: "Emergency Call-outs", bg: "bg-red-500/10", text: "text-red-600", amount: "$4,200 Est." },
+  { stage: "scoping", label: "Scoping & Mitigation", bg: "bg-amber-500/10", text: "text-amber-700", amount: "$12,800 Est." },
+  { stage: "drying", label: "Active Drying Ops", bg: "bg-blue-500/10", text: "text-blue-600", amount: "$28,500 Est." },
   { stage: "documentation", label: "Documentation Review", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$5,400 Est." },
-  { stage: "invoiced", label: "Invoiced & Sent", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$13,200 Est." },
-  { stage: "paid", label: "Paid (Settled)", bg: "bg-emerald-50", text: "text-emerald-700", amount: "$41,200 Total" },
+  { stage: "invoiced", label: "Invoiced & Sent", bg: "bg-slate-400/10", text: "text-slate-600", amount: "$13,200 Est." },
+  { stage: "paid", label: "Paid (Settled)", bg: "bg-surface-container-high", text: "text-emerald-600", amount: "$41,200 Total" },
 ];
 
 function PipelineMetrics({
