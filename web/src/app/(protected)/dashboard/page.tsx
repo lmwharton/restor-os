@@ -36,13 +36,13 @@ const PRIORITY_DOT: Record<PriorityTask["priority"], string> = {
   low: "bg-[#9ca3af]",
 };
 
-const PRIORITY_SUBTITLE: Record<string, string> = {
-  t1: "08:45 AM | UNIT 4 WATER MAIN",
-  t2: "24h SINCE LAST LOG",
-  t3: "SCHEDULED: 1:00 PM",
-  t4: "WAREHOUSE DEPT",
-  t5: "CLIENT READY",
-  t6: "ROUTINE",
+const STAGE_LABEL: Record<PipelineStage, { label: string; dot: string }> = {
+  emergency: { label: "Emergency", dot: "bg-red-600" },
+  scoping: { label: "Scoping & Mitigation", dot: "bg-amber-500" },
+  drying: { label: "Active Drying Ops", dot: "bg-brand-accent" },
+  documentation: { label: "Documentation Review", dot: "bg-on-surface-variant" },
+  invoiced: { label: "Invoiced & Sent", dot: "bg-on-surface-variant" },
+  paid: { label: "Paid (Settled)", dot: "bg-emerald-600" },
 };
 
 // ---------------------------------------------------------------------------
@@ -51,12 +51,13 @@ const PRIORITY_SUBTITLE: Record<string, string> = {
 
 function getJobStage(job: typeof mockJobs[number]): PipelineStage {
   const today = new Date().toISOString().split("T")[0];
-  if (job.loss_date === today) return "emergency";
+  // Job 7: emergency dispatch (created today, no rooms yet)
+  if (job.loss_date === today && job.room_count === 0) return "emergency";
+  // Submitted to adjuster → invoiced
   if (job.status === "submitted") return "invoiced";
-  if (job.status === "scoped") return "paid";
-  // needs_scope with rooms that have equipment → drying
-  if (job.status === "needs_scope" && job.room_count > 0) return "drying";
-  // needs_scope without rooms → scoping
+  // Scoped jobs with rooms + line items → active drying
+  if (job.status === "scoped" && job.room_count > 0) return "drying";
+  // needs_scope → scoping
   if (job.status === "needs_scope") return "scoping";
   return "scoping";
 }
@@ -197,42 +198,70 @@ function PriorityTaskList({
   tasks: PriorityTask[];
   selectedStage: PipelineStage | null;
 }) {
+  // Filter out paid tasks and group by stage
+  const activeTasks = tasks.filter((t) => {
+    const stage = getTaskStage(t);
+    return stage !== "paid";
+  });
+
+  // Group tasks by stage, preserving stage order
+  const stageOrder: PipelineStage[] = ["emergency", "scoping", "drying", "documentation", "invoiced"];
+  const grouped = stageOrder
+    .map((stage) => ({
+      stage,
+      tasks: activeTasks.filter((t) => getTaskStage(t) === stage),
+    }))
+    .filter((g) => g.tasks.length > 0);
+
   return (
     <Card className="flex flex-col">
       <h2 className="text-xl font-bold text-on-surface mb-4">
         Priority Tasks
       </h2>
-      <ul className="flex-1 divide-y divide-outline-variant/15" role="list">
-        {tasks.slice(0, 6).map((t) => {
-          const taskStage = getTaskStage(t);
-          const isMatch = selectedStage === null || taskStage === selectedStage;
+      <div className="flex-1 space-y-4" role="list">
+        {grouped.map((group) => {
+          const sl = STAGE_LABEL[group.stage];
           return (
-            <li
-              key={t.id}
-              className={`flex gap-3 items-start py-4 first:pt-0 last:pb-0 transition-all duration-200 ${
-                selectedStage !== null && isMatch
-                  ? "border-l-2 border-l-brand-accent pl-3"
-                  : selectedStage !== null
-                    ? "opacity-50 pl-0"
-                    : "pl-0"
-              }`}
-            >
-              <span
-                className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${PRIORITY_DOT[t.priority]}`}
-                aria-label={`${t.priority} priority`}
-              />
-              <div className="min-w-0">
-                <p className="text-[14px] font-semibold text-on-surface">
-                  {t.address} {t.priority === "critical" ? "-- Emergency" : ""}
-                </p>
-                <p className={`text-[11px] ${MONO} uppercase tracking-[0.08em] text-outline mt-0.5`}>
-                  {PRIORITY_SUBTITLE[t.id] ?? t.description}
-                </p>
-              </div>
-            </li>
+            <div key={group.stage}>
+              {/* Stage header */}
+              <p className={`text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline mb-2`}>
+                {sl.label}
+              </p>
+              <ul className="space-y-1">
+                {group.tasks.map((t) => {
+                  const taskStage = getTaskStage(t);
+                  const isMatch = selectedStage === null || taskStage === selectedStage;
+                  return (
+                    <li
+                      key={t.id}
+                      className={`flex gap-3 items-start py-2.5 transition-all duration-200 rounded-lg px-2 ${
+                        selectedStage !== null && isMatch
+                          ? "border-l-2 border-l-brand-accent pl-3 bg-brand-accent/5"
+                          : selectedStage !== null
+                            ? "opacity-40"
+                            : ""
+                      }`}
+                    >
+                      <span
+                        className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${sl.dot}`}
+                        aria-label={`${sl.label} stage`}
+                      />
+                      <div className="min-w-0">
+                        <p className="text-[14px] font-semibold text-on-surface">
+                          {t.address}
+                        </p>
+                        <p className={`text-[12px] text-outline mt-0.5 leading-snug`}>
+                          {t.description}
+                        </p>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
           );
         })}
-      </ul>
+      </div>
       <Link
         href="/jobs"
         className={`mt-5 w-full bg-surface-container rounded-xl h-12 flex items-center justify-center ${MONO} text-[12px] uppercase tracking-[0.1em] text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer`}
@@ -300,6 +329,24 @@ function PipelineMetrics({
           const data = stageMap.get(p.stage);
           const count = data?.count ?? 0;
           const isSelected = selectedStage === p.stage;
+          const isPaid = p.stage === "paid";
+
+          if (isPaid) {
+            // Paid bar: not clickable, no ring, informational only
+            return (
+              <div
+                key={p.stage}
+                className={`w-full ${p.bg} ${p.text} rounded-xl py-3 px-4 flex items-center justify-between cursor-default`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <span className={`text-[15px] font-bold ${MONO}`}>{count}</span>
+                  <span className="text-[13px] font-medium">{p.label}</span>
+                </div>
+                <span className={`text-[12px] ${MONO} opacity-90`}>{p.amount}</span>
+              </div>
+            );
+          }
+
           return (
             <button
               key={p.stage}
@@ -344,8 +391,9 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     });
   }
 
-  // Build pins from all mock jobs
-  const pins = mockJobs.map((job, i) => {
+  // Build pins from mock jobs — exclude paid/settled jobs
+  const activeJobs = mockJobs.filter((job) => getJobStage(job) !== "paid");
+  const pins = activeJobs.map((job, i) => {
     const stage = getJobStage(job);
     const pos = MAP_PIN_POSITIONS[i % MAP_PIN_POSITIONS.length];
     return {
@@ -357,7 +405,7 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     };
   });
 
-  const activePinCount = pins.filter((p) => p.stage !== "paid").length;
+  const activePinCount = pins.length;
 
   return (
     <Card>

@@ -458,18 +458,23 @@ export const mockPipeline: PipelineStageData[] = [
   { stage: "emergency", label: "Emergency", count: 1, amount: 0, color: "#dc2626" },
   { stage: "scoping", label: "Scoping", count: 2, amount: 0, color: "#e85d26" },
   { stage: "drying", label: "Drying", count: 3, amount: 8400, color: "#2563eb" },
-  { stage: "documentation", label: "Docs", count: 1, amount: 4200, color: "#7c3aed" },
-  { stage: "invoiced", label: "Invoiced", count: 2, amount: 12600, color: "#0891b2" },
+  { stage: "documentation", label: "Docs", count: 0, amount: 0, color: "#7c3aed" },
+  { stage: "invoiced", label: "Invoiced", count: 1, amount: 12600, color: "#0891b2" },
   { stage: "paid", label: "Paid", count: 4, amount: 18900, color: "#16a34a" },
 ];
 
 export const mockPriorityTasks: PriorityTask[] = [
-  { id: "t1", job_id: mockJobs[6].id, address: "450 Walnut Court", description: "Emergency dispatch — ETA 2:30 PM", priority: "critical" },
-  { id: "t2", job_id: mockJobs[0].id, address: "123 Oak Street", description: "Day 3 readings — subfloor still at 55 (target 16)", priority: "warning" },
-  { id: "t3", job_id: mockJobs[0].id, address: "123 Oak Street", description: "3 photos untagged — tag rooms before AI scope", priority: "warning" },
-  { id: "t4", job_id: mockJobs[3].id, address: "202 Cedar Way", description: "Adjuster report due Friday", priority: "normal" },
-  { id: "t5", job_id: mockJobs[4].id, address: "315 Elm Boulevard", description: "Equipment pickup scheduled tomorrow", priority: "normal" },
-  { id: "t6", job_id: mockJobs[5].id, address: "777 Birch Lane", description: "Review 2 new Google reviews", priority: "low" },
+  // Emergency
+  { id: "t1", job_id: mockJobs[6].id, address: "450 Walnut Court", description: "Emergency dispatch, toilet overflow — ETA 2:30 PM", priority: "critical" },
+  // Scoping
+  { id: "t2", job_id: mockJobs[0].id, address: "123 Oak Street", description: "Day 3, needs scope — 42 photos ready for AI", priority: "warning" },
+  { id: "t3", job_id: mockJobs[3].id, address: "202 Cedar Way", description: "Day 2, needs scope — 12 photos, 1 room", priority: "warning" },
+  // Active Drying
+  { id: "t4", job_id: mockJobs[1].id, address: "842 Maple Avenue", description: "Day 5, drying in progress — readings overdue 24h", priority: "normal" },
+  { id: "t5", job_id: mockJobs[4].id, address: "315 Elm Boulevard", description: "Day 6, drying — equipment pickup scheduled tomorrow", priority: "normal" },
+  { id: "t6", job_id: mockJobs[5].id, address: "777 Birch Lane", description: "Day 7, drying — 3 rooms monitored", priority: "normal" },
+  // Invoiced
+  { id: "t7", job_id: mockJobs[2].id, address: "519 Pine Ridge Drive", description: "Submitted to adjuster — awaiting payment", priority: "low" },
 ];
 
 export const mockTeamMembers: TeamMember[] = [
