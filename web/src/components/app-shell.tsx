@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Dashboard, Clipboard, Waves, People, Gear } from "@/components/icons";
+import { Dashboard, Clipboard, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
 
 /* ------------------------------------------------------------------ */
@@ -55,6 +55,7 @@ const navItems = [
 /* ------------------------------------------------------------------ */
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const MONO = "font-[family-name:var(--font-geist-mono)]";
 
 async function getAuthHeaders() {
   const supabase = createClient();
@@ -83,14 +84,32 @@ function getCompanyInitial(company: Company): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  User Avatar + Dropdown                                             */
+/*  User Avatar (compact, for top bar)                                 */
+/* ------------------------------------------------------------------ */
+
+function UserAvatarButton({ user }: { user: UserProfile }) {
+  const initials = getUserInitials(user);
+  return user.avatar_url ? (
+    <img
+      src={user.avatar_url}
+      alt=""
+      className="w-8 h-8 rounded-full object-cover"
+    />
+  ) : (
+    <span className="w-8 h-8 rounded-full bg-brand-accent text-on-primary text-[12px] font-bold flex items-center justify-center">
+      {initials}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  User Menu Dropdown (used in top bar on desktop)                    */
 /* ------------------------------------------------------------------ */
 
 function UserMenu({ user }: { user: UserProfile }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close on click outside
   useEffect(() => {
     if (!open) return;
     function handleClick(e: MouseEvent) {
@@ -141,7 +160,6 @@ function UserMenu({ user }: { user: UserProfile }) {
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-64 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(31,27,23,0.12),0_1px_4px_rgba(31,27,23,0.06)] border border-outline-variant/20 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-          {/* User info */}
           <div className="px-4 pt-4 pb-3">
             <p className="text-[14px] font-semibold text-on-surface truncate">
               {user.name || "User"}
@@ -153,7 +171,6 @@ function UserMenu({ user }: { user: UserProfile }) {
 
           <div className="h-px bg-outline-variant/20 mx-3" />
 
-          {/* Links */}
           <div className="py-1.5">
             <Link
               href="/settings?tab=profile"
@@ -178,7 +195,6 @@ function UserMenu({ user }: { user: UserProfile }) {
 
           <div className="h-px bg-outline-variant/20 mx-3" />
 
-          {/* Sign out */}
           <div className="py-1.5 pb-2">
             <button
               onClick={handleSignOut}
@@ -216,7 +232,7 @@ function CompanyBrand({ company }: { company: Company }) {
           {getCompanyInitial(company)}
         </span>
       )}
-      <span className="text-[15px] font-semibold tracking-[-0.3px] text-on-surface truncate hidden sm:block">
+      <span className="text-[15px] font-semibold tracking-[-0.3px] text-on-surface truncate">
         {company.name}
       </span>
     </div>
@@ -224,15 +240,186 @@ function CompanyBrand({ company }: { company: Company }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  App Header                                                         */
+/*  Sidebar Contractor Score (compact)                                 */
 /* ------------------------------------------------------------------ */
 
-function AppHeader({ user }: { user: UserProfile | null }) {
+function SidebarContractorScore() {
+  const score = 72;
+  const circumference = 2 * Math.PI * 14;
+  const dashArray = (score / 100) * circumference;
+
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="relative w-10 h-10 shrink-0">
+        <svg viewBox="0 0 36 36" className="w-10 h-10" aria-hidden="true">
+          <circle cx="18" cy="18" r="14" fill="none" stroke="var(--surface-container)" strokeWidth="3" />
+          <circle
+            cx="18" cy="18" r="14" fill="none"
+            stroke="var(--brand-accent)" strokeWidth="3"
+            strokeDasharray={`${dashArray} ${circumference}`}
+            strokeLinecap="round"
+            transform="rotate(-90 18 18)"
+          />
+        </svg>
+        <span className={`absolute inset-0 flex items-center justify-center text-[13px] font-bold text-brand-accent ${MONO}`}>
+          {score}
+        </span>
+      </div>
+      <div className="min-w-0">
+        <p className="text-[12px] font-semibold text-[#0891b2] uppercase tracking-wider leading-tight">
+          Good Standing
+        </p>
+        <p className="text-[10px] text-outline leading-snug mt-0.5">
+          Top 10% response
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Sidebar Google Reviews (compact)                                   */
+/* ------------------------------------------------------------------ */
+
+function SidebarGoogleReviews() {
+  return (
+    <div className="flex items-center gap-3 px-4 py-2.5">
+      <span className={`text-[22px] font-bold text-on-surface ${MONO} leading-none shrink-0`}>
+        4.7
+      </span>
+      <div className="min-w-0">
+        <span className="text-[14px] tracking-tight text-[#f59e0b] block leading-none" aria-label="4.7 out of 5 stars">
+          {"★★★★★"}
+        </span>
+        <span className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline mt-0.5 block`}>
+          108 reviews
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Desktop Left Sidebar                                               */
+/* ------------------------------------------------------------------ */
+
+function DesktopSidebar({ user }: { user: UserProfile | null }) {
+  const pathname = usePathname();
+
+  async function handleSignOut() {
+    const supabase = createClient();
+    await supabase.auth.signOut();
+    window.location.href = "/login";
+  }
+
+  return (
+    <aside className="hidden lg:flex fixed left-0 top-0 bottom-0 w-56 z-40 flex-col bg-surface-container-lowest border-r border-outline-variant/20">
+      {/* Top: Company brand */}
+      <div className="h-14 flex items-center px-4 border-b border-outline-variant/15 shrink-0">
+        {user?.company ? (
+          <CompanyBrand company={user.company} />
+        ) : (
+          <div className="flex items-center gap-2">
+            <span className="w-7 h-7 rounded-lg bg-surface-container animate-pulse" />
+            <span className="w-20 h-4 rounded bg-surface-container animate-pulse" />
+          </div>
+        )}
+      </div>
+
+      {/* Nav items */}
+      <nav className="flex-1 py-3 px-2 space-y-0.5" aria-label="Main navigation">
+        {navItems.map((item) => {
+          const isActive =
+            pathname === item.href ||
+            pathname?.startsWith(item.href + "/");
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex items-center gap-3 px-3 py-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+                isActive
+                  ? "text-brand-accent bg-brand-accent/8"
+                  : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container"
+              }`}
+              aria-current={isActive ? "page" : undefined}
+            >
+              <item.Icon size={20} className={isActive ? "text-brand-accent" : "text-outline"} />
+              {item.label}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Bottom section */}
+      <div className="mt-auto border-t border-outline-variant/15">
+        {/* Contractor Score + Google Reviews */}
+        <div className="py-2">
+          <SidebarContractorScore />
+          <SidebarGoogleReviews />
+        </div>
+
+      </div>
+    </aside>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Desktop Top Bar (simplified — sidebar handles nav)                 */
+/* ------------------------------------------------------------------ */
+
+function DesktopTopBar({ user }: { user: UserProfile | null }) {
+  return (
+    <header className="hidden lg:block sticky top-0 z-30 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30 lg:ml-56">
+      <div className="w-full px-6 h-12 flex items-center justify-between">
+        {/* Left: Search */}
+        <div className="relative flex-1 max-w-md">
+          <svg
+            width="16" height="16" viewBox="0 0 24 24" fill="none"
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-outline"
+            aria-hidden="true"
+          >
+            <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <input
+            type="text"
+            placeholder="Search jobs, addresses..."
+            className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container/60 text-[13px] text-on-surface placeholder:text-outline border-none outline-none focus:bg-surface-container focus:ring-1 focus:ring-brand-accent/30 transition-colors"
+          />
+        </div>
+
+        {/* Right: Status + Notification + Avatar */}
+        <div className="flex items-center gap-3">
+          <HealthStatusBadge />
+          {/* Notification bell */}
+          <button
+            type="button"
+            className="relative p-2 rounded-lg hover:bg-surface-container transition-colors cursor-pointer"
+            aria-label="Notifications"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-on-surface-variant">
+              <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#dc2626]" />
+          </button>
+          {user && <UserMenu user={user} />}
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Mobile Header (full nav, shown below lg:)                          */
+/* ------------------------------------------------------------------ */
+
+function MobileHeader({ user }: { user: UserProfile | null }) {
   const pathname = usePathname();
 
   return (
-    <header className="sticky top-0 z-50 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30">
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 h-14 flex items-center justify-between">
+    <header className="lg:hidden sticky top-0 z-50 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30">
+      <div className="w-full px-4 sm:px-6 h-14 flex items-center justify-between">
         {/* Left: Company brand */}
         {user?.company ? (
           <CompanyBrand company={user.company} />
@@ -243,8 +430,8 @@ function AppHeader({ user }: { user: UserProfile | null }) {
           </div>
         )}
 
-        {/* Center: Desktop nav */}
-        <nav className="hidden md:flex items-center gap-1" aria-label="Main">
+        {/* Center: Desktop nav (md to lg) */}
+        <nav className="hidden md:flex lg:hidden items-center gap-1" aria-label="Main">
           {navItems.map((item) => {
             const isActive =
               pathname === item.href ||
@@ -365,11 +552,19 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
-      <AppHeader user={user} />
+      {/* Desktop: sidebar + thin top bar */}
+      <DesktopSidebar user={user} />
+      <DesktopTopBar user={user} />
 
-      <main className="flex-1 pb-20 md:pb-0">{children}</main>
+      {/* Mobile/Tablet: full header */}
+      <MobileHeader user={user} />
 
-      <AppFooter />
+      {/* Main content — offset for sidebar on lg: */}
+      <main className="flex-1 pb-20 md:pb-0 lg:ml-56">{children}</main>
+
+      <div className="lg:ml-56">
+        <AppFooter />
+      </div>
       <MobileBottomNav />
     </div>
   );
@@ -382,7 +577,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 function AppFooter() {
   return (
     <footer className="hidden md:block border-t border-outline-variant/15 mt-auto">
-      <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-3 flex items-center justify-between">
+      <div className="w-full px-4 sm:px-6 py-3 flex items-center justify-between">
         <span className="text-[11px] text-outline font-[family-name:var(--font-geist-mono)]">
           Powered by{" "}
           <a

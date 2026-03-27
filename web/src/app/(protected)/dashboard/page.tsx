@@ -8,36 +8,67 @@ import {
   usePriorityTasks,
   useTeamMembers,
 } from "@/lib/hooks/use-dashboard";
-import { mockJobs } from "@/lib/mock-data";
-import type { PipelineStage, PipelineStageData, PriorityTask } from "@/lib/types";
+import { mockJobs, mockEvents } from "@/lib/mock-data";
+import type { PipelineStage, PipelineStageData, PriorityTask, Event } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 //  Helpers
 // ---------------------------------------------------------------------------
 
-function getGreeting(): string {
-  const h = new Date().getHours();
-  if (h < 12) return "Good morning";
-  if (h < 17) return "Good afternoon";
-  return "Good evening";
-}
-
 function fmtCurrency(n: number): string {
   return "$" + n.toLocaleString("en-US");
+}
+
+function timeAgo(dateStr: string): string {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return "Just now";
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function eventLabel(event: Event): string {
+  switch (event.event_type) {
+    case "photo_uploaded": {
+      const count = (event.event_data as Record<string, unknown>).count;
+      const room = (event.event_data as Record<string, unknown>).room_name;
+      return `${count} photos uploaded${room ? ` - ${room}` : ""}`;
+    }
+    case "moisture_reading_added": {
+      const room = (event.event_data as Record<string, unknown>).room_name;
+      return `Moisture reading${room ? ` - ${room}` : ""}`;
+    }
+    case "ai_photo_analysis": return "AI photo analysis complete";
+    case "ai_sketch_cleanup": return "AI sketch cleanup done";
+    case "report_generated": return "Report generated";
+    case "job_status_changed": {
+      const to = (event.event_data as Record<string, unknown>).to;
+      return `Status changed to ${to}`;
+    }
+    case "job_created": return "Job created";
+    case "room_added": {
+      const room = (event.event_data as Record<string, unknown>).room_name;
+      return `Room added: ${room}`;
+    }
+    default: return event.event_type.replace(/_/g, " ");
+  }
 }
 
 const MONO = "font-[family-name:var(--font-geist-mono)]";
 const LABEL_STYLE = `text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline`;
 
-const STAGE_LABEL: Record<PipelineStage, { label: string; dot: string }> = {
-  new: { label: "New", dot: "bg-red-500" },
-  contracted: { label: "Contracted", dot: "bg-amber-500" },
-  mitigation: { label: "Mitigation", dot: "bg-brand-accent" },
-  drying: { label: "Drying", dot: "bg-blue-500" },
-  completed: { label: "Job Complete", dot: "bg-slate-400" },
-  submitted: { label: "Submitted", dot: "bg-cyan-600" },
-  collected: { label: "Collected", dot: "bg-emerald-500" },
+const STAGE_META: Record<PipelineStage, { label: string; dot: string; color: string; bg: string; text: string }> = {
+  new:        { label: "New",          dot: "bg-red-500",      color: "#dc2626", bg: "bg-red-500/10",              text: "text-red-600" },
+  contracted: { label: "Contracted",   dot: "bg-amber-500",    color: "#f59e0b", bg: "bg-amber-500/10",            text: "text-amber-700" },
+  mitigation: { label: "Mitigation",   dot: "bg-brand-accent", color: "#e85d26", bg: "bg-brand-accent/10",         text: "text-brand-accent" },
+  drying:     { label: "Drying",       dot: "bg-blue-500",     color: "#2563eb", bg: "bg-blue-500/10",             text: "text-blue-600" },
+  completed:  { label: "Complete",     dot: "bg-slate-400",    color: "#6b7280", bg: "bg-surface-container-high",  text: "text-on-surface" },
+  submitted:  { label: "Submitted",    dot: "bg-cyan-600",     color: "#0891b2", bg: "bg-cyan-600/10",             text: "text-cyan-700" },
+  collected:  { label: "Collected",    dot: "bg-emerald-500",  color: "#16a34a", bg: "bg-surface-container-high",  text: "text-emerald-600" },
 };
+
+const STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "completed", "submitted", "collected"];
 
 // ---------------------------------------------------------------------------
 //  Stage-to-jobs mapping
@@ -56,6 +87,12 @@ function getJobStage(job: { status: string }): PipelineStage {
   }
 }
 
+function getTaskStage(task: PriorityTask): PipelineStage {
+  const job = mockJobs.find((j) => j.id === task.job_id);
+  if (!job) return "new";
+  return getJobStage(job);
+}
+
 const PIN_COLOR: Record<PipelineStage, string> = {
   new: "#dc2626",
   contracted: "#f59e0b",
@@ -66,7 +103,6 @@ const PIN_COLOR: Record<PipelineStage, string> = {
   collected: "#9ca3af",
 };
 
-// Map pin positions spread within the map area
 const MAP_PIN_POSITIONS: { top: string; left: string }[] = [
   { top: "28%", left: "32%" },
   { top: "55%", left: "72%" },
@@ -78,17 +114,7 @@ const MAP_PIN_POSITIONS: { top: string; left: string }[] = [
 ];
 
 // ---------------------------------------------------------------------------
-//  Stage-to-task mapping (which tasks relate to which stage)
-// ---------------------------------------------------------------------------
-
-function getTaskStage(task: PriorityTask): PipelineStage {
-  const job = mockJobs.find((j) => j.id === task.job_id);
-  if (!job) return "new";
-  return getJobStage(job);
-}
-
-// ---------------------------------------------------------------------------
-//  Skeleton placeholder
+//  Skeleton
 // ---------------------------------------------------------------------------
 
 function Skeleton({ className = "" }: { className?: string }) {
@@ -100,7 +126,7 @@ function Skeleton({ className = "" }: { className?: string }) {
 }
 
 // ---------------------------------------------------------------------------
-//  Card wrapper
+//  Card
 // ---------------------------------------------------------------------------
 
 function Card({
@@ -120,174 +146,10 @@ function Card({
 }
 
 // ---------------------------------------------------------------------------
-//  Notification Bell
+//  Row 1: Pipeline Boxes
 // ---------------------------------------------------------------------------
 
-function NotificationBell() {
-  return (
-    <button
-      type="button"
-      className="relative p-2 rounded-lg hover:bg-surface-container transition-colors cursor-pointer"
-      aria-label="Notifications"
-    >
-      <svg
-        width="20"
-        height="20"
-        viewBox="0 0 24 24"
-        fill="none"
-        className="text-on-surface-variant"
-      >
-        <path
-          d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9z"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M13.73 21a2 2 0 0 1-3.46 0"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-      <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#dc2626]" />
-    </button>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  Header Bar
-// ---------------------------------------------------------------------------
-
-function HeaderBar() {
-  return (
-    <div className="flex items-center justify-between">
-      <div className="flex items-baseline gap-3">
-        <h1 className="text-[22px] sm:text-[26px] font-bold tracking-[-0.5px] text-on-surface">
-          DryPros
-        </h1>
-        <span className={`text-[11px] ${MONO} uppercase tracking-[0.12em] text-outline`}>
-          HQ Operations
-        </span>
-      </div>
-      <div className="flex items-center gap-3">
-        <span className="text-[14px] text-on-surface-variant hidden sm:block">
-          {getGreeting()}, Brett
-        </span>
-        <NotificationBell />
-      </div>
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  Priority Tasks (Left Column)
-// ---------------------------------------------------------------------------
-
-function PriorityTaskList({
-  tasks,
-  selectedStage,
-}: {
-  tasks: PriorityTask[];
-  selectedStage: PipelineStage | null;
-}) {
-  // Filter out collected tasks and group by stage
-  const activeTasks = tasks.filter((t) => {
-    const stage = getTaskStage(t);
-    return stage !== "collected";
-  });
-
-  // Group tasks by stage, preserving stage order
-  const stageOrder: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "completed", "submitted"];
-  const grouped = stageOrder
-    .map((stage) => ({
-      stage,
-      tasks: activeTasks.filter((t) => getTaskStage(t) === stage),
-    }))
-    .filter((g) => g.tasks.length > 0);
-
-  return (
-    <Card className="flex flex-col">
-      <h2 className="text-xl font-bold text-on-surface mb-4">
-        Priority Tasks
-      </h2>
-      <div className="flex-1 space-y-4" role="list">
-        {grouped.map((group) => {
-          const sl = STAGE_LABEL[group.stage];
-          return (
-            <div key={group.stage}>
-              {/* Stage header */}
-              <p className={`text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline mb-2`}>
-                {sl.label}
-              </p>
-              <ul className="space-y-1">
-                {group.tasks.map((t) => {
-                  const taskStage = getTaskStage(t);
-                  const isMatch = selectedStage === null || taskStage === selectedStage;
-                  return (
-                    <li
-                      key={t.id}
-                      className={`flex gap-3 items-start py-2.5 transition-all duration-200 rounded-lg px-2 ${
-                        selectedStage !== null && isMatch
-                          ? "border-l-2 border-l-brand-accent pl-3 bg-brand-accent/5"
-                          : selectedStage !== null
-                            ? "opacity-40"
-                            : ""
-                      }`}
-                    >
-                      <span
-                        className={`w-2.5 h-2.5 rounded-full mt-1 shrink-0 ${sl.dot}`}
-                        aria-label={`${sl.label} stage`}
-                      />
-                      <div className="min-w-0">
-                        <p className="text-[14px] font-semibold text-on-surface">
-                          {t.address}
-                        </p>
-                        <p className={`text-[12px] text-outline mt-0.5 leading-snug`}>
-                          {t.description}
-                        </p>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </div>
-          );
-        })}
-      </div>
-      <Link
-        href="/jobs"
-        className={`mt-5 w-full bg-surface-container rounded-xl h-12 flex items-center justify-center ${MONO} text-[12px] uppercase tracking-[0.1em] text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer`}
-      >
-        View All Jobs
-      </Link>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  Job Pipeline Metrics (Right Column)
-// ---------------------------------------------------------------------------
-
-const PIPELINE_DISPLAY: {
-  stage: PipelineStage;
-  label: string;
-  bg: string;
-  text: string;
-  amount: string;
-}[] = [
-  { stage: "new", label: "New", bg: "bg-red-500/10", text: "text-red-600", amount: "$0" },
-  { stage: "contracted", label: "Contracted", bg: "bg-amber-500/10", text: "text-amber-700", amount: "$0" },
-  { stage: "mitigation", label: "Mitigation", bg: "bg-brand-accent/10", text: "text-brand-accent", amount: "$4,200 Est." },
-  { stage: "drying", label: "Drying", bg: "bg-blue-500/10", text: "text-blue-600", amount: "$28,500 Est." },
-  { stage: "completed", label: "Job Complete", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$0" },
-  { stage: "submitted", label: "Submitted", bg: "bg-cyan-600/10", text: "text-cyan-700", amount: "$12,600 Est." },
-  { stage: "collected", label: "Collected", bg: "bg-surface-container-high", text: "text-emerald-600", amount: "$41,200 Total" },
-];
-
-function PipelineMetrics({
+function PipelineBoxes({
   stages,
   selectedStage,
   onStageClick,
@@ -299,74 +161,138 @@ function PipelineMetrics({
   const stageMap = new Map(stages.map((s) => [s.stage, s]));
 
   return (
-    <Card>
-      <div className="flex items-center justify-between mb-4">
-        <h2 className="text-xl font-bold text-on-surface">
-          Job Pipeline Metrics
-        </h2>
-        <button
-          type="button"
-          className="p-1.5 rounded-lg hover:bg-surface-container transition-colors cursor-pointer"
-          aria-label="Pipeline settings"
-        >
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-outline">
-            <path
-              d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"
-              stroke="currentColor"
-              strokeWidth="1.5"
+    <div className="grid grid-cols-4 lg:grid-cols-7 gap-2">
+      {STAGE_ORDER.map((stage) => {
+        const data = stageMap.get(stage);
+        const count = data?.count ?? 0;
+        const meta = STAGE_META[stage];
+        const isSelected = selectedStage === stage;
+        const isCollected = stage === "collected";
+
+        return (
+          <button
+            key={stage}
+            type="button"
+            onClick={() => !isCollected && onStageClick(stage)}
+            disabled={isCollected}
+            className={`relative rounded-xl p-3 text-left transition-all duration-200 border-2 ${
+              isSelected
+                ? `border-current ${meta.bg} ${meta.text}`
+                : isCollected
+                  ? "border-outline-variant/20 bg-surface-container-lowest cursor-default"
+                  : "border-outline-variant/20 bg-surface-container-lowest hover:border-outline-variant/40 cursor-pointer"
+            }`}
+          >
+            <p className={`text-[10px] ${MONO} uppercase tracking-[0.1em] ${
+              isSelected ? meta.text : "text-outline"
+            } leading-tight mb-1`}>
+              {meta.label}
+            </p>
+            <p className={`text-[24px] font-bold ${MONO} leading-none ${
+              isSelected ? meta.text : "text-on-surface"
+            }`}>
+              {count}
+            </p>
+            {/* Color accent bar at bottom */}
+            <span
+              className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full"
+              style={{ backgroundColor: meta.color, opacity: isSelected ? 1 : 0.3 }}
             />
-            <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
-          </svg>
-        </button>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Row 2 Left: Jobs List
+// ---------------------------------------------------------------------------
+
+function JobsList({
+  tasks,
+  selectedStage,
+  now,
+}: {
+  tasks: PriorityTask[];
+  selectedStage: PipelineStage | null;
+  now: number;
+}) {
+  const activeTasks = tasks.filter((t) => getTaskStage(t) !== "collected");
+
+  const filteredTasks = selectedStage
+    ? activeTasks.filter((t) => getTaskStage(t) === selectedStage)
+    : activeTasks;
+
+  return (
+    <Card className="flex flex-col min-h-0">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[16px] font-bold text-on-surface">
+          {selectedStage
+            ? `${STAGE_META[selectedStage].label} Jobs`
+            : "Active Jobs"}
+        </h2>
+        <span className={`${LABEL_STYLE}`}>
+          {filteredTasks.length} {filteredTasks.length === 1 ? "job" : "jobs"}
+        </span>
       </div>
 
-      <div className="space-y-2.5">
-        {PIPELINE_DISPLAY.map((p) => {
-          const data = stageMap.get(p.stage);
-          const count = data?.count ?? 0;
-          const isSelected = selectedStage === p.stage;
-          const isCollected = p.stage === "collected";
+      <div className="flex-1 space-y-1" role="list">
+        {filteredTasks.length === 0 ? (
+          <p className="text-[13px] text-outline py-8 text-center">
+            No jobs in this stage
+          </p>
+        ) : (
+          filteredTasks.map((t) => {
+            const stage = getTaskStage(t);
+            const meta = STAGE_META[stage];
+            const job = mockJobs.find((j) => j.id === t.job_id);
+            const subtitle = job
+              ? `Day ${Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000))}, ${job.photo_count} photos, ${job.room_count} rooms`
+              : t.description;
 
-          if (isCollected) {
-            // Collected bar: not clickable, no ring, informational only
             return (
-              <div
-                key={p.stage}
-                className={`w-full ${p.bg} ${p.text} rounded-xl py-3 px-4 flex items-center justify-between cursor-default`}
+              <Link
+                key={t.id}
+                href={`/jobs/${t.job_id}`}
+                className="flex gap-3 items-start py-2.5 rounded-lg px-2 hover:bg-surface-container/60 transition-colors group"
+                role="listitem"
               >
-                <div className="flex items-center gap-2.5">
-                  <span className={`text-[15px] font-bold ${MONO}`}>{count}</span>
-                  <span className="text-[13px] font-medium">{p.label}</span>
+                <span
+                  className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${meta.dot}`}
+                  aria-label={`${meta.label} stage`}
+                />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="text-[14px] font-semibold text-on-surface group-hover:text-brand-accent transition-colors truncate">
+                      {t.address}
+                    </p>
+                    <span className={`text-[10px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded ${meta.bg} ${meta.text} shrink-0`}>
+                      {meta.label}
+                    </span>
+                  </div>
+                  <p className="text-[12px] text-outline mt-0.5 leading-snug truncate">
+                    {subtitle}
+                  </p>
                 </div>
-                <span className={`text-[12px] ${MONO} opacity-90`}>{p.amount}</span>
-              </div>
+              </Link>
             );
-          }
-
-          return (
-            <button
-              key={p.stage}
-              type="button"
-              onClick={() => onStageClick(p.stage)}
-              className={`w-full ${p.bg} ${p.text} rounded-xl py-3 px-4 flex items-center justify-between cursor-pointer transition-all duration-200 ${
-                isSelected ? "ring-2 ring-brand-accent" : ""
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <span className={`text-[15px] font-bold ${MONO}`}>{count}</span>
-                <span className="text-[13px] font-medium">{p.label}</span>
-              </div>
-              <span className={`text-[12px] ${MONO} opacity-90`}>{p.amount}</span>
-            </button>
-          );
-        })}
+          })
+        )}
       </div>
+
+      <Link
+        href="/jobs"
+        className={`mt-4 w-full bg-surface-container rounded-xl h-10 flex items-center justify-center ${MONO} text-[11px] uppercase tracking-[0.1em] text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer`}
+      >
+        View All Jobs
+      </Link>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Live Operations Map
+//  Row 2 Right: Live Operations Map
 // ---------------------------------------------------------------------------
 
 function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | null }) {
@@ -387,7 +313,6 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     });
   }
 
-  // Build pins from mock jobs — exclude collected jobs
   const activeJobs = mockJobs.filter((job) => getJobStage(job) !== "collected");
   const pins = activeJobs.map((job, i) => {
     const stage = getJobStage(job);
@@ -401,26 +326,23 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
     };
   });
 
-  const activePinCount = pins.length;
-
   return (
-    <Card>
-      <div className="flex items-baseline justify-between mb-4">
-        <h2 className="text-xl font-bold text-on-surface">
-          Live Operations Map
+    <Card className="flex flex-col">
+      <div className="flex items-baseline justify-between mb-3">
+        <h2 className="text-[16px] font-bold text-on-surface">
+          Live Operations
         </h2>
-        <span className={`${LABEL_STYLE}`}>{activePinCount} Pins Active</span>
+        <span className={`${LABEL_STYLE}`}>{pins.length} Pins</span>
       </div>
 
-      {/* Map area */}
-      <div className="relative min-h-[320px] bg-surface-container-high rounded-xl overflow-hidden">
+      <div className="relative min-h-[400px] flex-1 bg-surface-container-high rounded-xl overflow-hidden">
         {/* Zoom controls */}
         <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
           <button
             type="button"
             onClick={zoomIn}
             disabled={zoomLevel === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-            className="w-8 h-8 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[16px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-7 h-7 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[14px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             aria-label="Zoom in"
           >
             +
@@ -429,19 +351,18 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
             type="button"
             onClick={zoomOut}
             disabled={zoomLevel === ZOOM_STEPS[0]}
-            className="w-8 h-8 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[16px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            className="w-7 h-7 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[14px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             aria-label="Zoom out"
           >
             &minus;
           </button>
         </div>
 
-        {/* Scalable content area */}
         <div
           className="absolute inset-0 transition-transform duration-300 origin-center"
           style={{ transform: `scale(${zoomLevel})` }}
         >
-          {/* Subtle grid pattern */}
+          {/* Grid pattern */}
           <svg className="absolute inset-0 w-full h-full opacity-[0.08]" aria-hidden="true">
             <defs>
               <pattern id="mapGrid" width="32" height="32" patternUnits="userSpaceOnUse">
@@ -451,7 +372,7 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
             <rect width="100%" height="100%" fill="url(#mapGrid)" />
           </svg>
 
-          {/* Map pins */}
+          {/* Pins */}
           {pins.map((pin) => {
             const isMatch = selectedStage === null || pin.stage === selectedStage;
             return (
@@ -462,19 +383,16 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
                 }`}
                 style={{ top: pin.top, left: pin.left }}
               >
-                {/* Pulse ring for active/matching pins */}
                 {isMatch && (
                   <span
                     className="absolute w-5 h-5 rounded-full opacity-20 animate-ping"
                     style={{ backgroundColor: pin.color }}
                   />
                 )}
-                {/* Dot */}
                 <span
                   className="relative w-3 h-3 rounded-full border-2 border-white shadow-sm z-10"
                   style={{ backgroundColor: pin.color }}
                 />
-                {/* Label pill */}
                 <span
                   className="relative z-10 text-[11px] font-medium text-white rounded px-2 py-0.5 shadow-sm whitespace-nowrap"
                   style={{ backgroundColor: pin.color }}
@@ -491,184 +409,125 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
 }
 
 // ---------------------------------------------------------------------------
-//  Operations Team Status
+//  Row 3 Left: Operations Team
 // ---------------------------------------------------------------------------
 
-function OperationsTeamStatus() {
-  const displayMembers = [
-    { name: "Marcus V.", initials: "MV" },
-    { name: "Sarah J.", initials: "SJ" },
-    { name: "David R.", initials: "DR" },
-  ];
+function OperationsTeam() {
+  const team = useTeamMembers();
+  const members = team.data ?? [];
+
+  const statusColors: Record<string, string> = {
+    on_site: "bg-emerald-500",
+    available: "bg-blue-500",
+    off: "bg-slate-300",
+  };
+
+  const statusLabels: Record<string, string> = {
+    on_site: "On site",
+    available: "Available",
+    off: "Off",
+  };
 
   return (
-    <div>
-      <p className={`${LABEL_STYLE} mb-4`}>Operations Team Status</p>
-      <div className="flex gap-8 justify-center">
-        {displayMembers.map((m) => (
-          <div key={m.name} className="flex flex-col items-center gap-2">
-            <span className="w-12 h-12 rounded-full bg-surface-container-high text-[13px] font-bold text-on-surface-variant flex items-center justify-center">
-              {m.initials}
-            </span>
-            <span className="text-[13px] font-medium text-on-surface">{m.name}</span>
+    <Card>
+      <h3 className={`${LABEL_STYLE} mb-3`}>Operations Team</h3>
+      <div className="space-y-2.5">
+        {members.map((m) => (
+          <div key={m.id} className="flex items-center gap-2.5">
+            <div className="relative shrink-0">
+              <span className="w-8 h-8 rounded-full bg-surface-container-high text-[11px] font-bold text-on-surface-variant flex items-center justify-center">
+                {m.name.split(" ").map((n) => n[0]).join("")}
+              </span>
+              <span className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-surface-container-lowest ${statusColors[m.status] ?? "bg-slate-300"}`} />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-medium text-on-surface truncate">{m.name}</p>
+              <p className="text-[11px] text-outline truncate">
+                {m.current_job_address
+                  ? m.current_job_address
+                  : statusLabels[m.status] ?? m.status}
+              </p>
+            </div>
           </div>
         ))}
       </div>
-    </div>
+    </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Contractor Score
+//  Row 3 Center: Latest Activity
 // ---------------------------------------------------------------------------
 
-function ContractorScore() {
-  const score = 72;
-  const circumference = 2 * Math.PI * 20; // r=20
-  const dashArray = (score / 100) * circumference;
+function LatestActivity() {
+  // Get 4 most recent events
+  const recentEvents = [...mockEvents]
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+    .slice(0, 4);
 
   return (
-    <Card className="flex flex-col items-center justify-center text-center py-6">
-      {/* Circular gauge */}
-      <div className="relative w-16 h-16 mb-2">
-        <svg viewBox="0 0 48 48" className="w-16 h-16" aria-hidden="true">
-          <circle
-            cx="24"
-            cy="24"
-            r="20"
-            fill="none"
-            stroke="var(--surface-container)"
-            strokeWidth="4"
-          />
-          <circle
-            cx="24"
-            cy="24"
-            r="20"
-            fill="none"
-            stroke="var(--brand-accent)"
-            strokeWidth="4"
-            strokeDasharray={`${dashArray} ${circumference}`}
-            strokeLinecap="round"
-            transform="rotate(-90 24 24)"
-          />
-        </svg>
-        <span className={`absolute inset-0 flex items-center justify-center text-[20px] font-bold text-brand-accent ${MONO}`}>
-          {score}
-        </span>
+    <Card>
+      <h3 className={`${LABEL_STYLE} mb-3`}>Latest Activity</h3>
+      <div className="space-y-2.5">
+        {recentEvents.map((event, i) => {
+          const job = mockJobs.find((j) => j.id === event.job_id);
+          return (
+            <div key={`${event.event_type}-${i}`} className="flex gap-2.5 items-start">
+              <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${event.is_ai ? "bg-brand-accent" : "bg-outline-variant"}`} />
+              <div className="min-w-0 flex-1">
+                <p className="text-[12px] text-on-surface leading-snug">
+                  {eventLabel(event)}
+                </p>
+                <p className={`text-[10px] ${MONO} text-outline mt-0.5`}>
+                  {job ? `${job.address_line1} ` : ""}{timeAgo(event.created_at)}
+                </p>
+              </div>
+            </div>
+          );
+        })}
       </div>
-      <span className="text-[12px] font-semibold text-[#0891b2] uppercase tracking-wider">
-        Good Standing
-      </span>
-      <span className="text-[11px] text-outline mt-1 leading-snug">
-        Top 10% response time in Chicago
-      </span>
+      <Link
+        href="/jobs"
+        className="mt-3 block text-[11px] font-medium text-brand-accent hover:underline"
+      >
+        View full log &rarr;
+      </Link>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Customer Trust
+//  Row 3 Right: KPI Cards (2x2 mini grid)
 // ---------------------------------------------------------------------------
 
-function CustomerTrust() {
-  return (
-    <Card className="flex flex-col items-center justify-center text-center py-6">
-      <span className={`text-[32px] font-bold text-on-surface ${MONO} leading-none`}>
-        4.7
-      </span>
-      <span className="text-[18px] tracking-tight text-[#f59e0b] mt-1" aria-label="4.7 out of 5 stars">
-        {"★".repeat(5)}
-      </span>
-      <span className={`${LABEL_STYLE} mt-2`}>108 Google Reviews</span>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  Mini Sparkline SVG
-// ---------------------------------------------------------------------------
-
-function Sparkline({ color = "currentColor" }: { color?: string }) {
-  return (
-    <svg width="48" height="16" viewBox="0 0 48 16" fill="none" className="inline-block ml-2 align-middle">
-      <polyline
-        points="0,14 8,10 16,12 24,6 32,8 40,3 48,1"
-        stroke={color}
-        strokeWidth="1.5"
-        fill="none"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  KPI Cards Row
-// ---------------------------------------------------------------------------
-
-function KPICards({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | undefined }) {
+function KPIMiniGrid({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | undefined }) {
   const k = kpis;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-      {/* Active Jobs */}
-      <Card>
-        <p className={LABEL_STYLE}>Active Jobs</p>
-        <div className="mt-1.5 flex items-end gap-1">
-          <span className={`text-3xl font-bold ${MONO} text-on-surface leading-none`}>
-            {k ? k.active_jobs : "--"}
-          </span>
-          <Sparkline color="#16a34a" />
+    <Card>
+      <h3 className={`${LABEL_STYLE} mb-3`}>Key Metrics</h3>
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Active Jobs</p>
+          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>{k?.active_jobs ?? "--"}</p>
         </div>
-        <p className="mt-2 text-[12px] text-[#16a34a] font-medium">
-          {k ? `+${k.active_jobs_change} wk` : ""}
-        </p>
-      </Card>
-
-      {/* Revenue MTD */}
-      <Card>
-        <p className={LABEL_STYLE}>Revenue (MTD)</p>
-        <p className={`mt-1.5 text-2xl font-bold ${MONO} text-on-surface leading-none`}>
-          {k ? fmtCurrency(k.revenue_mtd) : "--"}
-        </p>
-        <p className="mt-2 text-[12px] text-[#16a34a] font-medium">
-          {k ? `\u2191 ${k.revenue_change_pct}%` : ""}
-        </p>
-      </Card>
-
-      {/* Outstanding AR */}
-      <Card>
-        <p className={LABEL_STYLE}>Outstanding AR</p>
-        <div className="mt-1.5 flex items-center gap-2">
-          <span className={`text-2xl font-bold ${MONO} text-brand-accent leading-none`}>
-            {k ? fmtCurrency(k.outstanding_ar) : "--"}
-          </span>
-          <span className="text-[14px] text-[#f59e0b]" aria-label="Attention needed">
-            {"\u26A0"}
-          </span>
+        <div>
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Revenue MTD</p>
+          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>{k ? fmtCurrency(k.revenue_mtd) : "--"}</p>
         </div>
-        <p className={`mt-2 text-[11px] ${MONO} uppercase tracking-[0.08em] text-brand-accent font-medium`}>
-          Action
-        </p>
-      </Card>
-
-      {/* Avg Cycle */}
-      <Card>
-        <p className={LABEL_STYLE}>Avg Cycle</p>
-        <p className="mt-1.5 flex items-baseline gap-1">
-          <span className={`text-2xl font-bold ${MONO} text-on-surface leading-none`}>
+        <div>
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Outstanding AR</p>
+          <p className={`text-[20px] font-bold ${MONO} text-brand-accent leading-tight`}>{k ? fmtCurrency(k.outstanding_ar) : "--"}</p>
+        </div>
+        <div>
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Avg Cycle</p>
+          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>
             {k ? k.avg_cycle_days : "--"}
-          </span>
-          <span className="text-[13px] text-on-surface-variant">days</span>
-        </p>
-        <p className="mt-2 text-[12px] text-outline">
-          {k && k.cycle_change_days < 0
-            ? `\u2193 ${Math.abs(k.cycle_change_days)} from last mo`
-            : ""}
-        </p>
-      </Card>
-    </div>
+            <span className="text-[12px] font-normal text-on-surface-variant ml-0.5">d</span>
+          </p>
+        </div>
+      </div>
+    </Card>
   );
 }
 
@@ -678,35 +537,35 @@ function KPICards({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | undefi
 
 function DashboardSkeleton() {
   return (
-    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <Skeleton className="w-48 h-7" />
-        <Skeleton className="w-10 h-10 rounded-lg" />
+    <div className="w-full px-4 sm:px-6 py-5 space-y-5">
+      {/* Pipeline boxes skeleton */}
+      <div className="grid grid-cols-4 lg:grid-cols-7 gap-2">
+        {Array.from({ length: 7 }).map((_, i) => (
+          <div key={i} className="rounded-xl border-2 border-outline-variant/20 p-3">
+            <Skeleton className="w-12 h-2.5 mb-2" />
+            <Skeleton className="w-8 h-6" />
+          </div>
+        ))}
       </div>
-      <div className="grid lg:grid-cols-2 gap-6">
+      {/* Two-column skeleton */}
+      <div className="grid lg:grid-cols-[55fr_45fr] gap-5">
         <Card>
           <Skeleton className="w-32 h-5 mb-4" />
-          <div className="space-y-4">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <Skeleton key={i} className="w-full h-10" />
-            ))}
-          </div>
+          {[1, 2, 3, 4].map((i) => (
+            <Skeleton key={i} className="w-full h-12 mb-2" />
+          ))}
         </Card>
         <Card>
-          <Skeleton className="w-40 h-5 mb-4" />
-          <div className="space-y-2.5">
-            {[1, 2, 3, 4, 5, 6].map((i) => (
-              <Skeleton key={i} className="w-full h-12 rounded-xl" />
-            ))}
-          </div>
+          <Skeleton className="w-32 h-5 mb-4" />
+          <Skeleton className="w-full h-[300px] rounded-xl" />
         </Card>
       </div>
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {[1, 2, 3, 4].map((i) => (
+      {/* Three-column skeleton */}
+      <div className="grid md:grid-cols-3 gap-5">
+        {[1, 2, 3].map((i) => (
           <Card key={i}>
-            <Skeleton className="w-20 h-3 mb-3" />
-            <Skeleton className="w-24 h-7 mb-2" />
-            <Skeleton className="w-16 h-3" />
+            <Skeleton className="w-24 h-3 mb-3" />
+            <Skeleton className="w-full h-20" />
           </Card>
         ))}
       </div>
@@ -724,6 +583,7 @@ export default function DashboardPage() {
   const tasks = usePriorityTasks();
   const team = useTeamMembers();
   const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null);
+  const [now] = useState(() => Date.now());
 
   const isLoading =
     kpis.isLoading || pipeline.isLoading || tasks.isLoading || team.isLoading;
@@ -736,48 +596,31 @@ export default function DashboardPage() {
   const taskData = tasks.data ?? [];
 
   function handleStageClick(stage: PipelineStage) {
-    if (stage === "collected") return; // Collected is informational only
+    if (stage === "collected") return;
     setSelectedStage((prev) => (prev === stage ? null : stage));
   }
 
   return (
-    <div className="max-w-7xl mx-auto w-full px-4 sm:px-6 py-6 space-y-6">
-      {/* -- Header Bar ---------------------------------------------------- */}
-      <HeaderBar />
+    <div className="w-full px-4 sm:px-6 py-5 space-y-5">
+      {/* -- Row 1: Pipeline Boxes ------------------------------------------ */}
+      <PipelineBoxes
+        stages={pipelineData}
+        selectedStage={selectedStage}
+        onStageClick={handleStageClick}
+      />
 
-      {/* -- Main Content: 2-column grid ----------------------------------- */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Left: Priority Tasks */}
-        <PriorityTaskList tasks={taskData} selectedStage={selectedStage} />
-
-        {/* Right: Pipeline Metrics */}
-        <PipelineMetrics
-          stages={pipelineData}
-          selectedStage={selectedStage}
-          onStageClick={handleStageClick}
-        />
-      </div>
-
-      {/* -- Bottom Section: 2-column grid --------------------------------- */}
-      <div className="grid lg:grid-cols-2 gap-6">
-        {/* Bottom-left: Live Operations Map */}
+      {/* -- Row 2: Jobs List (55%) + Map (45%) ----------------------------- */}
+      <div className="grid lg:grid-cols-[55fr_45fr] gap-5">
+        <JobsList tasks={taskData} selectedStage={selectedStage} now={now} />
         <LiveOperationsMap selectedStage={selectedStage} />
-
-        {/* Bottom-right: Team + Score/Trust */}
-        <div className="space-y-5">
-          <Card>
-            <OperationsTeamStatus />
-          </Card>
-
-          <div className="grid grid-cols-2 gap-4">
-            <ContractorScore />
-            <CustomerTrust />
-          </div>
-        </div>
       </div>
 
-      {/* -- KPI Cards Row (bottom) ---------------------------------------- */}
-      <KPICards kpis={kpis.data} />
+      {/* -- Row 3: Team + Activity + KPIs ---------------------------------- */}
+      <div className="grid md:grid-cols-3 gap-5">
+        <OperationsTeam />
+        <LatestActivity />
+        <KPIMiniGrid kpis={kpis.data} />
+      </div>
     </div>
   );
 }
