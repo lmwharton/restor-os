@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
-  Room, Photo, MoistureReading, Event,
+  Room, Photo, PhotoType, MoistureReading, Event,
   PaginatedResponse,
 } from "../types";
 
@@ -128,7 +128,7 @@ export function usePhotos(jobId: string) {
 export function useUpdatePhoto(jobId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ photoId, ...data }: { photoId: string; room_id?: string; room_name?: string; photo_type?: string; caption?: string; selected_for_ai?: boolean }) =>
+    mutationFn: ({ photoId, ...data }: { photoId: string; room_id?: string; room_name?: string; photo_type?: PhotoType; caption?: string; selected_for_ai?: boolean }) =>
       apiPatch<Photo>(`/v1/jobs/${jobId}/photos/${photoId}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["photos", jobId] });

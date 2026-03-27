@@ -927,8 +927,12 @@ export default function JobDetailPage() {
               type="button"
               onClick={async () => {
                 if (window.confirm("Are you sure you want to delete this job?")) {
-                  await deleteJob.mutateAsync(jobId);
-                  router.push("/jobs");
+                  try {
+                    await deleteJob.mutateAsync(jobId);
+                    router.push("/jobs");
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "Failed to delete job. Please try again.");
+                  }
                 }
               }}
               disabled={deleteJob.isPending}

@@ -13,7 +13,7 @@ import {
   Upload,
   Check,
 } from "@/components/icons";
-import type { Photo } from "@/lib/types";
+import type { Photo, PhotoType } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  Toolbar button                                                     */
@@ -90,13 +90,16 @@ function PhotoThumbnail({ photo }: { photo: Photo }) {
 
 export default function PhotosPage() {
   const { id: jobId } = useParams<{ id: string }>();
-  const { data: photos = [] } = usePhotos(jobId);
-  const { data: rooms = [] } = useRooms(jobId);
+  const { data: photos = [], isLoading: photosLoading } = usePhotos(jobId);
+  const { data: rooms = [], isLoading: roomsLoading } = useRooms(jobId);
   const updatePhoto = useUpdatePhoto(jobId);
   const deletePhoto = useDeletePhoto(jobId);
 
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const isLoading = photosLoading || roomsLoading;
 
   const selectedPhoto = useMemo(() => {
     if (!selectedPhotoId) return null;
@@ -219,11 +222,25 @@ export default function PhotosPage() {
         ))}
       </div>
 
+      {/* ─── Error banner ───────────────────────────────────────── */}
+      {error && (
+        <div className="mx-4 mb-2 rounded-lg bg-error-container/20 border border-error/20 px-4 py-3 text-sm text-error flex items-center justify-between">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} className="text-error/60 hover:text-error ml-3 text-xs font-semibold cursor-pointer">Dismiss</button>
+        </div>
+      )}
+
       {/* ─── Photo grid + detail panel ─────────────────────────── */}
       <div className="flex-1 px-4 pb-4 lg:grid lg:grid-cols-[1fr_288px] lg:gap-6">
         {/* Grid */}
         <div>
-          {filteredPhotos.length === 0 ? (
+          {isLoading ? (
+            <div className="grid grid-cols-3 lg:grid-cols-5 gap-2 lg:gap-3">
+              {Array.from({ length: 9 }).map((_, i) => (
+                <div key={i} className="aspect-square rounded-lg bg-surface-container-high animate-pulse" />
+              ))}
+            </div>
+          ) : filteredPhotos.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-16 text-on-surface-variant/60">
               <Camera size={32} />
               <p className="mt-2 text-sm">No photos yet</p>
@@ -275,12 +292,15 @@ export default function PhotosPage() {
                     className="w-full h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface outline-none focus:ring-2 focus:ring-brand-accent/30"
                     value={selectedPhoto.room_id ?? ""}
                     onChange={(e) => {
+                      setError(null);
                       const roomId = e.target.value || undefined;
                       const roomName = rooms.find((r) => r.id === roomId)?.room_name;
                       updatePhoto.mutate({
                         photoId: selectedPhoto.id,
                         room_id: roomId,
                         room_name: roomName,
+                      }, {
+                        onError: (err) => setError(err instanceof Error ? err.message : "Failed to update photo"),
                       });
                     }}
                   >
@@ -302,9 +322,12 @@ export default function PhotosPage() {
                     className="w-full h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface outline-none focus:ring-2 focus:ring-brand-accent/30"
                     value={selectedPhoto.photo_type}
                     onChange={(e) => {
+                      setError(null);
                       updatePhoto.mutate({
                         photoId: selectedPhoto.id,
-                        photo_type: e.target.value,
+                        photo_type: e.target.value as PhotoType,
+                      }, {
+                        onError: (err) => setError(err instanceof Error ? err.message : "Failed to update photo"),
                       });
                     }}
                   >
@@ -330,9 +353,12 @@ export default function PhotosPage() {
                     key={selectedPhoto.id}
                     onBlur={(e) => {
                       if (e.target.value !== (selectedPhoto.caption ?? "")) {
+                        setError(null);
                         updatePhoto.mutate({
                           photoId: selectedPhoto.id,
                           caption: e.target.value,
+                        }, {
+                          onError: (err) => setError(err instanceof Error ? err.message : "Failed to update caption"),
                         });
                       }
                     }}
@@ -346,9 +372,12 @@ export default function PhotosPage() {
                   <button
                     type="button"
                     onClick={() => {
+                      setError(null);
                       updatePhoto.mutate({
                         photoId: selectedPhoto.id,
                         selected_for_ai: !selectedPhoto.selected_for_ai,
+                      }, {
+                        onError: (err) => setError(err instanceof Error ? err.message : "Failed to update photo"),
                       });
                     }}
                     className={`w-10 h-6 rounded-full flex items-center px-1 cursor-pointer transition-colors ${
@@ -368,8 +397,13 @@ export default function PhotosPage() {
                   type="button"
                   onClick={async () => {
                     if (window.confirm("Delete this photo?")) {
-                      await deletePhoto.mutateAsync(selectedPhoto.id);
-                      setSelectedPhotoId(null);
+                      try {
+                        setError(null);
+                        await deletePhoto.mutateAsync(selectedPhoto.id);
+                        setSelectedPhotoId(null);
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "Failed to delete photo");
+                      }
                     }
                   }}
                   disabled={deletePhoto.isPending}

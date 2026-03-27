@@ -1,10 +1,12 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 import { ArrowBack, Camera, Plus } from "@/components/icons";
 import { useRooms, useReadings } from "@/lib/hooks/use-jobs";
+import { apiPost } from "@/lib/api";
 import type { MoisturePoint } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -36,6 +38,30 @@ interface DehuEntry {
   temp_out_f: string;
 }
 
+interface RoomFormState {
+  points: PointEntry[];
+  dehus: DehuEntry[];
+}
+
+function defaultPoints(): PointEntry[] {
+  return [
+    { id: crypto.randomUUID(), location_name: "South wall base", reading_value: "" },
+    { id: crypto.randomUUID(), location_name: "North wall base", reading_value: "" },
+    { id: crypto.randomUUID(), location_name: "Subfloor center", reading_value: "" },
+  ];
+}
+
+function defaultDehus(): DehuEntry[] {
+  return [
+    {
+      id: crypto.randomUUID(),
+      dehu_model: "Dri-Eaz LGR 3500i",
+      rh_out_pct: "",
+      temp_out_f: "",
+    },
+  ];
+}
+
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
@@ -43,6 +69,7 @@ interface DehuEntry {
 export default function MoistureReadingsPage() {
   const params = useParams();
   const router = useRouter();
+  const queryClient = useQueryClient();
   const jobId = params.id as string;
 
   // Room navigation
@@ -66,7 +93,7 @@ export default function MoistureReadingsPage() {
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Atmospheric state
+  // Atmospheric state (shared across all rooms)
   const [tempF, setTempF] = useState("72");
   const [rhPct, setRhPct] = useState("45");
 
@@ -77,132 +104,153 @@ export default function MoistureReadingsPage() {
     return calculateGPP(t, r).toFixed(1);
   }, [tempF, rhPct]);
 
-  // Moisture points state — pre-populate from latest reading's point names
-  const [points, setPoints] = useState<PointEntry[]>([
-    { id: crypto.randomUUID(), location_name: "South wall base", reading_value: "" },
-    { id: crypto.randomUUID(), location_name: "North wall base", reading_value: "" },
-    { id: crypto.randomUUID(), location_name: "Subfloor center", reading_value: "" },
-  ]);
+  // ── Per-room form state ──────────────────────────────────────────
+  // Track form data for ALL rooms, keyed by room ID.
+  const [roomForms, setRoomForms] = useState<Record<string, RoomFormState>>({});
+
+  // Get form state for a specific room, initializing with defaults if needed
+  const getRoomForm = useCallback((roomId: string): RoomFormState => {
+    return roomForms[roomId] ?? { points: defaultPoints(), dehus: defaultDehus() };
+  }, [roomForms]);
+
+  // Update form state for a specific room
+  const setRoomForm = useCallback((roomId: string, updater: (prev: RoomFormState) => RoomFormState) => {
+    setRoomForms((prev) => {
+      const current = prev[roomId] ?? { points: defaultPoints(), dehus: defaultDehus() };
+      return { ...prev, [roomId]: updater(current) };
+    });
+  }, []);
+
+  // Convenience: current room's form state
+  const currentRoomId = currentRoom?.id ?? "";
+  const currentForm = getRoomForm(currentRoomId);
+  const points = currentForm.points;
+  const dehus = currentForm.dehus;
 
   // Update points when room readings load (pre-populate location names from latest reading)
   const latestReadingId = roomReadings.length > 0 ? roomReadings[roomReadings.length - 1].id : null;
+  const prevLatestRef = useRef<string | null>(null);
   useMemo(() => {
-    if (roomReadings.length > 0) {
+    if (latestReadingId && latestReadingId !== prevLatestRef.current && currentRoomId) {
+      prevLatestRef.current = latestReadingId;
       const latest = roomReadings[roomReadings.length - 1];
       if (latest.points.length > 0) {
-        setPoints(latest.points.map((p: MoisturePoint) => ({
+        const newPoints = latest.points.map((p: MoisturePoint) => ({
           id: crypto.randomUUID(),
           location_name: p.location_name,
           reading_value: "",
-        })));
+        }));
+        setRoomForms((prev) => ({
+          ...prev,
+          [currentRoomId]: {
+            ...prev[currentRoomId],
+            points: newPoints,
+            dehus: prev[currentRoomId]?.dehus ?? defaultDehus(),
+          },
+        }));
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [latestReadingId]);
-
-  // Dehu state
-  const [dehus, setDehus] = useState<DehuEntry[]>([
-    {
-      id: crypto.randomUUID(),
-      dehu_model: "Dri-Eaz LGR 3500i",
-      rh_out_pct: "",
-      temp_out_f: "",
-    },
-  ]);
+  }, [latestReadingId, currentRoomId]);
 
   const dryStandard = currentRoom?.dry_standard ?? 16;
 
-  // Point handlers
+  // Point handlers (operate on current room)
   const updatePoint = useCallback(
-    (id: string, field: keyof PointEntry, value: string) => {
-      setPoints((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, [field]: value } : p))
-      );
+    (roomId: string, pointId: string, field: keyof PointEntry, value: string) => {
+      setRoomForm(roomId, (form) => ({
+        ...form,
+        points: form.points.map((p) => (p.id === pointId ? { ...p, [field]: value } : p)),
+      }));
     },
-    []
+    [setRoomForm]
   );
 
-  const addPoint = useCallback(() => {
-    setPoints((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        location_name: "",
-        reading_value: "",
-      },
-    ]);
-  }, []);
+  const addPoint = useCallback((roomId: string) => {
+    setRoomForm(roomId, (form) => ({
+      ...form,
+      points: [
+        ...form.points,
+        { id: crypto.randomUUID(), location_name: "", reading_value: "" },
+      ],
+    }));
+  }, [setRoomForm]);
 
-  // Dehu handlers
+  // Dehu handlers (operate on specific room)
   const updateDehu = useCallback(
-    (id: string, field: keyof DehuEntry, value: string) => {
-      setDehus((prev) =>
-        prev.map((d) => (d.id === id ? { ...d, [field]: value } : d))
-      );
+    (roomId: string, dehuId: string, field: keyof DehuEntry, value: string) => {
+      setRoomForm(roomId, (form) => ({
+        ...form,
+        dehus: form.dehus.map((d) => (d.id === dehuId ? { ...d, [field]: value } : d)),
+      }));
     },
-    []
+    [setRoomForm]
   );
 
-  const addDehu = useCallback(() => {
-    setDehus((prev) => [
-      ...prev,
-      {
-        id: crypto.randomUUID(),
-        dehu_model: "",
-        rh_out_pct: "",
-        temp_out_f: "",
-      },
-    ]);
-  }, []);
+  const addDehu = useCallback((roomId: string) => {
+    setRoomForm(roomId, (form) => ({
+      ...form,
+      dehus: [
+        ...form.dehus,
+        { id: crypto.randomUUID(), dehu_model: "", rh_out_pct: "", temp_out_f: "" },
+      ],
+    }));
+  }, [setRoomForm]);
 
-  // Helper to save current room's reading via API
+  // Helper to save a single room's reading via API
+  const saveRoom = useCallback(async (roomId: string, roomPoints: PointEntry[], roomDehus: DehuEntry[]) => {
+    // 1. Create the reading
+    const readingPayload = {
+      reading_date: new Date().toISOString().slice(0, 10),
+      atmospheric_temp_f: parseFloat(tempF) || undefined,
+      atmospheric_rh_pct: parseFloat(rhPct) || undefined,
+    };
+    type ReadingResult = { id: string };
+    const reading = await apiPost<ReadingResult>(
+      `/v1/jobs/${jobId}/rooms/${roomId}/readings`,
+      readingPayload
+    );
+
+    // 2. Create points
+    for (let i = 0; i < roomPoints.length; i++) {
+      const pt = roomPoints[i];
+      if (!pt.location_name.trim() && !pt.reading_value.trim()) continue;
+      await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/points`, {
+        location_name: pt.location_name.trim() || `Point ${i + 1}`,
+        reading_value: parseFloat(pt.reading_value) || 0,
+        sort_order: i,
+      });
+    }
+
+    // 3. Create dehus
+    for (const dehu of roomDehus) {
+      if (!dehu.dehu_model.trim() && !dehu.rh_out_pct.trim() && !dehu.temp_out_f.trim()) continue;
+      await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/dehus`, {
+        dehu_model: dehu.dehu_model.trim() || undefined,
+        rh_out_pct: parseFloat(dehu.rh_out_pct) || undefined,
+        temp_out_f: parseFloat(dehu.temp_out_f) || undefined,
+      });
+    }
+  }, [jobId, tempF, rhPct]);
+
+  // Save current room (mobile flow)
   const saveCurrentRoom = useCallback(async () => {
     if (!currentRoom) return;
     setSaveError(null);
     setIsSaving(true);
     try {
-      // 1. Create the reading
-      const readingPayload = {
-        reading_date: new Date().toISOString().slice(0, 10),
-        atmospheric_temp_f: parseFloat(tempF) || undefined,
-        atmospheric_rh_pct: parseFloat(rhPct) || undefined,
-      };
-      const { apiPost } = await import("@/lib/api");
-      type ReadingResult = { id: string };
-      const reading = await apiPost<ReadingResult>(
-        `/v1/jobs/${jobId}/rooms/${currentRoom.id}/readings`,
-        readingPayload
-      );
-
-      // 2. Create points
-      for (let i = 0; i < points.length; i++) {
-        const pt = points[i];
-        if (!pt.location_name.trim() && !pt.reading_value.trim()) continue;
-        await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/points`, {
-          location_name: pt.location_name.trim() || `Point ${i + 1}`,
-          reading_value: parseFloat(pt.reading_value) || 0,
-          sort_order: i,
-        });
-      }
-
-      // 3. Create dehus
-      for (const dehu of dehus) {
-        if (!dehu.dehu_model.trim() && !dehu.rh_out_pct.trim() && !dehu.temp_out_f.trim()) continue;
-        await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/dehus`, {
-          dehu_model: dehu.dehu_model.trim() || undefined,
-          rh_out_pct: parseFloat(dehu.rh_out_pct) || undefined,
-          temp_out_f: parseFloat(dehu.temp_out_f) || undefined,
-        });
-      }
+      await saveRoom(currentRoom.id, points, dehus);
+      // Invalidate React Query cache for readings
+      await queryClient.invalidateQueries({ queryKey: ["readings"] });
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : "Failed to save reading");
       throw err;
     } finally {
       setIsSaving(false);
     }
-  }, [currentRoom, jobId, tempF, rhPct, points, dehus]);
+  }, [currentRoom, points, dehus, saveRoom, queryClient]);
 
-  // Save & next room
+  // Save & next room (mobile)
   const handleSaveAndNext = useCallback(async () => {
     try {
       await saveCurrentRoom();
@@ -212,22 +260,9 @@ export default function MoistureReadingsPage() {
 
     if (roomIndex < rooms.length - 1) {
       setRoomIndex((prev) => prev + 1);
-      // Reset form for next room
+      // Reset atmospheric for next room
       setTempF("72");
       setRhPct("45");
-      setPoints([
-        { id: crypto.randomUUID(), location_name: "South wall base", reading_value: "" },
-        { id: crypto.randomUUID(), location_name: "North wall base", reading_value: "" },
-        { id: crypto.randomUUID(), location_name: "Subfloor center", reading_value: "" },
-      ]);
-      setDehus([
-        {
-          id: crypto.randomUUID(),
-          dehu_model: "Dri-Eaz LGR 3500i",
-          rh_out_pct: "",
-          temp_out_f: "",
-        },
-      ]);
       setSaveError(null);
       // Scroll to top
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -239,19 +274,29 @@ export default function MoistureReadingsPage() {
 
   const isLastRoom = roomIndex === rooms.length - 1;
 
-  // Save all rooms handler (desktop)
+  // Save all rooms handler (desktop) — iterates ALL rooms
   const handleSaveAll = useCallback(async () => {
+    if (rooms.length === 0) return;
+    setSaveError(null);
+    setIsSaving(true);
     try {
-      await saveCurrentRoom();
+      for (const room of rooms) {
+        const form = getRoomForm(room.id);
+        await saveRoom(room.id, form.points, form.dehus);
+      }
+      // Invalidate React Query cache for readings
+      await queryClient.invalidateQueries({ queryKey: ["readings"] });
       router.push(`/jobs/${jobId}`);
-    } catch {
-      // error already set
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "Failed to save readings");
+    } finally {
+      setIsSaving(false);
     }
-  }, [router, jobId, saveCurrentRoom]);
+  }, [rooms, getRoomForm, saveRoom, queryClient, router, jobId]);
 
   return (
     <div className="min-h-screen bg-surface">
-      {/* ── Header ─────────────────────────────────────────────── */}
+      {/* -- Header -------------------------------------------------- */}
       <header className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm px-4 pt-4 pb-3">
         <div className="flex items-center justify-between lg:max-w-5xl lg:mx-auto">
           <div className="flex items-center gap-3">
@@ -300,9 +345,9 @@ export default function MoistureReadingsPage() {
         </div>
       </header>
 
-      {/* ── Main content ───────────────────────────────────────── */}
+      {/* -- Main content -------------------------------------------- */}
       <main className="px-4 pb-28 lg:pb-8 mt-2 lg:max-w-5xl lg:mx-auto">
-        {/* ── Atmospheric (shared across all rooms — full width on desktop) ── */}
+        {/* -- Atmospheric (shared across all rooms) -- */}
         <section className="mb-6">
           <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
             Atmospheric
@@ -355,7 +400,7 @@ export default function MoistureReadingsPage() {
           </div>
         </section>
 
-        {/* ── Mobile: single room view ─────────────────────────── */}
+        {/* -- Mobile: single room view ------------------------------ */}
         <div className="lg:hidden space-y-6">
           {/* Room title */}
           <div className="text-center">
@@ -391,7 +436,7 @@ export default function MoistureReadingsPage() {
                       type="text"
                       value={point.location_name}
                       onChange={(e) =>
-                        updatePoint(point.id, "location_name", e.target.value)
+                        updatePoint(currentRoomId, point.id, "location_name", e.target.value)
                       }
                       placeholder="Location..."
                       className="flex-1 h-12 bg-surface-container-low rounded-lg px-3 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
@@ -402,7 +447,7 @@ export default function MoistureReadingsPage() {
                         inputMode="decimal"
                         value={point.reading_value}
                         onChange={(e) =>
-                          updatePoint(point.id, "reading_value", e.target.value)
+                          updatePoint(currentRoomId, point.id, "reading_value", e.target.value)
                         }
                         placeholder="--"
                         className={`w-20 h-14 rounded-lg px-2 text-xl font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
@@ -430,7 +475,7 @@ export default function MoistureReadingsPage() {
             </div>
             <button
               type="button"
-              onClick={addPoint}
+              onClick={() => addPoint(currentRoomId)}
               className="mt-3 flex items-center gap-2 px-4 h-12 rounded-xl text-brand-accent font-semibold text-sm active:bg-brand-accent/10 transition-colors"
             >
               <Plus size={18} />
@@ -453,7 +498,7 @@ export default function MoistureReadingsPage() {
                     type="text"
                     value={dehu.dehu_model}
                     onChange={(e) =>
-                      updateDehu(dehu.id, "dehu_model", e.target.value)
+                      updateDehu(currentRoomId, dehu.id, "dehu_model", e.target.value)
                     }
                     placeholder="Dehu model..."
                     className="w-full h-12 bg-surface-container-low rounded-lg px-3 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
@@ -468,7 +513,7 @@ export default function MoistureReadingsPage() {
                         inputMode="decimal"
                         value={dehu.rh_out_pct}
                         onChange={(e) =>
-                          updateDehu(dehu.id, "rh_out_pct", e.target.value)
+                          updateDehu(currentRoomId, dehu.id, "rh_out_pct", e.target.value)
                         }
                         placeholder="--"
                         className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
@@ -483,7 +528,7 @@ export default function MoistureReadingsPage() {
                         inputMode="decimal"
                         value={dehu.temp_out_f}
                         onChange={(e) =>
-                          updateDehu(dehu.id, "temp_out_f", e.target.value)
+                          updateDehu(currentRoomId, dehu.id, "temp_out_f", e.target.value)
                         }
                         placeholder="--"
                         className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
@@ -495,7 +540,7 @@ export default function MoistureReadingsPage() {
             </div>
             <button
               type="button"
-              onClick={addDehu}
+              onClick={() => addDehu(currentRoomId)}
               className="mt-3 flex items-center gap-2 px-4 h-12 rounded-xl text-brand-accent font-semibold text-sm active:bg-brand-accent/10 transition-colors"
             >
               <Plus size={18} />
@@ -504,17 +549,18 @@ export default function MoistureReadingsPage() {
           </section>
         </div>
 
-        {/* ── Error message ──────────────────────────────────── */}
+        {/* -- Error message ----------------------------------------- */}
         {saveError && (
           <div className="rounded-lg bg-error-container/20 border border-error/20 px-4 py-3 text-sm text-error mb-4">
             {saveError}
           </div>
         )}
 
-        {/* ── Desktop: all rooms side-by-side ──────────────────── */}
+        {/* -- Desktop: all rooms side-by-side ----------------------- */}
         <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6">
           {rooms.map((room) => {
             const roomDryStandard = room.dry_standard ?? 16;
+            const roomForm = getRoomForm(room.id);
 
             return (
               <div key={room.id} className="bg-surface-container-lowest rounded-2xl p-4 space-y-4">
@@ -528,7 +574,7 @@ export default function MoistureReadingsPage() {
                       ? `${room.length_ft} x ${room.width_ft} ft`
                       : ""}
                     {room.square_footage
-                      ? ` · ${Math.round(room.square_footage)} SF`
+                      ? ` \u00B7 ${Math.round(room.square_footage)} SF`
                       : ""}
                   </p>
                 </div>
@@ -539,11 +585,7 @@ export default function MoistureReadingsPage() {
                     Moisture Points
                   </label>
                   <div className="space-y-2">
-                    {(room.id === currentRoom?.id ? points : [
-                      { id: "1", location_name: "South wall base", reading_value: "" },
-                      { id: "2", location_name: "North wall base", reading_value: "" },
-                      { id: "3", location_name: "Subfloor center", reading_value: "" },
-                    ]).map((point, i) => {
+                    {roomForm.points.map((point, i) => {
                       const val = parseFloat(point.reading_value);
                       const isWet = !isNaN(val) && val > roomDryStandard;
                       return (
@@ -551,17 +593,23 @@ export default function MoistureReadingsPage() {
                           key={point.id}
                           className="flex items-center justify-between py-1.5"
                         >
-                          <div className="flex items-center gap-2">
-                            <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center">
+                          <div className="flex items-center gap-2 flex-1 min-w-0">
+                            <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center flex-shrink-0">
                               {i + 1}
                             </span>
-                            <span className="text-[12px] text-on-surface">
-                              {point.location_name}
-                            </span>
+                            <input
+                              type="text"
+                              value={point.location_name}
+                              onChange={(e) => updatePoint(room.id, point.id, "location_name", e.target.value)}
+                              placeholder="Location..."
+                              className="text-[12px] text-on-surface bg-transparent outline-none flex-1 min-w-0 focus:ring-1 focus:ring-brand-accent/30 rounded px-1"
+                            />
                           </div>
                           <input
                             type="text"
                             inputMode="decimal"
+                            value={point.reading_value}
+                            onChange={(e) => updatePoint(room.id, point.id, "reading_value", e.target.value)}
                             placeholder="--"
                             className={`w-16 h-10 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
                               isWet
@@ -575,7 +623,7 @@ export default function MoistureReadingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={addPoint}
+                    onClick={() => addPoint(room.id)}
                     className="mt-2 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer"
                   >
                     + Add Point
@@ -587,30 +635,43 @@ export default function MoistureReadingsPage() {
                   <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
                     Dehu Output
                   </label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div>
-                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
-                        RH Out %
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="--"
-                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-                      />
+                  {roomForm.dehus.map((dehu) => (
+                    <div key={dehu.id} className="grid grid-cols-2 gap-2 mb-2">
+                      <div>
+                        <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
+                          RH Out %
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={dehu.rh_out_pct}
+                          onChange={(e) => updateDehu(room.id, dehu.id, "rh_out_pct", e.target.value)}
+                          placeholder="--"
+                          className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        />
+                      </div>
+                      <div>
+                        <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
+                          Temp Out &deg;F
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={dehu.temp_out_f}
+                          onChange={(e) => updateDehu(room.id, dehu.id, "temp_out_f", e.target.value)}
+                          placeholder="--"
+                          className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
-                        Temp Out &deg;F
-                      </span>
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="--"
-                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-                      />
-                    </div>
-                  </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => addDehu(room.id)}
+                    className="mt-1 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer"
+                  >
+                    + Add Dehu
+                  </button>
                 </section>
               </div>
             );
@@ -618,7 +679,7 @@ export default function MoistureReadingsPage() {
         </div>
       </main>
 
-      {/* ── Bottom CTA (mobile only) ──────────────────────────── */}
+      {/* -- Bottom CTA (mobile only) -------------------------------- */}
       <div className="fixed bottom-0 inset-x-0 p-4 bg-surface/95 backdrop-blur-sm lg:hidden">
         {saveError && (
           <p className="text-sm text-error text-center mb-2">{saveError}</p>
