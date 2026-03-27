@@ -6,14 +6,9 @@ from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.rooms.schemas import RoomCreate, RoomResponse, RoomUpdate
 from api.rooms.service import create_room, delete_room, list_rooms, update_room
-from api.shared.dependencies import get_valid_job
+from api.shared.dependencies import _get_token, get_valid_job
 
 router = APIRouter(tags=["rooms"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.post("/jobs/{job_id}/rooms", status_code=201, response_model=RoomResponse)

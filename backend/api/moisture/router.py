@@ -39,14 +39,9 @@ from api.moisture.service import (
     update_reading,
 )
 from api.shared.database import get_authenticated_client
-from api.shared.dependencies import get_valid_job, get_valid_reading, get_valid_room
+from api.shared.dependencies import _get_token, get_valid_job, get_valid_reading, get_valid_room
 
 router = APIRouter(tags=["moisture"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 # --- Readings ---

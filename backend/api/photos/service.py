@@ -123,9 +123,19 @@ def _build_photo_response(row: dict, signed_url: str) -> PhotoResponse:
     )
 
 
-def _get_signed_url(storage_path: str) -> str:
-    """Generate a signed URL for a storage path using the admin client."""
-    admin = get_supabase_admin_client()
+def _get_signed_url(storage_path: str, *, admin: object | None = None) -> str:
+    """Generate a signed URL for a storage path using the admin client.
+
+    Parameters
+    ----------
+    storage_path : str
+        The storage path for the photo.
+    admin : object | None
+        Pre-created Supabase admin client. If None, one is created (use for
+        single calls; for loops, pass a shared client to avoid N+1 overhead).
+    """
+    if admin is None:
+        admin = get_supabase_admin_client()
     result = admin.storage.from_(STORAGE_BUCKET).create_signed_url(
         storage_path, SIGNED_URL_EXPIRY_SECONDS
     )
@@ -138,6 +148,26 @@ def _get_signed_url(storage_path: str) -> str:
         return result["signed_url"]
     # Fallback: return empty string rather than crashing
     return ""
+
+
+def _get_signed_urls_batch(storage_paths: list[str]) -> dict[str, str]:
+    """Generate signed URLs for multiple storage paths in a single API call.
+
+    Returns a dict mapping storage_path -> signed URL.
+    """
+    if not storage_paths:
+        return {}
+    admin = get_supabase_admin_client()
+    results = admin.storage.from_(STORAGE_BUCKET).create_signed_urls(
+        storage_paths, SIGNED_URL_EXPIRY_SECONDS
+    )
+    url_map: dict[str, str] = {}
+    for item in results:
+        path = item.get("path", "")
+        signed_url = item.get("signedURL") or item.get("signedUrl") or ""
+        if path:
+            url_map[path] = signed_url
+    return url_map
 
 
 async def generate_upload_url(
@@ -284,10 +314,13 @@ async def list_photos(
     rows = result.data or []
     total = result.count if result.count is not None else len(rows)
 
-    # Generate signed URLs for all photos
+    # Generate signed URLs for all photos in a single batch API call
+    storage_paths = [row["storage_url"] for row in rows if row.get("storage_url")]
+    url_map = _get_signed_urls_batch(storage_paths)
+
     photos = []
     for row in rows:
-        signed_url = _get_signed_url(row["storage_url"]) if row.get("storage_url") else ""
+        signed_url = url_map.get(row.get("storage_url", ""), "") if row.get("storage_url") else ""
         photos.append(_build_photo_response(row, signed_url))
 
     if group_by == "room":

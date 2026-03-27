@@ -6,15 +6,10 @@ from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.jobs.schemas import JobCreate, JobDetailResponse, JobListResponse, JobUpdate
 from api.jobs.service import create_job, delete_job, get_job, list_jobs, update_job
+from api.shared.dependencies import _get_token
 from api.shared.exceptions import AppException
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
-
-
-def _get_token(request: Request) -> str:
-    """Extract raw JWT from Authorization header."""
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.post("", status_code=201, response_model=JobDetailResponse)

@@ -175,16 +175,22 @@ async def get_shared_job(token: str) -> dict:
     )
     rooms = rooms_result.data or []
 
-    # Fetch photos with signed URLs
+    # Fetch photos with signed URLs (batch call to avoid N+1)
     photos_result = (
         admin.table("photos").select("*").eq("job_id", job_id).order("created_at").execute()
     )
     photos = photos_result.data or []
+    storage_paths = [p["storage_url"] for p in photos if p.get("storage_url")]
+    if storage_paths:
+        signed_results = admin.storage.from_("photos").create_signed_urls(storage_paths, 3600)
+        url_map = {
+            item.get("path", ""): item.get("signedURL") or item.get("signedUrl") or ""
+            for item in signed_results
+        }
+    else:
+        url_map = {}
     for photo in photos:
-        storage_path = photo.get("storage_url")
-        if storage_path:
-            signed = admin.storage.from_("photos").create_signed_url(storage_path, 3600)
-            photo["signed_url"] = signed.get("signedURL", signed.get("signedUrl", ""))
+        photo["signed_url"] = url_map.get(photo.get("storage_url", ""), "")
 
     # Fetch moisture readings (if scope allows)
     moisture_readings: list[dict] = []

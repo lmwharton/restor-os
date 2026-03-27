@@ -23,14 +23,9 @@ from api.photos.service import (
     list_photos,
     update_photo,
 )
-from api.shared.dependencies import PaginationParams, get_valid_job
+from api.shared.dependencies import PaginationParams, _get_token, get_valid_job
 
 router = APIRouter(tags=["photos"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.post("/jobs/{job_id}/photos/upload-url", response_model=PhotoUploadUrlResponse)

@@ -18,14 +18,9 @@ from api.floor_plans.service import (
     list_floor_plans,
     update_floor_plan,
 )
-from api.shared.dependencies import get_valid_job
+from api.shared.dependencies import _get_token, get_valid_job
 
 router = APIRouter(tags=["floor-plans"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.post("/jobs/{job_id}/floor-plans", status_code=201, response_model=FloorPlanResponse)

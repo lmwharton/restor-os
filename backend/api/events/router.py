@@ -13,14 +13,9 @@ from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.events.service import list_company_events, list_job_events
 from api.shared.database import get_authenticated_client
-from api.shared.dependencies import get_valid_job
+from api.shared.dependencies import _get_token, get_valid_job
 
 router = APIRouter(tags=["events"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.get("/jobs/{job_id}/events")

@@ -1,5 +1,6 @@
 """Jobs CRUD service. All queries use the authenticated client (RLS-scoped)."""
 
+import logging
 from datetime import UTC, date, datetime
 from uuid import UUID
 
@@ -8,12 +9,21 @@ from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
 
+logger = logging.getLogger(__name__)
+
+JOB_NUMBER_MAX_RETRIES = 3
+
 VALID_LOSS_TYPES = {"water", "fire", "mold", "storm", "other"}
 VALID_LOSS_CATEGORIES = {"1", "2", "3"}
 VALID_LOSS_CLASSES = {"1", "2", "3", "4"}
 VALID_STATUSES = {
-    "new", "contracted", "mitigation", "drying",
-    "job_complete", "submitted", "collected",
+    "new",
+    "contracted",
+    "mitigation",
+    "drying",
+    "job_complete",
+    "submitted",
+    "collected",
 }
 VALID_SORT_FIELDS = {"created_at", "updated_at", "job_number", "customer_name"}
 
@@ -186,11 +196,9 @@ async def create_job(
     )
 
     client = get_authenticated_client(token)
-    job_number = _generate_job_number(client, company_id)
 
     insert_data: dict = {
         "company_id": str(company_id),
-        "job_number": job_number,
         "address_line1": body.address_line1,
         "city": body.city,
         "state": body.state,
@@ -228,16 +236,44 @@ async def create_job(
             else:
                 insert_data[field] = value
 
-    result = client.table("jobs").insert(insert_data).execute()
+    # Retry loop to handle concurrent job_number collisions.
+    # Two simultaneous creates could read the same max sequence number;
+    # the second insert would fail on the unique constraint. We catch
+    # that specific error and regenerate the number.
+    job_data = None
+    for attempt in range(JOB_NUMBER_MAX_RETRIES):
+        job_number = _generate_job_number(client, company_id)
+        insert_data["job_number"] = job_number
+        try:
+            result = client.table("jobs").insert(insert_data).execute()
+            if not result.data:
+                raise AppException(
+                    status_code=500,
+                    detail="Failed to create job",
+                    error_code="JOB_CREATE_FAILED",
+                )
+            job_data = result.data[0]
+            break  # Success
+        except AppException:
+            raise  # Re-raise our own exceptions immediately
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_job_number_conflict = "unique" in error_msg and "job_number" in error_msg
+            if is_job_number_conflict and attempt < JOB_NUMBER_MAX_RETRIES - 1:
+                logger.warning(
+                    "Job number collision on attempt %d, retrying: %s",
+                    attempt + 1,
+                    job_number,
+                )
+                continue
+            raise  # Not a job_number conflict, or out of retries
 
-    if not result.data:
+    if job_data is None:
         raise AppException(
             status_code=500,
-            detail="Failed to create job",
+            detail="Failed to create job after retries",
             error_code="JOB_CREATE_FAILED",
         )
-
-    job_data = result.data[0]
 
     await log_event(
         company_id,

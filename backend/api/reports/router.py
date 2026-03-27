@@ -14,14 +14,9 @@ from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.reports.schemas import ReportCreate, ReportResponse
 from api.reports.service import create_report, list_reports
-from api.shared.dependencies import get_valid_job
+from api.shared.dependencies import _get_token, get_valid_job
 
 router = APIRouter(tags=["reports"])
-
-
-def _get_token(request: Request) -> str:
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
 
 
 @router.post(
