@@ -4,8 +4,12 @@ Uses admin client for storage operations (service role needed for presigned URLs
 Uses authenticated client for DB queries (RLS enforces tenant isolation).
 """
 
+import io
+import logging
 import uuid as _uuid
 from uuid import UUID
+
+from PIL import Image
 
 from api.photos.schemas import (
     VALID_CONTENT_TYPES,
@@ -19,9 +23,65 @@ from api.shared.database import get_authenticated_client, get_supabase_admin_cli
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
 
+logger = logging.getLogger(__name__)
+
+MAX_DIMENSION = 1920
 MAX_PHOTOS_PER_JOB = 100
 SIGNED_URL_EXPIRY_SECONDS = 15 * 60  # 15 minutes
 STORAGE_BUCKET = "photos"
+
+
+def _resize_photo(storage_path: str) -> None:
+    """Resize photo to max 1920px on longest edge. Overwrites in storage."""
+    admin = get_supabase_admin_client()
+
+    # Download from storage
+    file_bytes = admin.storage.from_(STORAGE_BUCKET).download(storage_path)
+
+    # Open with Pillow
+    img = Image.open(io.BytesIO(file_bytes))
+
+    # Check if resize needed
+    width, height = img.size
+    if max(width, height) <= MAX_DIMENSION:
+        return  # No resize needed
+
+    # Calculate new dimensions maintaining aspect ratio
+    if width > height:
+        new_width = MAX_DIMENSION
+        new_height = int(height * (MAX_DIMENSION / width))
+    else:
+        new_height = MAX_DIMENSION
+        new_width = int(width * (MAX_DIMENSION / height))
+
+    # Resize using high-quality downsampling
+    img = img.resize((new_width, new_height), Image.LANCZOS)
+
+    # Save to bytes
+    output = io.BytesIO()
+    path_lower = storage_path.lower()
+    img_format = "JPEG" if path_lower.endswith(".jpg") or path_lower.endswith(".jpeg") else "PNG"
+    save_kwargs: dict = {"format": img_format, "optimize": True}
+    if img_format == "JPEG":
+        save_kwargs["quality"] = 85
+    img.save(output, **save_kwargs)
+    output.seek(0)
+
+    # Upload back to same path (overwrite)
+    admin.storage.from_(STORAGE_BUCKET).upload(
+        storage_path,
+        output.getvalue(),
+        file_options={"content-type": f"image/{img_format.lower()}", "upsert": "true"},
+    )
+
+    logger.info(
+        "Resized photo %s from %dx%d to %dx%d",
+        storage_path,
+        width,
+        height,
+        new_width,
+        new_height,
+    )
 
 
 def _validate_photo_type(photo_type: str) -> None:
@@ -94,10 +154,7 @@ async def generate_upload_url(
     # Check photo count for this job
     client = get_authenticated_client(token)
     count_result = (
-        client.table("photos")
-        .select("id", count="exact")
-        .eq("job_id", str(job_id))
-        .execute()
+        client.table("photos").select("id", count="exact").eq("job_id", str(job_id)).execute()
     )
     current_count = count_result.count if count_result.count is not None else 0
     if current_count >= MAX_PHOTOS_PER_JOB:
@@ -174,6 +231,16 @@ async def confirm_photo(
         user_id=user_id,
         event_data={"photo_id": photo["id"], "filename": body.filename},
     )
+
+    # Best-effort resize — reduces AI token cost ~4x but non-critical
+    try:
+        _resize_photo(body.storage_path)
+    except Exception:
+        logger.warning(
+            "Failed to resize photo %s, continuing with original",
+            body.storage_path,
+            exc_info=True,
+        )
 
     return _build_photo_response(photo, signed_url)
 

@@ -78,3 +78,55 @@ def expired_token(jwt_secret, mock_auth_user_id):
         "iat": datetime.now(UTC) - timedelta(hours=2),
     }
     return jwt.encode(payload, jwt_secret, algorithm="HS256")
+
+
+@pytest.fixture
+def auth_headers(valid_token):
+    """Standard Authorization headers for authenticated requests."""
+    return {"Authorization": f"Bearer {valid_token}"}
+
+
+@pytest.fixture
+def mock_user_row(mock_user_id, mock_company_id):
+    """Standard user row dict as returned from the users table."""
+    return {
+        "id": str(mock_user_id),
+        "company_id": str(mock_company_id),
+        "role": "owner",
+        "is_platform_admin": False,
+    }
+
+
+def make_mock_supabase(user_row, table_handlers=None):
+    """Create a MagicMock Supabase client with auth middleware support.
+
+    Args:
+        user_row: Dict to return for users table lookup (auth context).
+                  Set to None to simulate user-not-found.
+        table_handlers: Optional dict mapping table names to callables
+                        that receive a fresh MagicMock table and configure it.
+                        Tables not in this dict get a default unconfigured mock.
+
+    Returns:
+        A MagicMock that behaves like a Supabase client.
+    """
+    from unittest.mock import MagicMock
+
+    mock_client = MagicMock()
+
+    def table_side_effect(table_name):
+        mock_table = MagicMock()
+        if table_name == "users":
+            # Auth middleware: select().eq().is_().single().execute().data
+            (
+                mock_table.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+            ).data = user_row
+        elif table_name == "event_history":
+            # log_event: insert().execute() — fire-and-forget, just succeed
+            mock_table.insert.return_value.execute.return_value = MagicMock()
+        elif table_handlers and table_name in table_handlers:
+            table_handlers[table_name](mock_table)
+        return mock_table
+
+    mock_client.table.side_effect = table_side_effect
+    return mock_client
