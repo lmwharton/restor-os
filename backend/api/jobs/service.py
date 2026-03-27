@@ -11,7 +11,10 @@ from api.shared.exceptions import AppException
 VALID_LOSS_TYPES = {"water", "fire", "mold", "storm", "other"}
 VALID_LOSS_CATEGORIES = {"1", "2", "3"}
 VALID_LOSS_CLASSES = {"1", "2", "3", "4"}
-VALID_STATUSES = {"needs_scope", "scoped", "submitted"}
+VALID_STATUSES = {
+    "new", "contracted", "mitigation", "drying",
+    "job_complete", "submitted", "collected",
+}
 VALID_SORT_FIELDS = {"created_at", "updated_at", "job_number", "customer_name"}
 
 
@@ -193,7 +196,7 @@ async def create_job(
         "state": body.state,
         "zip": body.zip,
         "loss_type": body.loss_type,
-        "status": "needs_scope",
+        "status": "new",
         "created_by": str(user_id),
     }
 

@@ -162,7 +162,7 @@ class JobCreate:
 
 class JobUpdate:
     # All fields optional — only send what changed
-    status: str | None                  # needs_scope | scoped | submitted
+    status: str | None                  # new | contracted | mitigation | drying | job_complete | submitted | collected
 
     # Address
     address_line1: str | None = None
@@ -530,7 +530,7 @@ class SharedJobResponse:
 | INVALID_LOSS_TYPE | 400 | Jobs | Not in: water, fire, mold, storm, other |
 | INVALID_LOSS_CATEGORY | 400 | Jobs/Rooms | Not in: 1, 2, 3 |
 | INVALID_LOSS_CLASS | 400 | Jobs/Rooms | Not in: 1, 2, 3, 4 |
-| INVALID_STATUS | 400 | Jobs | Not in: needs_scope, scoped, submitted |
+| INVALID_STATUS | 400 | Jobs | Not in: new, contracted, mitigation, drying, job_complete, submitted, collected |
 | NO_UPDATES | 400 | All PATCH | Empty update body |
 | FORBIDDEN | 403 | Jobs | Non-owner trying to delete |
 | FLOOR_PLAN_NOT_FOUND | 404 | Floor Plans | Floor plan ID not found |
@@ -701,7 +701,7 @@ DELETE /v1/jobs/{job_id}                           Soft delete job
   "loss_class": "1",
   "loss_cause": "dishwasher leak",
   "loss_date": "2026-03-13",
-  "status": "needs_scope",                        // needs_scope | scoped | submitted
+  "status": "new",                                 // new | contracted | mitigation | drying | job_complete | submitted | collected
   "assigned_to": null,
   "notes": "Customer called at 2pm",
   "tech_notes": "...",
@@ -724,7 +724,7 @@ DELETE /v1/jobs/{job_id}                           Soft delete job
 #### GET /v1/jobs
 ```
 Query params:
-  ?status=needs_scope          filter by status
+  ?status=mitigation           filter by status (new|contracted|mitigation|drying|job_complete|submitted|collected)
   &loss_type=water             filter by loss type
   &search=gilbert              search address_line1, customer_name (ILIKE)
   &limit=20                    max 100
@@ -744,7 +744,7 @@ Errors: 404 JOB_NOT_FOUND
 #### PATCH /v1/jobs/{job_id}
 ```jsonc
 // Request — only send fields to update
-{ "status": "scoped", "tech_notes": "Day 2: readings improving..." }
+{ "status": "drying", "tech_notes": "Day 2: readings improving..." }
 
 // Response: JobDetailResponse
 // Errors: 400 NO_UPDATES, 400 INVALID_STATUS, 404 JOB_NOT_FOUND
@@ -1188,7 +1188,7 @@ GET    /v1/shared/{token}                          Public read-only view (NO AUT
     "loss_type": "water",
     "loss_category": "2",
     "loss_class": "1",
-    "status": "scoped"
+    "status": "mitigation"
     // customer_phone, customer_email REDACTED in shared view
   },
   "rooms": [...],

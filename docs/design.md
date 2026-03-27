@@ -167,8 +167,7 @@ Full architecture reference: [`docs/research/product-specs/restoros-architecture
 ```sql
 CREATE TYPE user_role AS ENUM ('owner', 'admin', 'tech');
 CREATE TYPE job_status AS ENUM ('pending', 'in_progress', 'monitoring', 'completed', 'invoiced', 'closed');
--- V1 uses: needs_scope, scoped, submitted
--- V2 full lifecycle: new, contracted, in_progress, monitoring, completed, submitted, paid
+-- 7-stage industry pipeline: new, contracted, mitigation, drying, job_complete, submitted, collected
 CREATE TYPE loss_type AS ENUM ('water', 'fire', 'mold', 'storm', 'other');
 CREATE TYPE water_category AS ENUM ('1', '2', '3');
 CREATE TYPE water_class AS ENUM ('1', '2', '3', '4');
@@ -217,7 +216,7 @@ CREATE TABLE jobs (
     loss_class      water_class,
     loss_cause      TEXT,           -- e.g., "roof leak", "pipe burst", "sewer backup"
     loss_date       DATE,
-    status          TEXT NOT NULL DEFAULT 'needs_scope',  -- needs_scope | scoped | submitted
+    status          TEXT NOT NULL DEFAULT 'new',  -- new | contracted | mitigation | drying | job_complete | submitted | collected
     customer_name   TEXT,
     customer_phone  TEXT,
     customer_email  TEXT,
@@ -441,20 +440,19 @@ Complete water damage code database: [`docs/research/xactimate-codes-water.md`](
 
 Brett's full lifecycle (from [W15.1](competitive-analysis.md#appendix-b-workflow-review--validation-questions)):
 
-| Step | What Happens | V1 Status |
-|------|-------------|-----------|
-| 1. **Call** | Customer/TPA calls. Get name, address, carrier, claim number. | `needs_scope` |
-| 2. **Contract** | Homeowner signs work authorization (paper in V1). | — |
-| 3. **Assess** | Arrive on site. Identify damage, equipment needs, room count. Take photos. | `needs_scope` |
-| 4. **Work** | Day 1 heavy labor: tear-out, containment, equipment setup. Techs take photos. | — |
-| 5. **Monitor** | Days 2-4: daily moisture readings, equipment checks, progress photos. | — |
-| 6. **Pull Equipment** | Readings hit dry standard. Remove equipment, clean up. | — |
-| 7. **Submit** | Send scope + photos + report to adjuster (PDF). Wait. Get rejected. Resubmit. | `submitted` |
-| 8. **Get Paid** | Adjuster approves (eventually). Payment via AOB + W-9. | — |
+| Step | What Happens | Status |
+|------|-------------|--------|
+| 1. **Call** | Customer/TPA calls. Get name, address, carrier, claim number. | `new` |
+| 2. **Contract** | Homeowner signs work authorization. | `contracted` |
+| 3. **Mitigation** | Day 1 heavy labor: tear-out, containment, equipment setup. 1-2 techs, full day. | `mitigation` |
+| 4. **Drying** | Days 2-4: daily moisture readings, equipment checks. 1 tech, 20-min check-in. | `drying` |
+| 5. **Job Complete** | Dry standard met. Equipment pulled, site cleaned. | `job_complete` |
+| 6. **Submit** | Scope + report sent to adjuster (PDF). Wait. Get rejected. Resubmit. | `submitted` |
+| 7. **Collected** | Payment received, job closed. Active chasing — not passive "paid." | `collected` |
 
-**V1 status flow:** `needs_scope` → `scoped` → `submitted`
+**7-stage industry pipeline:** `new` → `contracted` → `mitigation` → `drying` → `job_complete` → `submitted` → `collected`
 
-**V2 full status flow:** `new` → `contracted` → `in_progress` → `monitoring` → `completed` → `submitted` → `paid`
+**Key insight:** Mitigation and Drying are split because they need different resources. Mitigation = 1-2 techs for a full day of labor. Drying = one tech for a 20-minute check-in. This drives scheduling.
 
 **Two payment paths:**
 1. **TPA path** (Alacrity, Code Blue, Sedgwick): Scope → third-party reviewer (strict) → adjuster → fast payment. First submission almost always rejected.

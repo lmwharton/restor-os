@@ -23,7 +23,7 @@ def _job_row(
     state="MI",
     zip_code="48083",
     loss_type="water",
-    status="needs_scope",
+    status="new",
     customer_name=None,
     customer_phone=None,
     customer_email=None,
@@ -205,7 +205,7 @@ class TestCreateJob:
         data = response.json()
         assert data["id"] == str(job_id)
         assert data["job_number"].startswith("JOB-")
-        assert data["status"] == "needs_scope"
+        assert data["status"] == "new"
         assert data["room_count"] == 0
 
     def test_create_job_minimal(
@@ -298,7 +298,7 @@ class TestListJobs:
         self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id
     ):
         """Filter by status returns matching jobs."""
-        rows = [_job_row(company_id=mock_company_id, status="scoped")]
+        rows = [_job_row(company_id=mock_company_id, status="mitigation")]
 
         def jobs_handler(mock_table, call_num):
             result = MagicMock()
@@ -466,7 +466,7 @@ class TestUpdateJob:
     ):
         """Update job status returns 200."""
         job_id = uuid4()
-        updated_row = _job_row(job_id=job_id, company_id=mock_company_id, status="scoped")
+        updated_row = _job_row(job_id=job_id, company_id=mock_company_id, status="mitigation")
 
         def jobs_handler(mock_table, call_num):
             if call_num == 1:
@@ -495,12 +495,12 @@ class TestUpdateJob:
         with _patch_all(jwt_secret, mock_client):
             response = client.patch(
                 f"/v1/jobs/{job_id}",
-                json={"status": "scoped"},
+                json={"status": "mitigation"},
                 headers=auth_headers,
             )
 
         assert response.status_code == 200
-        assert response.json()["status"] == "scoped"
+        assert response.json()["status"] == "mitigation"
 
     def test_update_job_invalid_status(self, client, auth_headers, jwt_secret, mock_user_row):
         """Invalid status returns 400 INVALID_STATUS."""

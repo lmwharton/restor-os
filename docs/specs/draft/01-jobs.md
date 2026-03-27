@@ -662,7 +662,15 @@ job (references property_id)
 **Job creation pattern:**
 - 2 required fields: address + loss type. Everything else nullable/optional.
 - Auto-generate `job_number` on creation: `JOB-20260324-001`
-- Status starts as `needs_scope`, transitions to `scoped` when AI scope runs, `submitted` when user marks as submitted.
+- Industry-standard 7-stage pipeline: `new` → `contracted` → `mitigation` → `drying` → `job_complete` → `submitted` → `collected`
+  - **New:** Got the call, lead entered
+  - **Contracted:** Work authorization signed
+  - **Mitigation:** Active tear-out, extraction, equipment setup (1-2 techs, full day)
+  - **Drying:** Equipment running, daily monitoring (1 tech, 20-min check-in)
+  - **Job Complete:** Dry standard met, equipment pulled
+  - **Submitted:** Scope + report sent to adjuster, waiting on insurance
+  - **Collected:** Payment received, job closed ("Collected" not "Paid" — reflects active chasing)
+  - Key insight: Mitigation vs Drying split matters for scheduling — different crew sizes and durations.
 
 **Field grouping (from Brett's ScopeFlow demo):**
 - **Customer:** customer_name, customer_phone, customer_email, address (line1 + city + state + zip)
@@ -767,7 +775,7 @@ cd /Users/lakshman/Workspaces/Crewmatic
 - **PDF expanded:** Now includes floor plan sketch, room summary, moisture log, tech notes — not just line items and photos.
 - **Storage:** Private bucket. All photo access via signed URLs (15-min expiry). Client property photos are sensitive.
 - **Share links:** Time-limited (7 days), read-only. No auth required for viewing.
-- **Status flow V1:** needs_scope → scoped → submitted.
+- **Status flow (7-stage industry pipeline):** new → contracted → mitigation → drying → job_complete → submitted → collected. Replaces the old 3-stage (needs_scope → scoped → submitted). See Technical Approach section for full stage descriptions.
 - **Canvas library:** Research needed — Konva.js/react-konva (React-native, good touch), Fabric.js (most mature), or Excalidraw fork (open-source whiteboard). Decision during Phase 4.
 - **GPP formula:** Psychrometric calculation from ASHRAE tables. Pure math, no AI needed. Replaces separate app Brett currently uses.
 - **Spec 02 is now AI Pipeline** (was originally spec 02 for floor plan, but floor plan merged into spec 01).
