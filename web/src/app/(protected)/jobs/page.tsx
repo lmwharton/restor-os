@@ -207,79 +207,122 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
   }
 
   const days = daysSince(job.created_at);
+  const padTwo = (n: number) => String(n).padStart(2, "0");
 
   return (
     <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-4">
-      {/* Title */}
+      {/* Status badge */}
+      <StatusBadge status={job.status} />
+
+      {/* Full address — large, bold */}
       <div>
-        <h2 className="text-base font-bold text-on-surface">{job.address_line1}</h2>
-        <p className="text-xs text-on-surface-variant mt-0.5">
+        <h2 className="text-lg font-bold text-on-surface leading-tight">{job.address_line1}</h2>
+        <p className="text-sm text-on-surface-variant mt-0.5">
           {job.city}, {job.state} {job.zip}
         </p>
       </div>
 
-      {/* Quick stats */}
-      <div className="grid grid-cols-2 gap-3">
-        <div className="bg-surface-container rounded-lg p-2.5 text-center">
-          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{days}</span>
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Days</span>
+      {/* Stats row — mono style */}
+      <div className="flex items-center gap-4 py-2.5 px-3 bg-surface-container rounded-lg">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Rooms:</span>
+          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{padTwo(job.room_count)}</span>
         </div>
-        <div className="bg-surface-container rounded-lg p-2.5 text-center">
-          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.room_count}</span>
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Rooms</span>
+        <div className="w-px h-4 bg-outline-variant/40" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Photos:</span>
+          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{padTwo(job.photo_count)}</span>
         </div>
-        <div className="bg-surface-container rounded-lg p-2.5 text-center">
-          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.photo_count}</span>
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Photos</span>
-        </div>
-        <div className="bg-surface-container rounded-lg p-2.5 text-center">
-          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.line_item_count}</span>
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Items</span>
+        <div className="w-px h-4 bg-outline-variant/40" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Progress:</span>
+          <span className="text-sm font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">Day {padTwo(days)}</span>
         </div>
       </div>
 
-      {/* Customer & carrier */}
+      {/* Customer, Carrier, Claim */}
       <div className="space-y-2 pt-1">
         {job.customer_name && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Customer</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Customer</span>
             <span className="text-xs font-medium text-on-surface">{job.customer_name}</span>
           </div>
         )}
         {job.carrier && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Carrier</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Carrier</span>
             <span className="text-xs font-medium text-on-surface">{job.carrier}</span>
           </div>
         )}
         {job.claim_number && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Claim #</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Claim #</span>
             <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
           </div>
         )}
         {job.loss_category && (
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Category</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Category</span>
             <span className="text-xs font-medium text-on-surface">{categoryLabel(job.loss_category)}</span>
           </div>
         )}
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-2 pt-1">
-        <Link
-          href={`/jobs/${job.id}`}
-          className="flex-1 h-10 rounded-xl text-sm font-semibold text-on-primary primary-gradient flex items-center justify-center transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
+      {/* Primary action — Open Job */}
+      <Link
+        href={`/jobs/${job.id}`}
+        className="w-full h-11 rounded-xl text-sm font-semibold text-on-primary primary-gradient flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
+      >
+        Open Job
+        <span aria-hidden="true">&rarr;</span>
+      </Link>
+
+      {/* Secondary actions — side by side */}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center gap-1.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
         >
-          Open Job
-        </Link>
-        <Link
-          href={`/jobs/${job.id}/timeline`}
-          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center hover:bg-surface-container-low transition-colors"
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <circle cx="8.5" cy="15.5" r="1.5" fill="currentColor" />
+            <circle cx="15" cy="10" r="2" fill="currentColor" />
+            <path d="M3 17l4-4 3 3 4-5 7 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+          Add Photo
+        </button>
+        <button
+          type="button"
+          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center gap-1.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
         >
-          Timeline
-        </Link>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3v18M3 12h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          Log Reading
+        </button>
+      </div>
+
+      {/* Field Technicians */}
+      <div className="pt-2">
+        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold">Field Technicians</span>
+        <div className="flex items-center gap-2 mt-2">
+          {/* Avatar placeholders */}
+          <div className="w-8 h-8 rounded-full bg-brand-accent/15 flex items-center justify-center text-[11px] font-bold text-brand-accent">
+            {job.customer_name ? job.customer_name.charAt(0).toUpperCase() : "T"}
+          </div>
+          <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-[11px] font-bold text-on-surface-variant">
+            +
+          </div>
+        </div>
+      </div>
+
+      {/* Location Map placeholder */}
+      <div className="pt-1">
+        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold">Location Map</span>
+        <div className="mt-2 h-28 rounded-xl bg-surface-container flex items-center justify-center border border-outline-variant/30">
+          <span className="text-xs text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)]">Map preview</span>
+        </div>
       </div>
     </div>
   );
@@ -416,10 +459,13 @@ export default function JobsPage() {
     );
   }, [jobs, search]);
 
+  // Derive effective selection: use explicit pick, or fall back to first job
+  const effectiveJobId = selectedJobId ?? (filtered.length > 0 ? filtered[0].id : null);
+
   const selectedJob = useMemo(() => {
-    if (!selectedJobId || !filtered) return null;
-    return filtered.find((j) => j.id === selectedJobId) ?? null;
-  }, [selectedJobId, filtered]);
+    if (!effectiveJobId || !filtered) return null;
+    return filtered.find((j) => j.id === effectiveJobId) ?? null;
+  }, [effectiveJobId, filtered]);
 
   const handleSelectJob = useCallback((id: string) => {
     setSelectedJobId((prev) => (prev === id ? null : id));
@@ -510,7 +556,7 @@ export default function JobsPage() {
                   key={job.id}
                   job={job}
                   isFirst={i === 0}
-                  isSelected={selectedJobId === job.id}
+                  isSelected={effectiveJobId === job.id}
                   onSelect={() => handleSelectJob(job.id)}
                 />
               ))
