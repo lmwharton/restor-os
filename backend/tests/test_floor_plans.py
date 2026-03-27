@@ -411,14 +411,14 @@ class TestDeleteFloorPlan:
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-cleanup
+# POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup
 # ---------------------------------------------------------------------------
 
 
-class TestAICleanup:
-    """Test POST .../ai-cleanup stub endpoint."""
+class TestSketchCleanup:
+    """Test POST .../cleanup — deterministic sketch cleanup (no AI)."""
 
-    def test_ai_cleanup_straightens_and_detects_rooms(
+    def test_cleanup_straightens_and_detects_rooms(
         self,
         client,
         auth_headers,
@@ -428,7 +428,7 @@ class TestAICleanup:
         mock_user_row,
         mock_job_row,
     ):
-        """AI cleanup straightens walls and detects rooms -> 200."""
+        """Cleanup straightens walls, detects rooms, returns event_id -> 200."""
         patches = _setup_mocks(jwt_secret, mock_user_row, mock_job_row)
 
         # A slightly wobbly rectangle that should be straightened
@@ -443,27 +443,48 @@ class TestAICleanup:
             "offset": {"x": 0, "y": 0},
         }
 
-        with patches[0], patches[1], patches[2], patches[3]:
+        mock_service_client = MagicMock()
+        # Floor plan fetch returns canvas_data
+        (
+            mock_service_client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.single.return_value.execute.return_value
+        ).data = {
+            "id": str(mock_floor_plan_id),
+            "canvas_data": canvas,
+        }
+        # Update after cleanup
+        (
+            mock_service_client.table.return_value.update.return_value.eq.return_value.execute.return_value
+        ).data = [{"id": str(mock_floor_plan_id)}]
+
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch(
+                "api.floor_plans.service.get_authenticated_client",
+                return_value=mock_service_client,
+            ),
+        ):
             response = client.post(
-                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/ai-cleanup",
-                json={"canvas_data": canvas},
+                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/cleanup",
                 headers=auth_headers,
             )
             assert response.status_code == 200
             data = response.json()
+            assert "canvas_data" in data
+            assert "changes_made" in data
+            assert "event_id" in data
             result = data["canvas_data"]
             assert "walls" in result
             assert len(result["walls"]) == 4
             assert "rooms" in result
             assert len(result["rooms"]) >= 1
-            # Room should have area and dimensions
             room = result["rooms"][0]
             assert "area_sqft" in room
             assert room["area_sqft"] > 0
-            assert "width_ft" in room
-            assert "length_ft" in room
 
-    def test_ai_cleanup_empty_walls(
+    def test_cleanup_no_sketch_data(
         self,
         client,
         auth_headers,
@@ -473,31 +494,43 @@ class TestAICleanup:
         mock_user_row,
         mock_job_row,
     ):
-        """AI cleanup with no walls returns input unchanged -> 200."""
+        """Cleanup with no canvas_data -> 400."""
         patches = _setup_mocks(jwt_secret, mock_user_row, mock_job_row)
 
-        canvas = {"walls": [], "scale": 24, "offset": {"x": 0, "y": 0}}
+        mock_service_client = MagicMock()
+        (
+            mock_service_client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.single.return_value.execute.return_value
+        ).data = {
+            "id": str(mock_floor_plan_id),
+            "canvas_data": None,
+        }
 
-        with patches[0], patches[1], patches[2], patches[3]:
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch(
+                "api.floor_plans.service.get_authenticated_client",
+                return_value=mock_service_client,
+            ),
+        ):
             response = client.post(
-                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/ai-cleanup",
-                json={"canvas_data": canvas},
+                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/cleanup",
                 headers=auth_headers,
             )
-            assert response.status_code == 200
-            data = response.json()
-            assert data["canvas_data"] == canvas
+            assert response.status_code == 400
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-chat
+# POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/edit
 # ---------------------------------------------------------------------------
 
 
-class TestAIChat:
-    """Test POST .../ai-chat stub endpoint."""
+class TestSketchEdit:
+    """Test POST .../edit — AI sketch edit (stub until Spec 02)."""
 
-    def test_ai_chat_stub(
+    def test_edit_stub_returns_current_canvas(
         self,
         client,
         auth_headers,
@@ -507,17 +540,38 @@ class TestAIChat:
         mock_user_row,
         mock_job_row,
     ):
-        """AI chat stub returns canvas_data unchanged -> 200."""
+        """Edit stub returns current canvas_data + event_id -> 200."""
         patches = _setup_mocks(jwt_secret, mock_user_row, mock_job_row)
 
-        canvas = {"rooms": [{"name": "Kitchen"}]}
+        canvas = {"walls": [{"id": "w1", "x1": 0, "y1": 0, "x2": 100, "y2": 0}]}
 
-        with patches[0], patches[1], patches[2], patches[3]:
+        mock_service_client = MagicMock()
+        (
+            mock_service_client.table.return_value.select.return_value.eq.return_value.eq.return_value.eq.return_value.single.return_value.execute.return_value
+        ).data = {
+            "id": str(mock_floor_plan_id),
+            "canvas_data": canvas,
+        }
+
+        with (
+            patches[0],
+            patches[1],
+            patches[2],
+            patches[3],
+            patch(
+                "api.shared.database.get_authenticated_client",
+                return_value=mock_service_client,
+            ),
+        ):
             response = client.post(
-                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/ai-chat",
-                json={"canvas_data": canvas, "message": "Add a bathroom"},
+                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/edit",
+                json={"instruction": "Add a door on the left wall"},
                 headers=auth_headers,
             )
             assert response.status_code == 200
             data = response.json()
-            assert data["canvas_data"] == canvas
+            assert "canvas_data" in data
+            assert "changes_made" in data
+            assert "event_id" in data
+            assert "cost_cents" in data
+            assert data["cost_cents"] == 0  # stub

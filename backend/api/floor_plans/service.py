@@ -6,11 +6,11 @@ Hard deletes (no deleted_at column on floor_plans).
 
 import logging
 import math
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from postgrest.exceptions import APIError
 from shapely.geometry import MultiLineString
-from shapely.ops import polygonize
+from shapely.ops import polygonize, unary_union
 
 from api.floor_plans.schemas import FloorPlanCreate, FloorPlanUpdate
 from api.shared.database import get_authenticated_client
@@ -34,16 +34,23 @@ _SNAP_THRESHOLD_PX = 20
 # Angle threshold in degrees for straightening walls to H/V
 _STRAIGHTEN_ANGLE_DEG = 15
 
+# Maximum walls to process (O(n²) snap becomes slow above this)
+_MAX_WALLS = 500
+
+# Required keys for a valid wall dict
+_WALL_REQUIRED_KEYS = {"x1", "y1", "x2", "y2"}
+
 
 def cleanup_sketch(canvas_data: dict) -> dict:
     """Clean up a hand-drawn floor plan sketch.
 
     Pipeline:
-      1. Straighten near-horizontal / near-vertical walls
-      2. Snap nearby endpoints together and align to grid
+      1. Validate + filter wall data
+      2. Straighten near-horizontal / near-vertical walls
       3. Standardize wall lengths to nearest 0.25 ft
-      4. Detect rooms via Shapely polygonize
-      5. Calculate room areas and bounding-box dimensions
+      4. Snap nearby endpoints together and align to grid (AFTER standardize)
+      5. Detect rooms via Shapely polygonize (with unary_union noding for T-junctions)
+      6. Calculate room areas and bounding-box dimensions
     """
     walls = canvas_data.get("walls", [])
     scale = canvas_data.get("scale", 24)  # px per foot
@@ -51,16 +58,39 @@ def cleanup_sketch(canvas_data: dict) -> dict:
     if not walls:
         return canvas_data
 
-    # --- Step 1: Straighten walls ----------------------------------------
-    straightened = _straighten_walls(walls, scale)
+    # --- Step 1: Validate wall data --------------------------------------
+    validated_walls = []
+    for wall in walls:
+        if not isinstance(wall, dict):
+            continue
+        if not _WALL_REQUIRED_KEYS.issubset(wall.keys()):
+            continue
+        if not all(isinstance(wall[k], (int, float)) for k in _WALL_REQUIRED_KEYS):
+            continue
+        validated_walls.append(wall)
 
-    # --- Step 2: Snap endpoints within threshold -------------------------
-    straightened = _snap_endpoints(straightened, scale)
+    if not validated_walls:
+        return canvas_data
 
-    # --- Step 3: Standardize lengths to nearest 0.25 ft ------------------
+    if len(validated_walls) > _MAX_WALLS:
+        raise AppException(
+            status_code=400,
+            detail=f"Too many walls ({len(validated_walls)}). Maximum is {_MAX_WALLS}.",
+            error_code="TOO_MANY_WALLS",
+        )
+
+    # --- Step 2: Straighten walls ----------------------------------------
+    straightened = _straighten_walls(validated_walls, scale)
+
+    # --- Step 3: Standardize lengths BEFORE snap -------------------------
+    # (If we snap first then standardize, standardize moves endpoints and
+    # un-snaps them. Standardize first, then snap to close gaps.)
     straightened = _standardize_lengths(straightened, scale)
 
-    # --- Step 4 & 5: Detect rooms using Shapely --------------------------
+    # --- Step 4: Snap endpoints within threshold (AFTER standardize) -----
+    straightened = _snap_endpoints(straightened, scale)
+
+    # --- Step 5 & 6: Detect rooms using Shapely --------------------------
     rooms = _detect_rooms(straightened, scale)
 
     return {
@@ -194,7 +224,10 @@ def _detect_rooms(walls: list[dict], scale: int) -> list[dict]:
     rooms: list[dict] = []
     try:
         multi_line = MultiLineString(lines)
-        polygons = list(polygonize(multi_line))
+        # unary_union nodes the lines at all intersection points (T-junctions, crossings)
+        # Without this, polygonize only finds rooms from endpoint-connected walls
+        noded = unary_union(multi_line)
+        polygons = list(polygonize(noded))
 
         for i, poly in enumerate(polygons):
             vertices = [{"x": x, "y": y} for x, y in poly.exterior.coords[:-1]]
@@ -416,3 +449,105 @@ async def delete_floor_plan(
         user_id=user_id,
         event_data={"floor_plan_id": str(floor_plan_id)},
     )
+
+
+async def cleanup_floor_plan(
+    token: str,
+    floor_plan_id: UUID,
+    job_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
+    client_canvas_data: dict | None = None,
+) -> dict:
+    """Run deterministic cleanup on a floor plan sketch.
+
+    If client_canvas_data is provided, cleans the client's unsaved sketch.
+    If None, fetches the saved canvas_data from the floor plan record.
+    Either way, the cleaned result is saved back to the DB.
+
+    Returns SketchCleanupResponse with cleaned canvas_data, changes_made, event_id.
+    """
+    client = get_authenticated_client(token)
+
+    # Fetch floor plan (always needed to verify ownership + for saving back)
+    result = (
+        client.table("floor_plans")
+        .select("*")
+        .eq("id", str(floor_plan_id))
+        .eq("job_id", str(job_id))
+        .eq("company_id", str(company_id))
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail="Floor plan not found",
+            error_code="FLOOR_PLAN_NOT_FOUND",
+        )
+
+    # Use client-supplied canvas_data (unsaved edits) or fall back to saved version
+    canvas_data = client_canvas_data or result.data.get("canvas_data")
+    if not canvas_data or not canvas_data.get("walls"):
+        raise AppException(
+            status_code=400,
+            detail="Floor plan has no sketch to clean up",
+            error_code="NO_SKETCH_DATA",
+        )
+
+    # Track what changed for the response
+    original_walls = canvas_data.get("walls", [])
+    original_wall_count = len(original_walls)
+
+    # Run deterministic cleanup
+    cleaned = cleanup_sketch(canvas_data)
+
+    # Build changes_made list
+    changes_made = []
+    cleaned_walls = cleaned.get("walls", [])
+    if len(cleaned_walls) != original_wall_count:
+        changes_made.append(f"Wall count: {original_wall_count} → {len(cleaned_walls)}")
+
+    cleaned_rooms = cleaned.get("rooms", [])
+    if cleaned_rooms:
+        room_names = [r.get("name", f"Room {i + 1}") for i, r in enumerate(cleaned_rooms)]
+        changes_made.append(f"Detected {len(cleaned_rooms)} room(s): {', '.join(room_names)}")
+
+    for w_orig, w_clean in zip(original_walls, cleaned_walls):
+        if (
+            w_orig.get("x1") != w_clean.get("x1")
+            or w_orig.get("y1") != w_clean.get("y1")
+            or w_orig.get("x2") != w_clean.get("x2")
+            or w_orig.get("y2") != w_clean.get("y2")
+        ):
+            wid = w_clean.get("id", "?")
+            changes_made.append(f"Adjusted wall {wid}")
+
+    if not changes_made:
+        changes_made.append("Sketch already clean — no changes needed")
+
+    # Save cleaned canvas_data back to DB (with company_id for defense-in-depth)
+    client.table("floor_plans").update({"canvas_data": cleaned}).eq("id", str(floor_plan_id)).eq(
+        "company_id", str(company_id)
+    ).execute()
+
+    # Log event
+    await log_event(
+        company_id,
+        "sketch_cleanup",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "floor_plan_id": str(floor_plan_id),
+            "changes_count": len(changes_made),
+            "rooms_detected": len(cleaned_rooms),
+        },
+    )
+
+    # Return response matching SketchCleanupResponse schema
+    # TODO: return real event_id when log_ai_event() is implemented (Spec 02)
+    return {
+        "canvas_data": cleaned,
+        "changes_made": changes_made,
+        "event_id": uuid4(),  # placeholder until log_ai_event()
+    }

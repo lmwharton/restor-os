@@ -29,14 +29,38 @@ class FloorPlanResponse(BaseModel):
     updated_at: datetime
 
 
+# --- Sketch Cleanup (deterministic, no AI) ---
+
+
 class SketchCleanupRequest(BaseModel):
+    """Optional client-supplied canvas_data for cleaning unsaved edits.
+    If omitted, server fetches from the saved floor plan record."""
+
+    canvas_data: dict | None = None
+
+
+class SketchCleanupResponse(BaseModel):
+    """Response from deterministic sketch cleanup. No AI cost."""
+
     canvas_data: dict
+    changes_made: list[str] = []
+    event_id: UUID
 
 
-class SketchChatRequest(BaseModel):
+# --- Sketch Edit (Claude AI, Spec 02) ---
+
+
+class SketchEditRequest(BaseModel):
+    """Natural language instruction to modify the sketch."""
+
+    instruction: str = Field(..., min_length=1, max_length=2000)
+
+
+class SketchEditResponse(BaseModel):
+    """Response from AI sketch edit. Includes cost tracking."""
+
     canvas_data: dict
-    message: str = Field(..., min_length=1, max_length=2000)
-
-
-class SketchAIResponse(BaseModel):
-    canvas_data: dict
+    changes_made: list[str] = []
+    event_id: UUID
+    cost_cents: int = 0
+    duration_ms: int = 0
