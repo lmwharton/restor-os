@@ -278,7 +278,7 @@ const PIPELINE_DISPLAY: {
   text: string;
   amount: string;
 }[] = [
-  { stage: "new", label: "New Leads", bg: "bg-red-500/10", text: "text-red-600", amount: "$0" },
+  { stage: "new", label: "New", bg: "bg-red-500/10", text: "text-red-600", amount: "$0" },
   { stage: "contracted", label: "Contracted", bg: "bg-amber-500/10", text: "text-amber-700", amount: "$0" },
   { stage: "mitigation", label: "Mitigation", bg: "bg-brand-accent/10", text: "text-brand-accent", amount: "$4,200 Est." },
   { stage: "drying", label: "Drying", bg: "bg-blue-500/10", text: "text-blue-600", amount: "$28,500 Est." },
