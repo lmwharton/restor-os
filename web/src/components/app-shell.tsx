@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { Clipboard, Gear } from "@/components/icons";
+import { Dashboard, Clipboard, Waves, People, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
 
 /* ------------------------------------------------------------------ */
@@ -45,7 +45,10 @@ export interface UserProfile {
 /* ------------------------------------------------------------------ */
 
 const navItems = [
+  { href: "/dashboard", label: "Dashboard", Icon: Dashboard },
   { href: "/jobs", label: "Jobs", Icon: Clipboard },
+  { href: "/readings", label: "Readings", Icon: Waves },
+  { href: "/team", label: "Team", Icon: People },
   { href: "/settings", label: "Settings", Icon: Gear },
 ];
 

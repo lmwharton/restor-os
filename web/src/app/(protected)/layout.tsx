@@ -33,7 +33,7 @@ export default async function ProtectedLayout({
 
   if (session?.access_token) {
     const destination = await getAuthenticatedRedirect(session.access_token);
-    if (destination !== "/jobs") {
+    if (destination !== "/dashboard") {
       redirect(destination);
     }
   }

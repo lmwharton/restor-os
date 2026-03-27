@@ -1,18 +1,398 @@
 "use client";
 
+import { useState, useMemo, useCallback } from "react";
+import Link from "next/link";
 import { Plus } from "@/components/icons";
+import { useJobs } from "@/lib/hooks/use-jobs";
+import type { JobDetail, JobStatus } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
-/*  Inline Icons (page-specific)                                       */
+/*  Helpers                                                            */
+/* ------------------------------------------------------------------ */
+
+function daysSince(dateStr: string): number {
+  const diff = Date.now() - new Date(dateStr).getTime();
+  return Math.max(0, Math.floor(diff / 86_400_000));
+}
+
+function formatDate(dateStr: string): string {
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function categoryLabel(cat: string | null): string {
+  if (!cat) return "";
+  const labels: Record<string, string> = {
+    "1": "Cat 1 (Clean)",
+    "2": "Cat 2 (Gray)",
+    "3": "Cat 3 (Black)",
+  };
+  return labels[cat] ?? `Cat ${cat}`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Status Badge                                                       */
+/* ------------------------------------------------------------------ */
+
+const statusConfig: Record<
+  JobStatus,
+  { label: string; className: string }
+> = {
+  needs_scope: {
+    label: "Needs Scope",
+    className: "bg-surface-container-high text-on-surface-variant",
+  },
+  scoped: {
+    label: "Scoped",
+    className: "bg-emerald-100 text-emerald-700",
+  },
+  submitted: {
+    label: "Submitted",
+    className: "bg-blue-100 text-blue-700",
+  },
+};
+
+function StatusBadge({ status }: { status: JobStatus }) {
+  const config = statusConfig[status];
+  return (
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.className}`}
+    >
+      {config.label}
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Search Icon (inline, page-specific)                                */
+/* ------------------------------------------------------------------ */
+
+function SearchIcon() {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className="text-on-surface-variant"
+    >
+      <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.5" />
+      <path
+        d="M16 16l4.5 4.5"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Clipboard Icon (for empty state)                                   */
 /* ------------------------------------------------------------------ */
 
 function ClipboardIcon() {
   return (
     <svg width="32" height="32" viewBox="0 0 32 32" fill="none" aria-hidden="true">
       <rect x="8" y="4" width="16" height="24" rx="2.5" stroke="#a63500" strokeWidth="1.5" />
-      <path d="M12 4h8v2a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V4z" fill="#a63500" opacity="0.15" stroke="#a63500" strokeWidth="1.5" />
+      <path
+        d="M12 4h8v2a1 1 0 0 1-1 1h-6a1 1 0 0 1-1-1V4z"
+        fill="#a63500"
+        opacity="0.15"
+        stroke="#a63500"
+        strokeWidth="1.5"
+      />
       <path d="M12 13h8M12 17h6M12 21h4" stroke="#a63500" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Skeleton Card                                                      */
+/* ------------------------------------------------------------------ */
+
+function SkeletonCard() {
+  return (
+    <div className="bg-surface-container-lowest rounded-xl p-4 animate-pulse">
+      <div className="h-4 bg-surface-container-high rounded w-3/4 mb-3" />
+      <div className="flex gap-2 mb-3">
+        <div className="h-5 bg-surface-container-high rounded-full w-20" />
+        <div className="h-5 bg-surface-container-high rounded w-12" />
+      </div>
+      <div className="h-3 bg-surface-container rounded w-1/2" />
+    </div>
+  );
+}
+
+function SkeletonTableRow() {
+  return (
+    <div className="grid grid-cols-7 gap-4 px-4 py-3 animate-pulse">
+      <div className="h-4 bg-surface-container-high rounded w-3/4 col-span-1" />
+      <div className="h-5 bg-surface-container-high rounded-full w-20" />
+      <div className="h-4 bg-surface-container-high rounded w-10" />
+      <div className="h-4 bg-surface-container-high rounded w-8" />
+      <div className="h-4 bg-surface-container-high rounded w-8" />
+      <div className="h-4 bg-surface-container-high rounded w-16" />
+      <div className="h-4 bg-surface-container-high rounded w-14" />
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Desktop Table Row                                                  */
+/* ------------------------------------------------------------------ */
+
+function JobTableRow({
+  job,
+  isFirst,
+  isSelected,
+  onSelect,
+}: {
+  job: JobDetail;
+  isFirst: boolean;
+  isSelected: boolean;
+  onSelect: () => void;
+}) {
+  const days = daysSince(job.created_at);
+
+  return (
+    <div
+      onClick={onSelect}
+      className={`grid grid-cols-[1fr_110px_60px_60px_60px_110px_80px] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer transition-colors duration-100 ${
+        isSelected
+          ? "bg-brand-accent/6 ring-1 ring-brand-accent/20"
+          : "hover:bg-surface-container-low"
+      } ${isFirst ? "border-l-3 border-brand-accent" : ""}`}
+    >
+      <Link href={`/jobs/${job.id}`} className="truncate text-[13px] font-semibold text-on-surface hover:text-brand-accent transition-colors">
+        {job.address_line1}
+      </Link>
+      <StatusBadge status={job.status} />
+      <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
+        {days}
+      </span>
+      <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
+        {job.room_count || "--"}
+      </span>
+      <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
+        {job.photo_count || "--"}
+      </span>
+      <span className="text-xs text-on-surface-variant truncate">
+        {categoryLabel(job.loss_category) || "--"}
+      </span>
+      <span className="text-xs text-on-surface-variant tabular-nums text-right">
+        {formatDate(job.created_at)}
+      </span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Desktop Preview Panel                                              */
+/* ------------------------------------------------------------------ */
+
+function PreviewPanel({ job }: { job: JobDetail | null }) {
+  if (!job) {
+    return (
+      <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-6 flex flex-col items-center justify-center min-h-[300px] text-center">
+        <div className="w-12 h-12 rounded-xl bg-surface-container flex items-center justify-center mb-3">
+          <ClipboardIcon />
+        </div>
+        <p className="text-sm text-on-surface-variant">Select a job to preview</p>
+      </div>
+    );
+  }
+
+  const days = daysSince(job.created_at);
+
+  return (
+    <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-4">
+      {/* Title */}
+      <div>
+        <h2 className="text-base font-bold text-on-surface">{job.address_line1}</h2>
+        <p className="text-xs text-on-surface-variant mt-0.5">
+          {job.city}, {job.state} {job.zip}
+        </p>
+      </div>
+
+      {/* Quick stats */}
+      <div className="grid grid-cols-2 gap-3">
+        <div className="bg-surface-container rounded-lg p-2.5 text-center">
+          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{days}</span>
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Days</span>
+        </div>
+        <div className="bg-surface-container rounded-lg p-2.5 text-center">
+          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.room_count}</span>
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Rooms</span>
+        </div>
+        <div className="bg-surface-container rounded-lg p-2.5 text-center">
+          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.photo_count}</span>
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Photos</span>
+        </div>
+        <div className="bg-surface-container rounded-lg p-2.5 text-center">
+          <span className="block text-lg font-bold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">{job.line_item_count}</span>
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Items</span>
+        </div>
+      </div>
+
+      {/* Customer & carrier */}
+      <div className="space-y-2 pt-1">
+        {job.customer_name && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Customer</span>
+            <span className="text-xs font-medium text-on-surface">{job.customer_name}</span>
+          </div>
+        )}
+        {job.carrier && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Carrier</span>
+            <span className="text-xs font-medium text-on-surface">{job.carrier}</span>
+          </div>
+        )}
+        {job.claim_number && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Claim #</span>
+            <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
+          </div>
+        )}
+        {job.loss_category && (
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">Category</span>
+            <span className="text-xs font-medium text-on-surface">{categoryLabel(job.loss_category)}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Actions */}
+      <div className="flex gap-2 pt-1">
+        <Link
+          href={`/jobs/${job.id}`}
+          className="flex-1 h-10 rounded-xl text-sm font-semibold text-on-primary primary-gradient flex items-center justify-center transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98]"
+        >
+          Open Job
+        </Link>
+        <Link
+          href={`/jobs/${job.id}/timeline`}
+          className="flex-1 h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center hover:bg-surface-container-low transition-colors"
+        >
+          Timeline
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Job Card                                                           */
+/* ------------------------------------------------------------------ */
+
+function JobCard({ job, isFirst }: { job: JobDetail; isFirst: boolean }) {
+  const days = daysSince(job.created_at);
+
+  return (
+    <Link href={`/jobs/${job.id}`} className="block group">
+      <div
+        className={`bg-surface-container-lowest rounded-xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)] transition-shadow duration-150 group-hover:shadow-[0_2px_8px_rgba(31,27,23,0.08)] ${
+          isFirst ? "border-l-4 border-brand-accent" : ""
+        }`}
+      >
+        {/* Row 1: Address */}
+        <h3 className="text-base font-semibold text-on-surface truncate">
+          {job.address_line1}
+        </h3>
+
+        {/* Row 2: Status + Day count */}
+        <div className="flex items-center gap-2 mt-1.5">
+          <StatusBadge status={job.status} />
+          <span className="text-xs text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+            Day {days}
+          </span>
+        </div>
+
+        {/* Row 3: Metadata + date */}
+        <div className="flex items-center justify-between mt-2.5">
+          <div className="flex items-center gap-3 text-xs text-on-surface-variant">
+            {job.room_count > 0 && (
+              <span className="font-[family-name:var(--font-geist-mono)]">
+                {job.room_count} {job.room_count === 1 ? "room" : "rooms"}
+              </span>
+            )}
+            {job.photo_count > 0 && (
+              <span className="font-[family-name:var(--font-geist-mono)]">
+                {job.photo_count} photos
+              </span>
+            )}
+            {job.loss_category && (
+              <span>{categoryLabel(job.loss_category)}</span>
+            )}
+          </div>
+          <span className="text-xs text-on-surface-variant shrink-0 ml-2">
+            {formatDate(job.created_at)}
+          </span>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Empty State                                                        */
+/* ------------------------------------------------------------------ */
+
+function EmptyState() {
+  return (
+    <div className="flex-1 flex flex-col items-center justify-center px-6 py-16 md:py-24 relative">
+      <div
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] h-[480px] rounded-full opacity-30 blur-[120px] pointer-events-none"
+        style={{
+          background:
+            "radial-gradient(circle, rgba(232,93,38,0.08) 0%, transparent 70%)",
+        }}
+        aria-hidden="true"
+      />
+      <div className="relative flex flex-col items-center text-center max-w-md">
+        <div className="w-16 h-16 rounded-2xl bg-surface-container flex items-center justify-center mb-6">
+          <ClipboardIcon />
+        </div>
+        <h1 className="text-3xl sm:text-4xl font-bold tracking-[-1px] text-on-surface mb-3">
+          No jobs yet.
+        </h1>
+        <p className="text-[15px] text-on-surface-variant leading-relaxed mb-8 max-w-sm">
+          Create your first job to start AI scoping and real-time field data
+          monitoring.
+        </p>
+        <Link
+          href="/jobs/new"
+          className="h-12 px-8 rounded-xl text-[15px] font-semibold text-on-primary primary-gradient transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] flex items-center gap-2"
+        >
+          <Plus size={18} />
+          Create Job
+        </Link>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  No Results State (search has no matches)                           */
+/* ------------------------------------------------------------------ */
+
+function NoResults({ query }: { query: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-16 text-center">
+      <div className="w-12 h-12 rounded-xl bg-surface-container flex items-center justify-center mb-4">
+        <SearchIcon />
+      </div>
+      <p className="text-base font-semibold text-on-surface mb-1">
+        No jobs found
+      </p>
+      <p className="text-sm text-on-surface-variant">
+        Nothing matches &ldquo;{query}&rdquo;. Try a different search.
+      </p>
+    </div>
   );
 }
 
@@ -21,58 +401,137 @@ function ClipboardIcon() {
 /* ------------------------------------------------------------------ */
 
 export default function JobsPage() {
+  const { data: jobs, isLoading } = useJobs();
+  const [search, setSearch] = useState("");
+  const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+
+  const filtered = useMemo(() => {
+    if (!jobs) return [];
+    if (!search.trim()) return jobs;
+    const q = search.toLowerCase();
+    return jobs.filter(
+      (j) =>
+        j.address_line1.toLowerCase().includes(q) ||
+        (j.customer_name && j.customer_name.toLowerCase().includes(q))
+    );
+  }, [jobs, search]);
+
+  const selectedJob = useMemo(() => {
+    if (!selectedJobId || !filtered) return null;
+    return filtered.find((j) => j.id === selectedJobId) ?? null;
+  }, [selectedJobId, filtered]);
+
+  const handleSelectJob = useCallback((id: string) => {
+    setSelectedJobId((prev) => (prev === id ? null : id));
+  }, []);
+
+  // True empty: no jobs at all (not loading, truly zero)
+  if (!isLoading && jobs && jobs.length === 0) {
+    return <EmptyState />;
+  }
+
   return (
     <>
-      {/* Main content -- empty state */}
-      <div className="flex-1 flex flex-col items-center justify-center px-6 py-16 md:py-24 relative">
-        {/* Subtle background shape */}
-        <div
-          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[480px] h-[480px] rounded-full opacity-30 blur-[120px] pointer-events-none"
-          style={{
-            background:
-              "radial-gradient(circle, rgba(232,93,38,0.08) 0%, transparent 70%)",
-          }}
-          aria-hidden="true"
-        />
+      {/* Header */}
+      <div className="px-4 sm:px-6 pt-6 pb-4 flex items-center gap-3">
+        <h1 className="text-2xl font-bold text-on-surface shrink-0">Jobs</h1>
 
-        <div className="relative flex flex-col items-center text-center max-w-md">
-          {/* Icon */}
-          <div className="w-16 h-16 rounded-2xl bg-surface-container flex items-center justify-center mb-6">
-            <ClipboardIcon />
+        {/* Search */}
+        <div className="relative flex-1 max-w-md">
+          <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+            <SearchIcon />
+          </div>
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search address or customer..."
+            className="w-full h-10 pl-10 pr-4 rounded-full bg-surface-container text-sm text-on-surface placeholder:text-on-surface-variant/60 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+          />
+        </div>
+
+        {/* Desktop New Job button */}
+        <Link
+          href="/jobs/new"
+          className="hidden sm:flex h-10 px-5 rounded-xl text-sm font-semibold text-on-primary primary-gradient items-center gap-1.5 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] shrink-0"
+        >
+          <Plus size={16} />
+          New Job
+        </Link>
+      </div>
+
+      {/* Desktop: table + preview panel */}
+      <div className="px-4 sm:px-6 pb-28 sm:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+        {/* ── Mobile card list (hidden on lg) ── */}
+        <div className="flex flex-col gap-2 lg:hidden">
+          {isLoading ? (
+            <>
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+              <SkeletonCard />
+            </>
+          ) : filtered.length === 0 ? (
+            <NoResults query={search} />
+          ) : (
+            filtered.map((job, i) => (
+              <JobCard key={job.id} job={job} isFirst={i === 0} />
+            ))
+          )}
+        </div>
+
+        {/* ── Desktop table (hidden below lg) ── */}
+        <div className="hidden lg:block">
+          {/* Table header */}
+          <div className="grid grid-cols-[1fr_110px_60px_60px_60px_110px_80px] gap-4 px-4 py-2 border-b border-outline-variant/30 mb-1">
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold">Address</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold">Status</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold text-center">Days</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold text-center">Rooms</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold text-center">Photos</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold">Category</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold text-right">Date</span>
           </div>
 
-          <h1 className="text-3xl sm:text-4xl font-bold tracking-[-1px] text-on-surface mb-3">
-            No jobs yet.
-          </h1>
-          <p className="text-[15px] text-on-surface-variant leading-relaxed mb-8 max-w-sm">
-            Create your first job to start AI scoping and real-time field data
-            monitoring.
-          </p>
+          {/* Table body */}
+          <div className="flex flex-col gap-0.5">
+            {isLoading ? (
+              <>
+                <SkeletonTableRow />
+                <SkeletonTableRow />
+                <SkeletonTableRow />
+                <SkeletonTableRow />
+              </>
+            ) : filtered.length === 0 ? (
+              <NoResults query={search} />
+            ) : (
+              filtered.map((job, i) => (
+                <JobTableRow
+                  key={job.id}
+                  job={job}
+                  isFirst={i === 0}
+                  isSelected={selectedJobId === job.id}
+                  onSelect={() => handleSelectJob(job.id)}
+                />
+              ))
+            )}
+          </div>
+        </div>
 
-          {/* Create Job button */}
-          <button
-            onClick={() => {
-              // TODO: Open create job modal or navigate to create job page
-              console.log("Create job");
-            }}
-            className="h-12 px-8 rounded-xl text-[15px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] flex items-center gap-2"
-          >
-            <Plus size={18} />
-            Create Job
-          </button>
-
-          {/* How it works link */}
-          <button
-            onClick={() => {
-              // TODO: Show how-it-works modal or section
-              console.log("How it works");
-            }}
-            className="mt-4 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
-          >
-            How it works
-          </button>
+        {/* ── Desktop preview panel (hidden below lg) ── */}
+        <div className="hidden lg:block">
+          <PreviewPanel job={selectedJob} />
         </div>
       </div>
+
+      {/* Mobile FAB */}
+      <Link
+        href="/jobs/new"
+        className="sm:hidden fixed bottom-6 right-6 z-40 w-16 h-16 rounded-full primary-gradient flex items-center justify-center shadow-lg shadow-primary/25 active:scale-95 transition-transform"
+        aria-label="New Job"
+      >
+        <Plus size={28} className="text-on-primary" />
+      </Link>
     </>
   );
 }

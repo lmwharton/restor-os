@@ -247,6 +247,18 @@ export function Shield(props: IconProps) {
   );
 }
 
+/** Dashboard / grid icon for Dashboard nav */
+export function Dashboard(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="14" y="3" width="7" height="4" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+      <rect x="14" y="11" width="7" height="10" rx="1.5" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
 /** Help circle icon for info/help */
 export function HelpCircle(props: IconProps) {
   return (
@@ -260,6 +272,131 @@ export function HelpCircle(props: IconProps) {
         strokeLinejoin="round"
       />
       <circle cx="12" cy="17" r="0.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Back arrow icon for navigation */
+export function ArrowBack(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M19 12H5m6-6-6 6 6 6"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Tag / label icon */
+export function Tag(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8 8a2 2 0 0 0 2.828 0l7.172-7.172a2 2 0 0 0 0-2.828l-8-8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="7.5" cy="7.5" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Sparkle / AI icon */
+export function Sparkle(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Upload arrow icon */
+export function Upload(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M12 16V4m0 0-4 4m4-4 4 4"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <path
+        d="M20 16v2a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2v-2"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
+/** Checkmark icon */
+export function Check(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M5 12l5 5L20 7"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Eye icon for before/inspection photos */
+export function Eye(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+/** Wrench icon for equipment photos */
+export function Wrench(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** Camera icon for photo capture */
+export function Camera(props: IconProps) {
+  return (
+    <svg {...defaultProps(props)}>
+      <path
+        d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2v11Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
 }

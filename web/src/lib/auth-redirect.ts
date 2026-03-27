@@ -13,7 +13,7 @@ export async function getAuthenticatedRedirect(accessToken: string): Promise<str
     });
 
     if (res.ok) {
-      return "/jobs";
+      return "/dashboard";
     }
 
     // Only redirect to onboarding for explicit "no company" (404)
@@ -21,11 +21,11 @@ export async function getAuthenticatedRedirect(accessToken: string): Promise<str
       return "/onboarding";
     }
 
-    // For auth errors (401/403) or server errors (5xx), fall through to /jobs
+    // For auth errors (401/403) or server errors (5xx), fall through to /dashboard
     // to avoid sending onboarded users to onboarding during outages
-    return "/jobs";
+    return "/dashboard";
   } catch {
     // Backend unreachable — don't block existing users, let protected layout handle it
-    return "/jobs";
+    return "/dashboard";
   }
 }
