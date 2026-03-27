@@ -241,12 +241,7 @@ async def update_user_profile(user_id: UUID, body: UserUpdate) -> UserResponse:
         updates["first_name"] = name_parts[0]
         updates["last_name"] = name_parts[1] if len(name_parts) > 1 else None
 
-    result = (
-        client.table("users")
-        .update(updates)
-        .eq("id", str(user_id))
-        .execute()
-    )
+    result = client.table("users").update(updates).eq("id", str(user_id)).execute()
     if not result.data:
         raise AppException(status_code=404, detail="User not found", error_code="USER_NOT_FOUND")
     return _parse_user(result.data[0])
@@ -259,14 +254,11 @@ async def update_company(company_id: UUID, body: CompanyUpdate) -> CompanyRespon
     if not updates:
         raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
 
-    result = (
-        client.table("companies")
-        .update(updates)
-        .eq("id", str(company_id))
-        .execute()
-    )
+    result = client.table("companies").update(updates).eq("id", str(company_id)).execute()
     if not result.data:
-        raise AppException(status_code=404, detail="Company not found", error_code="COMPANY_NOT_FOUND")
+        raise AppException(
+            status_code=404, detail="Company not found", error_code="COMPANY_NOT_FOUND"
+        )
     return _parse_company(result.data[0])
 
 

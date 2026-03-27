@@ -1,0 +1,227 @@
+"""Share links service: create, list, revoke, and resolve share tokens.
+
+Tokens are 32-char hex strings. Only the SHA-256 hash is stored in the database.
+The raw token is returned once on creation and never stored.
+"""
+
+import hashlib
+import secrets
+from datetime import UTC, datetime, timedelta
+from uuid import UUID
+
+from supabase import Client
+
+from api.config import settings
+from api.shared.database import get_supabase_admin_client
+from api.shared.events import log_event
+from api.shared.exceptions import AppException
+from api.sharing.schemas import VALID_SCOPES, ShareLinkCreate
+
+
+def _hash_token(token: str) -> str:
+    """SHA-256 hash a share token."""
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+async def create_share_link(
+    client: Client,
+    job_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
+    body: ShareLinkCreate,
+) -> dict:
+    """Create a share link with a random token. Returns the raw token (shown once)."""
+    if body.scope not in VALID_SCOPES:
+        raise AppException(
+            status_code=400,
+            detail=f"Invalid scope. Must be one of: {', '.join(sorted(VALID_SCOPES))}",
+            error_code="INVALID_SCOPE",
+        )
+
+    raw_token = secrets.token_hex(16)  # 32-char hex
+    token_hash = _hash_token(raw_token)
+    expires_at = datetime.now(UTC) + timedelta(days=body.expires_days)
+
+    row = {
+        "job_id": str(job_id),
+        "company_id": str(company_id),
+        "created_by": str(user_id),
+        "token_hash": token_hash,
+        "scope": body.scope,
+        "expires_at": expires_at.isoformat(),
+    }
+    result = client.table("share_links").insert(row).execute()
+    link = result.data[0]
+
+    await log_event(
+        company_id,
+        "share_link_created",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={"link_id": link["id"], "scope": body.scope, "expires_days": body.expires_days},
+    )
+
+    # Build the public share URL
+    base_url = getattr(settings, "frontend_url", "https://crewmaticai.vercel.app")
+    share_url = f"{base_url}/shared/{raw_token}"
+
+    return {
+        "share_url": share_url,
+        "share_token": raw_token,
+        "expires_at": link["expires_at"],
+    }
+
+
+async def list_share_links(
+    client: Client,
+    job_id: UUID,
+) -> list[dict]:
+    """List all share links for a job (including revoked, for audit trail)."""
+    result = (
+        client.table("share_links")
+        .select("id, scope, expires_at, revoked_at, created_at")
+        .eq("job_id", str(job_id))
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+async def revoke_share_link(
+    client: Client,
+    job_id: UUID,
+    link_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
+) -> None:
+    """Revoke a share link by setting revoked_at."""
+    result = (
+        client.table("share_links")
+        .update({"revoked_at": datetime.now(UTC).isoformat()})
+        .eq("id", str(link_id))
+        .eq("job_id", str(job_id))
+        .execute()
+    )
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail="Share link not found",
+            error_code="SHARE_LINK_NOT_FOUND",
+        )
+
+    await log_event(
+        company_id,
+        "share_link_revoked",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={"link_id": str(link_id)},
+    )
+
+
+async def get_shared_job(token: str) -> dict:
+    """Resolve a share token and return scoped job data.
+
+    Uses admin client because this is a public (no-auth) endpoint.
+    Validates the token is not expired or revoked.
+    """
+    token_hash = _hash_token(token)
+    admin = get_supabase_admin_client()
+
+    # Look up the share link by token hash
+    result = admin.table("share_links").select("*").eq("token_hash", token_hash).single().execute()
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail="Share link not found",
+            error_code="SHARE_NOT_FOUND",
+        )
+
+    link = result.data
+
+    # Check revoked
+    if link.get("revoked_at"):
+        raise AppException(
+            status_code=403,
+            detail="This share link has been revoked",
+            error_code="SHARE_REVOKED",
+        )
+
+    # Check expired
+    expires_at = datetime.fromisoformat(link["expires_at"].replace("Z", "+00:00"))
+    if expires_at < datetime.now(UTC):
+        raise AppException(
+            status_code=403,
+            detail="This share link has expired",
+            error_code="SHARE_EXPIRED",
+        )
+
+    job_id = link["job_id"]
+    company_id = link["company_id"]
+    scope = link.get("scope", "full")
+
+    # Fetch job (redact sensitive fields)
+    job_result = admin.table("jobs").select("*").eq("id", job_id).single().execute()
+    if not job_result.data:
+        raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
+
+    job = job_result.data
+    # Redact sensitive customer fields
+    for field in ("customer_phone", "customer_email", "claim_number"):
+        job.pop(field, None)
+
+    # Fetch rooms
+    rooms_result = (
+        admin.table("job_rooms").select("*").eq("job_id", job_id).order("sort_order").execute()
+    )
+    rooms = rooms_result.data or []
+
+    # Fetch photos with signed URLs
+    photos_result = (
+        admin.table("photos").select("*").eq("job_id", job_id).order("created_at").execute()
+    )
+    photos = photos_result.data or []
+    for photo in photos:
+        storage_path = photo.get("storage_url")
+        if storage_path:
+            signed = admin.storage.from_("photos").create_signed_url(storage_path, 3600)
+            photo["signed_url"] = signed.get("signedURL", signed.get("signedUrl", ""))
+
+    # Fetch moisture readings (if scope allows)
+    moisture_readings: list[dict] = []
+    if scope in ("full", "restoration_only"):
+        readings_result = (
+            admin.table("moisture_readings")
+            .select("*")
+            .eq("job_id", job_id)
+            .order("reading_date")
+            .execute()
+        )
+        moisture_readings = readings_result.data or []
+
+    # Fetch line items (if they exist)
+    line_items: list[dict] = []
+    if scope in ("full", "restoration_only"):
+        try:
+            items_result = admin.table("line_items").select("*").eq("job_id", job_id).execute()
+            line_items = items_result.data or []
+        except Exception:
+            pass  # Table may not exist yet
+
+    # Fetch company info (public fields only)
+    company_result = (
+        admin.table("companies")
+        .select("name, phone, logo_url")
+        .eq("id", company_id)
+        .single()
+        .execute()
+    )
+    company = company_result.data or {}
+
+    return {
+        "job": job,
+        "rooms": rooms,
+        "photos": photos,
+        "moisture_readings": moisture_readings,
+        "line_items": line_items,
+        "company": company,
+    }

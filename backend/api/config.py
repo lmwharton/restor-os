@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     # Database (used by Alembic migrations — not by app queries)
     database_url: str = ""
 
+    # Frontend (for share link URLs)
+    frontend_url: str = "https://crewmaticai.vercel.app"
+
     # Server
     port: int = 8000
 

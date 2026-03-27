@@ -94,7 +94,9 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
 async def patch_company(body: CompanyUpdate, ctx: AuthContext = Depends(get_auth_context)):
     """Update company details (name, phone). Owner only."""
     if ctx.role != "owner":
-        raise AppException(status_code=403, detail="Only owners can update company", error_code="FORBIDDEN")
+        raise AppException(
+            status_code=403, detail="Only owners can update company", error_code="FORBIDDEN"
+        )
     company = await update_company(ctx.company_id, body)
     return company
 
@@ -103,13 +105,19 @@ async def patch_company(body: CompanyUpdate, ctx: AuthContext = Depends(get_auth
 async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_auth_context)):
     """Upload company logo. Replaces existing logo. Owner only."""
     if ctx.role != "owner":
-        raise AppException(status_code=403, detail="Only owners can update logo", error_code="FORBIDDEN")
+        raise AppException(
+            status_code=403, detail="Only owners can update logo", error_code="FORBIDDEN"
+        )
 
     if not file.content_type or not file.content_type.startswith("image/"):
-        raise AppException(status_code=400, detail="File must be an image", error_code="INVALID_FILE_TYPE")
+        raise AppException(
+            status_code=400, detail="File must be an image", error_code="INVALID_FILE_TYPE"
+        )
 
     if file.size and file.size > 2 * 1024 * 1024:
-        raise AppException(status_code=400, detail="File too large (max 2MB)", error_code="FILE_TOO_LARGE")
+        raise AppException(
+            status_code=400, detail="File too large (max 2MB)", error_code="FILE_TOO_LARGE"
+        )
 
     logo_url = await update_company_logo(ctx.company_id, file)
     return {"logo_url": logo_url}

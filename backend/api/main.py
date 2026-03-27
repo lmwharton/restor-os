@@ -1,11 +1,20 @@
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth.router import router as auth_router
 from api.config import settings
+from api.events.router import router as events_router
+from api.floor_plans.router import router as floor_plans_router
+from api.jobs.router import router as jobs_router
+from api.moisture.router import router as moisture_router
+from api.photos.router import router as photos_router
+from api.properties.router import router as properties_router
+from api.reports.router import router as reports_router
+from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
+from api.sharing.router import router as sharing_router
 
 app = FastAPI(
     title="Crewmatic API",
@@ -24,6 +33,15 @@ app.add_middleware(
 app.add_exception_handler(AppException, app_exception_handler)
 
 app.include_router(auth_router, prefix="/v1")
+app.include_router(events_router, prefix="/v1")
+app.include_router(floor_plans_router, prefix="/v1")
+app.include_router(jobs_router, prefix="/v1")
+app.include_router(moisture_router, prefix="/v1")
+app.include_router(photos_router, prefix="/v1")
+app.include_router(properties_router, prefix="/v1")
+app.include_router(reports_router, prefix="/v1")
+app.include_router(rooms_router, prefix="/v1")
+app.include_router(sharing_router, prefix="/v1")
 
 
 @app.get("/")
@@ -62,7 +80,7 @@ async def health_check():
     return {
         "status": overall,
         "version": "26.3.1",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "environment": settings.environment,
         "services": services,
     }
