@@ -2,14 +2,15 @@
 // This file is the single source of mock data. Swap to real API calls in hooks.
 
 import type {
-  Job, JobDetail, Room, Photo, MoistureReading, MoisturePoint, DehuOutput,
-  Event, DashboardKPIs, PipelineStageData, PriorityTask, TeamMember, FloorPlan,
+  JobDetail, Room, Photo, MoistureReading,
+  Event, DashboardKPIs, PipelineStageData, PriorityTask, TeamMember,
 } from "./types";
 
 // ─── Helpers ──────────────────────────────────────────────────────────
 const uuid = () => crypto.randomUUID();
 const now = new Date().toISOString();
 const daysAgo = (n: number) => new Date(Date.now() - n * 86400000).toISOString();
+const hoursAgo = (n: number) => new Date(Date.now() - n * 3600000).toISOString();
 const dateStr = (n: number) => new Date(Date.now() - n * 86400000).toISOString().split("T")[0];
 
 const COMPANY_ID = "c0000000-0000-0000-0000-000000000001";
@@ -277,8 +278,9 @@ export const mockJobs: JobDetail[] = [
   },
 ];
 
-// ─── Rooms (for job 1 — 123 Oak Street) ──────────────────────────────
+// ─── Rooms (all jobs) ────────────────────────────────────────────────
 export const mockRooms: Room[] = [
+  // ── Job 1: 123 Oak Street (3 rooms) ──
   {
     id: "r0000001-0000-0000-0000-000000000001",
     job_id: mockJobs[0].id,
@@ -348,10 +350,322 @@ export const mockRooms: Room[] = [
     created_at: daysAgo(3),
     updated_at: daysAgo(0),
   },
+
+  // ── Job 2: 842 Maple Avenue (5 rooms) ──
+  {
+    id: "r0000004-0000-0000-0000-000000000002",
+    job_id: mockJobs[1].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Bathroom",
+    length_ft: 8,
+    width_ft: 6,
+    height_ft: 8,
+    square_footage: 48,
+    water_category: "1",
+    water_class: "2",
+    dry_standard: 14,
+    equipment_air_movers: 2,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Source room — pipe burst behind vanity wall.",
+    sort_order: 0,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000005-0000-0000-0000-000000000002",
+    job_id: mockJobs[1].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Hallway",
+    length_ft: 4,
+    width_ft: 10,
+    height_ft: 8,
+    square_footage: 40,
+    water_category: "1",
+    water_class: "1",
+    dry_standard: 14,
+    equipment_air_movers: 1,
+    equipment_dehus: 0,
+    room_sketch_data: null,
+    notes: null,
+    sort_order: 1,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000006-0000-0000-0000-000000000002",
+    job_id: mockJobs[1].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Laundry Room",
+    length_ft: 6,
+    width_ft: 8,
+    height_ft: 8,
+    square_footage: 48,
+    water_category: "1",
+    water_class: "2",
+    dry_standard: 14,
+    equipment_air_movers: 2,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Water traveled through floor joists from bathroom above.",
+    sort_order: 2,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000007-0000-0000-0000-000000000002",
+    job_id: mockJobs[1].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Living Room",
+    length_ft: 14,
+    width_ft: 18,
+    height_ft: 9,
+    square_footage: 252,
+    water_category: "1",
+    water_class: "2",
+    dry_standard: 14,
+    equipment_air_movers: 4,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Ceiling stain from second floor leak. Removed wet insulation.",
+    sort_order: 3,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000008-0000-0000-0000-000000000002",
+    job_id: mockJobs[1].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Basement",
+    length_ft: 20,
+    width_ft: 24,
+    height_ft: 7,
+    square_footage: 480,
+    water_category: "1",
+    water_class: "3",
+    dry_standard: 14,
+    equipment_air_movers: 6,
+    equipment_dehus: 2,
+    room_sketch_data: null,
+    notes: "Standing water pooled at drain. Carpet saturated full area.",
+    sort_order: 4,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+
+  // ── Job 3: 519 Pine Ridge Drive (2 rooms) ──
+  {
+    id: "r0000009-0000-0000-0000-000000000003",
+    job_id: mockJobs[2].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Basement",
+    length_ft: 22,
+    width_ft: 18,
+    height_ft: 7,
+    square_footage: 396,
+    water_category: "3",
+    water_class: "3",
+    dry_standard: 12,
+    equipment_air_movers: 8,
+    equipment_dehus: 2,
+    room_sketch_data: null,
+    notes: "Full demo — carpet, pad, drywall to 4ft. Antimicrobial applied.",
+    sort_order: 0,
+    reading_count: 0,
+    latest_reading_date: null,
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000010-0000-0000-0000-000000000003",
+    job_id: mockJobs[2].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Utility Room",
+    length_ft: 8,
+    width_ft: 10,
+    height_ft: 7,
+    square_footage: 80,
+    water_category: "3",
+    water_class: "3",
+    dry_standard: 12,
+    equipment_air_movers: 2,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Sewer backup point of entry. HVAC contamination check required.",
+    sort_order: 1,
+    reading_count: 0,
+    latest_reading_date: null,
+    created_at: daysAgo(5),
+    updated_at: daysAgo(1),
+  },
+
+  // ── Job 4: 202 Cedar Way (1 room) ──
+  {
+    id: "r0000011-0000-0000-0000-000000000004",
+    job_id: mockJobs[3].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Garage",
+    length_ft: 20,
+    width_ft: 22,
+    height_ft: 9,
+    square_footage: 440,
+    water_category: "2",
+    water_class: "1",
+    dry_standard: 16,
+    equipment_air_movers: 3,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Water heater in corner. Concrete floor, drywall affected 1ft.",
+    sort_order: 0,
+    reading_count: 0,
+    latest_reading_date: null,
+    created_at: daysAgo(2),
+    updated_at: daysAgo(0),
+  },
+
+  // ── Job 5: 315 Elm Boulevard (2 rooms) ──
+  {
+    id: "r0000012-0000-0000-0000-000000000005",
+    job_id: mockJobs[4].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Master Bedroom",
+    length_ft: 14,
+    width_ft: 12,
+    height_ft: 8,
+    square_footage: 168,
+    water_category: "1",
+    water_class: "1",
+    dry_standard: 14,
+    equipment_air_movers: 2,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Ceiling drywall stained from attic leak. No structural damage.",
+    sort_order: 0,
+    reading_count: 3,
+    latest_reading_date: dateStr(0),
+    created_at: daysAgo(6),
+    updated_at: daysAgo(0),
+  },
+  {
+    id: "r0000013-0000-0000-0000-000000000005",
+    job_id: mockJobs[4].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Hallway",
+    length_ft: 4,
+    width_ft: 14,
+    height_ft: 8,
+    square_footage: 56,
+    water_category: "1",
+    water_class: "1",
+    dry_standard: 14,
+    equipment_air_movers: 1,
+    equipment_dehus: 0,
+    room_sketch_data: null,
+    notes: "Minor ceiling drip stain. Monitored only.",
+    sort_order: 1,
+    reading_count: 3,
+    latest_reading_date: dateStr(0),
+    created_at: daysAgo(6),
+    updated_at: daysAgo(0),
+  },
+
+  // ── Job 6: 777 Birch Lane (3 rooms) ──
+  {
+    id: "r0000014-0000-0000-0000-000000000006",
+    job_id: mockJobs[5].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Laundry Room",
+    length_ft: 7,
+    width_ft: 8,
+    height_ft: 8,
+    square_footage: 56,
+    water_category: "2",
+    water_class: "2",
+    dry_standard: 16,
+    equipment_air_movers: 2,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Source — washing machine drain hose disconnected. Floor saturated.",
+    sort_order: 0,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(7),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000015-0000-0000-0000-000000000006",
+    job_id: mockJobs[5].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Kitchen",
+    length_ft: 10,
+    width_ft: 12,
+    height_ft: 8,
+    square_footage: 120,
+    water_category: "2",
+    water_class: "2",
+    dry_standard: 16,
+    equipment_air_movers: 3,
+    equipment_dehus: 1,
+    room_sketch_data: null,
+    notes: "Water migrated under cabinets. Toe kicks removed for drying.",
+    sort_order: 1,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(7),
+    updated_at: daysAgo(1),
+  },
+  {
+    id: "r0000016-0000-0000-0000-000000000006",
+    job_id: mockJobs[5].id,
+    company_id: COMPANY_ID,
+    floor_plan_id: null,
+    room_name: "Basement",
+    length_ft: 16,
+    width_ft: 20,
+    height_ft: 7,
+    square_footage: 320,
+    water_category: "2",
+    water_class: "2",
+    dry_standard: 16,
+    equipment_air_movers: 4,
+    equipment_dehus: 2,
+    room_sketch_data: null,
+    notes: "Water seeped through floor to basement ceiling joists.",
+    sort_order: 2,
+    reading_count: 2,
+    latest_reading_date: dateStr(1),
+    created_at: daysAgo(7),
+    updated_at: daysAgo(1),
+  },
+
+  // Job 7: 450 Walnut Court — 0 rooms (emergency just dispatched)
 ];
 
-// ─── Moisture Readings (for Master Bedroom, 3 days) ──────────────────
+// ─── Moisture Readings (multiple jobs) ──────────────────────────────
 export const mockReadings: MoistureReading[] = [
+  // ── Job 1 / Master Bedroom — 3 days ──
   {
     id: uuid(),
     job_id: mockJobs[0].id,
@@ -415,31 +729,273 @@ export const mockReadings: MoistureReading[] = [
     created_at: now,
     updated_at: now,
   },
+
+  // ── Job 2 / Bathroom — 2 days ──
+  {
+    id: uuid(),
+    job_id: mockJobs[1].id,
+    room_id: "r0000004-0000-0000-0000-000000000002",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(3),
+    day_number: 1,
+    atmospheric_temp_f: 70,
+    atmospheric_rh_pct: 58,
+    atmospheric_gpp: 82.5,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Vanity wall base", reading_value: 72, meter_photo_url: null, sort_order: 0, created_at: daysAgo(3) },
+      { id: uuid(), reading_id: "", location_name: "Tile subfloor", reading_value: 65, meter_photo_url: null, sort_order: 1, created_at: daysAgo(3) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "Dri-Eaz LGR 2800i", rh_out_pct: 50, temp_out_f: 90, sort_order: 0, created_at: daysAgo(3) },
+    ],
+    created_at: daysAgo(3),
+    updated_at: daysAgo(3),
+  },
+  {
+    id: uuid(),
+    job_id: mockJobs[1].id,
+    room_id: "r0000004-0000-0000-0000-000000000002",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(1),
+    day_number: 2,
+    atmospheric_temp_f: 71,
+    atmospheric_rh_pct: 50,
+    atmospheric_gpp: 66.8,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Vanity wall base", reading_value: 54, meter_photo_url: null, sort_order: 0, created_at: daysAgo(1) },
+      { id: uuid(), reading_id: "", location_name: "Tile subfloor", reading_value: 48, meter_photo_url: null, sort_order: 1, created_at: daysAgo(1) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "Dri-Eaz LGR 2800i", rh_out_pct: 44, temp_out_f: 87, sort_order: 0, created_at: daysAgo(1) },
+    ],
+    created_at: daysAgo(1),
+    updated_at: daysAgo(1),
+  },
+
+  // ── Job 5 / Master Bedroom — 3 days (nearly dry) ──
+  {
+    id: uuid(),
+    job_id: mockJobs[4].id,
+    room_id: "r0000012-0000-0000-0000-000000000005",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(4),
+    day_number: 1,
+    atmospheric_temp_f: 68,
+    atmospheric_rh_pct: 52,
+    atmospheric_gpp: 68.4,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Ceiling center", reading_value: 58, meter_photo_url: null, sort_order: 0, created_at: daysAgo(4) },
+      { id: uuid(), reading_id: "", location_name: "Ceiling east corner", reading_value: 45, meter_photo_url: null, sort_order: 1, created_at: daysAgo(4) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "BlueDri BD-76P", rh_out_pct: 46, temp_out_f: 88, sort_order: 0, created_at: daysAgo(4) },
+    ],
+    created_at: daysAgo(4),
+    updated_at: daysAgo(4),
+  },
+  {
+    id: uuid(),
+    job_id: mockJobs[4].id,
+    room_id: "r0000012-0000-0000-0000-000000000005",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(2),
+    day_number: 2,
+    atmospheric_temp_f: 69,
+    atmospheric_rh_pct: 46,
+    atmospheric_gpp: 54.2,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Ceiling center", reading_value: 38, meter_photo_url: null, sort_order: 0, created_at: daysAgo(2) },
+      { id: uuid(), reading_id: "", location_name: "Ceiling east corner", reading_value: 28, meter_photo_url: null, sort_order: 1, created_at: daysAgo(2) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "BlueDri BD-76P", rh_out_pct: 40, temp_out_f: 86, sort_order: 0, created_at: daysAgo(2) },
+    ],
+    created_at: daysAgo(2),
+    updated_at: daysAgo(2),
+  },
+  {
+    id: uuid(),
+    job_id: mockJobs[4].id,
+    room_id: "r0000012-0000-0000-0000-000000000005",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(0),
+    day_number: 3,
+    atmospheric_temp_f: 70,
+    atmospheric_rh_pct: 42,
+    atmospheric_gpp: 44.1,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Ceiling center", reading_value: 22, meter_photo_url: null, sort_order: 0, created_at: now },
+      { id: uuid(), reading_id: "", location_name: "Ceiling east corner", reading_value: 14, meter_photo_url: null, sort_order: 1, created_at: now },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "BlueDri BD-76P", rh_out_pct: 36, temp_out_f: 84, sort_order: 0, created_at: now },
+    ],
+    created_at: now,
+    updated_at: now,
+  },
+
+  // ── Job 6 / Laundry Room — 2 days ──
+  {
+    id: uuid(),
+    job_id: mockJobs[5].id,
+    room_id: "r0000014-0000-0000-0000-000000000006",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(5),
+    day_number: 1,
+    atmospheric_temp_f: 71,
+    atmospheric_rh_pct: 60,
+    atmospheric_gpp: 88.6,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Floor behind washer", reading_value: 78, meter_photo_url: null, sort_order: 0, created_at: daysAgo(5) },
+      { id: uuid(), reading_id: "", location_name: "East wall base", reading_value: 66, meter_photo_url: null, sort_order: 1, created_at: daysAgo(5) },
+      { id: uuid(), reading_id: "", location_name: "Subfloor center", reading_value: 70, meter_photo_url: null, sort_order: 2, created_at: daysAgo(5) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "Phoenix R200", rh_out_pct: 52, temp_out_f: 94, sort_order: 0, created_at: daysAgo(5) },
+    ],
+    created_at: daysAgo(5),
+    updated_at: daysAgo(5),
+  },
+  {
+    id: uuid(),
+    job_id: mockJobs[5].id,
+    room_id: "r0000014-0000-0000-0000-000000000006",
+    company_id: COMPANY_ID,
+    reading_date: dateStr(1),
+    day_number: 2,
+    atmospheric_temp_f: 72,
+    atmospheric_rh_pct: 50,
+    atmospheric_gpp: 68.2,
+    points: [
+      { id: uuid(), reading_id: "", location_name: "Floor behind washer", reading_value: 56, meter_photo_url: null, sort_order: 0, created_at: daysAgo(1) },
+      { id: uuid(), reading_id: "", location_name: "East wall base", reading_value: 44, meter_photo_url: null, sort_order: 1, created_at: daysAgo(1) },
+      { id: uuid(), reading_id: "", location_name: "Subfloor center", reading_value: 52, meter_photo_url: null, sort_order: 2, created_at: daysAgo(1) },
+    ],
+    dehus: [
+      { id: uuid(), reading_id: "", dehu_model: "Phoenix R200", rh_out_pct: 44, temp_out_f: 90, sort_order: 0, created_at: daysAgo(1) },
+    ],
+    created_at: daysAgo(1),
+    updated_at: daysAgo(1),
+  },
 ];
 
-// ─── Photos (mock URLs — use placeholder images) ─────────────────────
-export const mockPhotos: Photo[] = Array.from({ length: 42 }, (_, i) => ({
-  id: `p${String(i + 1).padStart(7, "0")}-0000-0000-0000-000000000001`,
-  job_id: mockJobs[0].id,
-  company_id: COMPANY_ID,
-  room_id: i < 12 ? mockRooms[0].id : i < 27 ? mockRooms[1].id : i < 35 ? mockRooms[2].id : null,
-  room_name: i < 12 ? "Master Bedroom" : i < 27 ? "Kitchen" : i < 35 ? "Hallway" : null,
-  storage_url: `/api/placeholder/${300 + (i % 5) * 20}/${200 + (i % 3) * 20}`,
-  filename: `IMG_${String(4200 + i)}.jpg`,
-  caption: null,
-  photo_type: i % 8 === 0 ? "equipment" : i % 6 === 0 ? "before" : "damage",
-  selected_for_ai: i < 20,
-  uploaded_at: daysAgo(3 - Math.floor(i / 15)),
-}));
+// ─── Photos (picsum.photos with seeded URLs) ─────────────────────────
 
-// ─── Events (activity feed) ──────────────────────────────────────────
+function generatePhotos(
+  jobIndex: number,
+  count: number,
+  rooms: { id: string; name: string }[],
+  daysBack: number,
+): Photo[] {
+  const jobId = mockJobs[jobIndex].id;
+  return Array.from({ length: count }, (_, i) => {
+    // Distribute photos across rooms; last few untagged
+    let roomId: string | null = null;
+    let roomName: string | null = null;
+    if (rooms.length > 0 && i < count - Math.max(0, Math.floor(count * 0.15))) {
+      const rIdx = i % rooms.length;
+      roomId = rooms[rIdx].id;
+      roomName = rooms[rIdx].name;
+    }
+    return {
+      id: `p${String(jobIndex + 1).padStart(3, "0")}-${String(i + 1).padStart(4, "0")}-0000-0000-000000000001`,
+      job_id: jobId,
+      company_id: COMPANY_ID,
+      room_id: roomId,
+      room_name: roomName,
+      storage_url: `https://picsum.photos/seed/crewmatic-${jobIndex + 1}-${i}/400/300`,
+      filename: `IMG_${String(3000 + jobIndex * 100 + i)}.jpg`,
+      caption: null,
+      photo_type: i % 8 === 0 ? "equipment" as const : i % 6 === 0 ? "before" as const : "damage" as const,
+      selected_for_ai: i < Math.ceil(count * 0.5),
+      uploaded_at: daysAgo(daysBack - Math.floor(i / Math.max(1, Math.ceil(count / 3)))),
+    };
+  });
+}
+
+export const mockPhotos: Photo[] = [
+  // Job 1: 42 photos
+  ...generatePhotos(0, 42, [
+    { id: mockRooms[0].id, name: "Master Bedroom" },
+    { id: mockRooms[1].id, name: "Kitchen" },
+    { id: mockRooms[2].id, name: "Hallway" },
+  ], 3),
+  // Job 2: 18 photos
+  ...generatePhotos(1, 18, [
+    { id: "r0000004-0000-0000-0000-000000000002", name: "Bathroom" },
+    { id: "r0000005-0000-0000-0000-000000000002", name: "Hallway" },
+    { id: "r0000006-0000-0000-0000-000000000002", name: "Laundry Room" },
+    { id: "r0000007-0000-0000-0000-000000000002", name: "Living Room" },
+    { id: "r0000008-0000-0000-0000-000000000002", name: "Basement" },
+  ], 5),
+  // Job 3: 24 photos
+  ...generatePhotos(2, 24, [
+    { id: "r0000009-0000-0000-0000-000000000003", name: "Basement" },
+    { id: "r0000010-0000-0000-0000-000000000003", name: "Utility Room" },
+  ], 5),
+  // Job 4: 12 photos
+  ...generatePhotos(3, 12, [
+    { id: "r0000011-0000-0000-0000-000000000004", name: "Garage" },
+  ], 2),
+  // Job 5: 8 photos
+  ...generatePhotos(4, 8, [
+    { id: "r0000012-0000-0000-0000-000000000005", name: "Master Bedroom" },
+    { id: "r0000013-0000-0000-0000-000000000005", name: "Hallway" },
+  ], 6),
+  // Job 6: 15 photos
+  ...generatePhotos(5, 15, [
+    { id: "r0000014-0000-0000-0000-000000000006", name: "Laundry Room" },
+    { id: "r0000015-0000-0000-0000-000000000006", name: "Kitchen" },
+    { id: "r0000016-0000-0000-0000-000000000006", name: "Basement" },
+  ], 7),
+  // Job 7: 0 photos (emergency just dispatched)
+];
+
+// ─── Events (activity feed for all jobs) ─────────────────────────────
 export const mockEvents: Event[] = [
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 5, room_name: "Master Bedroom" }, created_at: daysAgo(0) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "moisture_reading_added", user_id: "user1", is_ai: false, event_data: { room_name: "Master Bedroom", day_number: 3 }, created_at: daysAgo(0) },
+  // Job 1 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 5, room_name: "Master Bedroom" }, created_at: hoursAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "moisture_reading_added", user_id: "user1", is_ai: false, event_data: { room_name: "Master Bedroom", day_number: 3 }, created_at: hoursAgo(3) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "ai_sketch_cleanup", user_id: null, is_ai: true, event_data: { rooms_created: 3 }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Hallway" }, created_at: daysAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Kitchen" }, created_at: daysAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 18, room_name: "Kitchen" }, created_at: daysAgo(2) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[0].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(3) },
+
+  // Job 2 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "moisture_reading_added", user_id: "user2", is_ai: false, event_data: { room_name: "Bathroom", day_number: 2 }, created_at: daysAgo(1) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "ai_photo_analysis", user_id: null, is_ai: true, event_data: { line_items_generated: 12, duration_ms: 4200 }, created_at: daysAgo(1) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "report_generated", user_id: "user1", is_ai: false, event_data: { report_type: "mitigation_invoice" }, created_at: daysAgo(0) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "photo_uploaded", user_id: "user2", is_ai: false, event_data: { count: 10, room_name: "Basement" }, created_at: daysAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "needs_scope", to: "scoped" }, created_at: daysAgo(2) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "room_added", user_id: "user2", is_ai: false, event_data: { room_name: "Basement" }, created_at: daysAgo(3) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[1].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(5) },
+
+  // Job 3 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "report_generated", user_id: "user1", is_ai: false, event_data: { report_type: "mitigation_invoice" }, created_at: hoursAgo(6) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "scoped", to: "submitted" }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 14, room_name: "Basement" }, created_at: daysAgo(3) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Utility Room" }, created_at: daysAgo(4) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(5) },
+
+  // Job 4 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[3].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 12, room_name: "Garage" }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[3].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Garage" }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[3].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(2) },
+
+  // Job 5 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "moisture_reading_added", user_id: "user1", is_ai: false, event_data: { room_name: "Master Bedroom", day_number: 3 }, created_at: hoursAgo(5) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "needs_scope", to: "scoped" }, created_at: daysAgo(3) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 8, room_name: "Master Bedroom" }, created_at: daysAgo(5) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[4].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(6) },
+
+  // Job 6 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[5].id, event_type: "moisture_reading_added", user_id: "user2", is_ai: false, event_data: { room_name: "Laundry Room", day_number: 2 }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[5].id, event_type: "photo_uploaded", user_id: "user2", is_ai: false, event_data: { count: 15, room_name: "Kitchen" }, created_at: daysAgo(3) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[5].id, event_type: "room_added", user_id: "user2", is_ai: false, event_data: { room_name: "Basement" }, created_at: daysAgo(5) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[5].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(7) },
+
+  // Job 7 events
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[6].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: hoursAgo(1) },
 ];
 
 // ─── Dashboard Data ──────────────────────────────────────────────────

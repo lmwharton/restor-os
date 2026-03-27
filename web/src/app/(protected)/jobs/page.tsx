@@ -3,7 +3,7 @@
 import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { Plus } from "@/components/icons";
-import { useJobs } from "@/lib/hooks/use-jobs";
+import { useJobs, usePhotos } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -195,6 +195,8 @@ function JobTableRow({
 /* ------------------------------------------------------------------ */
 
 function PreviewPanel({ job }: { job: JobDetail | null }) {
+  const { data: photos } = usePhotos(job?.id ?? "");
+
   if (!job) {
     return (
       <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-6 flex flex-col items-center justify-center min-h-[300px] text-center">
@@ -206,12 +208,20 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
     );
   }
 
+  const heroPhoto = photos?.[0] ?? null;
   const days = daysSince(job.created_at);
 
   return (
     <div className="sticky top-24 bg-surface-container-lowest rounded-2xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden flex flex-col">
-      {/* Hero Photo placeholder */}
+      {/* Hero Photo */}
       <div className="relative w-full h-48 bg-surface-container-high rounded-xl overflow-hidden">
+        {heroPhoto ? (
+          <img
+            src={heroPhoto.storage_url}
+            alt={`${job.address_line1} hero`}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+        ) : null}
         <div
           className="absolute inset-0"
           style={{
@@ -220,13 +230,15 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
           }}
           aria-hidden="true"
         />
-        <div className="absolute inset-0 flex items-center justify-center">
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant/40">
-            <rect x="2" y="4" width="20" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
-            <circle cx="8" cy="10" r="2" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M2 17l5-5 3 3 4-4 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
+        {!heroPhoto && (
+          <div className="absolute inset-0 flex items-center justify-center">
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant/40">
+              <rect x="2" y="4" width="20" height="16" rx="2.5" stroke="currentColor" strokeWidth="1.5" />
+              <circle cx="8" cy="10" r="2" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M2 17l5-5 3 3 4-4 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        )}
       </div>
 
       {/* Content area */}

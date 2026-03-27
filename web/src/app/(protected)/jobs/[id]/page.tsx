@@ -672,7 +672,11 @@ export default function JobDetailPage() {
                     key={photo?.id ?? `placeholder-${i}`}
                     className="relative w-24 h-24 rounded-lg bg-surface-container-high shrink-0 overflow-hidden flex items-center justify-center"
                   >
-                    <CameraIcon size={18} />
+                    {photo ? (
+                      <img src={photo.storage_url} alt={photo.room_name || "Job photo"} className="w-full h-full object-cover" />
+                    ) : (
+                      <CameraIcon size={18} />
+                    )}
                     {/* Untagged dot */}
                     {photo && !photo.room_id && (
                       <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-brand-accent" />

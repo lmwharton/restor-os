@@ -195,11 +195,18 @@ export default function JobTimelinePage({
         <div>
           {/* Photo strip */}
           <div className="mb-3 flex gap-2 overflow-x-auto scrollbar-none">
-            {Array.from({ length: Math.min(5, totalPhotos) }).map((_, i) => (
+            {(photos ?? []).slice(0, 5).map((photo) => (
               <div
-                key={i}
-                className="h-12 w-12 shrink-0 rounded-lg bg-surface-container-high"
-              />
+                key={photo.id}
+                className="h-12 w-12 shrink-0 rounded-lg bg-surface-container-high overflow-hidden"
+              >
+                <img
+                  src={photo.storage_url}
+                  alt={photo.room_name || "Job photo"}
+                  className="w-full h-full object-cover"
+                  loading="lazy"
+                />
+              </div>
             ))}
             {totalPhotos > 5 && (
               <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-surface-container-high text-[11px] font-medium text-on-surface-variant">

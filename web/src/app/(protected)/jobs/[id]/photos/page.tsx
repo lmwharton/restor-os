@@ -12,26 +12,8 @@ import {
   Camera,
   Upload,
   Check,
-  Eye,
-  Wrench,
 } from "@/components/icons";
-import type { Photo, PhotoType } from "@/lib/types";
-
-/* ------------------------------------------------------------------ */
-/*  Photo type icon helper                                             */
-/* ------------------------------------------------------------------ */
-
-function PhotoTypeIcon({ type }: { type: PhotoType }) {
-  const cls = "text-on-surface-variant/60";
-  switch (type) {
-    case "equipment":
-      return <Wrench size={20} className={cls} />;
-    case "before":
-      return <Eye size={20} className={cls} />;
-    default:
-      return <Camera size={20} className={cls} />;
-  }
-}
+import type { Photo } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  Toolbar button                                                     */
@@ -77,10 +59,13 @@ function PhotoThumbnail({ photo }: { photo: Photo }) {
         isUntagged ? "border-2 border-dashed border-brand-accent/40" : ""
       }`}
     >
-      {/* Placeholder with type icon */}
-      <div className="absolute inset-0 flex items-center justify-center">
-        <PhotoTypeIcon type={photo.photo_type} />
-      </div>
+      {/* Photo image */}
+      <img
+        src={photo.storage_url}
+        alt={photo.room_name || "Job photo"}
+        className="absolute inset-0 w-full h-full object-cover"
+        loading="lazy"
+      />
 
       {/* Room label at bottom */}
       {photo.room_name && (
@@ -267,7 +252,11 @@ export default function PhotosPage() {
               <div className="space-y-4">
                 {/* Photo preview */}
                 <div className="aspect-square rounded-xl bg-surface-container-high flex items-center justify-center overflow-hidden">
-                  <PhotoTypeIcon type={selectedPhoto.photo_type} />
+                  <img
+                    src={selectedPhoto.storage_url}
+                    alt={selectedPhoto.room_name || "Selected photo"}
+                    className="w-full h-full object-cover"
+                  />
                 </div>
 
                 {/* Filename */}

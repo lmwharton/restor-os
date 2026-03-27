@@ -4,7 +4,8 @@ import { useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { ArrowBack, Camera, Plus } from "@/components/icons";
-import { mockRooms, mockReadings } from "@/lib/mock-data";
+import { useRooms } from "@/lib/hooks/use-jobs";
+import { mockReadings } from "@/lib/mock-data";
 import type { MoisturePoint, DehuOutput } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
@@ -46,7 +47,7 @@ export default function MoistureReadingsPage() {
   const jobId = params.id as string;
 
   // Room navigation
-  const rooms = mockRooms;
+  const { data: rooms = [] } = useRooms(jobId);
   const [roomIndex, setRoomIndex] = useState(0);
   const currentRoom = rooms[roomIndex];
 
