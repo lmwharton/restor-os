@@ -161,15 +161,15 @@ function JobTableRow({
   return (
     <div
       onClick={onSelect}
-      className={`grid grid-cols-[1fr_110px_60px_60px_60px_110px_80px] gap-4 items-center px-4 py-3 rounded-lg cursor-pointer transition-colors duration-100 ${
+      className={`grid grid-cols-[1fr_90px_50px_50px_50px_90px_70px] gap-2 items-center px-4 py-3 rounded-lg cursor-pointer transition-colors duration-100 ${
         isSelected
           ? "bg-brand-accent/6 ring-1 ring-brand-accent/20"
           : "hover:bg-surface-container-low"
       } ${isFirst ? "border-l-3 border-brand-accent" : ""}`}
     >
-      <Link href={`/jobs/${job.id}`} className="truncate text-[13px] font-semibold text-on-surface hover:text-brand-accent transition-colors">
+      <span className="truncate text-[13px] font-semibold text-on-surface">
         {job.address_line1}
-      </Link>
+      </span>
       <StatusBadge status={job.status} />
       <span className="text-xs font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
         {days}
@@ -507,7 +507,7 @@ export default function JobsPage() {
       </div>
 
       {/* Desktop: table + preview panel */}
-      <div className="px-4 sm:px-6 pb-28 sm:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+      <div className="px-4 sm:px-6 pb-28 sm:pb-6 lg:grid lg:grid-cols-[3fr_2fr] lg:gap-6">
         {/* ── Mobile card list (hidden on lg) ── */}
         <div className="flex flex-col gap-2 lg:hidden">
           {isLoading ? (
@@ -529,7 +529,7 @@ export default function JobsPage() {
         {/* ── Desktop table (hidden below lg) ── */}
         <div className="hidden lg:block">
           {/* Table header */}
-          <div className="grid grid-cols-[1fr_110px_60px_60px_60px_110px_80px] gap-4 px-4 py-2 border-b border-outline-variant/30 mb-1">
+          <div className="grid grid-cols-[1fr_90px_50px_50px_50px_90px_70px] gap-2 px-4 py-2 border-b border-outline-variant/30 mb-1">
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold">Address</span>
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold">Status</span>
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant font-semibold text-center">Days</span>
