@@ -84,6 +84,7 @@ Features from the V2/V3 roadmap that are not yet assigned to Specs 01-04. These 
 - [ ] **Photo Geo-Tagging with AI:** Beyond basic GPS — AI analysis layered on location data
 - [ ] **AI-Powered Adjuster Communication:** Draft professional adjuster emails, supplement cover letters, dispute responses in adjuster language
 - [ ] **Cross-trade referral network:** Every trade on the platform becomes a lead source for every other trade
+- [ ] **Customer Feedback Loop:** When a shared link is sent to a customer/adjuster, allow them to respond with feedback, questions, or approvals directly through the shared portal. Feedback reflects on the job (visible in job timeline/event history). Use cases: adjuster replies "approved" or "need more photos of kitchen ceiling", customer confirms "work looks good." This closes the communication loop without requiring the external party to have a Crewmatic account. Feedback events show in the job timeline as `customer_feedback_received` or `adjuster_feedback_received`.
 
 ## Quick Resume
 

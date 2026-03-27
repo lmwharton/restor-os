@@ -21,11 +21,13 @@ backend/api/
 ├── auth/                      # Auth + company (Spec 00)
 │   ├── middleware.py           # JWT validation, get_auth_context
 │   ├── router.py, schemas.py, service.py
-├── shared/                    # Cross-cutting infrastructure
-│   ├── database.py            # Supabase clients
+├── shared/
+│   ├── database.py            # Supabase clients (anon, authenticated, admin)
 │   ├── exceptions.py          # AppException
-│   ├── dependencies.py        # get_valid_job, get_valid_room, PaginationParams
-│   └── events.py              # log_event() — called by all services on mutations
+│   ├── dependencies.py        # Ownership validators: get_valid_job (verifies job belongs to company),
+│   │                          #   get_valid_room (verifies room belongs to job+company),
+│   │                          #   get_valid_reading (verifies reading chain), PaginationParams
+│   └── events.py              # log_event() — internal, fire-and-forget, never fails the parent operation
 ├── properties/                # router.py, schemas.py, service.py
 ├── jobs/                      # router.py, schemas.py, service.py
 ├── floor_plans/               # router.py, schemas.py, service.py
@@ -41,6 +43,15 @@ Each module follows the same pattern:
 - **`router.py`** — FastAPI route handlers (thin HTTP layer, calls service)
 - **`schemas.py`** — Pydantic models defining request/response types (the contract)
 - **`service.py`** — Business logic + Supabase queries
+
+---
+
+## Authentication & Authorization
+
+- **Authentication:** JWT in `Authorization: Bearer {token}` header. Validated by `auth/middleware.py` which decodes the Supabase JWT, looks up the user record, and injects `AuthContext(auth_user_id, user_id, company_id, role)` into route handlers via FastAPI `Depends()`.
+- **Tenant Isolation:** `get_authenticated_client(token)` from `shared/database.py` passes the user's JWT to Supabase. RLS policies on every table enforce `company_id` isolation at the database level -- queries automatically filter to the authenticated user's company.
+- **Nested Ownership:** `shared/dependencies.py` provides validator dependencies that verify the full parent chain belongs to the authenticated user's company. For example, `get_valid_room` verifies: room exists AND room.job_id matches the path AND job.company_id matches auth context. Similarly for readings (job -> room -> reading) and points (job -> reading -> point). These are injected as FastAPI dependencies on nested routes.
+- **Public Access:** `GET /v1/shared/{token}` is the ONLY unauthenticated endpoint. It uses the admin client to look up the share link by token hash, validates expiry/revocation, then serves scoped job data. No JWT required.
 
 ---
 
@@ -83,9 +94,12 @@ class PropertyCreate:
 class PropertyUpdate:
     # All fields optional — only send what changed
     address_line1: str | None
+    address_line2: str | None
     city: str | None
     state: str | None
     zip: str | None
+    latitude: float | None
+    longitude: float | None
     year_built: int | None
     property_type: str | None
     total_sqft: int | None
@@ -148,8 +162,39 @@ class JobCreate:
 
 class JobUpdate:
     # All fields optional — only send what changed
-    # Same fields as JobCreate + status
     status: str | None                  # needs_scope | scoped | submitted
+
+    # Address
+    address_line1: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+
+    # Property link
+    property_id: UUID | None = None
+
+    # Customer
+    customer_name: str | None = None
+    customer_phone: str | None = None
+    customer_email: str | None = None
+
+    # Loss info
+    loss_type: str | None = None
+    loss_category: str | None = None
+    loss_class: str | None = None
+    loss_cause: str | None = None
+    loss_date: date | None = None
+
+    # Insurance
+    claim_number: str | None = None
+    carrier: str | None = None
+    adjuster_name: str | None = None
+    adjuster_phone: str | None = None
+    adjuster_email: str | None = None
+
+    # Notes
+    notes: str | None = None
+    tech_notes: str | None = None
 
 class JobResponse:
     id: UUID
@@ -177,7 +222,10 @@ class JobResponse:
     assigned_to: UUID | None
     notes: str | None
     tech_notes: str | None
+    latitude: float | None
+    longitude: float | None
     created_by: UUID | None
+    updated_by: UUID | None
     created_at: datetime
     updated_at: datetime
 
@@ -185,6 +233,7 @@ class JobDetailResponse(JobResponse):
     room_count: int = 0                 # computed from job_rooms
     photo_count: int = 0                # computed from photos
     floor_plan_count: int = 0           # computed from floor_plans
+    line_item_count: int = 0            # computed from line_items (Spec 02)
 ```
 
 ### Floor Plans
@@ -244,6 +293,7 @@ class RoomCreate:
 class RoomUpdate:
     # All fields optional
     room_name: str | None
+    floor_plan_id: UUID | None
     length_ft: Decimal | None
     width_ft: Decimal | None
     height_ft: Decimal | None
@@ -254,6 +304,7 @@ class RoomUpdate:
     equipment_dehus: int | None
     room_sketch_data: dict | None
     notes: str | None
+    sort_order: int | None
 
 class RoomResponse:
     id: UUID
@@ -273,6 +324,8 @@ class RoomResponse:
     room_sketch_data: dict | None
     notes: str | None
     sort_order: int
+    reading_count: int = 0              # computed: count of moisture_readings for this room
+    latest_reading_date: date | None    # computed: max reading_date from moisture_readings
     created_at: datetime
     updated_at: datetime
 ```
@@ -513,7 +566,6 @@ class SharedJobResponse:
 | POST | `/v1/company` | JWT | Create company (onboarding) |
 | PATCH | `/v1/company` | JWT (owner) | Update company |
 | POST | `/v1/company/logo` | JWT (owner) | Upload company logo |
-| GET | `/v1/jobs` | JWT | List jobs (basic — will be enhanced) |
 
 ---
 
@@ -752,6 +804,8 @@ POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-chat      AI sketch chat
 // Response: FloorPlanResponse
 ```
 
+> **Auto-room creation:** When floor plan `canvas_data` is saved (PATCH), if closed shapes form rooms, the backend auto-creates/updates `job_room` records with dimensions extracted from the geometry. This is handled server-side in the `floor_plans` service.
+
 #### POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-cleanup
 ```jsonc
 // Request
@@ -894,10 +948,12 @@ Query params:
   ?room_id=uuid                filter by room
   &photo_type=damage           filter by type
   &selected_for_ai=true        filter by AI selection
+  &group_by=room               group photos by room (optional, values: "room" or omit)
   &limit=50                    max 100
   &offset=0
 
-Response: { "items": [PhotoResponse], "total": 42 }
+Response (default, no group_by): { "items": [PhotoResponse], "total": 42 }
+Response (group_by=room): { "groups": [{ "room_id": "uuid|null", "room_name": "str|null", "photos": [PhotoResponse] }], "total": 42 }
 // All storage_urls are signed with 15-min expiry
 ```
 

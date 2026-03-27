@@ -367,6 +367,20 @@ job (references property_id)
 ## Phases & Checklist
 
 ### Phase 1: Job + Room + Floor Plan Backend — ❌
+**Properties CRUD:**
+- [ ] Create `api/properties/schemas.py` — Pydantic models for property create/update/response
+- [ ] Create `api/properties/service.py` — property business logic (create, list, get, update)
+- [ ] Create `api/properties/router.py` — route handlers
+- [ ] `POST /v1/properties` — create property (address standardization, uniqueness check)
+- [ ] `GET /v1/properties` — list properties for company (search, paginate)
+- [ ] `GET /v1/properties/{property_id}` — get property detail
+- [ ] `PATCH /v1/properties/{property_id}` — update property
+- [ ] USPS address standardization on create/update (normalize to lowercase, strip whitespace)
+- [ ] pytest: create property
+- [ ] pytest: duplicate property detection (same standardized address)
+- [ ] pytest: list properties with search
+- [ ] pytest: update property
+
 **Jobs CRUD:**
 - [ ] Create `api/jobs/schemas.py` — Pydantic models for job create/update/response
 - [ ] Create `api/jobs/service.py` — job business logic (create, list, get, update, delete)
@@ -422,6 +436,7 @@ job (references property_id)
 - [ ] pytest: create room without floor plan (standalone)
 - [ ] pytest: update room equipment counts
 - [ ] pytest: auto-calculate square_footage
+- [ ] pytest: properties CRUD (create, list, search, update, duplicate detection)
 
 **Event History:**
 - [ ] Create `api/events/schemas.py` — Pydantic models
@@ -549,6 +564,8 @@ job (references property_id)
 - [ ] When rooms are created from sketch, auto-create job_room records with dimensions
 - [ ] Rooms from sketch show "2 rooms loaded from sketch — tap to edit" indicator
 - [ ] Canvas library: research best option (Konva.js/react-konva, Fabric.js, or Excalidraw fork)
+- [ ] pytest: floor plan AI cleanup endpoint returns cleaned canvas_data
+- [ ] pytest: floor plan AI chat endpoint modifies canvas_data based on message
 
 **Moisture Readings:**
 - [ ] Moisture Readings section within Site Log
@@ -594,6 +611,8 @@ job (references property_id)
 - [ ] Photo count indicator: "42 / 100 photos"
 - [ ] Filter photos by room (links from room card's "Photos" button)
 - [ ] "Tag Rooms" button → modal: shows all photos with room dropdown per photo (from job_rooms). Bulk-assign photos to rooms before AI analysis. Cancel / Save buttons.
+- [ ] pytest: photo bulk-tag assigns rooms correctly
+- [ ] pytest: photo bulk-select marks selected_for_ai
 
 ### Phase 6: PDF Export + Share Link — ❌
 **Reports:**
@@ -631,6 +650,12 @@ job (references property_id)
 - [ ] pytest: PDF generation produces valid PDF file
 - [ ] pytest: share token generates and resolves to correct job
 - [ ] pytest: expired share token returns 403
+- [ ] pytest: report list returns correct statuses
+- [ ] pytest: report download returns signed URL only when status=ready
+- [ ] pytest: share link creation returns hashed token
+- [ ] pytest: share link revocation sets revoked_at
+- [ ] pytest: public shared view returns scoped data
+- [ ] pytest: expired share link returns 403
 
 ## Technical Approach
 
@@ -746,7 +771,7 @@ cd /Users/lakshman/Workspaces/Crewmatic
 - **Canvas library:** Research needed — Konva.js/react-konva (React-native, good touch), Fabric.js (most mature), or Excalidraw fork (open-source whiteboard). Decision during Phase 4.
 - **GPP formula:** Psychrometric calculation from ASHRAE tables. Pure math, no AI needed. Replaces separate app Brett currently uses.
 - **Spec 02 is now AI Pipeline** (was originally spec 02 for floor plan, but floor plan merged into spec 01).
-- **year_built on jobs:** Added to schema. Pre-1978 = lead paint risk (EPA RRP rule). Can auto-fill from property data API (Zillow/ATTOM/county records) based on address, but always confirm with homeowner. Used by Hazmat Scanner in Spec 02.
+- **year_built on properties:** year_built lives on the `properties` table. The job creation form shows property fields (address, year_built) which create/link a property record. When user enters an address, the backend standardizes it (USPS format) and checks if a property already exists. If yes, links to existing property (and shows year_built). If no, creates a new property. If year_built is unknown, the form prompts: "Do you know when this home was built?" for lead paint risk assessment. Pre-1978 = lead paint risk (EPA RRP rule). Can auto-fill from property data API (Zillow/ATTOM/county records) based on address, but always confirm with homeowner. Used by Hazmat Scanner in Spec 02.
 - **Hazmat Scanner (Spec 02):** Two scan types — Asbestos Risk Scan + Lead Paint Risk Scan. AI analyzes uploaded photos for potential ACMs (vermiculite insulation, pipe wrap, 9x9 floor tiles) and lead paint indicators (alligatoring pattern). Per-finding output: material name, location, risk level (HIGH RISK badge), "What I see" description, next steps ("Do not disturb. Have certified inspector collect sample"), "Order Test Kit" CTA. Lead paint scan uses year_built to determine risk (pre-1978). "Add to Report" button includes findings in PDF. Mandatory disclaimer: "not a substitute for professional testing." Local contractor referrals by zip code (Google Maps, Angi, HomeAdvisor, EPA Directory). Future revenue: sponsored contractor listings + test kit affiliate links.
 - **Photo toolbar (from Brett's ScopeFlow):** Hazard Scan | Tag Rooms | Analyze with AI | Take Photo | Upload. Room filter tabs below (All Photos + room names from job_rooms). Hazard Scan and Analyze with AI are Spec 02 features — buttons present but disabled in Spec 01.
 - **Tag Rooms modal (Spec 01):** Before AI analysis, user assigns each photo to a room via a modal — photo thumbnail + room dropdown (from job_rooms). This is a Spec 01 feature (part of photo management). "Analyze →" button triggers Spec 02.

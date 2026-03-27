@@ -7,7 +7,6 @@ from api.auth.schemas import AuthContext, CompanyCreate, CompanyUpdate, UserUpda
 from api.auth.service import (
     get_or_create_company,
     get_user_with_company,
-    list_jobs,
     update_company,
     update_company_logo,
     update_last_login,
@@ -116,8 +115,5 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
     return {"logo_url": logo_url}
 
 
-@router.get("/jobs")
-async def list_company_jobs(ctx: AuthContext = Depends(get_auth_context)):
-    """List jobs for current company. Returns empty list for new companies."""
-    jobs = await list_jobs(ctx.company_id)
-    return {"jobs": jobs}
+# GET /v1/jobs endpoint moved to api/jobs/router.py (Spec 01).
+# The list_jobs function remains in auth/service.py temporarily until the jobs module is built.

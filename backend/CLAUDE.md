@@ -54,7 +54,7 @@ alembic history
 - Feature modules go in `api/{feature}/` with `router.py`, `service.py`, `schemas.py`
 - All routes prefixed with `/v1` when included via `app.include_router(router, prefix="/v1")`
 - Use `AppException` from `api.shared.exceptions` for error responses
-- Use `get_supabase_client()` for user-scoped queries (respects RLS)
-- Use `get_supabase_admin_client()` only for operations that bypass RLS (e.g., public report access)
+- Use `get_authenticated_client(token)` for all user-scoped queries (passes user's JWT, RLS enforces tenant isolation). This is the default for ALL normal user operations.
+- Use `get_supabase_admin_client()` ONLY for onboarding and platform admin operations (e.g., creating initial company/user records, public share link access). Never for normal user queries.
 - Linting: `ruff check api/` and `ruff format api/`
 - Full API spec: `docs/product-specs/restoros-architecture.md` Part 5
