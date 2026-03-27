@@ -65,13 +65,7 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
 
 function eventActor(evt: { is_ai: boolean; user_id: string | null }): string {
   if (evt.is_ai) return "Crewmatic AI";
-  // Mock user names
-  switch (evt.user_id) {
-    case "user1":
-      return "Brett Miller";
-    default:
-      return "Team Member";
-  }
+  return "Team Member";
 }
 
 function formatTime(dateStr: string): string {
@@ -507,9 +501,26 @@ export default function JobDetailPage() {
             <h1 className="text-[16px] font-bold text-on-surface truncate leading-tight">
               {job.address_line1}
             </h1>
-            <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight mt-0.5">
-              {job.job_number}
-            </p>
+            <div className="flex items-center gap-2 mt-0.5">
+              <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight">
+                {job.job_number}
+              </p>
+              {job.assigned_to ? (
+                <span className="text-[11px] text-on-surface-variant">
+                  · Assigned to <span className="font-medium text-on-surface">{job.assigned_to}</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  className="text-[11px] text-brand-accent hover:underline cursor-pointer"
+                  onClick={() => {
+                    // TODO: open assign modal with team member list
+                  }}
+                >
+                  + Assign
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Right: Day pill + Status badge + Bell + Avatar */}
@@ -903,7 +914,7 @@ export default function JobDetailPage() {
                     {untaggedPhotos.length} photos need room tags
                   </p>
                   <p className="text-[11px] text-on-surface-variant mt-0.5">
-                    Assigned to: Brett Miller
+                    Tag rooms before AI scope
                   </p>
                 </div>
               </div>

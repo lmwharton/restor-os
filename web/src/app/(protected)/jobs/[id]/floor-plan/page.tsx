@@ -39,21 +39,27 @@ export default function FloorPlanPage({
   /* ---------------------------------------------------------------- */
 
   const handleSave = useCallback(
-    (canvasData: Record<string, unknown>) => {
+    async (canvasData: Record<string, unknown>) => {
       if (activeFloor) {
         updateFloorPlan.mutate({
           floorPlanId: activeFloor.id,
           canvas_data: canvasData,
         });
       } else {
-        createFloorPlan.mutate({
-          floor_number: 1,
-          floor_name: "Floor 1",
-          canvas_data: canvasData,
-        });
+        try {
+          await createFloorPlan.mutateAsync({
+            floor_number: (floorPlans?.length ?? 0) + 1,
+            floor_name: `Floor ${(floorPlans?.length ?? 0) + 1}`,
+            canvas_data: canvasData,
+          });
+          // After create, the query invalidation will refetch and set activeFloor
+        } catch {
+          // 409 = floor plan already exists, refetch and try update
+          // The query invalidation from the hook will refresh floorPlans
+        }
       }
     },
-    [activeFloor, updateFloorPlan, createFloorPlan]
+    [activeFloor, floorPlans, updateFloorPlan, createFloorPlan]
   );
 
   const handleCleanup = useCallback(
