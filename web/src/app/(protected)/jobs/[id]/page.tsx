@@ -1,9 +1,15 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useJob, useRooms, useReadings, usePhotos } from "@/lib/hooks/use-jobs";
-import type { Room, MoistureReading } from "@/lib/types";
+import {
+  useJob,
+  useRooms,
+  useReadings,
+  usePhotos,
+  useJobEvents,
+} from "@/lib/hooks/use-jobs";
+// Types used via hook return inference — no direct imports needed
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -15,193 +21,89 @@ function daysSinceLoss(lossDate: string | null): number {
   return Math.max(1, Math.ceil(diff / 86_400_000));
 }
 
-function formatDateShort(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
+function statusLabel(status: string): string {
+  switch (status) {
+    case "needs_scope":
+      return "Needs Scope";
+    case "scoped":
+      return "Scoped";
+    case "submitted":
+      return "Submitted";
+    default:
+      return status;
+  }
+}
+
+function eventDescription(evt: { event_type: string; is_ai: boolean; event_data: Record<string, unknown> }): string {
+  switch (evt.event_type) {
+    case "photo_uploaded":
+      return `uploaded ${evt.event_data.count ?? ""} photos`;
+    case "moisture_reading_added":
+      return `logged Day ${evt.event_data.day_number ?? "?"} readings`;
+    case "ai_sketch_cleanup":
+      return `cleaned up floor plan`;
+    case "ai_photo_analysis":
+      return `generated ${evt.event_data.line_items_generated ?? ""} line items from photos`;
+    case "job_created":
+      return `created the job`;
+    case "report_generated":
+      return `generated ${evt.event_data.report_type ?? "report"}`;
+    default:
+      return evt.event_type.replace(/_/g, " ");
+  }
+}
+
+function eventActor(evt: { is_ai: boolean; user_id: string | null }): string {
+  if (evt.is_ai) return "Crewmatic AI";
+  // Mock user names
+  switch (evt.user_id) {
+    case "user1":
+      return "Brett Miller";
+    default:
+      return "Team Member";
+  }
+}
+
+function formatTime(dateStr: string): string {
+  return new Date(dateStr).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   });
 }
 
-function categoryColor(cat: string | null): string {
-  switch (cat) {
-    case "1":
-      return "bg-emerald-100 text-emerald-700";
-    case "2":
-      return "bg-amber-100 text-amber-700";
-    case "3":
-      return "bg-red-100 text-red-700";
-    default:
-      return "bg-surface-container-high text-on-surface-variant";
-  }
-}
-
-function classColor(cls: string | null): string {
-  switch (cls) {
-    case "1":
-      return "bg-sky-100 text-sky-700";
-    case "2":
-      return "bg-blue-100 text-blue-700";
-    case "3":
-      return "bg-indigo-100 text-indigo-700";
-    case "4":
-      return "bg-violet-100 text-violet-700";
-    default:
-      return "bg-surface-container-high text-on-surface-variant";
-  }
-}
-
-function getLatestReading(
-  readings: MoistureReading[] | undefined
-): MoistureReading | null {
-  if (!readings || readings.length === 0) return null;
-  return [...readings].sort(
-    (a, b) =>
-      new Date(b.reading_date).getTime() - new Date(a.reading_date).getTime()
-  )[0];
-}
-
-function getPreviousReading(
-  readings: MoistureReading[] | undefined
-): MoistureReading | null {
-  if (!readings || readings.length < 2) return null;
-  const sorted = [...readings].sort(
-    (a, b) =>
-      new Date(b.reading_date).getTime() - new Date(a.reading_date).getTime()
-  );
-  return sorted[1];
-}
-
 /* ------------------------------------------------------------------ */
-/*  Icons (inline SVGs for field mode — no extra imports)              */
+/*  Inline SVG Icons                                                   */
 /* ------------------------------------------------------------------ */
 
-function ChevronLeft({ size = 24 }: { size?: number }) {
+function ChevronDown({ size = 20, className = "" }: { size?: number; className?: string }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M15 18l-6-6 6-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path d="M6 9l6 6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function ChevronRight({ size = 24 }: { size?: number }) {
+function ChevronRight({ size = 20, className = "" }: { size?: number; className?: string }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M9 18l6-6-6-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
+      <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function FanIcon({ size = 20 }: { size?: number }) {
+function ArrowLeftIcon({ size = 20 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M12 12c-1.66-2.87-1-6.46 1.5-8.5 3.03-2.47 5.5-.5 5.5 2 0 3-3 4.5-7 6.5Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M12 12c2.87-1.66 6.46-1 8.5 1.5 2.47 3.03.5 5.5-2 5.5-3 0-4.5-3-6.5-7Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M12 12c1.66 2.87 1 6.46-1.5 8.5-3.03 2.47-5.5.5-5.5-2 0-3 3-4.5 7-6.5Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <path
-        d="M12 12c-2.87 1.66-6.46 1-8.5-1.5C1.03 7.47 3 5 5.5 5c3 0 4.5 3 6.5 7Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <circle cx="12" cy="12" r="1.5" fill="currentColor" />
-    </svg>
-  );
-}
-
-function DehuIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect
-        x="5"
-        y="4"
-        width="14"
-        height="16"
-        rx="2"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M12 8v2m0 4v2"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-      <path
-        d="M9 10h6m-6 4h6"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M19 12H5m6-6-6 6 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function CameraIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2v11Z"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2v11Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
     </svg>
   );
@@ -209,120 +111,131 @@ function CameraIcon({ size = 22 }: { size?: number }) {
 
 function ChartIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M18 20V10M12 20V4M6 20v-6"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
 function MicIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <rect
-        x="9"
-        y="1"
-        width="6"
-        height="11"
-        rx="3"
-        stroke="currentColor"
-        strokeWidth="1.5"
-      />
-      <path
-        d="M19 10v1a7 7 0 0 1-14 0v-1"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-      <line
-        x1="12"
-        y1="19"
-        x2="12"
-        y2="23"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
-      <line
-        x1="8"
-        y1="23"
-        x2="16"
-        y2="23"
-        stroke="currentColor"
-        strokeWidth="1.5"
-        strokeLinecap="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="9" y="1" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M19 10v1a7 7 0 0 1-14 0v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
     </svg>
   );
 }
 
-function MinusIcon({ size = 18 }: { size?: number }) {
+function PencilIcon({ size = 22 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <line
-        x1="5"
-        y1="12"
-        x2="19"
-        y2="12"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
 
-function PlusIcon({ size = 18 }: { size?: number }) {
+function BellIcon({ size = 20 }: { size?: number }) {
   return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      aria-hidden="true"
-    >
-      <line
-        x1="12"
-        y1="5"
-        x2="12"
-        y2="19"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
-      <line
-        x1="5"
-        y1="12"
-        x2="19"
-        y2="12"
-        stroke="currentColor"
-        strokeWidth="2.5"
-        strokeLinecap="round"
-      />
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+function ShareIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <circle cx="18" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="6" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <circle cx="18" cy="19" r="3" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
+  );
+}
+
+function DocumentIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+      <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function TrashIcon({ size = 18 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Accordion Section wrapper                                          */
+/* ------------------------------------------------------------------ */
+
+function AccordionSection({
+  icon,
+  title,
+  badge,
+  preview,
+  defaultOpen = false,
+  compact = false,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  badge?: React.ReactNode;
+  preview?: React.ReactNode;
+  defaultOpen?: boolean;
+  compact?: boolean;
+  children?: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(defaultOpen);
+
+  return (
+    <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => !compact && setOpen(!open)}
+        className={`w-full flex items-center gap-3 px-5 py-4 text-left transition-colors ${
+          compact ? "cursor-default" : "cursor-pointer hover:bg-surface-container-low/50"
+        }`}
+        aria-expanded={compact ? undefined : open}
+      >
+        <span className="shrink-0">{icon}</span>
+        <span className="flex-1 min-w-0">
+          <span className="flex items-center gap-2">
+            <span className="text-[15px] font-semibold text-on-surface">{title}</span>
+            {badge}
+          </span>
+          {!open && preview && (
+            <span className="block text-[13px] text-on-surface-variant mt-0.5 truncate">
+              {preview}
+            </span>
+          )}
+        </span>
+        {!compact && (
+          <span className="shrink-0 text-on-surface-variant">
+            {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+          </span>
+        )}
+        {compact && (
+          <span className="shrink-0 text-on-surface-variant">
+            <ChevronRight size={18} />
+          </span>
+        )}
+      </button>
+      {!compact && open && children && (
+        <div className="px-5 pb-5 pt-0">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -330,643 +243,699 @@ function PlusIcon({ size = 18 }: { size?: number }) {
 /*  Loading skeleton                                                   */
 /* ------------------------------------------------------------------ */
 
-function FieldModeSkeleton() {
+function PageSkeleton() {
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      {/* Header skeleton */}
-      <div className="sticky top-0 z-40 h-14 bg-surface/70 backdrop-blur-xl border-b border-outline-variant/20 flex items-center justify-between px-4">
-        <div className="w-8 h-8 rounded-lg bg-surface-container animate-pulse" />
-        <div className="w-32 h-5 rounded bg-surface-container animate-pulse" />
-        <div className="w-14 h-6 rounded-full bg-surface-container animate-pulse" />
-      </div>
-      <div className="flex-1 max-w-lg mx-auto w-full px-4 pt-5 space-y-4">
-        <div className="h-20 rounded-2xl bg-surface-container-lowest animate-pulse" />
-        <div className="h-32 rounded-2xl bg-surface-container-lowest animate-pulse" />
-        <div className="h-24 rounded-2xl bg-surface-container-lowest animate-pulse" />
-        <div className="h-40 rounded-2xl bg-surface-container-lowest animate-pulse" />
+    <div className="min-h-screen bg-surface">
+      <div className="h-16 bg-surface/70 backdrop-blur-xl border-b border-outline-variant/20" />
+      <div className="max-w-6xl mx-auto px-4 pt-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+        <div className="space-y-4">
+          {[120, 200, 96, 80, 64, 48, 48].map((h, i) => (
+            <div key={i} className="rounded-xl bg-surface-container-lowest animate-pulse" style={{ height: h }} />
+          ))}
+        </div>
+        <div className="hidden lg:block space-y-4">
+          <div className="h-52 rounded-xl bg-surface-container-lowest animate-pulse" />
+          <div className="h-40 rounded-xl bg-surface-container-lowest animate-pulse" />
+          <div className="h-48 rounded-xl bg-surface-container-lowest animate-pulse" />
+        </div>
       </div>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Equipment Counter                                                  */
+/*  Status icon helpers                                                */
 /* ------------------------------------------------------------------ */
 
-function EquipmentCounter({
-  icon,
-  label,
-  count,
-  onDecrement,
-  onIncrement,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  count: number;
-  onDecrement: () => void;
-  onIncrement: () => void;
-}) {
+function StatusCheck() {
   return (
-    <div className="flex-1 flex flex-col items-center gap-2">
-      <div className="flex items-center gap-1.5 text-on-surface-variant">
-        {icon}
-        <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] font-semibold">
-          {label}
-        </span>
+    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[12px] font-bold shrink-0">
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
+function StatusWarning() {
+  return (
+    <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-[12px] font-bold shrink-0">
+      !
+    </span>
+  );
+}
+
+function StatusLock() {
+  return (
+    <span className="w-5 h-5 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center shrink-0">
+      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <rect x="5" y="11" width="14" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
+        <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+      </svg>
+    </span>
+  );
+}
+
+function StatusSparkle() {
+  return (
+    <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center shrink-0">
+      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+      </svg>
+    </span>
+  );
+}
+
+function StatusGray() {
+  return (
+    <span className="w-5 h-5 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center text-[12px] shrink-0">
+      --
+    </span>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  GPP Bar Chart                                                      */
+/* ------------------------------------------------------------------ */
+
+function GppTrendChart({ readings, target }: { readings: { day: number; gpp: number }[]; target: number }) {
+  const maxGpp = Math.max(...readings.map((r) => r.gpp), target + 10);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end gap-3 h-[100px]">
+        {readings.map((r) => {
+          const pct = (r.gpp / maxGpp) * 100;
+          const isAboveTarget = r.gpp > target;
+          return (
+            <div key={r.day} className="flex-1 flex flex-col items-center gap-1">
+              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold text-on-surface tabular-nums">
+                {r.gpp.toFixed(0)}
+              </span>
+              <div className="w-full flex items-end" style={{ height: 80 }}>
+                <div
+                  className="w-full rounded-t-md transition-all duration-500"
+                  style={{
+                    height: `${pct}%`,
+                    background: isAboveTarget
+                      ? "linear-gradient(180deg, #e85d26 0%, #cc4911 100%)"
+                      : "linear-gradient(180deg, #16a34a 0%, #15803d 100%)",
+                  }}
+                />
+              </div>
+              <span className="text-[10px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                Day {r.day}
+              </span>
+            </div>
+          );
+        })}
+        {/* Target line visual */}
+        <div className="flex-1 flex flex-col items-center gap-1">
+          <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold text-emerald-600 tabular-nums">
+            {target}
+          </span>
+          <div className="w-full flex items-end" style={{ height: 80 }}>
+            <div
+              className="w-full rounded-t-md border-2 border-dashed border-emerald-400 bg-emerald-50"
+              style={{ height: `${(target / maxGpp) * 100}%` }}
+            />
+          </div>
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] text-emerald-600 font-semibold">
+            Target
+          </span>
+        </div>
       </div>
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          onClick={onDecrement}
-          disabled={count <= 0}
-          aria-label={`Decrease ${label}`}
-          className="w-12 h-12 flex items-center justify-center rounded-lg border border-outline-variant/40 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent active:bg-brand-accent/10 disabled:opacity-30 disabled:hover:border-outline-variant/40 disabled:hover:text-on-surface-variant transition-colors cursor-pointer"
-        >
-          <MinusIcon />
-        </button>
-        <span className="text-2xl font-[family-name:var(--font-geist-mono)] font-bold text-on-surface tabular-nums min-w-[2ch] text-center">
-          {count}
+
+      <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant text-center">
+        GPP Trend
+      </p>
+
+      <div className="flex items-center gap-4 justify-center">
+        <span className="flex items-center gap-1.5 text-[11px] font-[family-name:var(--font-geist-mono)]">
+          <span className="w-2 h-2 rounded-full bg-brand-accent" />
+          <span className="text-on-surface-variant">Latest: {readings[readings.length - 1]?.gpp.toFixed(0)} GPP</span>
         </span>
-        <button
-          type="button"
-          onClick={onIncrement}
-          aria-label={`Increase ${label}`}
-          className="w-12 h-12 flex items-center justify-center rounded-lg border border-outline-variant/40 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent active:bg-brand-accent/10 transition-colors cursor-pointer"
-        >
-          <PlusIcon />
-        </button>
+        <span className="flex items-center gap-1.5 text-[11px] font-[family-name:var(--font-geist-mono)]">
+          <span className="w-2 h-2 rounded-full bg-emerald-500" />
+          <span className="text-on-surface-variant">Target: {target} GPP</span>
+        </span>
       </div>
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Main Page Component                                                */
+/*  Main Page                                                          */
 /* ------------------------------------------------------------------ */
 
-export default function JobFieldModePage() {
+export default function JobDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
   const jobId = params.id;
 
-  // Data hooks
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
-
-  // Room navigation state
-  const [roomIndex, setRoomIndex] = useState(0);
-  const currentRoom: Room | undefined = rooms?.[roomIndex];
-  const roomId = currentRoom?.id ?? "";
-
-  // Readings for current room
-  const { data: readings } = useReadings(jobId, roomId);
   const { data: photos } = usePhotos(jobId);
+  const { data: events } = useJobEvents(jobId);
 
-  // Equipment local state (mock edits)
-  const [airMoverDelta, setAirMoverDelta] = useState<Record<string, number>>(
-    {}
-  );
-  const [dehuDelta, setDehuDelta] = useState<Record<string, number>>({});
+  // Use first room for readings
+  const firstRoomId = rooms?.[0]?.id ?? "";
+  const { data: readings } = useReadings(jobId, firstRoomId);
 
-  const airMovers =
-    (currentRoom?.equipment_air_movers ?? 0) + (airMoverDelta[roomId] ?? 0);
-  const dehus =
-    (currentRoom?.equipment_dehus ?? 0) + (dehuDelta[roomId] ?? 0);
-
-  // Latest and previous readings
-  const latestReading = useMemo(
-    () => getLatestReading(readings),
-    [readings]
-  );
-  const previousReading = useMemo(
-    () => getPreviousReading(readings),
-    [readings]
-  );
-
-  // GPP calculation
-  const currentGpp = latestReading?.atmospheric_gpp ?? null;
-  const previousGpp = previousReading?.atmospheric_gpp ?? null;
-  const targetGpp = 45; // Standard dry target for GPP
-  const gppTrend =
-    currentGpp !== null && previousGpp !== null
-      ? currentGpp < previousGpp
-        ? "dropping"
-        : currentGpp > previousGpp
-          ? "rising"
-          : "stable"
-      : null;
-
-  // GPP progress (0..1, clamped): from starting high GPP towards target
-  const startGpp = 85; // assumed starting GPP
-  const gppProgress =
-    currentGpp !== null
-      ? Math.min(
-          1,
-          Math.max(0, (startGpp - currentGpp) / (startGpp - targetGpp))
-        )
-      : 0;
-
-  // Day number
   const dayNumber = job?.loss_date ? daysSinceLoss(job.loss_date) : null;
 
-  // Room photos
-  const roomPhotos = useMemo(() => {
-    if (!photos || !currentRoom) return [];
-    return photos.filter((p) => p.room_id === currentRoom.id);
-  }, [photos, currentRoom]);
+  // Untagged photos (no room assigned)
+  const untaggedPhotos = useMemo(
+    () => photos?.filter((p) => !p.room_id) ?? [],
+    [photos]
+  );
 
-  const totalPhotos = roomPhotos.length;
+  // GPP data from readings
+  const gppData = useMemo(() => {
+    if (!readings || readings.length === 0) return [];
+    return [...readings]
+      .sort((a, b) => new Date(a.reading_date).getTime() - new Date(b.reading_date).getTime())
+      .filter((r) => r.atmospheric_gpp !== null)
+      .map((r) => ({ day: r.day_number ?? 0, gpp: r.atmospheric_gpp! }));
+  }, [readings]);
 
-  // Navigation handlers
-  const prevRoom = useCallback(() => {
-    setRoomIndex((i) => Math.max(0, i - 1));
-  }, []);
+  // Job events for this job, sorted newest first
+  const jobEvents = useMemo(() => {
+    if (!events) return [];
+    return [...events].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+  }, [events]);
 
-  const nextRoom = useCallback(() => {
-    if (!rooms) return;
-    setRoomIndex((i) => Math.min(rooms.length - 1, i + 1));
-  }, [rooms]);
-
-  // Loading
   if (jobLoading || !job) {
-    return <FieldModeSkeleton />;
+    return <PageSkeleton />;
   }
 
-  const roomCount = rooms?.length ?? 0;
-  const hasRooms = roomCount > 0;
+  const hasPhotos = (photos?.length ?? 0) > 0;
+  const hasTechNotes = !!job.tech_notes;
 
   return (
-    <div className="flex flex-col min-h-screen bg-surface">
-      {/* ── Sticky Header ───────────────────────────────────────── */}
-      <header className="sticky top-0 z-40 h-14 bg-surface/70 backdrop-blur-xl border-b border-outline-variant/20">
-        <div className="h-full max-w-lg lg:max-w-6xl mx-auto w-full px-4 flex items-center justify-between">
+    <div className="min-h-screen bg-surface">
+      {/* ── Header ──────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/15">
+        <div className="max-w-6xl mx-auto px-4 h-16 flex items-center gap-3">
           {/* Back */}
           <button
             type="button"
             onClick={() => router.push("/jobs")}
             aria-label="Back to jobs"
-            className="w-10 h-10 -ml-2 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface active:bg-surface-container transition-colors cursor-pointer"
+            className="w-9 h-9 -ml-1 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
           >
-            <ChevronLeft />
+            <ArrowLeftIcon size={20} />
           </button>
 
-          {/* Address */}
-          <h1 className="text-[15px] font-semibold text-on-surface truncate max-w-[50%] text-center">
-            {job.address_line1}
-          </h1>
+          {/* Address + Job number */}
+          <div className="flex-1 min-w-0">
+            <h1 className="text-[16px] font-bold text-on-surface truncate leading-tight">
+              {job.address_line1}
+            </h1>
+            <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight mt-0.5">
+              {job.job_number}
+            </p>
+          </div>
 
-          {/* Day pill */}
-          {dayNumber !== null && (
-            <span className="shrink-0 px-3 py-1 rounded-full bg-brand-accent text-on-primary text-[12px] font-bold font-[family-name:var(--font-geist-mono)] tracking-wide">
-              Day {dayNumber}
+          {/* Right: Day pill + Status badge + Bell + Avatar */}
+          <div className="flex items-center gap-2 shrink-0">
+            {dayNumber !== null && (
+              <span className="px-2.5 py-1 rounded-full bg-brand-accent text-on-primary text-[11px] font-bold font-[family-name:var(--font-geist-mono)] tracking-wide">
+                Day {dayNumber}
+              </span>
+            )}
+            <span className="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant text-[11px] font-semibold font-[family-name:var(--font-geist-mono)]">
+              {statusLabel(job.status)}
             </span>
-          )}
-          {dayNumber === null && <span className="w-14" />}
+            <button
+              type="button"
+              aria-label="Notifications"
+              className="w-9 h-9 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer hidden sm:flex"
+            >
+              <BellIcon size={18} />
+            </button>
+            <div className="w-8 h-8 rounded-full bg-surface-container-high flex items-center justify-center text-[12px] font-bold text-on-surface-variant hidden sm:flex">
+              BM
+            </div>
+          </div>
         </div>
       </header>
 
-      {/* ── Two-Pane Layout (desktop) / Single column (mobile) ── */}
-      <div className="flex-1 max-w-lg lg:max-w-6xl mx-auto w-full px-4 pt-5 pb-28 lg:pb-6 lg:grid lg:grid-cols-[1fr_380px] lg:gap-6">
+      {/* ── Main Content Grid ───────────────────────────────────── */}
+      <main className="max-w-6xl mx-auto px-4 py-6 pb-28 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
 
-        {/* ── Left Pane: Room Data ────────────────────────────── */}
-        <div className="space-y-4">
-          {/* ── Room Selector ─────────────────────────────────── */}
-          {hasRooms && currentRoom ? (
-            <section className="text-center" aria-label="Room selector">
-              <div className="flex items-center justify-center gap-4">
-                <button
-                  type="button"
-                  onClick={prevRoom}
-                  disabled={roomIndex === 0}
-                  aria-label="Previous room"
-                  className="w-12 h-12 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface active:bg-surface-container disabled:opacity-20 transition-colors cursor-pointer"
-                >
-                  <ChevronLeft size={28} />
-                </button>
-                <div className="flex-1 min-w-0">
-                  <h2 className="text-xl font-bold text-on-surface truncate">
-                    {currentRoom.room_name}
-                  </h2>
-                  <p className="text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant mt-0.5">
-                    {currentRoom.length_ft && currentRoom.width_ft
-                      ? `${currentRoom.length_ft} x ${currentRoom.width_ft} ft`
-                      : ""}
-                    {currentRoom.square_footage
-                      ? ` · ${Math.round(currentRoom.square_footage)} SF`
-                      : ""}
-                  </p>
-                  {/* Category + Class pills */}
-                  <div className="flex items-center justify-center gap-2 mt-2">
-                    {currentRoom.water_category && (
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold font-[family-name:var(--font-geist-mono)] uppercase tracking-wider ${categoryColor(currentRoom.water_category)}`}
-                      >
-                        Cat {currentRoom.water_category}
+        {/* ── LEFT COLUMN: Accordion Sections ───────────────────── */}
+        <div className="space-y-3">
+
+          {/* Section 1: Job Info */}
+          <AccordionSection
+            icon={<StatusCheck />}
+            title="Job Info"
+            preview={
+              [job.customer_name, job.carrier, job.claim_number ? `#${job.claim_number}` : null]
+                .filter(Boolean)
+                .join(" \u00B7 ")
+            }
+          >
+            <div className="space-y-4">
+              {/* Customer */}
+              <div>
+                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+                  Customer
+                </h4>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+                  {job.customer_name && (
+                    <>
+                      <span className="text-on-surface-variant">Name</span>
+                      <span className="text-on-surface font-medium">{job.customer_name}</span>
+                    </>
+                  )}
+                  {job.customer_phone && (
+                    <>
+                      <span className="text-on-surface-variant">Phone</span>
+                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.customer_phone}</span>
+                    </>
+                  )}
+                  {job.customer_email && (
+                    <>
+                      <span className="text-on-surface-variant">Email</span>
+                      <span className="text-on-surface">{job.customer_email}</span>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Loss Info */}
+              <div>
+                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+                  Loss Info
+                </h4>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+                  {job.loss_date && (
+                    <>
+                      <span className="text-on-surface-variant">Date</span>
+                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.loss_date}</span>
+                    </>
+                  )}
+                  {job.loss_cause && (
+                    <>
+                      <span className="text-on-surface-variant">Cause</span>
+                      <span className="text-on-surface">{job.loss_cause}</span>
+                    </>
+                  )}
+                  <span className="text-on-surface-variant">Category</span>
+                  <div className="flex gap-2">
+                    {job.loss_category && (
+                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[11px] font-bold font-[family-name:var(--font-geist-mono)]">
+                        Cat {job.loss_category}
                       </span>
                     )}
-                    {currentRoom.water_class && (
-                      <span
-                        className={`px-2.5 py-0.5 rounded-full text-[11px] font-bold font-[family-name:var(--font-geist-mono)] uppercase tracking-wider ${classColor(currentRoom.water_class)}`}
-                      >
-                        Class {currentRoom.water_class}
+                    {job.loss_class && (
+                      <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold font-[family-name:var(--font-geist-mono)]">
+                        Class {job.loss_class}
                       </span>
                     )}
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={nextRoom}
-                  disabled={roomIndex >= roomCount - 1}
-                  aria-label="Next room"
-                  className="w-12 h-12 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface active:bg-surface-container disabled:opacity-20 transition-colors cursor-pointer"
-                >
-                  <ChevronRight size={28} />
-                </button>
               </div>
-              {/* Room indicator dots */}
-              {roomCount > 1 && (
-                <div className="flex items-center justify-center gap-1.5 mt-3">
-                  {rooms?.map((_, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      onClick={() => setRoomIndex(i)}
-                      aria-label={`Go to room ${i + 1}`}
-                      className={`w-2 h-2 rounded-full transition-all cursor-pointer ${
-                        i === roomIndex
-                          ? "bg-brand-accent w-5"
-                          : "bg-outline-variant/40 hover:bg-outline-variant"
-                      }`}
-                    />
-                  ))}
+
+              {/* Insurance */}
+              <div>
+                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+                  Insurance
+                </h4>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
+                  {job.carrier && (
+                    <>
+                      <span className="text-on-surface-variant">Carrier</span>
+                      <span className="text-on-surface font-medium">{job.carrier}</span>
+                    </>
+                  )}
+                  {job.claim_number && (
+                    <>
+                      <span className="text-on-surface-variant">Claim #</span>
+                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
+                    </>
+                  )}
+                  {job.adjuster_name && (
+                    <>
+                      <span className="text-on-surface-variant">Adjuster</span>
+                      <span className="text-on-surface">{job.adjuster_name}</span>
+                    </>
+                  )}
                 </div>
-              )}
-            </section>
-          ) : (
-            <section className="text-center py-8">
-              <p className="text-on-surface-variant text-[14px]">
-                No rooms added yet
-              </p>
+              </div>
+
               <button
                 type="button"
-                onClick={() => console.log("Add room")}
-                className="mt-3 px-5 py-2.5 rounded-lg primary-gradient text-on-primary text-[13px] font-semibold cursor-pointer"
+                className="text-[13px] font-semibold text-brand-accent hover:underline cursor-pointer"
               >
-                + Add First Room
+                Edit &rarr;
               </button>
-            </section>
-          )}
+            </div>
+          </AccordionSection>
 
-          {/* ── GPP Drying Status ─────────────────────────────── */}
-          {hasRooms && currentRoom && (
-            <section
-              className="bg-surface-container-lowest rounded-2xl p-4"
-              aria-label="GPP drying status"
-            >
-              <div className="flex items-baseline justify-between mb-3">
-                <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant">
-                  GPP Status
-                </span>
-                {latestReading && (
-                  <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                    Day {latestReading.day_number ?? "?"}
-                  </span>
-                )}
-              </div>
-
-              {/* GPP values */}
-              <div className="flex items-end justify-between mb-2">
-                <span className="text-3xl font-[family-name:var(--font-geist-mono)] font-bold text-on-surface tabular-nums">
-                  {currentGpp !== null ? currentGpp.toFixed(0) : "--"}
-                </span>
-                <span className="text-lg font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums">
-                  <span className="text-[13px] mr-0.5">&rarr;</span> {targetGpp}
-                </span>
-              </div>
-
-              {/* Progress bar */}
-              <div className="h-3 rounded-full bg-surface-container overflow-hidden">
+          {/* Section 2: Property Layout */}
+          <AccordionSection
+            icon={<StatusCheck />}
+            title="Property Layout"
+            defaultOpen
+          >
+            <div className="space-y-3">
+              {/* Floor plan placeholder */}
+              <div className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden">
+                {/* Grid pattern */}
                 <div
-                  className="h-full rounded-full transition-all duration-700 ease-out"
+                  className="absolute inset-0 opacity-[0.08]"
                   style={{
-                    width: `${Math.max(4, gppProgress * 100)}%`,
-                    background:
-                      gppProgress > 0.8
-                        ? "linear-gradient(90deg, #e85d26 0%, #16a34a 100%)"
-                        : gppProgress > 0.5
-                          ? "linear-gradient(90deg, #e85d26 0%, #eab308 100%)"
-                          : "#e85d26",
+                    backgroundImage: "linear-gradient(to right, var(--on-surface) 1px, transparent 1px), linear-gradient(to bottom, var(--on-surface) 1px, transparent 1px)",
+                    backgroundSize: "32px 32px",
                   }}
                 />
-              </div>
-
-              {/* Trend text */}
-              {gppTrend && (
-                <p
-                  className={`mt-2 text-[12px] font-[family-name:var(--font-geist-mono)] ${
-                    gppTrend === "dropping"
-                      ? "text-emerald-600"
-                      : gppTrend === "rising"
-                        ? "text-brand-accent"
-                        : "text-on-surface-variant"
-                  }`}
+                {/* Room shapes placeholder */}
+                <div className="relative z-10 flex flex-col items-center gap-2 text-on-surface-variant">
+                  <svg width={32} height={32} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                    <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
+                  <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">
+                    {rooms?.length ?? 0} rooms mapped
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  className="absolute bottom-3 right-3 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer font-[family-name:var(--font-geist-mono)]"
                 >
-                  {gppTrend === "dropping" && (
-                    <>
-                      &darr; Dropping &middot; ~
-                      {Math.max(
-                        1,
-                        Math.ceil(
-                          ((currentGpp ?? 0) - targetGpp) /
-                            ((previousGpp ?? 0) - (currentGpp ?? 0) || 1)
-                        )
-                      )}{" "}
-                      more days estimated
-                    </>
-                  )}
-                  {gppTrend === "rising" && (
-                    <>
-                      &uarr; Rising &mdash; check equipment placement
-                    </>
-                  )}
-                  {gppTrend === "stable" && <>&#8596; Holding steady</>}
-                </p>
-              )}
-            </section>
-          )}
-
-          {/* ── Equipment Row ─────────────────────────────────── */}
-          {hasRooms && currentRoom && (
-            <section
-              className="bg-surface-container-lowest rounded-2xl p-4"
-              aria-label="Equipment"
-            >
-              <div className="flex items-stretch">
-                <EquipmentCounter
-                  icon={<FanIcon />}
-                  label="Air Movers"
-                  count={airMovers}
-                  onDecrement={() =>
-                    setAirMoverDelta((prev) => ({
-                      ...prev,
-                      [roomId]: (prev[roomId] ?? 0) - 1,
-                    }))
-                  }
-                  onIncrement={() =>
-                    setAirMoverDelta((prev) => ({
-                      ...prev,
-                      [roomId]: (prev[roomId] ?? 0) + 1,
-                    }))
-                  }
-                />
-                <div className="w-px bg-outline-variant/20 mx-2" />
-                <EquipmentCounter
-                  icon={<DehuIcon />}
-                  label="Dehus"
-                  count={dehus}
-                  onDecrement={() =>
-                    setDehuDelta((prev) => ({
-                      ...prev,
-                      [roomId]: (prev[roomId] ?? 0) - 1,
-                    }))
-                  }
-                  onIncrement={() =>
-                    setDehuDelta((prev) => ({
-                      ...prev,
-                      [roomId]: (prev[roomId] ?? 0) + 1,
-                    }))
-                  }
-                />
+                  View Plan &rarr;
+                </button>
               </div>
-            </section>
-          )}
 
-          {/* ── Today's Moisture Points ─────────────────────── */}
-          {hasRooms && currentRoom && latestReading && (
-            <section
-              className="bg-surface-container-lowest rounded-2xl p-4"
-              aria-label="Moisture readings"
-            >
-              <div className="flex items-baseline justify-between mb-3">
-                <h3 className="text-[14px] font-semibold text-on-surface">
-                  Today&apos;s Readings
-                </h3>
-                <span className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                  Day {latestReading.day_number ?? "?"} &middot;{" "}
-                  {formatDateShort(latestReading.reading_date)}
+              {/* Room pills */}
+              <div className="flex flex-wrap gap-2">
+                {rooms?.map((room) => (
+                  <span
+                    key={room.id}
+                    className="px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
+                  >
+                    {room.room_name}
+                  </span>
+                ))}
+                {(!rooms || rooms.length === 0) && (
+                  <span className="text-[13px] text-on-surface-variant">No rooms added yet</span>
+                )}
+              </div>
+            </div>
+          </AccordionSection>
+
+          {/* Section 3: Photos */}
+          <AccordionSection
+            icon={untaggedPhotos.length > 0 ? <StatusWarning /> : <StatusCheck />}
+            title="Photos"
+            badge={
+              untaggedPhotos.length > 0 ? (
+                <span className="text-[11px] font-bold font-[family-name:var(--font-geist-mono)] text-brand-accent">
+                  {untaggedPhotos.length} UNTAGGED
                 </span>
-              </div>
-              <ul className="space-y-2">
-                {latestReading.points.map((point) => {
-                  const overDry =
-                    currentRoom.dry_standard !== null &&
-                    point.reading_value > currentRoom.dry_standard;
-                  return (
-                    <li
-                      key={point.id}
-                      className="flex items-center justify-between py-2 border-b border-outline-variant/10 last:border-b-0"
-                    >
-                      <span className="text-[13px] text-on-surface">
-                        {point.location_name}
-                      </span>
-                      <span
-                        className={`text-[16px] font-[family-name:var(--font-geist-mono)] font-bold tabular-nums ${
-                          overDry ? "text-brand-accent" : "text-on-surface"
-                        }`}
-                      >
-                        {overDry && (
-                          <span className="mr-1" aria-label="Above dry standard">
-                            &#9888;
-                          </span>
-                        )}
-                        {point.reading_value}
-                      </span>
-                    </li>
-                  );
-                })}
-              </ul>
-              {currentRoom.dry_standard !== null && (
-                <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant mt-2">
-                  Dry standard: {currentRoom.dry_standard}
-                </p>
-              )}
-              <button
-                type="button"
-                onClick={() => console.log("Add moisture point")}
-                className="mt-3 text-[13px] font-semibold text-brand-accent hover:underline cursor-pointer"
-              >
-                + Add Point
-              </button>
-            </section>
-          )}
-
-          {/* ── Room Photos ─────────────────────────────────── */}
-          {hasRooms && currentRoom && (
-            <section
-              className="bg-surface-container-lowest rounded-2xl p-4"
-              aria-label="Room photos"
-            >
+              ) : undefined
+            }
+            defaultOpen
+          >
+            <div className="space-y-3">
               <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
-                {(roomPhotos.length > 0
-                  ? roomPhotos.slice(0, 4)
+                {(photos && photos.length > 0
+                  ? photos.slice(0, 4)
                   : Array.from({ length: 4 }, () => null)
                 ).map((photo, i) => (
                   <div
-                    key={photo?.id ?? i}
-                    className="w-16 h-16 rounded-lg bg-surface-container-high shrink-0 overflow-hidden"
+                    key={photo?.id ?? `placeholder-${i}`}
+                    className="relative w-24 h-24 rounded-lg bg-surface-container-high shrink-0 overflow-hidden flex items-center justify-center"
                   >
-                    <div className="w-full h-full flex items-center justify-center text-outline/40">
-                      <CameraIcon size={16} />
-                    </div>
+                    <CameraIcon size={18} />
+                    {/* Untagged dot */}
+                    {photo && !photo.room_id && (
+                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-brand-accent" />
+                    )}
                   </div>
                 ))}
+                {/* Add more */}
+                <button
+                  type="button"
+                  className="w-24 h-24 rounded-lg border-2 border-dashed border-outline-variant/40 shrink-0 flex flex-col items-center justify-center gap-1 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                >
+                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold uppercase">Add</span>
+                </button>
               </div>
+              {photos && photos.length > 4 && (
+                <p className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                  {photos.length} total photos &middot;{" "}
+                  <button type="button" className="text-brand-accent hover:underline cursor-pointer font-semibold">
+                    View all &rarr;
+                  </button>
+                </p>
+              )}
+            </div>
+          </AccordionSection>
+
+          {/* Section 4: Readings */}
+          <AccordionSection
+            icon={<StatusWarning />}
+            title="Readings"
+            preview={
+              gppData.length > 0
+                ? `GPP: ${gppData.map((d) => d.gpp.toFixed(0)).join(" \u2192 ")} \u2193 Target: 45`
+                : "No readings yet"
+            }
+          >
+            {gppData.length > 0 ? (
+              <GppTrendChart readings={gppData} target={45} />
+            ) : (
+              <p className="text-[13px] text-on-surface-variant py-2">
+                No moisture readings logged yet. Use the &quot;Log Reading&quot; action to start tracking.
+              </p>
+            )}
+          </AccordionSection>
+
+          {/* Section 5: Tech Notes */}
+          <AccordionSection
+            icon={hasTechNotes ? <StatusCheck /> : <StatusGray />}
+            title="Tech Notes"
+            badge={
+              hasTechNotes ? (
+                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                  2 entries today
+                </span>
+              ) : undefined
+            }
+            preview={hasTechNotes ? undefined : "No notes yet"}
+          >
+            {hasTechNotes ? (
+              <div className="space-y-3">
+                <p className="text-[13px] text-on-surface leading-relaxed">
+                  {job.tech_notes}
+                </p>
+                <button
+                  type="button"
+                  className="text-[13px] font-semibold text-brand-accent hover:underline cursor-pointer"
+                >
+                  Edit
+                </button>
+              </div>
+            ) : (
+              <p className="text-[13px] text-on-surface-variant py-2">
+                No tech notes yet. Add notes from the field.
+              </p>
+            )}
+          </AccordionSection>
+
+          {/* Section 6: AI Scope */}
+          <AccordionSection
+            icon={<StatusSparkle />}
+            title="AI Scope"
+            badge={
+              hasPhotos ? (
+                <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
+                  Ready
+                </span>
+              ) : (
+                <span className="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
+                  Needs Photos
+                </span>
+              )
+            }
+            compact
+          />
+
+          {/* Section 7: Final Report */}
+          <AccordionSection
+            icon={<StatusLock />}
+            title="Final Report"
+            badge={
+              <span className="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
+                Locked
+              </span>
+            }
+            compact
+          />
+        </div>
+
+        {/* ── RIGHT COLUMN: Sticky Sidebar ──────────────────────── */}
+        <div className="hidden lg:block lg:sticky lg:top-20 lg:self-start space-y-4">
+
+          {/* Quick Actions */}
+          <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
+            <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => console.log("View all photos")}
-                className="mt-2 text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant hover:text-brand-accent transition-colors cursor-pointer"
+                className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
               >
-                {totalPhotos > 0
-                  ? `${totalPhotos} photos · See all \u2192`
-                  : "No photos yet · Add photos \u2192"}
+                <CameraIcon size={22} />
+                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
+                  Take Photo
+                </span>
               </button>
-            </section>
-          )}
-        </div>
+              <button
+                type="button"
+                className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
+              >
+                <ChartIcon size={22} />
+                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
+                  Log Reading
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center justify-center h-20 rounded-xl bg-surface-container text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
+              >
+                <MicIcon size={22} />
+                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
+                  Voice Note
+                </span>
+              </button>
+              <button
+                type="button"
+                className="flex flex-col items-center justify-center h-20 rounded-xl bg-surface-container text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
+              >
+                <PencilIcon size={22} />
+                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
+                  Edit Job
+                </span>
+              </button>
+            </div>
+          </section>
 
-        {/* ── Right Pane: Desktop Sidebar ─────────────────────── */}
-        <div className="hidden lg:block">
-          <div className="sticky top-20 space-y-4">
-            {/* Quick Actions */}
-            <section className="bg-surface-container-lowest rounded-2xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)]">
-              <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
-                Quick Actions
-              </h3>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => console.log("Take photo")}
-                  className="flex flex-col items-center justify-center h-20 rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/30"
-                >
-                  <CameraIcon size={22} />
-                  <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
-                    Photo
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => console.log("New reading")}
-                  className="flex flex-col items-center justify-center h-20 rounded-xl text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/12 transition-colors cursor-pointer border border-brand-accent/20"
-                >
-                  <ChartIcon size={22} />
-                  <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
-                    Reading
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => console.log("Voice note")}
-                  className="flex flex-col items-center justify-center h-20 rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/30"
-                >
-                  <MicIcon size={22} />
-                  <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
-                    Voice
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => console.log("View photos")}
-                  className="flex flex-col items-center justify-center h-20 rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer border border-outline-variant/30"
-                >
-                  <CameraIcon size={22} />
-                  <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
-                    Photos
-                  </span>
-                </button>
+          {/* Upcoming Task Requirements */}
+          <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
+            <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
+              Upcoming Task Requirements
+            </h3>
+            <div className="space-y-3">
+              <div className="flex gap-2.5">
+                <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
+                <div>
+                  <p className="text-[13px] font-semibold text-brand-accent">
+                    Day {dayNumber ?? 3} readings not logged
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant mt-0.5">
+                    Required for AI scoping engine
+                  </p>
+                </div>
               </div>
-            </section>
-
-            {/* Room Summary */}
-            {hasRooms && rooms && (
-              <section className="bg-surface-container-lowest rounded-2xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)]">
-                <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
-                  Room Summary
-                </h3>
-                <ul className="space-y-2">
-                  {rooms.map((room, i) => (
-                    <li key={room.id}>
-                      <button
-                        type="button"
-                        onClick={() => setRoomIndex(i)}
-                        className={`w-full flex items-center justify-between py-2 px-3 rounded-lg text-left transition-colors cursor-pointer ${
-                          i === roomIndex
-                            ? "bg-brand-accent/8 text-brand-accent"
-                            : "hover:bg-surface-container text-on-surface"
-                        }`}
-                      >
-                        <span className="text-[13px] font-medium truncate">
-                          {room.room_name}
-                        </span>
-                        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant shrink-0 ml-2">
-                          {room.reading_count > 0
-                            ? `${room.reading_count} readings`
-                            : "No data"}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            )}
-
-            {/* Job Info Compact */}
-            <section className="bg-surface-container-lowest rounded-2xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)]">
-              <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
-                Job Info
-              </h3>
-              <div className="space-y-2 text-[13px]">
-                {job.customer_name && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-on-surface-variant">Customer</span>
-                    <span className="font-medium text-on-surface">{job.customer_name}</span>
-                  </div>
-                )}
-                {job.carrier && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-on-surface-variant">Carrier</span>
-                    <span className="font-medium text-on-surface">{job.carrier}</span>
-                  </div>
-                )}
-                {job.claim_number && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-on-surface-variant">Claim #</span>
-                    <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
-                  </div>
-                )}
+              <div className="flex gap-2.5">
+                <span className="w-2 h-2 rounded-full bg-surface-container-highest mt-1.5 shrink-0" />
+                <div>
+                  <p className="text-[13px] font-medium text-on-surface">
+                    {untaggedPhotos.length} photos need room tags
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant mt-0.5">
+                    Assigned to: Brett Miller
+                  </p>
+                </div>
               </div>
-            </section>
+            </div>
+          </section>
+
+          {/* Activity Timeline */}
+          <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
+            <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
+              Activity Timeline
+            </h3>
+            <div className="space-y-3">
+              {jobEvents.slice(0, 4).map((evt) => (
+                <div key={evt.id} className="flex gap-2.5">
+                  <span
+                    className={`w-2 h-2 rounded-full mt-1.5 shrink-0 ${
+                      evt.is_ai ? "bg-brand-accent" : evt.event_type.includes("photo") ? "bg-blue-500" : "bg-surface-container-highest"
+                    }`}
+                  />
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-[13px] ${evt.is_ai ? "text-brand-accent" : "text-on-surface"}`}>
+                      <span className="font-medium">{eventActor(evt)}</span>{" "}
+                      {eventDescription(evt)}
+                    </p>
+                    <p className="text-[10px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant mt-0.5">
+                      {formatTime(evt.created_at)}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="mt-3 text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold text-brand-accent hover:underline cursor-pointer uppercase tracking-[0.06em]"
+            >
+              View Full Log
+            </button>
+          </section>
+
+          {/* Footer Links */}
+          <div className="flex items-center gap-4 px-1">
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+            >
+              <ShareIcon size={14} />
+              Share Job
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+            >
+              <DocumentIcon size={14} />
+              Export PDF
+            </button>
+            <button
+              type="button"
+              className="flex items-center gap-1.5 text-[12px] font-medium text-error hover:text-error/80 transition-colors cursor-pointer ml-auto"
+            >
+              <TrashIcon size={14} />
+              Delete Job
+            </button>
           </div>
         </div>
-      </div>
+      </main>
 
-      {/* ── Bottom Action Bar (mobile only) ────────────────────── */}
+      {/* ── Mobile Bottom Action Bar ────────────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)] lg:hidden">
         <div className="max-w-lg mx-auto px-4 pb-[68px] md:pb-4">
           <div className="bg-surface-container-lowest rounded-2xl shadow-[0_-2px_20px_rgba(31,27,23,0.08),0_-1px_4px_rgba(31,27,23,0.04)] p-2 flex items-stretch gap-1">
             <button
               type="button"
-              onClick={() => console.log("Take photo")}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer"
+              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
             >
               <CameraIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">
+              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
                 Photo
               </span>
             </button>
             <button
               type="button"
-              onClick={() => console.log("New reading")}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/12 active:bg-brand-accent/16 transition-colors cursor-pointer"
+              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
             >
               <ChartIcon size={22} />
               <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
@@ -975,7 +944,6 @@ export default function JobFieldModePage() {
             </button>
             <button
               type="button"
-              onClick={() => console.log("Voice note")}
               className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer"
             >
               <MicIcon size={22} />
