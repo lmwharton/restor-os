@@ -29,20 +29,13 @@ function fmtCurrency(n: number): string {
 const MONO = "font-[family-name:var(--font-geist-mono)]";
 const LABEL_STYLE = `text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline`;
 
-const PRIORITY_DOT: Record<PriorityTask["priority"], string> = {
-  critical: "bg-[#dc2626]",
-  warning: "bg-[#f59e0b]",
-  normal: "bg-[#2563eb]",
-  low: "bg-[#9ca3af]",
-};
-
 const STAGE_LABEL: Record<PipelineStage, { label: string; dot: string }> = {
-  emergency: { label: "Emergency", dot: "bg-red-600" },
+  emergency: { label: "Emergency", dot: "bg-red-500" },
   scoping: { label: "Scoping & Mitigation", dot: "bg-amber-500" },
   drying: { label: "Active Drying Ops", dot: "bg-brand-accent" },
-  documentation: { label: "Documentation Review", dot: "bg-on-surface-variant" },
-  invoiced: { label: "Invoiced & Sent", dot: "bg-on-surface-variant" },
-  paid: { label: "Paid (Settled)", dot: "bg-emerald-600" },
+  documentation: { label: "Documentation Review", dot: "bg-slate-400" },
+  invoiced: { label: "Invoiced & Sent", dot: "bg-slate-400" },
+  paid: { label: "Paid (Settled)", dot: "bg-emerald-500" },
 };
 
 // ---------------------------------------------------------------------------
@@ -283,12 +276,12 @@ const PIPELINE_DISPLAY: {
   text: string;
   amount: string;
 }[] = [
-  { stage: "emergency", label: "Emergency Call-outs", bg: "bg-red-600", text: "text-white", amount: "$4,200 Est." },
+  { stage: "emergency", label: "Emergency Call-outs", bg: "bg-red-50", text: "text-red-700", amount: "$4,200 Est." },
   { stage: "scoping", label: "Scoping & Mitigation", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$12,800 Est." },
-  { stage: "drying", label: "Active Drying Ops", bg: "bg-brand-accent/15", text: "text-brand-accent", amount: "$28,500 Est." },
+  { stage: "drying", label: "Active Drying Ops", bg: "bg-brand-accent/10", text: "text-brand-accent", amount: "$28,500 Est." },
   { stage: "documentation", label: "Documentation Review", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$5,400 Est." },
   { stage: "invoiced", label: "Invoiced & Sent", bg: "bg-surface-container-high", text: "text-on-surface", amount: "$13,200 Est." },
-  { stage: "paid", label: "Paid (Settled)", bg: "bg-emerald-600", text: "text-white", amount: "$41,200 Total" },
+  { stage: "paid", label: "Paid (Settled)", bg: "bg-emerald-50", text: "text-emerald-700", amount: "$41,200 Total" },
 ];
 
 function PipelineMetrics({
@@ -458,25 +451,16 @@ function LiveOperationsMap({ selectedStage }: { selectedStage: PipelineStage | n
           {/* Map pins */}
           {pins.map((pin) => {
             const isMatch = selectedStage === null || pin.stage === selectedStage;
-            // When no stage selected, hide paid pins (show all active)
-            const showWhenNoSelection = selectedStage === null && pin.stage === "paid";
             return (
               <div
                 key={pin.address}
                 className={`absolute flex items-center gap-1.5 transition-opacity duration-300 ${
-                  !isMatch ? "opacity-20" : showWhenNoSelection ? "opacity-40" : ""
+                  !isMatch ? "opacity-20" : ""
                 }`}
                 style={{ top: pin.top, left: pin.left }}
               >
-                {/* Pulse ring — only on matching pins when a stage is selected */}
-                {isMatch && selectedStage !== null && (
-                  <span
-                    className="absolute w-5 h-5 rounded-full opacity-20 animate-ping"
-                    style={{ backgroundColor: pin.color }}
-                  />
-                )}
-                {/* Default pulse for active pins when no selection */}
-                {selectedStage === null && pin.stage !== "paid" && (
+                {/* Pulse ring for active/matching pins */}
+                {isMatch && (
                   <span
                     className="absolute w-5 h-5 rounded-full opacity-20 animate-ping"
                     style={{ backgroundColor: pin.color }}
@@ -749,6 +733,7 @@ export default function DashboardPage() {
   const taskData = tasks.data ?? [];
 
   function handleStageClick(stage: PipelineStage) {
+    if (stage === "paid") return; // Paid is informational only
     setSelectedStage((prev) => (prev === stage ? null : stage));
   }
 
