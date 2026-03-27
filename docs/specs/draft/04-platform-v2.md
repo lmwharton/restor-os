@@ -90,12 +90,22 @@
 - [ ] Proactive communication → faster approvals → faster payment
 
 ### Phase 4: AI Past History Intelligence — ❌
-- [ ] Scope Auditor Source (b): AI PAST HISTORY
-- [ ] Query contractor's own event_history + line_items from completed jobs
+**Upload Past Jobs:**
+- [ ] Alembic migration: `ALTER TABLE jobs ADD COLUMN source TEXT NOT NULL DEFAULT 'live' CHECK (source IN ('live', 'imported'))`
+- [ ] `POST /v1/company/upload-past-jobs` — upload Xactimate PDFs (up to 10)
+- [ ] AI extracts from each PDF: loss type, category, source, carrier, room count, all line items (code, description, unit, qty, price, category)
+- [ ] Creates regular job records with `source='imported'`, `status='collected'`
+- [ ] Creates rooms + line items in normal tables (same schema as live jobs)
+- [ ] No separate `scope_intelligence` table — imported jobs ARE jobs, just tagged as imported
+- [ ] Can be part of onboarding flow (first-time setup) or Settings page
+- [ ] pytest: imported job appears in job list with source=imported
+- [ ] pytest: imported line items queryable alongside live job line items
+
+**Past History Intelligence (Scope Auditor Source B):**
+- [ ] Query contractor's own jobs + line_items from completed/collected jobs (both live and imported)
 - [ ] Build per-contractor patterns: "For Cat 2 dishwasher leaks, you typically add these items..."
 - [ ] Reference specific past jobs: "You had a similar job at 123 Oak St — you added content manipulation there but it's missing here"
 - [ ] Coach behavior: "Good catch adding deodorization — you missed this on your last 3 Cat 2 jobs"
-- [ ] Include patterns from uploaded scope PDFs (Scope Intelligence from Spec 02)
 - [ ] Feed patterns into Scope Auditor prompts alongside real-time analysis
 - [ ] pytest: past history suggestions appear for contractors with 5+ completed jobs
 

@@ -551,6 +551,10 @@ class SharedJobResponse:
 | INVALID_REPORT_TYPE | 400 | Reports | Not in: full_report, mitigation_invoice |
 | SHARE_NOT_FOUND | 404 | Sharing | Token not found |
 | SHARE_EXPIRED | 403 | Sharing | Token expired or revoked |
+| AI_EVENT_NOT_FOUND | 404 | Feedback | event_id not found or not AI-generated |
+| AI_PHOTOS_NOT_TAGGED | 400 | Photo Scope | Photos must be tagged to rooms before analysis |
+| AI_NO_PHOTOS_SELECTED | 400 | Photo Scope/Hazmat | No photos selected for analysis |
+| AI_PROCESSING_FAILED | 500 | All AI | Claude API call failed |
 
 ---
 
@@ -765,8 +769,8 @@ POST   /v1/jobs/{job_id}/floor-plans                         Create floor plan
 GET    /v1/jobs/{job_id}/floor-plans                         List floor plans
 PATCH  /v1/jobs/{job_id}/floor-plans/{floor_plan_id}         Update floor plan
 DELETE /v1/jobs/{job_id}/floor-plans/{floor_plan_id}         Delete floor plan
-POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-cleanup   AI sketch cleanup
-POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-chat      AI sketch chat
+POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup      Deterministic sketch cleanup
+POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/edit         AI sketch edit via natural language
 ```
 
 #### POST /v1/jobs/{job_id}/floor-plans
@@ -806,26 +810,37 @@ POST   /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-chat      AI sketch chat
 
 > **Auto-room creation:** When floor plan `canvas_data` is saved (PATCH), if closed shapes form rooms, the backend auto-creates/updates `job_room` records with dimensions extracted from the geometry. This is handled server-side in the `floor_plans` service.
 
-#### POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-cleanup
+#### POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup
 ```jsonc
-// Request
-{ "canvas_data": { "walls": [...], "doors": [...] } }
+// Request — empty body (canvas_data fetched server-side from floor plan record)
+{}
 
-// Response — cleaned geometry
-{ "canvas_data": { "walls": [...], "doors": [...] } }
+// Response
+{
+  "canvas_data": { "walls": [...], "doors": [...] },
+  "changes_made": ["Straightened wall segment #3", "Snapped corner to grid"],
+  "event_id": "uuid"
+}
+// No AI — deterministic geometry code. cost_cents=0.
 // Walls straightened, corners aligned, dimensions snapped to 0.25ft
 ```
 
-#### POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-chat
+#### POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/edit
 ```jsonc
 // Request
 {
-  "canvas_data": { "walls": [...], "doors": [...] },
-  "message": "Move the door to the corner and make room 2 be 10x10"
+  "instruction": "Move the door to the corner and make room 2 be 10x10"
 }
 
-// Response — modified geometry
-{ "canvas_data": { "walls": [...], "doors": [...] } }
+// Response
+{
+  "canvas_data": { "walls": [...], "doors": [...] },
+  "changes_made": ["Moved door to NE corner", "Resized room 2 to 10x10"],
+  "event_id": "uuid",
+  "cost_cents": 42,
+  "duration_ms": 1850
+}
+// canvas_data fetched server-side. Claude modifies based on instruction.
 ```
 
 ---
@@ -1207,6 +1222,254 @@ GET    /v1/shared/{token}                          Public read-only view (NO AUT
 
 ---
 
+## AI Endpoints (Spec 02)
+
+All AI endpoints require JWT auth and are scoped to `company_id`. AI-powered endpoints log an `event` with `is_ai=true` and return `event_id` for feedback linking. Cost tracking (`cost_cents`) is included in every AI response.
+
+### Generate Line Items (Photo Scope)
+
+```
+POST /v1/jobs/{job_id}/photos/generate-scope
+```
+
+**Request:**
+```python
+class PhotoScopeRequest:
+    photo_ids: list[UUID] | None = None   # None = all photos on job
+    rerun: bool = False                   # True = regenerate (clears previous AI items)
+```
+
+**Response:** SSE stream (Server-Sent Events) with three event types:
+
+```python
+# event: line_item — streamed as each item is generated
+{
+    "event_id": UUID,
+    "index": int,
+    "item": {
+        "xactimate_code": str,           # e.g. "WTR DRYOUT"
+        "description": str,
+        "quantity": Decimal,
+        "unit": str,                     # SF, LF, EA, etc.
+        "category": str,                 # "water_mitigation", "contents", etc.
+        "room": str | None,              # room name
+        "room_id": UUID | None,
+        "is_non_obvious": bool,          # True = item a human might miss
+        "citations": [
+            {
+                "standard": str,         # "S500", "OSHA", "EPA"
+                "section": str,          # "10.3.2"
+                "text": str              # relevant quote
+            }
+        ]
+    }
+}
+
+# event: complete — sent after all items
+{
+    "event_id": UUID,
+    "total_items": int,
+    "cost_cents": int,
+    "duration_ms": int
+}
+
+# event: error — sent on failure
+{
+    "event_id": UUID,
+    "message": str,
+    "error_code": str                    # AI_PROCESSING_FAILED, etc.
+}
+```
+
+### Check for Hazards (Hazmat Scan)
+
+```
+POST /v1/jobs/{job_id}/photos/check-hazards
+```
+
+**Request:**
+```python
+class HazmatScanRequest:
+    photo_ids: list[UUID] | None = None   # None = all photos on job
+```
+
+**Response:**
+```python
+class HazmatScanResponse:
+    findings: list[HazmatFinding]
+    disclaimer: str                       # legal disclaimer text
+    event_id: UUID
+    cost_cents: int
+    duration_ms: int
+
+class HazmatFinding:
+    material_name: str                    # e.g. "Asbestos tile"
+    location: str                         # "Kitchen floor"
+    risk_level: Literal['high', 'medium', 'low']
+    description: str
+    next_steps: str                       # recommended action
+    photo_id: UUID                        # which photo triggered this finding
+```
+
+### Sketch Cleanup (Deterministic)
+
+```
+POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup
+```
+
+**Request:** empty body (`canvas_data` fetched server-side from floor plan record)
+
+**Response:**
+```python
+class SketchCleanupResponse:
+    canvas_data: dict                     # cleaned geometry
+    changes_made: list[str]              # human-readable list of changes
+    event_id: UUID
+```
+
+No AI -- deterministic geometry code. `cost_cents=0`.
+
+### Sketch Edit (AI)
+
+```
+POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/edit
+```
+
+**Request:**
+```python
+class SketchEditRequest:
+    instruction: str                      # "Move the door to the corner"
+```
+
+**Response:**
+```python
+class SketchEditResponse:
+    canvas_data: dict                     # modified geometry
+    changes_made: list[str]              # human-readable list of changes
+    event_id: UUID
+    cost_cents: int
+    duration_ms: int
+```
+
+`canvas_data` fetched server-side. Claude modifies based on instruction.
+
+### Scope Check
+
+```
+POST /v1/jobs/{job_id}/scope-check
+```
+
+**Request:** empty body (all job data -- line items, photos, rooms, readings -- fetched server-side)
+
+**Response:**
+```python
+class ScopeCheckResponse:
+    flagged_items: list[AuditFinding]
+    summary: str                          # overall assessment
+    event_id: UUID
+    cost_cents: int
+    duration_ms: int
+
+class AuditFinding:
+    title: str
+    room: str | None
+    severity: Literal['critical', 'warning', 'suggestion']
+    xactimate_codes: list[str]           # related codes
+    explanation: str
+```
+
+### Job Assistant
+
+```
+POST /v1/jobs/{job_id}/assistant
+```
+
+**Request:**
+```python
+class AssistantRequest:
+    message: str
+    screen_context: Literal['photos', 'floor_plan', 'scope', 'readings', 'general']
+    target_id: UUID | None = None         # specific photo/room/reading ID for context
+```
+
+**Response:**
+```python
+class AssistantResponse:
+    reply: str
+    suggested_actions: list[SuggestedAction]
+    event_id: UUID
+    cost_cents: int
+    duration_ms: int
+```
+
+**SuggestedAction** (discriminated union on `type` field):
+```python
+class AddLineItemAction:
+    type: Literal['add_line_item']
+    xactimate_code: str
+    description: str
+    quantity: Decimal
+    unit: str
+    category: str
+    room: str | None
+    citations: list[Citation]
+
+class EditSketchAction:
+    type: Literal['edit_sketch']
+    floor_plan_id: UUID
+    canvas_data: dict
+    changes_made: list[str]
+
+class NavigateAction:
+    type: Literal['navigate']
+    to: str                               # route path, e.g. "/jobs/{id}/photos"
+    label: str                            # button text, e.g. "Go to Photos"
+
+class ExplainAction:
+    type: Literal['explain']
+    text: str                             # detailed explanation text
+
+SuggestedAction = AddLineItemAction | EditSketchAction | NavigateAction | ExplainAction
+```
+
+### AI Feedback
+
+```
+POST /v1/ai/feedback
+```
+
+**Request:**
+```python
+class AIFeedbackRequest:
+    event_id: UUID                        # must belong to company and have is_ai=true
+    item_id: str | None = None            # specific line item within the event
+    rating: Literal['up', 'down']
+    comment: str | None = None
+```
+
+**Response:**
+```jsonc
+{ "ok": true }
+```
+
+Validates `event_id` belongs to the authenticated user's company and that the event has `is_ai=true`.
+
+### AI Service Layer (internal -- not exposed as endpoints)
+
+```
+backend/api/
+├── ai/
+│   ├── client.py        # Anthropic client singleton, cost tracking
+│   ├── config.py        # model selection per feature (Sonnet 4 / Haiku 3.5)
+│   ├── validator.py     # 3-layer validation (schema, domain rules, business rules)
+│   ├── prompts/         # per-feature prompt builders
+│   └── tools/           # per-feature Claude tool-use schemas
+```
+
+- `log_ai_event()` -- synchronous event logging that returns `event_id` (unlike fire-and-forget `log_event()`)
+
+---
+
 ## Event Types (for filtering)
 
 ```
@@ -1233,11 +1496,12 @@ settings_updated, team_member_invited, team_member_joined
 |--------|-----------|---------|
 | Properties | 4 | POST, GET list, GET detail, PATCH |
 | Jobs | 5 | POST, GET list, GET detail, PATCH, DELETE |
-| Floor Plans | 6 | POST, GET list, PATCH, DELETE, AI cleanup, AI chat |
+| Floor Plans | 6 | POST, GET list, PATCH, DELETE, cleanup, edit |
 | Rooms | 4 | POST, GET list, PATCH, DELETE |
 | Photos | 7 | upload-url, confirm, GET list, PATCH, DELETE, bulk-select, bulk-tag |
 | Moisture | 11 | readings CRUD, points CRUD, dehus CRUD, job-level list |
 | Events | 2 | job timeline, company feed |
 | Reports | 3 | generate, list/poll, download |
 | Share | 4 | create, list, revoke, public view |
-| **Total** | **46** | |
+| AI (Spec 02) | 5 | generate-scope, check-hazards, scope-check, assistant, feedback |
+| **Total** | **51** | |

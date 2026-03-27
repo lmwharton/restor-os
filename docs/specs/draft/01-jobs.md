@@ -27,7 +27,7 @@
 - [ ] User can view job detail with all fields editable (grouped: Customer, Loss Info, Insurance)
 - [ ] User can add floor plans (one per floor) and rooms to a job
 - [ ] User can draw a floor plan sketch (walls, doors, windows) — rooms auto-populate from sketch
-- [ ] User can "Clean up sketch" via AI (straighten walls, align corners, standardize dimensions)
+- [ ] User can "Clean up sketch" (deterministic geometry: straighten walls, align corners, standardize dimensions)
 - [ ] User can chat with AI to refine sketch ("move the door to the corner", "make it 10x10")
 - [ ] User can add rooms without a sketch (typed/spoken dimensions)
 - [ ] User can set per-room: dimensions, category, class, dry standard, equipment counts, notes
@@ -85,7 +85,7 @@ CREATE TYPE event_type AS ENUM (
     'photo_uploaded', 'photo_updated', 'photo_deleted', 'photo_tagged_to_room',
     'photos_bulk_tagged',
     -- AI Analysis
-    'ai_photo_analysis', 'ai_photo_analysis_retry', 'ai_sketch_cleanup', 'ai_sketch_chat',
+    'ai_photo_analysis', 'ai_photo_analysis_retry', 'sketch_cleanup', 'sketch_edit',
     'ai_hazmat_scan', 'ai_scope_audit',
     -- Line Items
     'line_item_generated', 'line_item_accepted', 'line_item_edited',
@@ -557,15 +557,15 @@ job (references property_id)
 - [ ] Auto-calculate room SF when walls close a shape
 - [ ] Grid background for scale reference
 - [ ] Touch-optimized: finger-friendly on mobile, mouse on desktop
-- [ ] "Clean up sketch" button → sends canvas_data to Claude API → returns cleaned geometry (straightened walls, aligned corners, snapped dimensions to nearest 0.25ft)
-  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{fp_id}/ai-cleanup` — accepts canvas_data, returns cleaned canvas_data. Logs event: `ai_sketch_cleanup`.
+- [ ] "Clean up sketch" button → deterministic geometry code (snap walls, align corners, straighten lines, snap dimensions to nearest 0.25ft). No AI/LLM involved.
+  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup` — canvas_data fetched server-side from floor_plan record, returns cleaned canvas_data + event_id. Logs event: `sketch_cleanup`.
 - [ ] Chat refinement: text input below sketch to tell AI "move the door to the corner", "make room 2 be 10x10" → AI updates canvas_data
-  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{fp_id}/ai-chat` — accepts canvas_data + user message, returns modified canvas_data. Logs event: `ai_sketch_chat`.
+  - Backend endpoint: `POST /v1/jobs/{job_id}/floor-plans/{floor_plan_id}/edit` — accepts `SketchEditRequest { instruction: str }`, canvas_data fetched server-side from floor_plan record, returns modified canvas_data + event_id. Logs event: `sketch_edit`.
 - [ ] When rooms are created from sketch, auto-create job_room records with dimensions
 - [ ] Rooms from sketch show "2 rooms loaded from sketch — tap to edit" indicator
 - [ ] Canvas library: research best option (Konva.js/react-konva, Fabric.js, or Excalidraw fork)
-- [ ] pytest: floor plan AI cleanup endpoint returns cleaned canvas_data
-- [ ] pytest: floor plan AI chat endpoint modifies canvas_data based on message
+- [ ] pytest: floor plan cleanup endpoint returns cleaned canvas_data + event_id
+- [ ] pytest: floor plan edit endpoint modifies canvas_data based on instruction + returns event_id
 
 **Moisture Readings:**
 - [ ] Moisture Readings section within Site Log
@@ -690,8 +690,8 @@ job (references property_id)
 **Floor plan sketch tool:**
 - Canvas-based drawing (HTML5 Canvas via react-konva or similar)
 - Geometric primitives stored as JSONB: walls (line segments with length), doors (gap in wall), windows (marked segment), rooms (closed polygons)
-- AI cleanup: send canvas_data to Claude → returns cleaned geometry (straightened walls, aligned corners)
-- AI chat refinement: natural language instructions → Claude modifies canvas_data
+- Sketch cleanup: deterministic geometry code (snap walls, align corners, straighten lines). No LLM. canvas_data fetched server-side from floor_plan record.
+- Sketch edit: natural language instruction → Claude Sonnet 4 modifies canvas_data. canvas_data fetched server-side. Returns event_id for feedback tracking.
 - When sketch creates rooms, auto-create job_room records with dimensions from geometry
 - Future iOS: Apple RoomPlan API (LiDAR) → generates canvas_data in same JSONB format
 
@@ -763,7 +763,10 @@ cd /Users/lakshman/Workspaces/Crewmatic
 - **Job creation:** 2 required fields only (address + loss type). Brett: "can't start without claim number" but that's for insurance submission, not initial creation. Let them add it later.
 - **Field grouping:** Customer | Loss Info | Insurance (validated against Brett's ScopeFlow demo, March 2026).
 - **Voice-first is V1:** Voice-to-form is the killer feature. Deepgram Nova-2 for STT (~300ms, best quality for noisy job sites), Claude for field extraction. Hold-to-speak + tap-for-continuous modes.
-- **Floor plan sketch in V1:** Canvas drawing tool with AI cleanup + chat refinement. Schema includes canvas_data from day one. Future iOS: LiDAR via Apple RoomPlan API generates same JSONB format.
+- **Floor plan sketch in V1:** Canvas drawing tool with deterministic cleanup + AI edit. Schema includes canvas_data from day one. Future iOS: LiDAR via Apple RoomPlan API generates same JSONB format.
+- **Sketch cleanup is deterministic geometry code** (snap walls, align corners), not LLM. Zero AI cost.
+- **Sketch edit uses Claude Sonnet 4** with natural language instruction. canvas_data fetched server-side from floor_plan record, not sent by client.
+- **All AI endpoints return event_id** for feedback tracking. New `log_ai_event()` function (synchronous, returns UUID) used for AI events.
 - **Floor plan ↔ Room relationship:** Floor plan is per-floor (visual sketch). Rooms link to floor plan via floor_plan_id (nullable). Rooms can exist without a sketch. Multiple rooms per floor plan. The sketch is the visual; the room is the data.
 - **Room sketch detail:** Per-room sketch detail (which side has door/window) lives IN the floor plan canvas. You zoom into that room's portion of the floor plan — no separate per-room sketch table needed.
 - **Moisture readings in V1:** Daily tracking with atmospheric (temp, RH%, GPP auto-calc), moisture points (location + reading + meter photo), dehu output. Needed for adjuster documentation (equipment days must be justified by drying timeline).

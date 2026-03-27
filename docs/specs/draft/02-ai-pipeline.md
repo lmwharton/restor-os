@@ -1,9 +1,9 @@
-# AI Pipeline — Photo Scope, Hazmat Scanner, Scope Auditor
+# AI Pipeline — Photo Scope, Hazmat Scanner, Scope Check, Job Assistant, AI Feedback
 
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% (0/8 phases) |
+| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% (0/9 phases) |
 | **State** | ❌ Not Started |
 | **Blocker** | Spec 01 (jobs + site log + floor plan) must be complete |
 | **Branch** | TBD |
@@ -21,7 +21,7 @@
 | Tests Written | 0 |
 
 ## Done When
-- [ ] User selects damage photos → taps "Analyze with AI" → sees Xactimate line items stream in within 15-30 seconds
+- [ ] "Generate Line Items" via `POST /v1/jobs/{job_id}/photos/generate-scope` — user selects damage photos → taps "Generate Line Items" → sees Xactimate line items stream in within 15-30 seconds
 - [ ] Line items grouped by trade category (Mitigation, Insulation, Drywall, Painting, Structural, General) with colored headers
 - [ ] Every line item has an S500/OSHA citation inline (no item without citation)
 - [ ] Non-obvious items highlighted with "AI found this — you might have missed it"
@@ -29,9 +29,10 @@
 - [ ] User can add manual line items and delete AI-generated ones
 - [ ] User can re-run AI on additional photos (iterative scoping — new items merge with existing)
 - [ ] "Push to Report →" sends approved items to PDF report
-- [ ] Hazmat Scanner: "Hazard Scan" button scans photos for asbestos + lead paint risk
-- [ ] AI Scope Auditor: "Audit Scope" reviews scope for missed items before submission (AI real-time source)
-- [ ] Scope Intelligence: "Train AI" accepts uploaded past scope PDFs to learn contractor patterns
+- [ ] "Check for Hazards" via `POST /v1/jobs/{job_id}/photos/check-hazards` — scans photos for asbestos + lead paint risk
+- [ ] "Scope Check" via `POST /v1/jobs/{job_id}/scope-check` — reviews scope for missed items before submission (AI real-time source)
+- [ ] "Job Assistant" via `POST /v1/jobs/{job_id}/assistant` — context-aware AI assistant for any job screen
+- [ ] "AI Feedback" via `POST /v1/ai/feedback` — centralized thumbs up/down feedback for all AI features
 - [ ] Accuracy tracking: event_history records AI accuracy per job
 - [ ] AI pipeline works on Brett's first 5 real jobs at 80%+ accuracy
 - [ ] All backend endpoints have pytest coverage
@@ -47,8 +48,8 @@
 3. **AI Scope Auditor** — "second expert" that reviews the scope before submission. Catches missed items, validates data quality, suggests additions with one-click add + auto-citation.
 
 **Scope:**
-- IN: Claude Vision integration, Xactimate code matching, S500/OSHA/EPA citation generation, per-photo analysis, agentic retry (auto + manual), thumbs up/down feedback, line item CRUD, trade category grouping, scope review UI, accuracy tracking (via event_history from Spec 01), hazmat scanning (asbestos + lead paint), scope auditing, scope intelligence (Train AI with past PDFs), Push to Report flow
-- OUT: Voice scoping (Spec 03), network intelligence (V3/Spec 05), carrier-specific rules (V3), supplement detection (V2.5)
+- IN: Claude Vision integration, Xactimate code matching, S500/OSHA/EPA citation generation, per-photo analysis, agentic retry (auto + manual), thumbs up/down feedback, line item CRUD, trade category grouping, scope review UI, accuracy tracking (via event_history from Spec 01), hazmat scanning (asbestos + lead paint), scope auditing, Job Assistant (context-aware AI per screen), AI Feedback (centralized feedback endpoint), Push to Report flow
+- OUT: Voice scoping (Spec 03), network intelligence (V3/Spec 05), carrier-specific rules (V3), supplement detection (V2.5), Scope Intelligence / Train AI (moved to Spec 04)
 - NOTE: Accuracy tracking uses event_history table (from Spec 01), not a separate event_history table. Events: ai_photo_analysis, line_item_accepted/edited/deleted, ai_feedback_thumbs_up/down. Accuracy = (thumbs_up + accepted) / (total generated).
 
 ## Database Schema Updates
@@ -79,18 +80,7 @@ CREATE TABLE hazmat_findings (
 );
 ```
 
-**scope_intelligence** (NEW — uploaded past scopes for training)
-```sql
-CREATE TABLE scope_intelligence (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    source_filename TEXT NOT NULL,
-    storage_url     TEXT NOT NULL,
-    extracted_data  JSONB,            -- parsed line items, patterns, pricing from PDF
-    status          TEXT NOT NULL DEFAULT 'pending',  -- pending | processing | completed | failed
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-```
+**Upload Past Jobs → moved to Spec 04 Phase 4.** No separate `scope_intelligence` table — imported past jobs use the existing `jobs` + `line_items` schema with `jobs.source = 'imported'`. See Spec 04 for details.
 
 ## Phases & Checklist
 
@@ -147,18 +137,19 @@ CREATE TABLE scope_intelligence (
 - [ ] Create `api/scope/schemas.py` — Pydantic models for scope request/response/line items
 - [ ] Create `api/scope/service.py` — orchestrates pipeline, stores results
 - [ ] Create `api/scope/router.py` — route handlers
-- [ ] `POST /v1/jobs/:id/scope` — trigger AI Photo Scope (SSE streaming response)
-- [ ] `GET /v1/jobs/:id/scope` — get current scope results (all line items for job, grouped by category)
-- [ ] `POST /v1/jobs/:id/scope/items` — add manual line item (source: 'manual')
-- [ ] `PATCH /v1/jobs/:id/scope/items/:iid` — edit line item (code, description, qty, unit, room, category)
-- [ ] `DELETE /v1/jobs/:id/scope/items/:iid` — delete line item
-- [ ] `POST /v1/jobs/:id/scope/push-to-report` — mark items as approved, transition to report
+- [ ] `POST /v1/jobs/{job_id}/photos/generate-scope` — trigger AI Photo Scope (SSE streaming response)
+- [ ] `GET /v1/jobs/{job_id}/scope` — get current scope results (all line items for job, grouped by category)
+- [ ] `POST /v1/jobs/{job_id}/scope/items` — add manual line item (source: 'manual')
+- [ ] `PATCH /v1/jobs/{job_id}/scope/items/{item_id}` — edit line item (code, description, qty, unit, room, category)
+- [ ] `DELETE /v1/jobs/{job_id}/scope/items/{item_id}` — delete line item
+- [ ] `POST /v1/jobs/{job_id}/scope/push-to-report` — mark items as approved, transition to report
 - [ ] Alembic migration: create line_items table (with category TEXT field, citation JSONB)
+- [ ] `log_ai_event()` returns `event_id: UUID` (not fire-and-forget — raises on failure). event_id included in every SSE event and all AI responses.
 - [ ] Log `ai_photo_analysis` event to event_history on each photo analysis (photo_id, duration_ms, ai_cost_cents, line_items_generated)
 - [ ] Log `line_item_generated` event for each AI-generated line item
 - [ ] Log `line_item_accepted` / `line_item_edited` / `line_item_deleted` events on user actions
 - [ ] Calculate accuracy from events: (accepted + thumbs_up) / (total generated) per job
-- [ ] Iterative scoping: POST /v1/jobs/:id/scope with additional photos → merge new items with existing
+- [ ] Iterative scoping: POST /v1/jobs/{job_id}/photos/generate-scope with additional photos → merge new items with existing
 - [ ] Update job status to "scoped" after first successful analysis
 - [ ] pytest: scope endpoint triggers AI pipeline and returns line items
 - [ ] pytest: manual line item CRUD (add, edit, delete)
@@ -167,10 +158,11 @@ CREATE TABLE scope_intelligence (
 - [ ] pytest: push-to-report marks items as approved
 
 ### Phase 4: Scope Review UI — ❌
-- [ ] "Analyze with AI" button on Photos tab (enabled when photos are tagged to rooms)
+- [ ] "Generate Line Items" button on Photos tab (enabled when photos are tagged to rooms)
 - [ ] Pre-analysis: "Tag Rooms" must be complete (photos assigned to rooms)
 - [ ] Loading state: "AI is analyzing damage... Just a moment..." with spinner overlay
-- [ ] "Analyze with AI" button changes to "Analyzing..." state during processing
+- [ ] "Generate Line Items" button changes to "Generating..." state during processing
+- [ ] SSE events include `event_id` from the start (every streamed event carries the event_id)
 - [ ] AI Photo Scope results page/section:
   - Summary paragraph at top: overall damage assessment description
   - "Push to Report →" button at top right
@@ -186,8 +178,8 @@ CREATE TABLE scope_intelligence (
 - [ ] Inline editing: tap any field to edit in place
 - [ ] "+ Add Line Item" button at bottom of each category (or at bottom of all items)
 - [ ] Delete line item: x button per item
-- [ ] **Thumbs up / thumbs down per line item:** small icons next to each AI-generated item. Thumbs up = "correct, good job." Thumbs down = "wrong" → triggers agentic retry for that photo. Logs ai_feedback_thumbs_up/down event.
-- [ ] **Thumbs up / thumbs down on hazmat findings and scope audit items too** — same pattern, different context
+- [ ] **Thumbs up / thumbs down per line item:** small icons next to each AI-generated item. Linked via `event_id` + item index. Thumbs up = "correct, good job." Thumbs down = "wrong" → triggers agentic retry for that photo. Feedback sent to centralized `POST /v1/ai/feedback`.
+- [ ] **Thumbs up / thumbs down on hazmat findings and scope audit items too** — same pattern, different context, same feedback endpoint
 - [ ] Non-obvious items: highlighted with special styling + "AI found this — you might have missed it"
 - [ ] Streaming: line items appear progressively as AI generates them (SSE)
 - [ ] Processing state: "Analyzing 12 photos... this takes 15-30 seconds"
@@ -199,9 +191,9 @@ CREATE TABLE scope_intelligence (
 ### Phase 5: Hazmat Scanner — ❌
 **Backend:**
 - [ ] Create `api/ai/hazmat.py` — hazmat scanning pipeline
-- [ ] `POST /v1/jobs/:id/hazmat-scan` — trigger hazmat scan on job photos
-- [ ] `GET /v1/jobs/:id/hazmat-findings` — list findings
-- [ ] `POST /v1/jobs/:id/hazmat-findings/:fid/add-to-report` — add finding to PDF report
+- [ ] `POST /v1/jobs/{job_id}/photos/check-hazards` — trigger hazmat scan on job photos
+- [ ] `GET /v1/jobs/{job_id}/hazmat-findings` — list findings
+- [ ] `POST /v1/jobs/{job_id}/hazmat-findings/{finding_id}/add-to-report` — add finding to PDF report
 - [ ] Asbestos Risk Scan: AI analyzes photos for ACMs (vermiculite insulation, pipe wrap, 9x9 floor tiles, popcorn ceiling, transite siding)
 - [ ] Lead Paint Risk Scan: AI analyzes photos for lead paint indicators (alligatoring pattern, chalking, multi-layer peeling)
 - [ ] Lead paint risk check: use property.year_built (via job.property_id) — pre-1978 = lead risk (EPA RRP rule)
@@ -209,7 +201,7 @@ CREATE TABLE scope_intelligence (
 - [ ] Alembic migration: create hazmat_findings table
 
 **Frontend:**
-- [ ] "Hazard Scan" button on Photos tab toolbar
+- [ ] "Check for Hazards" button on Photos tab toolbar
 - [ ] Loading state: "Scanning for hazardous materials..."
 - [ ] Asbestos Risk Scan section:
   - Disclaimer: "This scan uses AI visual analysis to flag materials that *may* contain asbestos... not a substitute for professional testing."
@@ -226,10 +218,10 @@ CREATE TABLE scope_intelligence (
 - [ ] pytest: hazmat scan identifies known ACMs in test photos
 - [ ] pytest: lead paint risk correctly flags pre-1978 homes
 
-### Phase 6: AI Scope Auditor — ❌
+### Phase 6: Scope Check — ❌
 **Backend:**
-- [ ] Create `api/ai/auditor.py` — scope audit pipeline
-- [ ] `POST /v1/jobs/:id/scope/audit` — trigger AI audit of current scope
+- [ ] Create `api/ai/auditor.py` — scope check pipeline
+- [ ] `POST /v1/jobs/{job_id}/scope-check` — trigger AI scope check of current scope
 - [ ] AI Scope Auditor analyzes:
   1. Line items in scope vs photos/rooms/readings (what's present vs what should be)
   2. S500/OSHA/EPA standards for what SHOULD be present given damage type
@@ -240,8 +232,8 @@ CREATE TABLE scope_intelligence (
 - [ ] Severity levels: critical (alarm icon), warning (triangle icon), suggestion (lightbulb icon)
 
 **Frontend:**
-- [ ] "AI Scope Auditor" banner on Report tab: "Reviews your scope like a 10-year veteran — flags missed line items before it goes to the adjuster"
-- [ ] "Audit Scope" button
+- [ ] "Scope Check" banner on Report tab: "Reviews your scope like a 10-year veteran — flags missed line items before it goes to the adjuster"
+- [ ] "Scope Check" button
 - [ ] Results: "10 items flagged — review before submitting to adjuster"
 - [ ] Per-finding card (dark theme from Brett's demo):
   - Title (bold): "No Emergency Services or Water Extraction"
@@ -249,34 +241,52 @@ CREATE TABLE scope_intelligence (
   - Xactimate code badges: `WTR - EXTRWTR`, `DRY - AIRM`, `DRY - DEHU`
   - Explanation: "Missing initial emergency response, water extraction, and drying equipment setup..."
   - Severity icon
-- [ ] "Re-Audit" button after making changes
-- [ ] "Train AI" button → opens Scope Intelligence modal
+- [ ] "Re-check" button after making changes
 - [ ] pytest: auditor catches missing antimicrobial for Cat 2
 - [ ] pytest: auditor flags impossible moisture readings
 - [ ] pytest: auditor suggests equipment for affected rooms without equipment
 
-### Phase 7: Scope Intelligence (Train AI) — ❌
+### Phase 7: Job Assistant — ❌
 **Backend:**
-- [ ] Create `api/ai/intelligence.py` — scope intelligence pipeline
-- [ ] `POST /v1/company/scope-intelligence/upload` — upload past scope PDFs (up to 10)
-- [ ] `GET /v1/company/scope-intelligence` — list uploaded scopes + extraction status
-- [ ] PDF parsing: extract line items, pricing patterns, category distribution from uploaded scopes
-- [ ] Alembic migration: create scope_intelligence table
-- [ ] Store extracted data in scope_intelligence table
-- [ ] Feed extracted patterns into Scope Auditor prompts for personalized suggestions
+- [ ] Create `api/ai/assistant.py` — job assistant pipeline
+- [ ] `POST /v1/jobs/{job_id}/assistant` — context-aware AI assistant
+- [ ] Request schema: `AssistantRequest { message: str, screen_context: Literal['photos','floor_plan','scope','readings','general'], target_id: UUID | None }`
+- [ ] Response schema: `AssistantResponse { reply: str, suggested_actions: list[SuggestedAction], event_id: UUID, cost_cents: int, duration_ms: int }`
+- [ ] `SuggestedAction` = `AddLineItemAction | EditSketchAction | NavigateAction | ExplainAction`
+- [ ] Context-aware: fetches relevant job data based on `screen_context` (e.g., scope screen → loads line items; photos screen → loads photo metadata)
+- [ ] Validates `target_id` exists and belongs to the job when provided
+- [ ] Uses `log_ai_event()` — returns `event_id` in response
+- [ ] pytest: assistant returns valid response for each screen_context
+- [ ] pytest: target_id validation rejects invalid IDs
+- [ ] pytest: suggested_actions match expected types per screen_context
 
 **Frontend:**
-- [ ] "Scope Intelligence" modal (triggered by "Train AI" button):
-  - "Train AI on your past scopes"
-  - "Upload your 10 most recent insurance scopes (PDF). AI will extract your line items, pricing patterns, and identify where you've been leaving money on the table."
-  - Drag-and-drop upload zone: "Tap to select PDFs or drag and drop — up to 10 scopes"
-  - "Analyze Scopes →" button
-  - Processing status per PDF
-- [ ] Can be part of onboarding flow (first-time setup) or accessed from Scope Auditor
-- [ ] pytest: PDF upload and extraction produces valid line item data
-- [ ] pytest: extracted patterns influence auditor suggestions
+- [ ] Floating Action Button (FAB) on all job screens — opens Job Assistant panel
+- [ ] Chat-style UI: user message → assistant reply with suggested actions
+- [ ] Suggested actions rendered as tappable chips/buttons
+- [ ] Screen context auto-detected from current route
 
-### Phase 8: Integration Testing + Validation — ❌
+### Phase 8: AI Feedback — ❌
+**Backend:**
+- [ ] Create `api/ai/feedback.py` — centralized AI feedback handler
+- [ ] `POST /v1/ai/feedback` — submit feedback for any AI feature
+- [ ] Request schema: `AIFeedbackRequest { event_id: UUID, item_id: str | None, rating: Literal['up','down'], comment: str | None }`
+- [ ] Validates `event_id` belongs to the requesting user's company
+- [ ] Validates the referenced event has `is_ai=true`
+- [ ] Stores feedback linked to the original AI event
+- [ ] pytest: feedback accepted for valid event_id
+- [ ] pytest: feedback rejected for event_id from another company
+- [ ] pytest: feedback rejected for non-AI events
+
+**Frontend:**
+- [ ] Thumbs up/down component reused across all AI features (scope, hazmat, scope check, assistant)
+- [ ] Optional comment field on thumbs-down
+- [ ] All feedback calls go through single `POST /v1/ai/feedback` endpoint
+
+### ~~Phase 7 (old): Upload Past Jobs~~ → Moved to Spec 04 Phase 4
+No separate scope_intelligence table. Past jobs are imported into the existing jobs + line_items schema with `jobs.source = 'imported'`. See Spec 04 for details.
+
+### Phase 9: Integration Testing + Validation — ❌
 - [ ] End-to-end test: upload photos → tag rooms → run scope → review items → edit → push to report → generate PDF (from Spec 01)
 - [ ] End-to-end test: upload photos → hazmat scan → review findings → add to report
 - [ ] End-to-end test: push to report → audit scope → add flagged items → re-audit → submit
@@ -295,9 +305,9 @@ CREATE TABLE scope_intelligence (
 
 **AI pipeline architecture:**
 ```
-1. User taps "Analyze with AI" on Photos tab
+1. User taps "Generate Line Items" on Photos tab
 2. Pre-check: all photos must be tagged to rooms
-3. POST /v1/jobs/:id/scope
+3. POST /v1/jobs/{job_id}/photos/generate-scope
 4. Fetch selected photos from Supabase Storage (signed URLs)
 5. Resize each to 1920px max
 6. Split into batches of 10
@@ -318,11 +328,13 @@ CREATE TABLE scope_intelligence (
 13. Create event_history record for accuracy tracking
 ```
 
-**Three AI actions on Photos tab:**
+**Five AI endpoints:**
 ```
-Hazard Scan    → POST /v1/jobs/:id/hazmat-scan    → hazmat_findings
-Analyze with AI → POST /v1/jobs/:id/scope          → line_items (via SSE)
-Audit Scope    → POST /v1/jobs/:id/scope/audit    → flagged items
+Generate Line Items  → POST /v1/jobs/{job_id}/photos/generate-scope  → line_items (via SSE)
+Check for Hazards    → POST /v1/jobs/{job_id}/photos/check-hazards   → hazmat_findings
+Scope Check          → POST /v1/jobs/{job_id}/scope-check            → flagged items
+Job Assistant        → POST /v1/jobs/{job_id}/assistant              → assistant reply + suggested actions
+AI Feedback          → POST /v1/ai/feedback                          → feedback record
 ```
 
 **Prompt strategy:**
@@ -335,8 +347,22 @@ Audit Scope    → POST /v1/jobs/:id/scope/audit    → flagged items
 **SSE streaming:**
 - FastAPI SSE endpoint streams line items as they're generated
 - Frontend uses EventSource or fetch + ReadableStream
-- Each event: one line item as JSON
-- Final event: `{type: "complete", scope_run_id: "..."}`
+- Every SSE event includes `event_id` (from `log_ai_event()`) for feedback tracking
+- Each event: one line item as JSON with `event_id` and item index
+- Final event: `{type: "complete", scope_run_id: "...", event_id: "..."}`
+
+**`log_ai_event()` pattern:**
+- Unlike fire-and-forget `log_event()`, `log_ai_event()` returns a `UUID` (the `event_id`)
+- Raises on failure (not silent) — AI responses must have trackable events
+- `event_id` is included in every SSE event and all AI endpoint responses
+- Used by `POST /v1/ai/feedback` to link feedback to the originating AI action
+
+**Shared AI service layer:**
+- `backend/api/ai/client.py` — Anthropic SDK wrapper, retry logic, cost tracking
+- `backend/api/ai/config.py` — model selection, token limits, feature flags
+- `backend/api/ai/validator.py` — response validation, Xactimate code checking
+- `backend/api/ai/prompts/` — prompt templates per feature (scope, hazmat, auditor, assistant)
+- `backend/api/ai/tools/` — Claude tool-use definitions per feature
 
 **Xactimate code matching:**
 - AI generates codes from the embedded database
@@ -350,8 +376,14 @@ Audit Scope    → POST /v1/jobs/:id/scope/audit    → flagged items
 - `backend/api/ai/parser.py` — structured output parsing
 - `backend/api/ai/rules.py` — auto-add rules engine
 - `backend/api/ai/hazmat.py` — hazmat scanning pipeline
-- `backend/api/ai/auditor.py` — scope auditor pipeline
-- `backend/api/ai/intelligence.py` — scope intelligence (Train AI)
+- `backend/api/ai/auditor.py` — scope check pipeline
+- `backend/api/ai/assistant.py` — job assistant pipeline
+- `backend/api/ai/feedback.py` — centralized AI feedback handler
+- `backend/api/ai/client.py` — Anthropic SDK wrapper
+- `backend/api/ai/config.py` — model selection + feature config
+- `backend/api/ai/validator.py` — response validation
+- `backend/api/ai/prompts/` — prompt templates per feature
+- `backend/api/ai/tools/` — Claude tool-use definitions
 - `backend/api/ai/xactimate_codes.py` — code validation
 - `backend/api/scope/router.py`, `service.py`, `schemas.py` — scope endpoints
 - `web/src/app/(protected)/jobs/[id]/scope/` — scope review UI
@@ -404,3 +436,8 @@ cd /Users/lakshman/Workspaces/Crewmatic
   - **Equipment ROI Tracker** — AI tracks which equipment generates most billing
   - **Supplement Trigger Engine** — flags when material/labor cost changes justify a supplement
 - **Voice scoping UX decision:** Guided form approach tested poorly with Brett — too rigid. V2 voice must use free-form AI extraction. Two modes: Continuous and Push-to-Talk. See `docs/research/brett-prototype-sessions.md`.
+- **User-facing names drop "AI":** "Generate Line Items" not "Analyze with AI", "Scope Check" not "AI Scope Auditor", "Check for Hazards" not "Hazard Scan". Users don't care that it's AI — they care what it does.
+- **Three-layer frontend pattern:** Primary action button per screen (e.g., "Generate Line Items" on Photos tab), secondary toolbar actions (e.g., "Check for Hazards", "Scope Check"), and Job Assistant FAB available on all screens.
+- **Sketch cleanup is deterministic code:** Geometry math (wall snapping, room closing, angle correction) is NOT an LLM task. Use computational geometry, not Claude.
+- **Model selection:** Sonnet 4 for complex features (photo scope, scope check, assistant). Haiku 3.5 for lightweight tasks (voice transcription quality check, photo quality assessment).
+- **All AI responses include event_id:** Every AI endpoint returns an `event_id` (UUID) from `log_ai_event()`. This enables centralized feedback tracking via `POST /v1/ai/feedback`.
