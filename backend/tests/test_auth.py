@@ -158,33 +158,65 @@ class TestCreateCompany:
             }
             mock_client.auth.admin.get_user_by_id.return_value = mock_auth_response
 
-            # No existing user
-            (
-                mock_client.table.return_value.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
-            ).data = None
+            company_row = {
+                "id": str(mock_company_id),
+                "name": "DryPros",
+                "slug": "drypros-a1b2",
+                "phone": "(586) 944-7700",
+                "email": "brett@drypros.com",
+                "logo_url": None,
+                "address": None,
+                "city": None,
+                "state": None,
+                "zip": None,
+                "subscription_tier": "free",
+                "created_at": "2026-03-25T00:00:00Z",
+                "updated_at": "2026-03-25T00:00:00Z",
+            }
 
-            # Company insert
-            (mock_client.table.return_value.insert.return_value.execute.return_value).data = [
-                {
-                    "id": str(mock_company_id),
-                    "name": "DryPros",
-                    "slug": "drypros-a1b2",
-                    "phone": "(586) 944-7700",
-                    "email": "brett@drypros.com",
-                    "logo_url": None,
-                    "address": None,
-                    "city": None,
-                    "state": None,
-                    "zip": None,
-                    "subscription_tier": "free",
-                    "created_at": "2026-03-25T00:00:00Z",
-                    "updated_at": "2026-03-25T00:00:00Z",
-                }
-            ]
+            user_row = {
+                "id": str(mock_user_id),
+                "auth_user_id": str(mock_auth_user_id),
+                "company_id": str(mock_company_id),
+                "email": "brett@drypros.com",
+                "name": "Brett Sodders",
+                "first_name": "Brett",
+                "last_name": "Sodders",
+                "phone": None,
+                "avatar_url": "https://avatar.url",
+                "role": "owner",
+                "is_platform_admin": False,
+                "deleted_at": None,
+            }
 
-            with patch(
-                "api.auth.service.get_supabase_admin_client",
-                return_value=mock_client,
+            def table_side_effect(table_name):
+                mock_table = MagicMock()
+                if table_name == "users":
+                    # maybe_single for existing user check (returns None)
+                    (
+                        mock_table.select.return_value
+                        .eq.return_value
+                        .is_.return_value
+                        .maybe_single.return_value
+                        .execute.return_value
+                    ).data = None
+                    # insert for new user
+                    (mock_table.insert.return_value.execute.return_value).data = [user_row]
+                elif table_name == "companies":
+                    (mock_table.insert.return_value.execute.return_value).data = [company_row]
+                return mock_table
+
+            mock_client.table.side_effect = table_side_effect
+
+            with (
+                patch(
+                    "api.auth.service.get_supabase_admin_client",
+                    return_value=mock_client,
+                ),
+                patch(
+                    "api.shared.database.get_supabase_admin_client",
+                    return_value=mock_client,
+                ),
             ):
                 response = client.post(
                     "/v1/company",
