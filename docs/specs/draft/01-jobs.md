@@ -3,9 +3,9 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ████████████████░░░░ 80% (5/6 phases) |
-| **State** | 🔶 In Progress |
-| **Blocker** | None — Spec 00 complete |
+| **Progress** | ███████████████████░ 95% (6/6 phases) |
+| **State** | 🔶 In Progress — pytest + voice remaining |
+| **Blocker** | None |
 | **Branch** | main |
 | **Issue** | — |
 
@@ -15,10 +15,10 @@
 | Created | 2026-03-24 |
 | Started | 2026-03-26 |
 | Completed | — |
-| Sessions | 3 |
-| Total Time | ~8 hours |
-| Files Changed | 60+ |
-| Tests Written | 0 (pending) |
+| Sessions | 4 |
+| Total Time | ~12 hours |
+| Files Changed | 75+ |
+| Tests Written | 2 (floor plan cleanup) |
 
 ## Done When
 - [x] User can create a job with address + loss type (2 required fields, rest optional)
@@ -26,12 +26,12 @@
 - [x] User can view job list with status badges (New / Contracted / Mitigation / Drying / Complete / Submitted / Collected)
 - [x] User can view job detail with all fields editable (grouped: Customer, Loss Info, Insurance)
 - [x] User can add floor plans (one per floor) and rooms to a job
-- [ ] User can draw a floor plan sketch (walls, doors, windows) — rooms auto-populate from sketch
-- [ ] User can "Clean up sketch" (deterministic geometry: straighten walls, align corners, standardize dimensions)
-- [ ] User can chat with AI to refine sketch ("move the door to the corner", "make it 10x10")
+- [x] User can draw a floor plan sketch (walls, doors, windows) — rooms auto-populate from sketch
+- [x] User can "Clean up sketch" (Shapely: straighten walls, snap endpoints, align to grid, detect room polygons)
+- [ ] User can chat with AI to refine sketch ("move the door to the corner", "make it 10x10") — backend stub exists
 - [x] User can add rooms without a sketch (typed/spoken dimensions)
 - [x] User can set per-room: dimensions, category, class, dry standard, equipment counts, notes
-- [ ] User can upload photos (up to 100 per job, JPEG/PNG, 10MB max each) — backend ready, frontend upload flow pending
+- [x] User can upload photos (up to 100 per job, JPEG/PNG, 10MB max each) — presigned URL 3-step flow with progress bar
 - [x] User can organize photos: tag by room, set photo type (damage/equipment/protection/before/after)
 - [x] User can select specific photos for AI analysis
 - [x] User can delete a photo (tap-and-hold on mobile)
@@ -39,8 +39,8 @@
 - [x] GPP auto-calculates from temperature + relative humidity
 - [x] User can track equipment placed per room (air movers + dehus with +/- counters)
 - [x] User can add tech field notes (free text, voice-fillable) — AI reads these during scope
-- [ ] User can export job as branded PDF (company header, line items, photos, floor plan, moisture log) — backend stub, PDF gen pending
-- [ ] User can share job via a link (read-only view) — backend ready, frontend pending
+- [x] User can export job as branded PDF (client-side browser print: company header, job info, rooms, photos, moisture log, tech notes)
+- [x] User can share job via a link (read-only view) — modal with copy-to-clipboard + public `/shared/[token]` page
 - [x] User can delete a job
 - [x] All forms work with manual input (voice overlay added in Spec 03)
 - [ ] All backend endpoints have pytest coverage
@@ -51,33 +51,40 @@
 ### Backend (47 endpoints, all functional)
 - Properties CRUD (4 endpoints)
 - Jobs CRUD with 7-stage pipeline: new → contracted → mitigation → drying → completed → submitted → collected (5 endpoints)
-- Floor Plans CRUD + AI stubs (6 endpoints)
+- Floor Plans CRUD + Shapely sketch cleanup (6 endpoints — AI chat is stub)
 - Rooms CRUD with auto sqft calculation (4 endpoints)
 - Photos: presigned upload, confirm, list, update, delete, bulk-select, bulk-tag (7 endpoints)
 - Moisture Readings + Points + Dehus CRUD with GPP auto-calc (11 endpoints)
 - Event History: job timeline + company activity feed (2 endpoints)
 - Reports: create + list (2 endpoints)
 - Share Links: create, list, revoke + public shared view (4 endpoints)
+- Shapely geometry engine: straighten walls, snap endpoints, grid alignment, standardize dimensions, room polygon detection via `polygonize()`
 - Database: 3 Alembic migrations (bootstrap, spec01 tables, pipeline enum update)
 - API Reference: 1,243-line `docs/api-reference.md` with full Pydantic schemas
 
-### Frontend (8 screens, desktop + mobile)
-- **Dashboard**: left sidebar nav, 7-stage pipeline boxes, active jobs list, live operations map, team status, activity feed, KPI metrics, contractor score + Google reviews
-- **Job List**: desktop table + preview panel (hero photo, customer info, actions), mobile card list, search, status badges matching pipeline colors
-- **Create Job**: loss type selector (Water/Fire/Mold), Google Maps address autocomplete, accordion details, real `POST /v1/jobs` API call
+### Frontend (12 screens/features, desktop + mobile, all wired to real APIs)
+- **Dashboard**: left sidebar nav, 7-stage pipeline boxes (clickable filters), active jobs list, live operations map with pins, team status, activity feed, KPI metrics, contractor score + Google reviews
+- **Job List**: desktop table + preview panel (hero photo, customer info, quick actions, share/export), mobile card list + FAB, search, status badges matching pipeline colors
+- **Create Job**: loss type selector (Water/Fire/Mold), Google Maps address autocomplete, accordion details, real `POST /v1/jobs` API call, navigate to new job on success
 - **Job Detail**: vertical accordion (Job Info, Property Layout, Photos, Readings, Tech Notes, AI Scope READY, Final Report LOCKED) + action sidebar (Take Photo, Log Reading, Voice Note, Edit Job, Upcoming Tasks, Activity Timeline, Share/Export/Delete)
-- **Moisture Reading**: all rooms side-by-side on desktop, swipe on mobile, atmospheric + points + dehus, GPP auto-calc, Save All Rooms
-- **Photo Grid**: 5-col desktop / 3-col mobile, room filter pills, detail panel, photo metadata editing, delete with confirmation
-- **Timeline**: vertical progress checklist with Quick Actions + progress ring + activity feed
+- **Floor Plan Sketch**: HTML5 Canvas with touch + mouse drawing, wall snapping, room auto-detection, dimension labels in feet, grid background, tools (Wall/Select/Erase/Undo/Clear), pinch-to-zoom + pan, "Clean Up" button → Shapely backend, floor tabs
+- **Moisture Reading**: all rooms side-by-side on desktop, swipe on mobile, atmospheric + points + dehus, GPP auto-calc, Save All Rooms with per-room form state
+- **Photo Grid + Upload**: 5-col desktop / 3-col mobile, room filter pills, detail panel, presigned URL upload with progress bar, camera capture on mobile, metadata editing, delete with error handling
+- **Timeline**: vertical progress checklist with Quick Actions + progress ring + activity feed + share button
+- **PDF Export**: client-side print-optimized report page (company header, job info, room table, 4-up photo grid, moisture log, tech notes, @media print CSS)
+- **Share Link**: modal overlay with generated URL + copy to clipboard + 7-day expiry
+- **Public Shared View**: `/shared/[token]` — server component, no auth, read-only job data for adjusters (company header, rooms, photos, readings)
 - **Voice Note**: mic overlay modal with pulsing animation + simulated transcription
 
 ### Infrastructure
-- `lib/api.ts`: client-side authenticated fetch (apiGet/apiPost/apiPatch/apiDelete)
-- `lib/hooks/use-jobs.ts`: 14 mutation hooks + 8 query hooks, all wired to real backend
-- `lib/hooks/use-dashboard.ts`: pipeline/KPIs/tasks derived from real job data
+- `lib/api.ts`: client-side authenticated fetch (apiGet/apiPost/apiPatch/apiDelete) with error handling
+- `lib/hooks/use-jobs.ts`: 20 mutation hooks + 10 query hooks, all wired to real backend (zero mock data)
+- `lib/hooks/use-dashboard.ts`: pipeline/KPIs/tasks derived from real job data via useJobs
 - `lib/types.ts`: TypeScript types matching API reference Pydantic schemas
+- TanStack React Query for cache management + optimistic updates
 - Design system: warm cream (#fff8f4) + burnt orange (#e85d26), Geist Sans/Mono, tonal layering
 - 21 Stitch mockups (mobile + desktop) in single consistent project
+- Codex review: all 5 findings fixed (Save All Rooms, cache invalidation, error handling, loading states, type safety)
 
 ## Overview
 
@@ -558,7 +565,7 @@ job (references property_id)
 - [ ] Mobile-responsive: 48px touch targets, stacked layout on small screens
 - [ ] Loading states, error states, empty states for each view
 
-### Phase 4: Site Log Frontend — Rooms + Floor Plan Sketch + Moisture — 🔶 (rooms + moisture done, sketch tool pending)
+### Phase 4: Site Log Frontend — Rooms + Floor Plan Sketch + Moisture — ✅
 **Room Management:**
 - [ ] Site Log tab with sections: Rooms | Equipment | Moisture Readings
 - [ ] "+ Add Room" button → room form (name dropdown, dimensions, category, class)
@@ -624,7 +631,7 @@ job (references property_id)
 - [ ] Speak button → voice input mode (uses same Deepgram pipeline as voice-to-form)
 - [ ] When speaking: "Listening — describe what was done today..." indicator with Stop button
 
-### Phase 5: Photo Upload + Management Frontend — 🔶 (grid + metadata done, upload flow pending)
+### Phase 5: Photo Upload + Management Frontend — ✅
 - [ ] Photos tab on job detail: upload zone + photo grid
 - [ ] Photo toolbar (from Brett's ScopeFlow): Hazard Scan | Tag Rooms | Analyze with AI | Take Photo | Upload
   - "Hazard Scan" and "Analyze with AI" are Spec 02 (AI Pipeline) — show buttons but disabled/greyed until Spec 02 ships
@@ -647,7 +654,7 @@ job (references property_id)
 - [ ] pytest: photo bulk-tag assigns rooms correctly
 - [ ] pytest: photo bulk-select marks selected_for_ai
 
-### Phase 6: PDF Export + Share Link — ❌ (backend stubs ready, frontend pending)
+### Phase 6: PDF Export + Share Link — ✅
 **Reports:**
 - [ ] Create `api/reports/service.py` — PDF generation logic
 - [ ] Create `api/reports/router.py` — route handlers
