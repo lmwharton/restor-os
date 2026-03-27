@@ -116,3 +116,74 @@ body {
     transform: translateY(0);
   }
 }
+
+/* ── Print styles for PDF export ─────────────────────────────────── */
+@media print {
+  /* Hide all app chrome */
+  nav, aside, header:not(.print-section *), footer:not(.print-section *), .no-print {
+    display: none !important;
+  }
+  /* Reset background */
+  body, main {
+    background: white !important;
+    color: black !important;
+  }
+  /* Page setup */
+  @page {
+    margin: 0.75in;
+    size: letter;
+  }
+  /* Avoid page breaks inside sections */
+  .print-section {
+    break-inside: avoid;
+  }
+  /* Photo grid for print */
+  .print-photos {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+  }
+  .print-photos img {
+    width: 100%;
+    height: auto;
+  }
+  /* Report table styling for print */
+  .report-table {
+    border-collapse: collapse;
+  }
+  .report-table th,
+  .report-table td {
+    border-bottom: 1px solid #e5e5e5;
+  }
+}
+
+/* ── Report page styles (screen + print) ─────────────────────────── */
+.report-section-title {
+  font-size: 14px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #525252;
+  border-bottom: 1px solid #d4d4d4;
+  padding-bottom: 6px;
+  margin-bottom: 12px;
+}
+
+.report-table {
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.report-table th {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #737373;
+  padding: 6px 8px;
+  border-bottom: 2px solid #d4d4d4;
+}
+.report-table td {
+  padding: 5px 8px;
+  color: #404040;
+  border-bottom: 1px solid #e5e5e5;
+}

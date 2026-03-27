@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
-  PaginatedResponse,
+  FloorPlan, PaginatedResponse,
 } from "../types";
 
 // ─── Job Queries ──────────────────────────────────────────────────────
@@ -147,6 +147,51 @@ export function useDeletePhoto(jobId: string) {
   });
 }
 
+// ─── Photo Upload ────────────────────────────────────────────────────
+
+export function useUploadPhoto(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (file: File) => {
+      // Step 1: Get presigned URL
+      const { upload_url, storage_path } = await apiPost<{
+        upload_url: string;
+        storage_path: string;
+      }>(`/v1/jobs/${jobId}/photos/upload-url`, {
+        filename: file.name,
+        content_type: file.type,
+      });
+      // Step 2: Upload to storage
+      await fetch(upload_url, {
+        method: "PUT",
+        body: file,
+        headers: { "Content-Type": file.type },
+      });
+      // Step 3: Confirm
+      return apiPost<Photo>(`/v1/jobs/${jobId}/photos/confirm`, {
+        storage_path,
+        filename: file.name,
+      });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["photos", jobId] });
+      qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+    },
+  });
+}
+
+// ─── Share Link ──────────────────────────────────────────────────────
+
+export function useCreateShareLink(jobId: string) {
+  return useMutation({
+    mutationFn: (data: { scope?: string; expires_days?: number }) =>
+      apiPost<{ share_url: string; share_token: string; expires_at: string }>(
+        `/v1/jobs/${jobId}/share`,
+        data
+      ),
+  });
+}
+
 // ─── Moisture Reading Queries + Mutations ─────────────────────────────
 
 export function useReadings(jobId: string, roomId: string) {
@@ -228,5 +273,51 @@ export function useCompanyEvents() {
       const data = await apiGet<PaginatedResponse<Event>>(`/v1/events?limit=20`);
       return data.items;
     },
+  });
+}
+
+// ─── Floor Plan Queries + Mutations ──────────────────────────────────
+
+export function useFloorPlans(jobId: string) {
+  return useQuery<FloorPlan[]>({
+    queryKey: ["floor-plans", jobId],
+    queryFn: async () => {
+      const data = await apiGet<PaginatedResponse<FloorPlan>>(`/v1/jobs/${jobId}/floor-plans`);
+      return data.items;
+    },
+    enabled: !!jobId,
+  });
+}
+
+export function useCreateFloorPlan(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { floor_number?: number; floor_name?: string; canvas_data?: Record<string, unknown> }) =>
+      apiPost<FloorPlan>(`/v1/jobs/${jobId}/floor-plans`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+      qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+    },
+  });
+}
+
+export function useUpdateFloorPlan(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; canvas_data?: Record<string, unknown>; floor_name?: string }) =>
+      apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+    },
+  });
+}
+
+export function useCleanupSketch(jobId: string, floorPlanId: string) {
+  return useMutation({
+    mutationFn: (canvasData: Record<string, unknown>) =>
+      apiPost<{ canvas_data: Record<string, unknown> }>(
+        `/v1/jobs/${jobId}/floor-plans/${floorPlanId}/ai-cleanup`,
+        { canvas_data: canvasData }
+      ),
   });
 }

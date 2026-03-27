@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
   useJob,
@@ -9,6 +9,7 @@ import {
   usePhotos,
   useJobEvents,
   useDeleteJob,
+  useCreateShareLink,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
 
@@ -407,6 +408,48 @@ export default function JobDetailPage() {
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const deleteJob = useDeleteJob();
+  const createShareLink = useCreateShareLink(jobId);
+
+  const [shareModal, setShareModal] = useState<{
+    url: string;
+    expires_at: string;
+  } | null>(null);
+  const [shareCopied, setShareCopied] = useState(false);
+
+  const handleShareJob = useCallback(async () => {
+    try {
+      const result = await createShareLink.mutateAsync({
+        scope: "full",
+        expires_days: 7,
+      });
+      setShareModal({
+        url: result.share_url,
+        expires_at: result.expires_at,
+      });
+      setShareCopied(false);
+    } catch {
+      alert("Failed to create share link. Please try again.");
+    }
+  }, [createShareLink]);
+
+  const handleCopyShareLink = useCallback(async () => {
+    if (!shareModal) return;
+    try {
+      await navigator.clipboard.writeText(shareModal.url);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    } catch {
+      // Fallback for older browsers
+      const input = document.createElement("input");
+      input.value = shareModal.url;
+      document.body.appendChild(input);
+      input.select();
+      document.execCommand("copy");
+      document.body.removeChild(input);
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    }
+  }, [shareModal]);
 
   // Use first room for readings
   const firstRoomId = rooms?.[0]?.id ?? "";
@@ -614,8 +657,14 @@ export default function JobDetailPage() {
             defaultOpen
           >
             <div className="space-y-3">
-              {/* Floor plan placeholder */}
-              <div className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden">
+              {/* Floor plan placeholder — links to sketch tool */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => router.push(`/jobs/${jobId}/floor-plan`)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
+                className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
+              >
                 {/* Grid pattern */}
                 <div
                   className="absolute inset-0 opacity-[0.08]"
@@ -634,12 +683,9 @@ export default function JobDetailPage() {
                     {rooms?.length ?? 0} rooms mapped
                   </span>
                 </div>
-                <button
-                  type="button"
-                  className="absolute bottom-3 right-3 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer font-[family-name:var(--font-geist-mono)]"
-                >
+                <span className="absolute bottom-3 right-3 text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
                   View Plan &rarr;
-                </button>
+                </span>
               </div>
 
               {/* Room pills */}
@@ -911,18 +957,22 @@ export default function JobDetailPage() {
           <div className="flex items-center gap-4 px-1">
             <button
               type="button"
-              className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              onClick={handleShareJob}
+              disabled={createShareLink.isPending}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer disabled:opacity-50"
             >
               <ShareIcon size={14} />
-              Share Job
+              {createShareLink.isPending ? "Creating..." : "Share Job"}
             </button>
-            <button
-              type="button"
+            <a
+              href={`/jobs/${jobId}/report`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
             >
               <DocumentIcon size={14} />
               Export PDF
-            </button>
+            </a>
             <button
               type="button"
               onClick={async () => {
@@ -979,6 +1029,49 @@ export default function JobDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Share Link Modal ─────────────────────────────────── */}
+      {shareModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-inverse-surface/40 backdrop-blur-sm">
+          <div className="mx-4 w-full max-w-md rounded-2xl bg-surface-container-lowest shadow-[0_8px_32px_rgba(31,27,23,0.12)] p-6 space-y-4">
+            <h3 className="text-lg font-semibold text-on-surface">Share Link Created</h3>
+            <p className="text-sm text-on-surface-variant">
+              Anyone with this link can view this job. Expires in 7 days.
+            </p>
+            <div className="flex items-center gap-2">
+              <input
+                readOnly
+                value={shareModal.url}
+                className="flex-1 h-10 px-3 rounded-lg bg-surface-container-low text-sm text-on-surface font-[family-name:var(--font-geist-mono)] outline-none select-all truncate"
+                onFocus={(e) => e.target.select()}
+              />
+              <button
+                type="button"
+                onClick={handleCopyShareLink}
+                className="shrink-0 h-10 px-4 rounded-lg bg-brand-accent text-on-primary text-sm font-medium transition-colors hover:bg-brand-accent/90 cursor-pointer"
+              >
+                {shareCopied ? "Copied!" : "Copy Link"}
+              </button>
+            </div>
+            <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+              Expires {new Date(shareModal.expires_at).toLocaleDateString("en-US", {
+                month: "short",
+                day: "numeric",
+                year: "numeric",
+              })}
+            </p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => setShareModal(null)}
+                className="h-9 px-4 rounded-lg text-sm font-medium text-on-surface-variant hover:bg-surface-container-low transition-colors cursor-pointer"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

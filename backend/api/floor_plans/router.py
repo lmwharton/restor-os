@@ -13,6 +13,7 @@ from api.floor_plans.schemas import (
     SketchCleanupRequest,
 )
 from api.floor_plans.service import (
+    cleanup_sketch,
     create_floor_plan,
     delete_floor_plan,
     list_floor_plans,
@@ -109,11 +110,15 @@ async def ai_cleanup_endpoint(
 ):
     """AI sketch cleanup — straighten walls, align corners, snap dimensions.
 
-    TODO: Integrate actual AI model for sketch cleanup. Currently returns
-    canvas_data unchanged as a stub.
+    Uses Shapely geometric operations to:
+    1. Straighten near-horizontal/vertical walls
+    2. Snap nearby endpoints together
+    3. Align coordinates to grid
+    4. Standardize wall lengths to nearest 0.25 ft
+    5. Detect closed rooms via polygonize
     """
-    # TODO: Call AI service to clean up the sketch geometry
-    return SketchAIResponse(canvas_data=body.canvas_data)
+    cleaned = cleanup_sketch(body.canvas_data)
+    return SketchAIResponse(canvas_data=cleaned)
 
 
 @router.post(

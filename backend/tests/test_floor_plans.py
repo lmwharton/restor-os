@@ -418,7 +418,7 @@ class TestDeleteFloorPlan:
 class TestAICleanup:
     """Test POST .../ai-cleanup stub endpoint."""
 
-    def test_ai_cleanup_stub(
+    def test_ai_cleanup_straightens_and_detects_rooms(
         self,
         client,
         auth_headers,
@@ -428,10 +428,55 @@ class TestAICleanup:
         mock_user_row,
         mock_job_row,
     ):
-        """AI cleanup stub returns canvas_data unchanged -> 200."""
+        """AI cleanup straightens walls and detects rooms -> 200."""
         patches = _setup_mocks(jwt_secret, mock_user_row, mock_job_row)
 
-        canvas = {"walls": [{"start": [0, 0], "end": [10, 0]}]}
+        # A slightly wobbly rectangle that should be straightened
+        canvas = {
+            "walls": [
+                {"id": "w1", "x1": 0, "y1": 2, "x2": 240, "y2": 3},
+                {"id": "w2", "x1": 239, "y1": 2, "x2": 241, "y2": 240},
+                {"id": "w3", "x1": 241, "y1": 239, "x2": 1, "y2": 241},
+                {"id": "w4", "x1": 1, "y1": 240, "x2": 0, "y2": 3},
+            ],
+            "scale": 24,
+            "offset": {"x": 0, "y": 0},
+        }
+
+        with patches[0], patches[1], patches[2], patches[3]:
+            response = client.post(
+                f"/v1/jobs/{mock_job_id}/floor-plans/{mock_floor_plan_id}/ai-cleanup",
+                json={"canvas_data": canvas},
+                headers=auth_headers,
+            )
+            assert response.status_code == 200
+            data = response.json()
+            result = data["canvas_data"]
+            assert "walls" in result
+            assert len(result["walls"]) == 4
+            assert "rooms" in result
+            assert len(result["rooms"]) >= 1
+            # Room should have area and dimensions
+            room = result["rooms"][0]
+            assert "area_sqft" in room
+            assert room["area_sqft"] > 0
+            assert "width_ft" in room
+            assert "length_ft" in room
+
+    def test_ai_cleanup_empty_walls(
+        self,
+        client,
+        auth_headers,
+        jwt_secret,
+        mock_job_id,
+        mock_floor_plan_id,
+        mock_user_row,
+        mock_job_row,
+    ):
+        """AI cleanup with no walls returns input unchanged -> 200."""
+        patches = _setup_mocks(jwt_secret, mock_user_row, mock_job_row)
+
+        canvas = {"walls": [], "scale": 24, "offset": {"x": 0, "y": 0}}
 
         with patches[0], patches[1], patches[2], patches[3]:
             response = client.post(

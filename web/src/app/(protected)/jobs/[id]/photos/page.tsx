@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useRef, useCallback } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { usePhotos, useRooms, useUpdatePhoto, useDeletePhoto } from "@/lib/hooks/use-jobs";
+import { usePhotos, useRooms, useUpdatePhoto, useDeletePhoto, useUploadPhoto } from "@/lib/hooks/use-jobs";
 import {
   ArrowBack,
   Shield,
@@ -24,12 +24,14 @@ interface ToolbarAction {
   icon: React.ReactNode;
   disabled?: boolean;
   accent?: boolean;
+  onClick?: () => void;
 }
 
-function ToolbarButton({ label, icon, disabled, accent }: ToolbarAction) {
+function ToolbarButton({ label, icon, disabled, accent, onClick }: ToolbarAction) {
   return (
     <button
       disabled={disabled}
+      onClick={onClick}
       className={`flex flex-1 flex-col lg:flex-row items-center gap-1 lg:gap-2 py-2 lg:px-3 lg:justify-center transition-opacity ${
         disabled
           ? "opacity-40 cursor-not-allowed"
@@ -94,12 +96,45 @@ export default function PhotosPage() {
   const { data: rooms = [], isLoading: roomsLoading } = useRooms(jobId);
   const updatePhoto = useUpdatePhoto(jobId);
   const deletePhoto = useDeletePhoto(jobId);
+  const uploadPhoto = useUploadPhoto(jobId);
 
   const [selectedRoom, setSelectedRoom] = useState<string | null>(null);
   const [selectedPhotoId, setSelectedPhotoId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  /* Upload state */
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const captureInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFiles = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return;
+      setError(null);
+      const fileArray = Array.from(files);
+      setUploadProgress({ current: 0, total: fileArray.length });
+
+      for (let i = 0; i < fileArray.length; i++) {
+        setUploadProgress({ current: i + 1, total: fileArray.length });
+        try {
+          await uploadPhoto.mutateAsync(fileArray[i]);
+        } catch (err) {
+          setError(
+            `Failed to upload ${fileArray[i].name}: ${err instanceof Error ? err.message : "Unknown error"}`
+          );
+          break;
+        }
+      }
+      setUploadProgress(null);
+      // Reset file inputs so re-selecting the same file triggers onChange
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      if (captureInputRef.current) captureInputRef.current.value = "";
+    },
+    [uploadPhoto]
+  );
+
   const isLoading = photosLoading || roomsLoading;
+  const isUploading = uploadProgress !== null;
 
   const selectedPhoto = useMemo(() => {
     if (!selectedPhotoId) return null;
@@ -147,6 +182,24 @@ export default function PhotosPage() {
         </span>
       </header>
 
+      {/* ─── Hidden file inputs ────────────────────────────────── */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/png"
+        multiple
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+      <input
+        ref={captureInputRef}
+        type="file"
+        accept="image/jpeg,image/png"
+        capture="environment"
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+      />
+
       {/* ─── Toolbar ────────────────────────────────────────────── */}
       <div className="flex items-stretch px-4 py-1">
         <ToolbarButton
@@ -167,12 +220,37 @@ export default function PhotosPage() {
           label="Capture"
           icon={<Camera size={20} />}
           accent
+          disabled={isUploading}
+          onClick={() => captureInputRef.current?.click()}
         />
         <ToolbarButton
           label="Upload"
           icon={<Upload size={20} />}
+          disabled={isUploading}
+          onClick={() => fileInputRef.current?.click()}
         />
       </div>
+
+      {/* ─── Upload progress ──────────────────────────────────── */}
+      {uploadProgress && (
+        <div className="mx-4 mb-1">
+          <div className="flex items-center gap-3 rounded-lg bg-surface-container-low px-4 py-2.5">
+            <div className="flex-1">
+              <p className="text-[12px] font-medium text-on-surface">
+                Uploading {uploadProgress.current} of {uploadProgress.total}...
+              </p>
+              <div className="mt-1.5 h-1.5 w-full rounded-full bg-surface-container-high overflow-hidden">
+                <div
+                  className="h-full rounded-full bg-brand-accent transition-all duration-300"
+                  style={{
+                    width: `${Math.round((uploadProgress.current / uploadProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ─── Room filter pills ──────────────────────────────────── */}
       <div className="flex gap-2 overflow-x-auto px-4 py-3 scrollbar-none">
