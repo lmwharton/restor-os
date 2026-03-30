@@ -1,6 +1,6 @@
 # TODOS — Crewmatic
 
-Deferred items from eng review (2026-03-30). Ordered by priority.
+Updated 2026-03-30. Items from eng review.
 
 ## Pre-Spec 02 Blockers
 
@@ -9,31 +9,29 @@ Shapely requires libgeos (C library). WeasyPrint (Spec 02 PDF generation) requir
 - **Blocked by:** nothing
 - **Blocks:** Spec 02 Phase 9 (PDF generation)
 
-### Job number retry loop is ineffective
-`backend/api/jobs/service.py:64-85` — `_generate_job_number` re-reads the same `max` on retry because the failed insert hasn't committed. All 3 retries generate the same number. Fix: re-query after failed insert, or add random offset.
+### Frontend: update shared page to use POST /shared/resolve
+The backend now has `POST /v1/shared/resolve` (token in body, not URL path). The frontend `web/src/app/shared/[token]/page.tsx` still calls `GET` with token in path. Update to POST the token in the request body.
 - **Blocked by:** nothing
-- **Impact:** race condition on concurrent job creation (same day). Low risk at 1 user.
+- **Impact:** security improvement (token no longer logged in URL paths)
 
-## Security
+### Backend integration tests against real Supabase
+Unit tests use mocked Supabase. Need integration tests hitting a real local Supabase (Docker) to validate RLS policies, RPC functions, and query syntax.
+- **Blocked by:** Docker setup for local Supabase test instance
 
-### Share link token in URL path
-`GET /shared/{token}` passes raw token as path parameter. URL paths are logged by Railway, FastAPI middleware, Supabase, and browser history. Move token to POST body or query parameter before sharing line items (Spec 02).
-- **Blocked by:** nothing
-- **Fix before:** Spec 02 adds AI-generated line items to shared views
+## Completed (from original TODOS)
 
-### Onboarding race condition
-`backend/api/auth/service.py:101-194` — check-then-insert without transaction. Two simultaneous onboarding requests can create duplicate companies. Fix: use database-level UNIQUE constraint on auth_user_id + transaction.
-- **Blocked by:** RPC-based transactions (accepted in review)
-- **Impact:** very low (single-user V1), but fix before team invites
+- ~~Job number retry loop~~ — FIXED: re-queries + random offset on collision
+- ~~Share link token in URL path~~ — FIXED: POST /v1/shared/resolve added
+- ~~Onboarding race condition~~ — FIXED: rpc_onboard_user with advisory lock
+- ~~File size validation unreliable~~ — FIXED: chunked read with 2MB hard limit
+- ~~Photo ordering inconsistency~~ — FIXED: both use uploaded_at
 
-### File size validation unreliable
-`backend/api/auth/router.py:54` — `UploadFile.size` is `None` when Content-Length header is missing (chunked uploads). Large files silently pass validation and load fully into memory. Fix: read file in chunks, enforce size limit on bytes read.
-- **Blocked by:** nothing
-- **Impact:** DoS vector (upload 100MB avatar). Low risk at single-user.
+## Architecture Notes (for Spec 02)
 
-## Data Consistency
-
-### Photo ordering inconsistency
-`backend/api/sharing/service.py:181` orders photos by `created_at`. `backend/api/photos/service.py:298` orders by `uploaded_at`. If these columns diverge (e.g., DB clock skew), shared view and auth view show photos in different order.
-- **Blocked by:** nothing
-- **Impact:** cosmetic, but confusing for adjusters viewing shared links
+### Celery for long-running AI jobs
+AI Photo Scope calls (Claude Vision, 15-30s) must NOT block the API. Architecture:
+- `POST /v1/jobs/{id}/photos/generate-scope` → enqueue Celery task → return task_id immediately
+- Client polls `GET /v1/jobs/{id}/scope/status/{task_id}` or uses SSE for streaming
+- Celery worker processes photos asynchronously
+- Redis as broker (Upstash Redis via Supabase/Railway, or self-hosted)
+- This pattern applies to: AI Photo Scope, Hazmat Scanner, Scope Check, Job Assistant
