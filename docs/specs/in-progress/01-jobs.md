@@ -3,8 +3,8 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ███████████████████░ 95% (6/6 phases) |
-| **State** | 🔶 In Progress — pytest + voice remaining |
+| **Progress** | ████████████████████ 98% (6/6 phases + eng review) |
+| **State** | 🔶 In Progress — voice (Spec 03), integration tests remaining |
 | **Blocker** | None |
 | **Branch** | main |
 | **Issue** | — |
@@ -15,10 +15,10 @@
 | Created | 2026-03-24 |
 | Started | 2026-03-26 |
 | Completed | — |
-| Sessions | 4 |
-| Total Time | ~12 hours |
-| Files Changed | 75+ |
-| Tests Written | 2 (floor plan cleanup) |
+| Sessions | 5 |
+| Total Time | ~16 hours |
+| Files Changed | 140+ |
+| Tests Written | 466 backend (mocked) + 29 frontend (Vitest) |
 
 ## Done When
 - [x] User can create a job with address + loss type (2 required fields, rest optional)
@@ -43,14 +43,18 @@
 - [x] User can share job via a link (read-only view) — modal with copy-to-clipboard + public `/shared/[token]` page
 - [x] User can delete a job
 - [x] All forms work with manual input (voice overlay added in Spec 03)
-- [ ] All backend endpoints have pytest coverage
+- [x] All backend endpoints have pytest coverage (466 tests, mocked Supabase)
+- [x] Eng review completed (21 issues found, 19 fixed, 2 deferred)
+- [x] Frontend test framework (Vitest + Testing Library, 29 tests)
+- [x] Production hardening: async migration, RPC transactions, structured logging, input sanitization
+- [ ] Backend integration tests against real Supabase (deferred)
 - [ ] Code review approved
 
 ## What's Been Built
 
 ### Backend (47 endpoints, all functional)
 - Properties CRUD (4 endpoints)
-- Jobs CRUD with 7-stage pipeline: new → contracted → mitigation → drying → completed → submitted → collected (5 endpoints)
+- Jobs CRUD with 7-stage pipeline: new → contracted → mitigation → drying → job_complete → submitted → collected (5 endpoints)
 - Floor Plans CRUD + Shapely sketch cleanup (6 endpoints — AI chat is stub)
 - Rooms CRUD with auto sqft calculation (4 endpoints)
 - Photos: presigned upload, confirm, list, update, delete, bulk-select, bulk-tag (7 endpoints)
@@ -59,8 +63,21 @@
 - Reports: create + list (2 endpoints)
 - Share Links: create, list, revoke + public shared view (4 endpoints)
 - Shapely geometry engine: straighten walls, snap endpoints, grid alignment, standardize dimensions, room polygon detection via `polygonize()`
-- Database: 3 Alembic migrations (bootstrap, spec01 tables, pipeline enum update)
+- Dashboard endpoint: `GET /v1/dashboard` (pipeline counts, KPIs, priority jobs, recent events)
+- Database: 6 Alembic migrations (bootstrap, spec01 tables, pipeline enum, trigger fix, avatars, FTS index + RPC functions)
 - API Reference: 1,243-line `docs/api-reference.md` with full Pydantic schemas
+
+### Production Hardening (eng review session 2026-03-30)
+- **Async I/O**: entire Supabase layer migrated to AsyncClient (was sync, blocking event loop)
+- **Transactions**: 4 PostgreSQL RPC functions for atomic operations (create_job, delete_job, create_share_link, onboard_user)
+- **Security**: PostgREST filter injection sanitized, share token via POST body, CORS tightened, file upload size enforced via chunked read
+- **Auth**: JWKS cache with 5-min TTL + retry, auth context cache (60s), proper JWT header auth (was set_session hack)
+- **Logging**: structured JSON logs, request ID propagation (contextvars), X-Request-ID header, timing on critical paths
+- **Reliability**: job number retry fixed (re-query + random offset), onboarding race condition eliminated (advisory lock), photo ordering standardized
+- **API contract**: all list endpoints return `{items, total}` (was inconsistent array vs object)
+- **Validation queries**: N+1 → JOINs via PostgREST embedded resources
+- **Server-side search**: 6-field search (address, customer, job_number, city, carrier, claim_number) + PostgreSQL FTS index
+- **Frontend**: error.tsx boundaries, Vitest + Testing Library (29 tests), live search autocomplete, real Google Maps on dashboard
 
 ### Frontend (12 screens/features, desktop + mobile, all wired to real APIs)
 - **Dashboard**: left sidebar nav, 7-stage pipeline boxes (clickable filters), active jobs list, live operations map with pins, team status, activity feed, KPI metrics, contractor score + Google reviews
