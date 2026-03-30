@@ -10,7 +10,7 @@ import {
   useUpdateFloorPlan,
   useCleanupSketch,
 } from "@/lib/hooks/use-jobs";
-import { apiPost, apiPatch } from "@/lib/api";
+import { apiGet, apiPost, apiPatch } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
 
 export default function FloorPlanPage({
@@ -71,13 +71,13 @@ export default function FloorPlanPage({
             // 409 = floor plan already exists — refetch and update instead
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
-              await queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-              // Wait for refetch, then try update on floor 1
-              const refetched = await queryClient.fetchQuery<FloorPlan[]>({
-                queryKey: ["floor-plans", jobId],
-              });
-              if (refetched && refetched.length > 0) {
-                const fp = refetched[0];
+              // Fetch fresh list directly from API (bypass cache to avoid stale/undefined data)
+              const refetched = await apiGet<FloorPlan[]>(`/v1/jobs/${jobId}/floor-plans`);
+              const plans = Array.isArray(refetched) ? refetched : [];
+              // Update the query cache with the fresh data
+              queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], plans);
+              if (plans.length > 0) {
+                const fp = plans[0];
                 setActiveFloorId(fp.id);
                 await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${fp.id}`, {
                   canvas_data: canvasData,

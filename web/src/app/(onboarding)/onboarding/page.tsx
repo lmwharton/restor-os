@@ -90,10 +90,10 @@ export default function OnboardingPage() {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error(data.error || "Failed to create company");
+        throw new Error(data.detail || data.error || "Failed to create company");
       }
 
-      router.push("/jobs");
+      router.push("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setIsSubmitting(false);

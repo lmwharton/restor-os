@@ -56,6 +56,22 @@ interface Label {
   text: string;
 }
 
+type ShapeKind = "rectangle" | "circle" | "line" | "triangle" | "ellipse" | "polygon";
+
+interface Shape {
+  id: string;
+  kind: ShapeKind;
+  // Bounding box (world coords) for rectangle/ellipse/triangle/circle
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  // For polygon: vertices; for line: 2 points
+  points?: { x: number; y: number }[];
+  strokeColor?: string;
+  fillColor?: string;
+}
+
 interface CanvasData {
   walls: Wall[];
   rooms: RoomShape[];
@@ -63,11 +79,12 @@ interface CanvasData {
   windows: Window_[];
   openings: Opening[];
   labels: Label[];
+  shapes: Shape[];
   scale: number;
   offset: { x: number; y: number };
 }
 
-type Tool = "wall" | "door" | "window" | "opening" | "label" | "select" | "erase" | "undo";
+type Tool = "wall" | "door" | "window" | "opening" | "label" | "select" | "erase" | "undo" | "rectangle" | "circle" | "line" | "triangle" | "ellipse" | "polygon";
 
 interface FloorPlanCanvasProps {
   canvasData?: Record<string, unknown> | null;
@@ -110,6 +127,9 @@ const COLORS = {
   window: "#00628e",
   opening: "#594139",
   label: "#594139",
+  shape: "#8d7168",
+  shapeFill: "rgba(232, 93, 38, 0.06)",
+  shapeSelected: "#e85d26",
 } as const;
 
 /* ------------------------------------------------------------------ */
@@ -304,6 +324,7 @@ function parseCanvasData(raw: Record<string, unknown> | null | undefined): Canva
       windows: [],
       openings: [],
       labels: [],
+      shapes: [],
       scale: DEFAULT_SCALE,
       offset: { x: 0, y: 0 },
     };
@@ -315,6 +336,7 @@ function parseCanvasData(raw: Record<string, unknown> | null | undefined): Canva
     windows: (raw.windows as Window_[]) || [],
     openings: (raw.openings as Opening[]) || [],
     labels: (raw.labels as Label[]) || [],
+    shapes: (raw.shapes as Shape[]) || [],
     scale: (raw.scale as number) || DEFAULT_SCALE,
     offset: (raw.offset as { x: number; y: number }) || { x: 0, y: 0 },
   };
@@ -333,6 +355,39 @@ function hitTestWallElement(
   const d = distance(px, py, pos.x, pos.y);
   return d < Math.max(threshold, width / 2);
 }
+
+/** Hit test a shape: returns true if point (px,py) in world coords is near the shape */
+function hitTestShape(px: number, py: number, shape: Shape, threshold: number): boolean {
+  if (shape.kind === "line" && shape.points && shape.points.length >= 2) {
+    return pointToSegmentDistance(px, py, shape.points[0].x, shape.points[0].y, shape.points[1].x, shape.points[1].y) < threshold;
+  }
+  if (shape.kind === "polygon" && shape.points && shape.points.length >= 2) {
+    // Check if near any edge of the polygon
+    for (let i = 0; i < shape.points.length; i++) {
+      const j = (i + 1) % shape.points.length;
+      if (pointToSegmentDistance(px, py, shape.points[i].x, shape.points[i].y, shape.points[j].x, shape.points[j].y) < threshold) return true;
+    }
+    // Also check if inside the polygon (ray casting)
+    let inside = false;
+    const pts = shape.points;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      if (((pts[i].y > py) !== (pts[j].y > py)) && (px < (pts[j].x - pts[i].x) * (py - pts[i].y) / (pts[j].y - pts[i].y) + pts[i].x)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  }
+  // Bounding box shapes: check if point is inside or near the border
+  const x1 = Math.min(shape.x, shape.x + shape.width);
+  const y1 = Math.min(shape.y, shape.y + shape.height);
+  const x2 = Math.max(shape.x, shape.x + shape.width);
+  const y2 = Math.max(shape.y, shape.y + shape.height);
+  // Inside the shape
+  if (px >= x1 - threshold && px <= x2 + threshold && py >= y1 - threshold && py <= y2 + threshold) return true;
+  return false;
+}
+
+const SHAPE_TOOLS: Tool[] = ["rectangle", "circle", "line", "triangle", "ellipse", "polygon"];
 
 /* ------------------------------------------------------------------ */
 /*  Component                                                          */
@@ -355,6 +410,7 @@ export default function FloorPlanCanvas({
   const [windows, setWindows] = useState<Window_[]>(() => parseCanvasData(initialData).windows);
   const [openings, setOpenings] = useState<Opening[]>(() => parseCanvasData(initialData).openings);
   const [labels, setLabels] = useState<Label[]>(() => parseCanvasData(initialData).labels);
+  const [shapes, setShapes] = useState<Shape[]>(() => parseCanvasData(initialData).shapes);
   const [scale, setScale] = useState(() => parseCanvasData(initialData).scale);
   const [offset, setOffset] = useState(() => parseCanvasData(initialData).offset);
   const [tool, setTool] = useState<Tool>("wall");
@@ -363,6 +419,7 @@ export default function FloorPlanCanvas({
   const [isCleaning, setIsCleaning] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveFlash, setSaveFlash] = useState(false);
+  const [toolCategory, setToolCategory] = useState<"structure" | "shapes" | "annotate" | "actions">("structure");
 
   // Label editing state
   const [editingLabel, setEditingLabel] = useState<{ id: string; x: number; y: number; text: string } | null>(null);
@@ -434,6 +491,28 @@ export default function FloorPlanCanvas({
     labelOffsetY: 0,
   });
 
+  // Shape drawing state
+  const shapeDrawRef = useRef<{
+    isDrawing: boolean;
+    startX: number;
+    startY: number;
+    currentX: number;
+    currentY: number;
+    polygonPoints: { x: number; y: number }[];
+    isPolygonStarted: boolean;
+  }>({
+    isDrawing: false,
+    startX: 0,
+    startY: 0,
+    currentX: 0,
+    currentY: 0,
+    polygonPoints: [],
+    isPolygonStarted: false,
+  });
+
+  // Selected shape for select tool
+  const [selectedShapeId, setSelectedShapeId] = useState<string | null>(null);
+
   /* ---------------------------------------------------------------- */
   /*  Canvas-to-world coordinate transforms                            */
   /* ---------------------------------------------------------------- */
@@ -459,8 +538,8 @@ export default function FloorPlanCanvas({
   /* ---------------------------------------------------------------- */
 
   const getCurrentData = useCallback((): CanvasData => {
-    return { walls, rooms, doors, windows, openings, labels, scale, offset };
-  }, [walls, rooms, doors, windows, openings, labels, scale, offset]);
+    return { walls, rooms, doors, windows, openings, labels, shapes, scale, offset };
+  }, [walls, rooms, doors, windows, openings, labels, shapes, scale, offset]);
 
   /* ---------------------------------------------------------------- */
   /*  Save undo snapshot                                               */
@@ -469,9 +548,9 @@ export default function FloorPlanCanvas({
   const pushUndo = useCallback(() => {
     setUndoStack((prev) => [
       ...prev,
-      { walls, rooms, doors, windows, openings, labels, scale, offset },
+      { walls, rooms, doors, windows, openings, labels, shapes, scale, offset },
     ]);
-  }, [walls, rooms, doors, windows, openings, labels, scale, offset]);
+  }, [walls, rooms, doors, windows, openings, labels, shapes, scale, offset]);
 
   /* ---------------------------------------------------------------- */
   /*  Render loop                                                      */
@@ -829,6 +908,233 @@ export default function FloorPlanCanvas({
       ctx.fillText(lbl.text, canvasPos.x, canvasPos.y);
     }
 
+    // Draw shapes
+    for (const shape of shapes) {
+      const isSelected = shape.id === selectedShapeId;
+      const stroke = isSelected ? COLORS.shapeSelected : (shape.strokeColor || COLORS.shape);
+      const fill = shape.fillColor || COLORS.shapeFill;
+
+      ctx.save();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5 * ratio;
+      ctx.fillStyle = fill;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      if (shape.kind === "rectangle") {
+        const tl = worldToCanvas(shape.x, shape.y);
+        const br = worldToCanvas(shape.x + shape.width, shape.y + shape.height);
+        const w = br.x - tl.x;
+        const h = br.y - tl.y;
+        ctx.fillRect(tl.x, tl.y, w, h);
+        ctx.strokeRect(tl.x, tl.y, w, h);
+      } else if (shape.kind === "circle") {
+        const cx = shape.x + shape.width / 2;
+        const cy = shape.y + shape.height / 2;
+        const center = worldToCanvas(cx, cy);
+        const r = Math.abs(shape.width / 2) * ratio;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (shape.kind === "ellipse") {
+        const cx = shape.x + shape.width / 2;
+        const cy = shape.y + shape.height / 2;
+        const center = worldToCanvas(cx, cy);
+        const rx = Math.abs(shape.width / 2) * ratio;
+        const ry = Math.abs(shape.height / 2) * ratio;
+        ctx.beginPath();
+        ctx.ellipse(center.x, center.y, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (shape.kind === "triangle") {
+        // Equilateral-ish triangle inscribed in bounding box
+        const tl = worldToCanvas(shape.x, shape.y);
+        const br = worldToCanvas(shape.x + shape.width, shape.y + shape.height);
+        const topMid = { x: (tl.x + br.x) / 2, y: tl.y };
+        const botLeft = { x: tl.x, y: br.y };
+        const botRight = { x: br.x, y: br.y };
+        ctx.beginPath();
+        ctx.moveTo(topMid.x, topMid.y);
+        ctx.lineTo(botRight.x, botRight.y);
+        ctx.lineTo(botLeft.x, botLeft.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (shape.kind === "line" && shape.points && shape.points.length >= 2) {
+        const p1 = worldToCanvas(shape.points[0].x, shape.points[0].y);
+        const p2 = worldToCanvas(shape.points[1].x, shape.points[1].y);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      } else if (shape.kind === "polygon" && shape.points && shape.points.length >= 2) {
+        ctx.beginPath();
+        const first = worldToCanvas(shape.points[0].x, shape.points[0].y);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < shape.points.length; i++) {
+          const pt = worldToCanvas(shape.points[i].x, shape.points[i].y);
+          ctx.lineTo(pt.x, pt.y);
+        }
+        if (shape.points.length >= 3) {
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.stroke();
+      }
+
+      // Selection handles
+      if (isSelected) {
+        if (shape.kind === "line" && shape.points && shape.points.length >= 2) {
+          for (const pt of shape.points) {
+            const cp = worldToCanvas(pt.x, pt.y);
+            ctx.beginPath();
+            ctx.arc(cp.x, cp.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = COLORS.shapeSelected;
+            ctx.fill();
+          }
+        } else if (shape.kind === "polygon" && shape.points) {
+          for (const pt of shape.points) {
+            const cp = worldToCanvas(pt.x, pt.y);
+            ctx.beginPath();
+            ctx.arc(cp.x, cp.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = COLORS.shapeSelected;
+            ctx.fill();
+          }
+        } else {
+          // Draw corner handles for bounding-box shapes
+          const corners = [
+            { x: shape.x, y: shape.y },
+            { x: shape.x + shape.width, y: shape.y },
+            { x: shape.x + shape.width, y: shape.y + shape.height },
+            { x: shape.x, y: shape.y + shape.height },
+          ];
+          for (const c of corners) {
+            const cp = worldToCanvas(c.x, c.y);
+            ctx.beginPath();
+            ctx.arc(cp.x, cp.y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = COLORS.shapeSelected;
+            ctx.fill();
+          }
+        }
+      }
+
+      ctx.restore();
+    }
+
+    // Shape drawing preview
+    const sd = shapeDrawRef.current;
+    if (sd.isDrawing && !sd.isPolygonStarted) {
+      const stroke = COLORS.shape;
+      const fill = COLORS.shapeFill;
+      ctx.save();
+      ctx.strokeStyle = stroke;
+      ctx.lineWidth = 1.5 * ratio;
+      ctx.fillStyle = fill;
+      ctx.setLineDash([6, 4]);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      const activeTool = tool;
+      if (activeTool === "rectangle") {
+        const tl = worldToCanvas(Math.min(sd.startX, sd.currentX), Math.min(sd.startY, sd.currentY));
+        const br = worldToCanvas(Math.max(sd.startX, sd.currentX), Math.max(sd.startY, sd.currentY));
+        ctx.fillRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+        ctx.strokeRect(tl.x, tl.y, br.x - tl.x, br.y - tl.y);
+      } else if (activeTool === "circle") {
+        const cx = (sd.startX + sd.currentX) / 2;
+        const cy = (sd.startY + sd.currentY) / 2;
+        const center = worldToCanvas(cx, cy);
+        const r = Math.abs(sd.currentX - sd.startX) / 2 * ratio;
+        ctx.beginPath();
+        ctx.arc(center.x, center.y, r || 1, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (activeTool === "ellipse") {
+        const cx = (sd.startX + sd.currentX) / 2;
+        const cy = (sd.startY + sd.currentY) / 2;
+        const center = worldToCanvas(cx, cy);
+        const rx = Math.abs(sd.currentX - sd.startX) / 2 * ratio;
+        const ry = Math.abs(sd.currentY - sd.startY) / 2 * ratio;
+        ctx.beginPath();
+        ctx.ellipse(center.x, center.y, rx || 1, ry || 1, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      } else if (activeTool === "triangle") {
+        const minX = Math.min(sd.startX, sd.currentX);
+        const minY = Math.min(sd.startY, sd.currentY);
+        const maxX = Math.max(sd.startX, sd.currentX);
+        const maxY = Math.max(sd.startY, sd.currentY);
+        const tl = worldToCanvas(minX, minY);
+        const br = worldToCanvas(maxX, maxY);
+        const topMid = { x: (tl.x + br.x) / 2, y: tl.y };
+        ctx.beginPath();
+        ctx.moveTo(topMid.x, topMid.y);
+        ctx.lineTo(br.x, br.y);
+        ctx.lineTo(tl.x, br.y);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+      } else if (activeTool === "line") {
+        const p1 = worldToCanvas(sd.startX, sd.startY);
+        const p2 = worldToCanvas(sd.currentX, sd.currentY);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // Polygon drawing preview (in-progress vertices)
+    if (sd.isPolygonStarted && sd.polygonPoints.length > 0) {
+      ctx.save();
+      ctx.strokeStyle = COLORS.shape;
+      ctx.lineWidth = 1.5 * ratio;
+      ctx.fillStyle = COLORS.shapeFill;
+      ctx.setLineDash([6, 4]);
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+
+      ctx.beginPath();
+      const first = worldToCanvas(sd.polygonPoints[0].x, sd.polygonPoints[0].y);
+      ctx.moveTo(first.x, first.y);
+      for (let i = 1; i < sd.polygonPoints.length; i++) {
+        const pt = worldToCanvas(sd.polygonPoints[i].x, sd.polygonPoints[i].y);
+        ctx.lineTo(pt.x, pt.y);
+      }
+      // Line to current mouse position
+      const cur = worldToCanvas(sd.currentX, sd.currentY);
+      ctx.lineTo(cur.x, cur.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Draw vertex dots
+      for (const pt of sd.polygonPoints) {
+        const cp = worldToCanvas(pt.x, pt.y);
+        ctx.beginPath();
+        ctx.arc(cp.x, cp.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = COLORS.shape;
+        ctx.fill();
+      }
+
+      // Highlight first point when close (to indicate close-ability)
+      if (sd.polygonPoints.length >= 3) {
+        const d0 = distance(sd.currentX, sd.currentY, sd.polygonPoints[0].x, sd.polygonPoints[0].y);
+        if (d0 < 15) {
+          const fp = worldToCanvas(sd.polygonPoints[0].x, sd.polygonPoints[0].y);
+          ctx.beginPath();
+          ctx.arc(fp.x, fp.y, 8, 0, Math.PI * 2);
+          ctx.strokeStyle = COLORS.shapeSelected;
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+      }
+
+      ctx.restore();
+    }
+
     // Drawing preview line
     const d = drawingRef.current;
     if (d.isDrawing) {
@@ -855,7 +1161,7 @@ export default function FloorPlanCanvas({
         ctx.stroke();
       }
     }
-  }, [walls, rooms, doors, windows, openings, labels, scale, offset, selectedWallId, worldToCanvas, roomNames]);
+  }, [walls, rooms, doors, windows, openings, labels, shapes, scale, offset, selectedWallId, selectedShapeId, worldToCanvas, roomNames, tool]);
 
   /* ---------------------------------------------------------------- */
   /*  Resize observer                                                  */
@@ -895,6 +1201,14 @@ export default function FloorPlanCanvas({
     const detected = detectRooms(walls);
     setRooms(detected);
   }, [walls]);
+
+  // Sync mobile category tab with active tool
+  useEffect(() => {
+    if (["wall", "door", "window", "opening"].includes(tool)) setToolCategory("structure");
+    else if (SHAPE_TOOLS.includes(tool)) setToolCategory("shapes");
+    else if (tool === "label") setToolCategory("annotate");
+    else if (["select", "erase"].includes(tool)) setToolCategory("actions");
+  }, [tool]);
 
   /* ---------------------------------------------------------------- */
   /*  Pointer event handlers                                           */
@@ -1068,6 +1382,23 @@ export default function FloorPlanCanvas({
             drag.labelId = lbl.id;
             drag.labelOffsetX = pos.x - lbl.x;
             drag.labelOffsetY = pos.y - lbl.y;
+            setSelectedShapeId(null);
+            return;
+          }
+        }
+
+        // Check if tapping on a shape to select/drag it
+        for (const shape of [...shapes].reverse()) {
+          if (hitTestShape(pos.x, pos.y, shape, 15)) {
+            setSelectedShapeId(shape.id);
+            setSelectedWallId(null);
+            const drag = dragRef.current;
+            drag.isDragging = true;
+            drag.wallId = null;
+            drag.labelId = null;
+            // Store shape drag offset
+            drag.offsetX = pos.x - shape.x;
+            drag.offsetY = pos.y - shape.y;
             return;
           }
         }
@@ -1083,6 +1414,7 @@ export default function FloorPlanCanvas({
           }
         }
         setSelectedWallId(closestId);
+        setSelectedShapeId(null);
 
         if (closestId) {
           const wall = walls.find((w) => w.id === closestId)!;
@@ -1108,7 +1440,16 @@ export default function FloorPlanCanvas({
           }
         }
       } else if (tool === "erase") {
-        // Check doors first
+        // Check shapes first
+        for (const shape of [...shapes].reverse()) {
+          if (hitTestShape(pos.x, pos.y, shape, 15)) {
+            pushUndo();
+            setShapes((prev) => prev.filter((s) => s.id !== shape.id));
+            return;
+          }
+        }
+
+        // Check doors
         for (const door of doors) {
           const wall = walls.find((w) => w.id === door.wallId);
           if (!wall) continue;
@@ -1168,9 +1509,61 @@ export default function FloorPlanCanvas({
           setWindows((prev) => prev.filter((w) => w.wallId !== closestId));
           setOpenings((prev) => prev.filter((o) => o.wallId !== closestId));
         }
+      } else if (tool === "polygon") {
+        // Polygon: click to add vertex, close when near first point
+        const sd = shapeDrawRef.current;
+        if (!sd.isPolygonStarted) {
+          // Start a new polygon
+          sd.isPolygonStarted = true;
+          sd.polygonPoints = [{ x: pos.x, y: pos.y }];
+          sd.currentX = pos.x;
+          sd.currentY = pos.y;
+          render();
+        } else {
+          // Check if close to first point to finish
+          if (sd.polygonPoints.length >= 3 && distance(pos.x, pos.y, sd.polygonPoints[0].x, sd.polygonPoints[0].y) < 15) {
+            // Close the polygon
+            pushUndo();
+            const pts = [...sd.polygonPoints];
+            // Compute bounding box
+            const xs = pts.map((p) => p.x);
+            const ys = pts.map((p) => p.y);
+            const minX = Math.min(...xs);
+            const minY = Math.min(...ys);
+            const maxX = Math.max(...xs);
+            const maxY = Math.max(...ys);
+            setShapes((prev) => [
+              ...prev,
+              {
+                id: generateId(),
+                kind: "polygon",
+                x: minX,
+                y: minY,
+                width: maxX - minX,
+                height: maxY - minY,
+                points: pts,
+              },
+            ]);
+            sd.isPolygonStarted = false;
+            sd.polygonPoints = [];
+            render();
+          } else {
+            // Add vertex
+            sd.polygonPoints.push({ x: pos.x, y: pos.y });
+            render();
+          }
+        }
+      } else if (tool === "rectangle" || tool === "circle" || tool === "line" || tool === "triangle" || tool === "ellipse") {
+        // Start shape drawing (rectangle, circle, line, triangle, ellipse)
+        const sd = shapeDrawRef.current;
+        sd.isDrawing = true;
+        sd.startX = pos.x;
+        sd.startY = pos.y;
+        sd.currentX = pos.x;
+        sd.currentY = pos.y;
       }
     },
-    [readOnly, tool, walls, doors, windows, openings, labels, rooms, roomNames, scale, getPointerPos, getCanvasPixelPos, worldToCanvas, pushUndo]
+    [readOnly, tool, walls, doors, windows, openings, labels, shapes, rooms, roomNames, scale, getPointerPos, getCanvasPixelPos, worldToCanvas, pushUndo, render]
   );
 
   const handlePointerMove = useCallback(
@@ -1208,6 +1601,14 @@ export default function FloorPlanCanvas({
         drawingRef.current.currentX = snap.x;
         drawingRef.current.currentY = snap.y;
         render();
+      } else if ((tool === "rectangle" || tool === "circle" || tool === "line" || tool === "triangle" || tool === "ellipse") && shapeDrawRef.current.isDrawing) {
+        shapeDrawRef.current.currentX = pos.x;
+        shapeDrawRef.current.currentY = pos.y;
+        render();
+      } else if (tool === "polygon" && shapeDrawRef.current.isPolygonStarted) {
+        shapeDrawRef.current.currentX = pos.x;
+        shapeDrawRef.current.currentY = pos.y;
+        render();
       } else if (tool === "select" && dragRef.current.isDragging) {
         const drag = dragRef.current;
 
@@ -1219,6 +1620,26 @@ export default function FloorPlanCanvas({
                 ? { ...lbl, x: pos.x - drag.labelOffsetX, y: pos.y - drag.labelOffsetY }
                 : lbl
             )
+          );
+          return;
+        }
+
+        // Dragging a shape
+        if (selectedShapeId && !drag.wallId && !drag.labelId) {
+          const dx = pos.x - drag.offsetX;
+          const dy = pos.y - drag.offsetY;
+          setShapes((prev) =>
+            prev.map((s) => {
+              if (s.id !== selectedShapeId) return s;
+              const deltaX = dx - s.x;
+              const deltaY = dy - s.y;
+              const updated = { ...s, x: dx, y: dy };
+              // Also shift points for polygon/line
+              if (s.points) {
+                updated.points = s.points.map((p) => ({ x: p.x + deltaX, y: p.y + deltaY }));
+              }
+              return updated;
+            })
           );
           return;
         }
@@ -1245,7 +1666,7 @@ export default function FloorPlanCanvas({
         );
       }
     },
-    [readOnly, tool, walls, getPointerPos, render]
+    [readOnly, tool, walls, selectedShapeId, getPointerPos, render]
   );
 
   const handlePointerUp = useCallback(
@@ -1279,10 +1700,56 @@ export default function FloorPlanCanvas({
         render();
       }
 
+      // Finalize shape drawing (not polygon - that uses click-to-add)
+      if ((tool === "rectangle" || tool === "circle" || tool === "line" || tool === "triangle" || tool === "ellipse") && shapeDrawRef.current.isDrawing) {
+        const sd = shapeDrawRef.current;
+        sd.isDrawing = false;
+        const len = distance(sd.startX, sd.startY, sd.currentX, sd.currentY);
+        if (len > 5) {
+          pushUndo();
+          if (tool === "line") {
+            setShapes((prev) => [
+              ...prev,
+              {
+                id: generateId(),
+                kind: "line",
+                x: Math.min(sd.startX, sd.currentX),
+                y: Math.min(sd.startY, sd.currentY),
+                width: Math.abs(sd.currentX - sd.startX),
+                height: Math.abs(sd.currentY - sd.startY),
+                points: [
+                  { x: sd.startX, y: sd.startY },
+                  { x: sd.currentX, y: sd.currentY },
+                ],
+              },
+            ]);
+          } else {
+            const x = Math.min(sd.startX, sd.currentX);
+            const y = Math.min(sd.startY, sd.currentY);
+            const w = Math.abs(sd.currentX - sd.startX);
+            const h = Math.abs(sd.currentY - sd.startY);
+            setShapes((prev) => [
+              ...prev,
+              {
+                id: generateId(),
+                kind: tool as ShapeKind,
+                x,
+                y,
+                width: tool === "circle" ? Math.max(w, h) : w,
+                height: tool === "circle" ? Math.max(w, h) : h,
+              },
+            ]);
+          }
+        }
+        render();
+      }
+
       if (tool === "select") {
         dragRef.current.isDragging = false;
         dragRef.current.wallId = null;
         dragRef.current.labelId = null;
+        dragRef.current.offsetX = 0;
+        dragRef.current.offsetY = 0;
       }
     },
     [tool, render, pushUndo]
@@ -1330,18 +1797,21 @@ export default function FloorPlanCanvas({
     setWindows(prev.windows);
     setOpenings(prev.openings);
     setLabels(prev.labels);
+    setShapes(prev.shapes);
   }, [undoStack]);
 
   const handleClearAll = useCallback(() => {
-    if (walls.length === 0 && doors.length === 0 && windows.length === 0 && openings.length === 0 && labels.length === 0) return;
+    if (walls.length === 0 && doors.length === 0 && windows.length === 0 && openings.length === 0 && labels.length === 0 && shapes.length === 0) return;
     pushUndo();
     setWalls([]);
     setDoors([]);
     setWindows([]);
     setOpenings([]);
     setLabels([]);
+    setShapes([]);
     setSelectedWallId(null);
-  }, [walls, doors, windows, openings, labels, pushUndo]);
+    setSelectedShapeId(null);
+  }, [walls, doors, windows, openings, labels, shapes, pushUndo]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -1367,6 +1837,8 @@ export default function FloorPlanCanvas({
       setWindows(cleaned.windows);
       setOpenings(cleaned.openings);
       setLabels(cleaned.labels);
+      // Preserve shapes — cleanup API only returns walls/rooms/scale/offset,
+      // so cleaned.shapes would be empty. Keep user-drawn shapes intact.
       setScale(cleaned.scale);
       setOffset(cleaned.offset);
     } catch {
@@ -1422,7 +1894,8 @@ export default function FloorPlanCanvas({
   /*  Toolbar                                                          */
   /* ---------------------------------------------------------------- */
 
-  const tools: { id: Tool | "clear"; label: string; icon: React.ReactNode }[] = [
+  const tools: { id: Tool | "clear" | "divider"; label: string; icon: React.ReactNode }[] = [
+    // Structural tools
     {
       id: "wall",
       label: "Wall",
@@ -1464,6 +1937,66 @@ export default function FloorPlanCanvas({
         </svg>
       ),
     },
+    // Divider
+    { id: "divider" as Tool | "clear" | "divider", label: "", icon: null },
+    // Shape tools
+    {
+      id: "rectangle",
+      label: "Rect",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <rect x="4" y="6" width="16" height="12" rx="1" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      ),
+    },
+    {
+      id: "circle",
+      label: "Circle",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      ),
+    },
+    {
+      id: "triangle",
+      label: "Tri",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <path d="M12 4L21 20H3L12 4z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      ),
+    },
+    {
+      id: "ellipse",
+      label: "Ellipse",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <ellipse cx="12" cy="12" rx="9" ry="6" stroke="currentColor" strokeWidth="1.8" />
+        </svg>
+      ),
+    },
+    {
+      id: "line",
+      label: "Line",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <path d="M5 19L19 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+      ),
+    },
+    {
+      id: "polygon",
+      label: "Poly",
+      icon: (
+        <svg width={20} height={20} viewBox="0 0 24 24" fill="none">
+          <path d="M12 3L20 9L18 18H6L4 9L12 3z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" />
+        </svg>
+      ),
+    },
+    // Divider
+    { id: "divider" as Tool | "clear" | "divider", label: "", icon: null },
+    // Annotation
     {
       id: "label",
       label: "Label",
@@ -1473,6 +2006,9 @@ export default function FloorPlanCanvas({
         </svg>
       ),
     },
+    // Divider
+    { id: "divider" as Tool | "clear" | "divider", label: "", icon: null },
+    // Actions
     {
       id: "select",
       label: "Select",
@@ -1511,18 +2047,18 @@ export default function FloorPlanCanvas({
     },
   ];
 
-  const elementCount = doors.length + windows.length + openings.length + labels.length;
+  const elementCount = doors.length + windows.length + openings.length + labels.length + shapes.length;
 
   return (
     <div className="flex flex-col h-full bg-surface">
       {/* Top bar */}
-      <div className="relative flex items-center justify-between px-4 py-3 border-b border-outline-variant/40 bg-surface-container-low">
+      <div className="relative flex items-center justify-between px-2 py-2 sm:px-4 sm:py-3 border-b border-outline-variant/40 bg-surface-container-low">
         {/* Save */}
         <button
           type="button"
           onClick={handleSave}
           disabled={readOnly || saving}
-          className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-semibold transition-all duration-200 bg-on-surface text-surface hover:bg-on-surface/90 disabled:opacity-40 cursor-pointer"
+          className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all duration-200 bg-on-surface text-surface hover:bg-on-surface/90 disabled:opacity-40 cursor-pointer"
         >
           {saving ? (
             <span className="animate-spin w-4 h-4 border-2 border-surface border-t-transparent rounded-full" />
@@ -1532,11 +2068,11 @@ export default function FloorPlanCanvas({
               <path d="M17 21v-8H7v8M7 3v5h8" stroke="currentColor" strokeWidth="1.8" />
             </svg>
           )}
-          {saveFlash ? "Saved" : "Save"}
+          <span className="hidden sm:inline">{saveFlash ? "Saved" : "Save"}</span>
         </button>
 
         {/* Floor name */}
-        <span className="absolute left-1/2 -translate-x-1/2 text-[13px] font-semibold text-on-surface-variant font-[family-name:var(--font-geist-mono)] tracking-wide uppercase">
+        <span className="absolute left-1/2 -translate-x-1/2 text-[11px] sm:text-[13px] font-semibold text-on-surface-variant font-[family-name:var(--font-geist-mono)] tracking-wide uppercase">
           {floorName}
         </span>
 
@@ -1546,7 +2082,7 @@ export default function FloorPlanCanvas({
             type="button"
             onClick={handleCleanup}
             disabled={isCleaning || walls.length === 0}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-[13px] font-semibold transition-all duration-200 bg-brand-accent text-white hover:bg-brand-accent/90 disabled:opacity-40 cursor-pointer"
+            className="flex items-center gap-1 sm:gap-1.5 px-2.5 py-1.5 sm:px-3.5 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all duration-200 bg-brand-accent text-white hover:bg-brand-accent/90 disabled:opacity-40 cursor-pointer"
           >
             {isCleaning ? (
               <span className="animate-spin w-4 h-4 border-2 border-white border-t-transparent rounded-full" />
@@ -1556,7 +2092,7 @@ export default function FloorPlanCanvas({
                 <path d="M19 15l1 3 3 1-3 1-1 3-1-3-3-1 3-1 1-3z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round" />
               </svg>
             )}
-            {isCleaning ? "Cleaning..." : "Clean Up"}
+            <span className="hidden sm:inline">{isCleaning ? "Cleaning..." : "Clean Up"}</span>
           </button>
         )}
       </div>
@@ -1576,6 +2112,8 @@ export default function FloorPlanCanvas({
                 ? "text"
                 : tool === "door" || tool === "window" || tool === "opening"
                 ? "copy"
+                : SHAPE_TOOLS.includes(tool)
+                ? "crosshair"
                 : "crosshair",
           }}
           onPointerDown={handlePointerDown}
@@ -1585,12 +2123,11 @@ export default function FloorPlanCanvas({
         />
 
         {/* Counts indicator */}
-        <div className="absolute top-3 left-1/2 -translate-x-1/2 bg-inverse-surface/80 text-inverse-on-surface px-3 py-1 rounded-full text-[11px] font-[family-name:var(--font-geist-mono)] backdrop-blur-sm pointer-events-none">
-          {walls.length} wall{walls.length !== 1 ? "s" : ""} &middot;{" "}
-          {rooms.length} room{rooms.length !== 1 ? "s" : ""}
+        <div className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 bg-inverse-surface/80 text-inverse-on-surface px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-[family-name:var(--font-geist-mono)] backdrop-blur-sm pointer-events-none whitespace-nowrap">
+          {walls.length}W &middot; {rooms.length}R
           {elementCount > 0 && (
             <>
-              {" "}&middot; {elementCount} element{elementCount !== 1 ? "s" : ""}
+              {" "}&middot; {elementCount}E
             </>
           )}
         </div>
@@ -1652,49 +2189,135 @@ export default function FloorPlanCanvas({
         )}
       </div>
 
-      {/* Toolbar */}
+      {/* Toolbar — mobile: two-row with category tabs; desktop: single scrollable row */}
       {!readOnly && (
-        <div className="flex items-center gap-1 px-2 py-2.5 border-t border-outline-variant/40 bg-surface-container-low overflow-x-auto scrollbar-none">
-          <div className="flex items-center gap-1 mx-auto">
-            {tools.map((t) => {
-              const isActive = t.id === tool;
-              const isClear = t.id === "clear";
-              const isUndo = t.id === "undo";
-
-              return (
+        <div className="border-t border-outline-variant/40 bg-surface-container-low">
+          {/* Mobile: category tabs + tool row */}
+          <div className="sm:hidden">
+            {/* Category tabs */}
+            <div className="flex border-b border-outline-variant/20">
+              {(["structure", "shapes", "annotate", "actions"] as const).map((cat) => (
                 <button
-                  key={t.id}
+                  key={cat}
                   type="button"
-                  onClick={() => {
-                    if (isClear) {
-                      handleClearAll();
-                    } else if (isUndo) {
-                      handleUndo();
-                    } else {
-                      setTool(t.id as Tool);
-                    }
-                  }}
-                  disabled={
-                    (isUndo && undoStack.length === 0) ||
-                    (isClear && walls.length === 0 && doors.length === 0 && windows.length === 0 && openings.length === 0 && labels.length === 0)
-                  }
+                  onClick={() => setToolCategory(cat)}
                   className={`
-                    flex flex-col items-center justify-center gap-0.5 min-w-[44px] h-[44px] rounded-xl text-[10px] font-medium transition-all duration-150 cursor-pointer shrink-0
+                    flex-1 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors cursor-pointer
                     font-[family-name:var(--font-geist-mono)]
-                    ${
-                      isActive
-                        ? "bg-brand-accent/12 text-brand-accent"
-                        : "text-on-surface-variant hover:bg-surface-container-high"
+                    ${toolCategory === cat
+                      ? "text-brand-accent border-b-2 border-brand-accent"
+                      : "text-on-surface-variant/60"
                     }
-                    disabled:opacity-30 disabled:cursor-not-allowed
                   `}
-                  title={t.label}
                 >
-                  {t.icon}
-                  <span className="leading-none">{t.label}</span>
+                  {cat === "structure" ? "Build" : cat === "shapes" ? "Shapes" : cat === "annotate" ? "Note" : "Edit"}
                 </button>
-              );
-            })}
+              ))}
+            </div>
+            {/* Tools for selected category */}
+            <div className="flex items-center justify-center gap-1 px-1 py-1.5 overflow-x-auto scrollbar-none">
+              {tools
+                .filter((t) => {
+                  if (t.id === "divider") return false;
+                  if (toolCategory === "structure") return ["wall", "door", "window", "opening"].includes(t.id);
+                  if (toolCategory === "shapes") return ["rectangle", "circle", "triangle", "ellipse", "line", "polygon"].includes(t.id);
+                  if (toolCategory === "annotate") return t.id === "label";
+                  if (toolCategory === "actions") return ["select", "erase", "undo", "clear"].includes(t.id);
+                  return false;
+                })
+                .map((t) => {
+                  const isActive = t.id === tool;
+                  const isClear = t.id === "clear";
+                  const isUndo = t.id === "undo";
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => {
+                        if (isClear) {
+                          handleClearAll();
+                        } else if (isUndo) {
+                          handleUndo();
+                        } else {
+                          setTool(t.id as Tool);
+                          if (t.id !== "polygon") {
+                            shapeDrawRef.current.isPolygonStarted = false;
+                            shapeDrawRef.current.polygonPoints = [];
+                          }
+                        }
+                      }}
+                      disabled={
+                        (isUndo && undoStack.length === 0) ||
+                        (isClear && walls.length === 0 && doors.length === 0 && windows.length === 0 && openings.length === 0 && labels.length === 0 && shapes.length === 0)
+                      }
+                      className={`
+                        flex flex-col items-center justify-center gap-0.5 min-w-[48px] h-[48px] rounded-xl text-[10px] font-medium transition-all duration-150 cursor-pointer shrink-0
+                        font-[family-name:var(--font-geist-mono)]
+                        ${isActive ? "bg-brand-accent/12 text-brand-accent" : "text-on-surface-variant hover:bg-surface-container-high"}
+                        disabled:opacity-30 disabled:cursor-not-allowed
+                      `}
+                      title={t.label}
+                    >
+                      {t.icon}
+                      <span className="leading-none">{t.label}</span>
+                    </button>
+                  );
+                })}
+            </div>
+          </div>
+
+          {/* Desktop: single scrollable row */}
+          <div className="hidden sm:flex items-center gap-1 px-2 py-2.5 overflow-x-auto scrollbar-none">
+            <div className="flex items-center gap-1 mx-auto">
+              {tools.map((t, idx) => {
+                if (t.id === "divider") {
+                  return (
+                    <div
+                      key={`divider-${idx}`}
+                      className="w-px h-7 bg-outline-variant/40 mx-1 shrink-0"
+                    />
+                  );
+                }
+
+                const isActive = t.id === tool;
+                const isClear = t.id === "clear";
+                const isUndo = t.id === "undo";
+
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => {
+                      if (isClear) {
+                        handleClearAll();
+                      } else if (isUndo) {
+                        handleUndo();
+                      } else {
+                        setTool(t.id as Tool);
+                        if (t.id !== "polygon") {
+                          shapeDrawRef.current.isPolygonStarted = false;
+                          shapeDrawRef.current.polygonPoints = [];
+                        }
+                      }
+                    }}
+                    disabled={
+                      (isUndo && undoStack.length === 0) ||
+                      (isClear && walls.length === 0 && doors.length === 0 && windows.length === 0 && openings.length === 0 && labels.length === 0 && shapes.length === 0)
+                    }
+                    className={`
+                      flex flex-col items-center justify-center gap-0.5 min-w-[44px] h-[44px] rounded-xl text-[10px] font-medium transition-all duration-150 cursor-pointer shrink-0
+                      font-[family-name:var(--font-geist-mono)]
+                      ${isActive ? "bg-brand-accent/12 text-brand-accent" : "text-on-surface-variant hover:bg-surface-container-high"}
+                      disabled:opacity-30 disabled:cursor-not-allowed
+                    `}
+                    title={t.label}
+                  >
+                    {t.icon}
+                    <span className="leading-none">{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
       )}

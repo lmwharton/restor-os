@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowBack, Camera, Plus } from "@/components/icons";
+import { ArrowBack, Plus } from "@/components/icons";
 import { useRooms, useReadings } from "@/lib/hooks/use-jobs";
 import { apiPost } from "@/lib/api";
 import type { MoisturePoint } from "@/lib/types";
@@ -462,13 +462,6 @@ export default function MoistureReadingsPage() {
                         </span>
                       )}
                     </div>
-                    <button
-                      type="button"
-                      className="flex-shrink-0 w-12 h-12 rounded-xl bg-surface-container-low flex items-center justify-center active:bg-surface-container-high transition-colors"
-                      aria-label={`Take photo of point ${i + 1}`}
-                    >
-                      <Camera size={20} className="text-on-surface-variant" />
-                    </button>
                   </div>
                 );
               })}

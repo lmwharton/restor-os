@@ -4,6 +4,23 @@ import { use, useMemo } from "react";
 import Link from "next/link";
 import { useJob, useRooms, usePhotos, useReadings, useJobEvents } from "@/lib/hooks/use-jobs";
 
+// ─── Helpers ────────────────────────────────────────────────────────
+
+function formatTimeAgo(dateStr: string): string {
+  const now = Date.now();
+  const then = new Date(dateStr).getTime();
+  const diffMs = now - then;
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return "Just now";
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays === 1) return "Yesterday";
+  if (diffDays < 7) return `${diffDays} days ago`;
+  return new Date(dateStr).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
 // ─── Types ─────────────────────────────────────────────────────────
 type TimelineStatus = "complete" | "in-progress" | "not-started";
 
@@ -109,7 +126,7 @@ export default function JobTimelinePage({
   // Fetch readings for the first room (for GPP display)
   const firstRoomId = rooms?.[0]?.id ?? "";
   const { data: readings } = useReadings(jobId, firstRoomId);
-  useJobEvents(jobId); // pre-fetch events
+  const { data: events } = useJobEvents(jobId);
 
   const lossDate = job?.loss_date ?? null;
   const dayNumber = useMemo(() => {
@@ -329,9 +346,10 @@ export default function JobTimelinePage({
               </p>
               <button
                 type="button"
-                className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary transition-opacity hover:opacity-90 active:opacity-80"
+                disabled
+                className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary opacity-40"
               >
-                Analyze with AI &rarr;
+                Coming Soon
               </button>
             </>
           )}
@@ -348,13 +366,12 @@ export default function JobTimelinePage({
           <p className="mb-3 text-[13px] text-on-surface-variant">
             Needs scope to generate
           </p>
-          <button
-            type="button"
-            disabled
-            className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary opacity-40"
+          <Link
+            href={`/jobs/${jobId}/report`}
+            className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary flex items-center justify-center transition-opacity hover:opacity-90 active:opacity-80"
           >
             Generate Report
-          </button>
+          </Link>
         </div>
       ),
     },
@@ -455,26 +472,17 @@ export default function JobTimelinePage({
                   </svg>
                   <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">Readings</span>
                 </Link>
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center h-16 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors border border-outline-variant/30 cursor-pointer"
+                <Link
+                  href={`/jobs/${jobId}/report`}
+                  className="flex flex-col items-center justify-center h-16 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors border border-outline-variant/30"
                 >
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <rect x="9" y="1" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.5" />
-                    <path d="M19 10v1a7 7 0 0 1-14 0v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                    <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    <path d="M6 2h9l5 5v15H6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+                    <path d="M15 2v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M9 13h6M9 17h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
                   </svg>
-                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">Voice</span>
-                </button>
-                <button
-                  type="button"
-                  className="flex flex-col items-center justify-center h-16 rounded-xl text-on-surface-variant hover:bg-surface-container transition-colors border border-outline-variant/30 cursor-pointer"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M4 12h16M4 6h16M4 18h16" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">Notes</span>
-                </button>
+                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">Report</span>
+                </Link>
               </div>
             </section>
 
@@ -523,56 +531,36 @@ export default function JobTimelinePage({
               <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
                 Activity Feed
               </h3>
-              <ul className="space-y-3">
-                <li className="flex gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[12px] text-on-surface">5 photos uploaded to Master Bedroom</p>
-                    <p className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">Today</p>
-                  </div>
-                </li>
-                <li className="flex gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-brand-accent mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[12px] text-on-surface">Day 3 moisture readings added</p>
-                    <p className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">Today</p>
-                  </div>
-                </li>
-                <li className="flex gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-tertiary mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[12px] text-on-surface">AI generated 3 room sketches</p>
-                    <p className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">Yesterday</p>
-                  </div>
-                </li>
-                <li className="flex gap-2">
-                  <div className="w-1.5 h-1.5 rounded-full bg-surface-dim mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[12px] text-on-surface">Job created</p>
-                    <p className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">3 days ago</p>
-                  </div>
-                </li>
-              </ul>
+              {events && events.length > 0 ? (
+                <ul className="space-y-3">
+                  {events.slice(0, 10).map((event) => {
+                    const eventLabel = event.event_type
+                      .replace(/_/g, " ")
+                      .replace(/\b\w/g, (c) => c.toUpperCase());
+                    const timeAgo = formatTimeAgo(event.created_at);
+                    const dotColor = event.is_ai
+                      ? "bg-tertiary"
+                      : event.event_type.includes("photo")
+                        ? "bg-emerald-500"
+                        : event.event_type.includes("reading")
+                          ? "bg-brand-accent"
+                          : "bg-surface-dim";
+                    return (
+                      <li key={event.id} className="flex gap-2">
+                        <div className={`w-1.5 h-1.5 rounded-full ${dotColor} mt-1.5 shrink-0`} />
+                        <div>
+                          <p className="text-[12px] text-on-surface">{eventLabel}</p>
+                          <p className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">{timeAgo}</p>
+                        </div>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-[12px] text-on-surface-variant">No activity yet</p>
+              )}
             </section>
 
-            {/* Share */}
-            <section className="bg-surface-container-lowest rounded-2xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)]">
-              <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
-                Share
-              </h3>
-              <button
-                type="button"
-                className="w-full h-10 rounded-xl text-sm font-medium text-on-surface-variant border border-outline-variant flex items-center justify-center gap-2 hover:bg-surface-container-low transition-colors cursor-pointer"
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                  <circle cx="18" cy="5" r="3" stroke="currentColor" strokeWidth="1.5" />
-                  <circle cx="6" cy="12" r="3" stroke="currentColor" strokeWidth="1.5" />
-                  <circle cx="18" cy="19" r="3" stroke="currentColor" strokeWidth="1.5" />
-                  <path d="M8.59 13.51l6.83 3.98M15.41 6.51l-6.82 3.98" stroke="currentColor" strokeWidth="1.5" />
-                </svg>
-                Share with Adjuster
-              </button>
-            </section>
           </div>
         </div>
       </div>

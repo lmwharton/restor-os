@@ -49,7 +49,9 @@ async def upload_avatar(file: UploadFile, ctx: AuthContext = Depends(get_auth_co
     allowed_types = {"image/jpeg", "image/png", "image/webp"}
     if not file.content_type or file.content_type not in allowed_types:
         raise AppException(
-            status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
+            status_code=400,
+            detail="File must be JPEG, PNG, or WebP",
+            error_code="INVALID_FILE_TYPE",
         )
 
     # Read file with enforced size limit (handles chunked uploads where file.size is None)
@@ -130,7 +132,9 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
     allowed_types = {"image/jpeg", "image/png", "image/webp"}
     if not file.content_type or file.content_type not in allowed_types:
         raise AppException(
-            status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
+            status_code=400,
+            detail="File must be JPEG, PNG, or WebP",
+            error_code="INVALID_FILE_TYPE",
         )
 
     # Read file with enforced size limit (handles chunked uploads where file.size is None)

@@ -210,6 +210,7 @@ export default function PhotosPage() {
         <ToolbarButton
           label="Tag Rooms"
           icon={<Tag size={20} />}
+          disabled
         />
         <ToolbarButton
           label="AI Scope"
