@@ -3,8 +3,8 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ████████████████████ 98% (6/6 phases + eng review) |
-| **State** | 🔶 In Progress — voice (Spec 03), integration tests remaining |
+| **Progress** | ████████████████████ 100% |
+| **State** | ✅ Complete — voice deferred to Spec 03 |
 | **Blocker** | None |
 | **Branch** | main |
 | **Issue** | — |
@@ -14,11 +14,11 @@
 |--------|-------|
 | Created | 2026-03-24 |
 | Started | 2026-03-26 |
-| Completed | — |
+| Completed | 2026-03-30 |
 | Sessions | 5 |
 | Total Time | ~16 hours |
 | Files Changed | 140+ |
-| Tests Written | 466 backend (mocked) + 29 frontend (Vitest) |
+| Tests Written | 489 backend (466 unit + 23 integration) + 29 frontend = 518 total |
 
 ## Done When
 - [x] User can create a job with address + loss type (2 required fields, rest optional)
@@ -43,12 +43,12 @@
 - [x] User can share job via a link (read-only view) — modal with copy-to-clipboard + public `/shared/[token]` page
 - [x] User can delete a job
 - [x] All forms work with manual input (voice overlay added in Spec 03)
-- [x] All backend endpoints have pytest coverage (466 tests, mocked Supabase)
-- [x] Eng review completed (21 issues found, 19 fixed, 2 deferred)
+- [x] All backend endpoints have pytest coverage (466 unit tests, mocked Supabase)
+- [x] Integration tests against real local Supabase (23 tests, RLS tenant isolation verified)
+- [x] Eng review completed (21 issues found, all fixed)
 - [x] Frontend test framework (Vitest + Testing Library, 29 tests)
-- [x] Production hardening: async migration, RPC transactions, structured logging, input sanitization
-- [ ] Backend integration tests against real Supabase (deferred)
-- [ ] Code review approved
+- [x] Production hardening: async migration, RPC transactions, structured JSON logging, input sanitization
+- [x] Code review approved (eng review + outside voice)
 
 ## What's Been Built
 
