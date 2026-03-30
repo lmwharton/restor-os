@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Dashboard, Clipboard, Gear } from "@/components/icons";
@@ -367,26 +367,44 @@ function DesktopSidebar({ user }: { user: UserProfile | null }) {
 /*  Desktop Top Bar (simplified — sidebar handles nav)                 */
 /* ------------------------------------------------------------------ */
 
+function GlobalSearch() {
+  const router = useRouter();
+  const [query, setQuery] = useState("");
+
+  function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Enter" && query.trim()) {
+      router.push(`/jobs?search=${encodeURIComponent(query.trim())}`);
+    }
+  }
+
+  return (
+    <div className="relative flex-1 max-w-md">
+      <svg
+        width="16" height="16" viewBox="0 0 24 24" fill="none"
+        className="absolute left-3 top-1/2 -translate-y-1/2 text-outline"
+        aria-hidden="true"
+      >
+        <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Search jobs, addresses..."
+        className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container/60 text-[13px] text-on-surface placeholder:text-outline border-none outline-none focus:bg-surface-container focus:ring-1 focus:ring-brand-accent/30 transition-colors"
+      />
+    </div>
+  );
+}
+
 function DesktopTopBar({ user }: { user: UserProfile | null }) {
   return (
     <header className="hidden lg:block sticky top-0 z-30 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30 lg:ml-56">
       <div className="w-full px-6 h-12 flex items-center justify-between">
         {/* Left: Search */}
-        <div className="relative flex-1 max-w-md">
-          <svg
-            width="16" height="16" viewBox="0 0 24 24" fill="none"
-            className="absolute left-3 top-1/2 -translate-y-1/2 text-outline"
-            aria-hidden="true"
-          >
-            <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="1.5" />
-            <path d="M21 21l-4.35-4.35" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-          </svg>
-          <input
-            type="text"
-            placeholder="Search jobs, addresses..."
-            className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container/60 text-[13px] text-on-surface placeholder:text-outline border-none outline-none focus:bg-surface-container focus:ring-1 focus:ring-brand-accent/30 transition-colors"
-          />
-        </div>
+        <GlobalSearch />
 
         {/* Right: Status + Notification + Avatar */}
         <div className="flex items-center gap-3">

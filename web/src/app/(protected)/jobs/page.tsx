@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Plus } from "@/components/icons";
 import { useJobs, usePhotos } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus } from "@/lib/types";
@@ -460,8 +461,9 @@ function NoResults({ query }: { query: string }) {
 /* ------------------------------------------------------------------ */
 
 export default function JobsPage() {
+  const searchParams = useSearchParams();
   const { data: jobs, isLoading } = useJobs();
-  const [search, setSearch] = useState("");
+  const [search, setSearch] = useState(searchParams.get("search") ?? "");
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
