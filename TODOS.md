@@ -4,10 +4,10 @@ Updated 2026-03-30. Items from eng review.
 
 ## Pre-Spec 02 Blockers
 
-### Dockerfile for backend (Railway)
-Shapely requires libgeos (C library). WeasyPrint (Spec 02 PDF generation) requires cairo + pango. Without a Dockerfile, Railway buildpack detection may break silently on base image updates. Create `backend/Dockerfile` with Python 3.13 + system deps.
+### Dockerfile for backend (Railway) — LOW PRIORITY
+Shapely requires libgeos (C library). Railway buildpack handles it today, but a Dockerfile pins system deps against base image updates. No WeasyPrint needed — PDF generation is client-side (browser print-to-PDF).
 - **Blocked by:** nothing
-- **Blocks:** Spec 02 Phase 9 (PDF generation)
+- **Priority:** low — nice-to-have for reproducibility, not blocking anything
 
 ### Frontend: update shared page to use POST /shared/resolve
 The backend now has `POST /v1/shared/resolve` (token in body, not URL path). The frontend `web/src/app/shared/[token]/page.tsx` still calls `GET` with token in path. Update to POST the token in the request body.
