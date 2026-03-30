@@ -34,7 +34,10 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function fetchSharedJob(token: string): Promise<SharedJobResponse | null> {
   try {
-    const res = await fetch(`${API_URL}/v1/shared/${token}`, {
+    const res = await fetch(`${API_URL}/v1/shared/resolve`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ token }),
       cache: "no-store",
     });
     if (!res.ok) return null;
