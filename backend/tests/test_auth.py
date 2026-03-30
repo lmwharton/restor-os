@@ -667,29 +667,19 @@ class TestCreateCompany:
                 "last_name": "Sodders",
                 "phone": None,
                 "avatar_url": "https://avatar.url",
+                "title": None,
                 "role": "owner",
                 "is_platform_admin": False,
                 "deleted_at": None,
             }
 
-            def table_side_effect(table_name):
-                mock_table = AsyncSupabaseMock()
-                if table_name == "users":
-                    # maybe_single for existing user check (returns None)
-                    (
-                        mock_table.select.return_value
-                        .eq.return_value
-                        .is_.return_value
-                        .maybe_single.return_value
-                        .execute.return_value
-                    ).data = None
-                    # insert for new user
-                    (mock_table.insert.return_value.execute.return_value).data = [user_row]
-                elif table_name == "companies":
-                    (mock_table.insert.return_value.execute.return_value).data = [company_row]
-                return mock_table
-
-            mock_client.table.side_effect = table_side_effect
+            # Mock the rpc_onboard_user RPC call
+            rpc_result = {
+                "already_exists": False,
+                "user": user_row,
+                "company": company_row,
+            }
+            mock_client.rpc.return_value.execute.return_value = MagicMock(data=rpc_result)
 
             with (
                 patch(

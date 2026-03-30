@@ -6,6 +6,7 @@ Uses authenticated client for DB queries (RLS enforces tenant isolation).
 
 import io
 import logging
+import time
 import uuid as _uuid
 from uuid import UUID
 
@@ -77,14 +78,11 @@ async def _resize_photo(storage_path: str) -> None:
         file_options={"content-type": f"image/{img_format.lower()}", "upsert": "true"},
     )
 
-    logger.info(
-        "Resized photo %s from %dx%d to %dx%d",
-        storage_path,
-        width,
-        height,
-        new_width,
-        new_height,
-    )
+    logger.info("photo_resized", extra={"extra_data": {
+        "storage_path": storage_path,
+        "from": f"{width}x{height}",
+        "to": f"{new_width}x{new_height}",
+    }})
 
 
 def _validate_photo_type(photo_type: str) -> None:
@@ -227,6 +225,7 @@ async def confirm_photo(
     token: str,
 ) -> PhotoResponse:
     """Create photo record after successful upload to storage."""
+    start = time.perf_counter()
     _validate_photo_type(body.photo_type)
 
     client = await get_authenticated_client(token)
@@ -269,11 +268,17 @@ async def confirm_photo(
     try:
         await _resize_photo(body.storage_path)
     except Exception:
-        logger.warning(
-            "Failed to resize photo %s, continuing with original",
-            body.storage_path,
-            exc_info=True,
-        )
+        logger.warning("photo_resize_failed", exc_info=True, extra={"extra_data": {
+            "storage_path": body.storage_path,
+        }})
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info("photo_confirmed", extra={"extra_data": {
+        "photo_id": photo["id"],
+        "job_id": str(job_id),
+        "filename": body.filename,
+        "duration_ms": duration_ms,
+    }})
 
     return _build_photo_response(photo, signed_url)
 

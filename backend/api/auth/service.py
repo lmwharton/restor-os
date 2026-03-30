@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 import string
@@ -7,6 +8,8 @@ from uuid import UUID
 from api.auth.schemas import CompanyResponse, CompanyUpdate, JobResponse, UserResponse, UserUpdate
 from api.shared.database import get_supabase_admin_client
 from api.shared.exceptions import AppException
+
+logger = logging.getLogger(__name__)
 
 
 def _slugify(name: str) -> str:
@@ -90,16 +93,80 @@ async def get_or_create_company(
 ) -> tuple[CompanyResponse, UserResponse]:
     """Onboarding flow: create company + user atomically.
 
-    1. Check if user already exists with a company -- return existing if so.
-    2. Generate slug from company name.
-    3. Insert company row.
-    4. Insert user row (auth_user_id, company_id, email, name, avatar_url, role='owner').
-    5. Return both.
-
-    Uses get_supabase_admin_client() (service_role, bypasses RLS).
+    Uses rpc_onboard_user for atomic company + user creation with advisory
+    lock to prevent race conditions from concurrent requests. Falls back to
+    non-atomic path if the RPC is not available.
     """
     client = await get_supabase_admin_client()
 
+    # Split name into first/last
+    name_parts = user_name.strip().split(" ", 1)
+    first_name = name_parts[0] if name_parts else user_name
+    last_name = name_parts[1] if len(name_parts) > 1 else None
+
+    slug = _slugify(name)
+
+    try:
+        result = await client.rpc(
+            "rpc_onboard_user",
+            {
+                "p_auth_user_id": str(auth_user_id),
+                "p_email": email,
+                "p_name": user_name,
+                "p_first_name": first_name,
+                "p_last_name": last_name,
+                "p_avatar_url": avatar_url,
+                "p_company_name": name,
+                "p_company_phone": phone,
+                "p_company_slug": slug,
+            },
+        ).execute()
+
+        rpc_data = result.data
+        if isinstance(rpc_data, list):
+            rpc_data = rpc_data[0] if rpc_data else None
+
+        if not rpc_data:
+            raise AppException(
+                status_code=500,
+                detail="Failed to create company",
+                error_code="COMPANY_CREATE_FAILED",
+            )
+
+        company = _parse_company(rpc_data["company"])
+        user = _parse_user(rpc_data["user"], company)
+        return company, user
+
+    except AppException:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        is_rpc_missing = "rpc_onboard_user" in error_msg and (
+            "not found" in error_msg or "does not exist" in error_msg
+            or "could not find" in error_msg
+        )
+        if is_rpc_missing:
+            logger.info("rpc_onboard_user not available, falling back to non-atomic path")
+            return await _onboard_user_fallback(
+                client, auth_user_id, name, phone, email, user_name,
+                avatar_url, slug, first_name, last_name,
+            )
+        raise
+
+
+async def _onboard_user_fallback(
+    client,
+    auth_user_id: UUID,
+    name: str,
+    phone: str | None,
+    email: str,
+    user_name: str,
+    avatar_url: str | None,
+    slug: str,
+    first_name: str,
+    last_name: str | None,
+) -> tuple[CompanyResponse, UserResponse]:
+    """Fallback: non-atomic onboarding when RPC is not available."""
     # Check if user already has a company
     existing = await (
         client.table("users")
@@ -117,17 +184,9 @@ async def get_or_create_company(
         return company, user
 
     # Create company
-    slug = _slugify(name)
     company_result = await (
         client.table("companies")
-        .insert(
-            {
-                "name": name,
-                "slug": slug,
-                "phone": phone,
-                "email": email,
-            }
-        )
+        .insert({"name": name, "slug": slug, "phone": phone, "email": email})
         .execute()
     )
 
@@ -141,45 +200,34 @@ async def get_or_create_company(
     company_data = company_result.data[0]
     company = _parse_company(company_data)
 
-    # Split name into first/last
-    name_parts = user_name.strip().split(" ", 1)
-    first_name = name_parts[0] if name_parts else user_name
-    last_name = name_parts[1] if len(name_parts) > 1 else None
-
     # Create or update user
     if existing_data:
-        # User exists but has no company -- update them
         user_result = await (
             client.table("users")
-            .update(
-                {
-                    "company_id": str(company.id),
-                    "name": user_name,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "avatar_url": avatar_url,
-                    "role": "owner",
-                }
-            )
+            .update({
+                "company_id": str(company.id),
+                "name": user_name,
+                "first_name": first_name,
+                "last_name": last_name,
+                "avatar_url": avatar_url,
+                "role": "owner",
+            })
             .eq("id", existing_data["id"])
             .execute()
         )
     else:
-        # Create new user
         user_result = await (
             client.table("users")
-            .insert(
-                {
-                    "auth_user_id": str(auth_user_id),
-                    "company_id": str(company.id),
-                    "email": email,
-                    "name": user_name,
-                    "first_name": first_name,
-                    "last_name": last_name,
-                    "avatar_url": avatar_url,
-                    "role": "owner",
-                }
-            )
+            .insert({
+                "auth_user_id": str(auth_user_id),
+                "company_id": str(company.id),
+                "email": email,
+                "name": user_name,
+                "first_name": first_name,
+                "last_name": last_name,
+                "avatar_url": avatar_url,
+                "role": "owner",
+            })
             .execute()
         )
 
@@ -265,12 +313,16 @@ async def update_company(company_id: UUID, body: CompanyUpdate) -> CompanyRespon
     return _parse_company(result.data[0])
 
 
-async def update_company_logo(company_id: UUID, file) -> str:
-    """Upload logo to Supabase Storage and update company.logo_url."""
+async def update_company_logo(company_id: UUID, file, *, content: bytes | None = None) -> str:
+    """Upload logo to Supabase Storage and update company.logo_url.
+
+    If content is provided (pre-read with size validation), it is used directly.
+    Otherwise falls back to reading from the file object.
+    """
     client = await get_supabase_admin_client()
 
-    # Read file content
-    content = await file.read()
+    if content is None:
+        content = await file.read()
     ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png"
     path = f"{company_id}/logo.{ext}"
 
@@ -295,12 +347,16 @@ async def update_company_logo(company_id: UUID, file) -> str:
     return public_url
 
 
-async def update_user_avatar(user_id: UUID, file) -> UserResponse:
-    """Upload avatar to Supabase Storage and update user.avatar_url."""
+async def update_user_avatar(user_id: UUID, file, *, content: bytes | None = None) -> UserResponse:
+    """Upload avatar to Supabase Storage and update user.avatar_url.
+
+    If content is provided (pre-read with size validation), it is used directly.
+    Otherwise falls back to reading from the file object.
+    """
     client = await get_supabase_admin_client()
 
-    # Read file content
-    content = await file.read()
+    if content is None:
+        content = await file.read()
     ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png"
     path = f"{user_id}/avatar.{ext}"
 

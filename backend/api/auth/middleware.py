@@ -10,6 +10,7 @@ from api.auth.schemas import AuthContext
 from api.config import settings
 from api.shared.database import get_supabase_admin_client
 from api.shared.exceptions import AppException
+from api.shared.logging import company_id_var, user_id_var
 
 # ---------------------------------------------------------------------------
 # JWKS cache with TTL (Issue 3)
@@ -220,4 +221,9 @@ async def get_auth_context(request: Request) -> AuthContext:
         is_platform_admin=user.get("is_platform_admin", False),
     )
     _set_cached_auth_context(auth_user_id, ctx)
+
+    # Set context vars so all subsequent log lines include tenant info
+    company_id_var.set(str(ctx.company_id))
+    user_id_var.set(str(ctx.user_id))
+
     return ctx

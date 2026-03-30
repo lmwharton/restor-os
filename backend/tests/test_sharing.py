@@ -1481,3 +1481,63 @@ class TestShareSchemaValidation:
         from api.sharing.schemas import VALID_SCOPES
 
         assert VALID_SCOPES == {"full", "restoration_only", "photos_only"}
+
+
+# ---------------------------------------------------------------------------
+# Tests: POST /v1/shared/resolve (token in body, not URL path)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveSharedEndpoint:
+    """Test POST /v1/shared/resolve endpoint."""
+
+    def test_resolve_shared_success(self, client, mock_job_id, mock_company_id, mock_job_data):
+        """POST /v1/shared/resolve with valid token -> 200."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "d" * 32
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(mock_job_id, mock_company_id, token_hash)
+
+        _shared_view_table_router(mock_admin, link_data, {**mock_job_data})
+
+        with _patch_public_only(mock_admin):
+            response = client.post("/v1/shared/resolve", json={"token": raw_token})
+            assert response.status_code == 200
+            data = response.json()
+            assert "job" in data
+            assert "rooms" in data
+            assert "photos" in data
+            assert "company" in data
+
+    def test_resolve_shared_expired(self, client, mock_job_id, mock_company_id):
+        """POST /v1/shared/resolve with expired token -> 403."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "e" * 32
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(mock_job_id, mock_company_id, token_hash, expired=True)
+
+        def table_router(name):
+            if name == "share_links":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+                    MagicMock(data=link_data)
+                )
+                return t
+            return AsyncSupabaseMock()
+
+        mock_admin.table.side_effect = table_router
+
+        with _patch_public_only(mock_admin):
+            response = client.post("/v1/shared/resolve", json={"token": raw_token})
+            assert response.status_code == 403
+            assert response.json()["error_code"] == "SHARE_EXPIRED"
+
+    def test_resolve_shared_missing_token(self, client):
+        """POST /v1/shared/resolve without token -> 422."""
+        response = client.post("/v1/shared/resolve", json={})
+        assert response.status_code == 422
+
+    def test_resolve_shared_empty_token(self, client):
+        """POST /v1/shared/resolve with empty token -> 422."""
+        response = client.post("/v1/shared/resolve", json={"token": ""})
+        assert response.status_code == 422

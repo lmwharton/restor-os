@@ -752,7 +752,7 @@ class TestLogEvent:
                 await log_event(mock_company_id, "job_created")
 
         # Verify warning was logged
-        assert any("Failed to log event job_created" in record.message for record in caplog.records)
+        assert any("event_log_failed" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_log_event_swallows_insert_execute_error(self, mock_company_id, caplog):
@@ -768,7 +768,7 @@ class TestLogEvent:
             with caplog.at_level(logging.WARNING, logger="api.shared.events"):
                 await log_event(mock_company_id, "job_created")
 
-        assert any("Failed to log event" in record.message for record in caplog.records)
+        assert any("event_log_failed" in record.message for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_log_event_swallows_admin_client_error(self, mock_company_id, caplog):
@@ -782,7 +782,7 @@ class TestLogEvent:
             with caplog.at_level(logging.WARNING, logger="api.shared.events"):
                 await log_event(mock_company_id, "test_event")
 
-        assert any("Failed to log event" in record.message for record in caplog.records)
+        assert any("event_log_failed" in record.message for record in caplog.records)
 
 
 # ---------------------------------------------------------------------------

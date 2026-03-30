@@ -24,6 +24,7 @@ Non-transactional pattern (V1):
 """
 
 import logging
+import time
 from uuid import UUID
 
 from api.shared.database import get_supabase_admin_client
@@ -46,6 +47,7 @@ async def log_event(
     Uses admin client because event inserts must succeed regardless of
     which user triggered them (including system/AI actions).
     """
+    start = time.perf_counter()
     try:
         client = await get_supabase_admin_client()
         await client.table("event_history").insert(
@@ -58,5 +60,15 @@ async def log_event(
                 "event_data": event_data or {},
             }
         ).execute()
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        logger.info("event_logged", extra={"extra_data": {
+            "event_type": event_type,
+            "job_id": str(job_id) if job_id else None,
+            "duration_ms": duration_ms,
+        }})
     except Exception:
-        logger.warning("Failed to log event %s", event_type, exc_info=True)
+        duration_ms = round((time.perf_counter() - start) * 1000, 1)
+        logger.warning("event_log_failed", exc_info=True, extra={"extra_data": {
+            "event_type": event_type,
+            "duration_ms": duration_ms,
+        }})

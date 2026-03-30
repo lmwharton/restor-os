@@ -1,6 +1,8 @@
 """Jobs CRUD service. All queries use the authenticated client (RLS-scoped)."""
 
 import logging
+import random
+import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
@@ -12,7 +14,7 @@ from api.shared.sanitize import sanitize_postgrest_search
 
 logger = logging.getLogger(__name__)
 
-JOB_NUMBER_MAX_RETRIES = 3
+JOB_NUMBER_MAX_RETRIES = 5
 
 VALID_LOSS_TYPES = {"water", "fire", "mold", "storm", "other"}
 VALID_LOSS_CATEGORIES = {"1", "2", "3"}
@@ -62,8 +64,15 @@ def _validate_enums(
         )
 
 
-async def _generate_job_number(client, company_id: UUID) -> str:
-    """Generate JOB-YYYYMMDD-XXX. Queries max existing for today."""
+async def _generate_job_number(
+    client, company_id: UUID, *, collision_offset: int = 0
+) -> str:
+    """Generate JOB-YYYYMMDD-XXX. Queries max existing for today.
+
+    On retry after a unique constraint collision, pass collision_offset > 0
+    to add a random bump beyond the max sequence. Each retry re-queries the
+    database to see the latest committed state.
+    """
     today = datetime.now(UTC).strftime("%Y%m%d")
     prefix = f"JOB-{today}-"
 
@@ -82,6 +91,9 @@ async def _generate_job_number(client, company_id: UUID) -> str:
         seq = int(last_number.split("-")[-1]) + 1
     else:
         seq = 1
+
+    # On collision retries, bump by a random offset to avoid repeated clashes
+    seq += collision_offset
 
     return f"{prefix}{seq:03d}"
 
@@ -191,7 +203,14 @@ async def create_job(
     user_id: UUID,
     body: JobCreate,
 ) -> JobDetailResponse:
-    """Create a new job with auto-generated job_number."""
+    """Create a new job with auto-generated job_number.
+
+    Uses rpc_create_job for atomic job insert + event logging in a single
+    database transaction. Falls back to separate insert + fire-and-forget
+    event if the RPC is unavailable (e.g., migration not yet applied).
+    """
+    start = time.perf_counter()
+
     _validate_enums(
         loss_type=body.loss_type,
         loss_category=body.loss_category,
@@ -199,9 +218,117 @@ async def create_job(
     )
 
     client = await get_authenticated_client(token)
+    admin_client = await get_supabase_admin_client()
 
+    # Build optional field values
+    opt_property_id = str(body.property_id) if body.property_id else None
+    opt_loss_date = body.loss_date.isoformat() if isinstance(body.loss_date, date) else None
+
+    # Retry loop to handle concurrent job_number collisions.
+    # Each retry re-queries for the max sequence and adds a random offset
+    # to avoid repeated clashes with concurrent requests.
+    job_data = None
+    for attempt in range(JOB_NUMBER_MAX_RETRIES):
+        collision_offset = random.randint(1, 10) if attempt > 0 else 0
+        job_number = await _generate_job_number(
+            client, company_id, collision_offset=collision_offset
+        )
+
+        rpc_params = {
+            "p_company_id": str(company_id),
+            "p_job_number": job_number,
+            "p_address_line1": body.address_line1,
+            "p_city": body.city,
+            "p_state": body.state,
+            "p_zip": body.zip,
+            "p_loss_type": body.loss_type,
+            "p_created_by": str(user_id),
+            "p_property_id": opt_property_id,
+            "p_customer_name": body.customer_name,
+            "p_customer_phone": body.customer_phone,
+            "p_customer_email": body.customer_email,
+            "p_loss_category": body.loss_category,
+            "p_loss_class": body.loss_class,
+            "p_loss_cause": body.loss_cause,
+            "p_loss_date": opt_loss_date,
+            "p_claim_number": body.claim_number,
+            "p_carrier": body.carrier,
+            "p_adjuster_name": body.adjuster_name,
+            "p_adjuster_phone": body.adjuster_phone,
+            "p_adjuster_email": body.adjuster_email,
+            "p_notes": body.notes,
+            "p_tech_notes": body.tech_notes,
+        }
+
+        try:
+            # Use admin client for RPC (SECURITY DEFINER function, bypasses RLS)
+            result = await admin_client.rpc("rpc_create_job", rpc_params).execute()
+            if not result.data:
+                raise AppException(
+                    status_code=500,
+                    detail="Failed to create job",
+                    error_code="JOB_CREATE_FAILED",
+                )
+            job_data = result.data
+            # RPC returns JSONB; supabase-py may wrap it in a list or return dict directly
+            if isinstance(job_data, list):
+                job_data = job_data[0] if job_data else None
+            break  # Success -- job + event created atomically
+        except AppException:
+            raise
+        except Exception as e:
+            error_msg = str(e).lower()
+            is_job_number_conflict = "unique" in error_msg and "job_number" in error_msg
+            # If RPC doesn't exist yet, fall back to non-atomic path
+            is_rpc_missing = "rpc_create_job" in error_msg and (
+                "not found" in error_msg or "does not exist" in error_msg
+                or "could not find" in error_msg
+            )
+            if is_rpc_missing:
+                logger.info("rpc_create_job not available, falling back to non-atomic path")
+                job_data = await _create_job_fallback(
+                    client, company_id, user_id, body, job_number
+                )
+                break
+            if is_job_number_conflict and attempt < JOB_NUMBER_MAX_RETRIES - 1:
+                logger.warning(
+                    "Job number collision on attempt %d, retrying: %s",
+                    attempt + 1,
+                    job_number,
+                )
+                continue
+            raise
+
+    if job_data is None:
+        raise AppException(
+            status_code=500,
+            detail="Failed to create job after retries",
+            error_code="JOB_CREATE_FAILED",
+        )
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info("job_created", extra={"extra_data": {
+        "job_id": str(job_data.get("id", "")),
+        "job_number": job_data.get("job_number", ""),
+        "duration_ms": duration_ms,
+    }})
+
+    # New job has zero counts
+    counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
+    return _parse_job_detail(job_data, counts)
+
+
+async def _create_job_fallback(
+    client,
+    company_id: UUID,
+    user_id: UUID,
+    body: JobCreate,
+    job_number: str,
+) -> dict:
+    """Fallback: non-atomic job creation when RPC is not available."""
     insert_data: dict = {
         "company_id": str(company_id),
+        "job_number": job_number,
         "address_line1": body.address_line1,
         "city": body.city,
         "state": body.state,
@@ -211,23 +338,11 @@ async def create_job(
         "created_by": str(user_id),
     }
 
-    # Add optional fields if provided
     optional_fields = [
-        "property_id",
-        "customer_name",
-        "customer_phone",
-        "customer_email",
-        "loss_category",
-        "loss_class",
-        "loss_cause",
-        "loss_date",
-        "claim_number",
-        "carrier",
-        "adjuster_name",
-        "adjuster_phone",
-        "adjuster_email",
-        "notes",
-        "tech_notes",
+        "property_id", "customer_name", "customer_phone", "customer_email",
+        "loss_category", "loss_class", "loss_cause", "loss_date",
+        "claim_number", "carrier", "adjuster_name", "adjuster_phone",
+        "adjuster_email", "notes", "tech_notes",
     ]
     for field in optional_fields:
         value = getattr(body, field)
@@ -239,47 +354,15 @@ async def create_job(
             else:
                 insert_data[field] = value
 
-    # Retry loop to handle concurrent job_number collisions.
-    # Two simultaneous creates could read the same max sequence number;
-    # the second insert would fail on the unique constraint. We catch
-    # that specific error and regenerate the number.
-    job_data = None
-    for attempt in range(JOB_NUMBER_MAX_RETRIES):
-        job_number = await _generate_job_number(client, company_id)
-        insert_data["job_number"] = job_number
-        try:
-            result = await client.table("jobs").insert(insert_data).execute()
-            if not result.data:
-                raise AppException(
-                    status_code=500,
-                    detail="Failed to create job",
-                    error_code="JOB_CREATE_FAILED",
-                )
-            job_data = result.data[0]
-            break  # Success
-        except AppException:
-            raise  # Re-raise our own exceptions immediately
-        except Exception as e:
-            error_msg = str(e).lower()
-            is_job_number_conflict = "unique" in error_msg and "job_number" in error_msg
-            if is_job_number_conflict and attempt < JOB_NUMBER_MAX_RETRIES - 1:
-                logger.warning(
-                    "Job number collision on attempt %d, retrying: %s",
-                    attempt + 1,
-                    job_number,
-                )
-                continue
-            raise  # Not a job_number conflict, or out of retries
-
-    if job_data is None:
+    result = await client.table("jobs").insert(insert_data).execute()
+    if not result.data:
         raise AppException(
             status_code=500,
-            detail="Failed to create job after retries",
+            detail="Failed to create job",
             error_code="JOB_CREATE_FAILED",
         )
 
-    # Non-transactional: job insert succeeded, event logging is fire-and-forget.
-    # See api/shared/events.py for rationale. Acceptable for V1.
+    job_data = result.data[0]
     await log_event(
         company_id,
         "job_created",
@@ -287,10 +370,7 @@ async def create_job(
         user_id=user_id,
         event_data={"job_number": job_number},
     )
-
-    # New job has zero counts
-    counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
-    return _parse_job_detail(job_data, counts)
+    return job_data
 
 
 async def list_jobs(
@@ -431,12 +511,51 @@ async def delete_job(
 ) -> None:
     """Soft delete a job by setting deleted_at.
 
-    Uses admin client because RLS update policy requires deleted_at IS NULL,
-    which conflicts with setting deleted_at to a non-null value.
-    company_id + job_id are verified explicitly.
+    Uses rpc_delete_job for atomic soft-delete + event logging.
+    Falls back to non-atomic path if RPC is not available.
     """
     client = await get_supabase_admin_client()
 
+    try:
+        result = await client.rpc(
+            "rpc_delete_job",
+            {
+                "p_job_id": str(job_id),
+                "p_company_id": str(company_id),
+                "p_user_id": str(user_id),
+            },
+        ).execute()
+
+        # RPC returns boolean; supabase-py may wrap in a list
+        rpc_result = result.data
+        if isinstance(rpc_result, list):
+            rpc_result = rpc_result[0] if rpc_result else False
+        if not rpc_result:
+            raise AppException(
+                status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND"
+            )
+    except AppException:
+        raise
+    except Exception as e:
+        error_msg = str(e).lower()
+        is_rpc_missing = "rpc_delete_job" in error_msg and (
+            "not found" in error_msg or "does not exist" in error_msg
+            or "could not find" in error_msg
+        )
+        if is_rpc_missing:
+            logger.info("rpc_delete_job not available, falling back to non-atomic path")
+            await _delete_job_fallback(client, company_id, user_id, job_id)
+        else:
+            raise
+
+
+async def _delete_job_fallback(
+    client,
+    company_id: UUID,
+    user_id: UUID,
+    job_id: UUID,
+) -> None:
+    """Fallback: non-atomic delete when RPC is not available."""
     now = datetime.now(UTC).isoformat()
     result = await (
         client.table("jobs")

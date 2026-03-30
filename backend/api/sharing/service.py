@@ -5,7 +5,9 @@ The raw token is returned once on creation and never stored.
 """
 
 import hashlib
+import logging
 import secrets
+import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
@@ -16,6 +18,8 @@ from api.shared.database import get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
 from api.sharing.schemas import VALID_SCOPES, ShareLinkCreate
+
+logger = logging.getLogger(__name__)
 
 
 def _hash_token(token: str) -> str:
@@ -30,7 +34,13 @@ async def create_share_link(
     user_id: UUID,
     body: ShareLinkCreate,
 ) -> dict:
-    """Create a share link with a random token. Returns the raw token (shown once)."""
+    """Create a share link with a random token. Returns the raw token (shown once).
+
+    Uses rpc_create_share_link for atomic insert + event logging.
+    Falls back to non-atomic path if RPC is not available.
+    """
+    start = time.perf_counter()
+
     if body.scope not in VALID_SCOPES:
         raise AppException(
             status_code=400,
@@ -42,6 +52,69 @@ async def create_share_link(
     token_hash = _hash_token(raw_token)
     expires_at = datetime.now(UTC) + timedelta(days=body.expires_days)
 
+    admin = await get_supabase_admin_client()
+    try:
+        result = await admin.rpc(
+            "rpc_create_share_link",
+            {
+                "p_job_id": str(job_id),
+                "p_company_id": str(company_id),
+                "p_created_by": str(user_id),
+                "p_token_hash": token_hash,
+                "p_scope": body.scope,
+                "p_expires_at": expires_at.isoformat(),
+            },
+        ).execute()
+
+        link_data = result.data
+        if isinstance(link_data, list):
+            link_data = link_data[0] if link_data else {}
+        link = link_data if isinstance(link_data, dict) else {}
+    except Exception as e:
+        error_msg = str(e).lower()
+        is_rpc_missing = "rpc_create_share_link" in error_msg and (
+            "not found" in error_msg or "does not exist" in error_msg
+            or "could not find" in error_msg
+        )
+        if is_rpc_missing:
+            logger.info(
+                "rpc_create_share_link not available, falling back to non-atomic path"
+            )
+            link = await _create_share_link_fallback(
+                client, job_id, company_id, user_id, body, token_hash, expires_at
+            )
+        else:
+            raise
+
+    # Build the public share URL
+    base_url = getattr(settings, "frontend_url", "https://crewmaticai.vercel.app")
+    share_url = f"{base_url}/shared/{raw_token}"
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info("share_link_created", extra={"extra_data": {
+        "job_id": str(job_id),
+        "scope": body.scope,
+        "expires_days": body.expires_days,
+        "duration_ms": duration_ms,
+    }})
+
+    return {
+        "share_url": share_url,
+        "share_token": raw_token,
+        "expires_at": link.get("expires_at", expires_at.isoformat()),
+    }
+
+
+async def _create_share_link_fallback(
+    client: AsyncClient,
+    job_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
+    body: ShareLinkCreate,
+    token_hash: str,
+    expires_at: datetime,
+) -> dict:
+    """Fallback: non-atomic share link creation when RPC is not available."""
     row = {
         "job_id": str(job_id),
         "company_id": str(company_id),
@@ -61,15 +134,7 @@ async def create_share_link(
         event_data={"link_id": link["id"], "scope": body.scope, "expires_days": body.expires_days},
     )
 
-    # Build the public share URL
-    base_url = getattr(settings, "frontend_url", "https://crewmaticai.vercel.app")
-    share_url = f"{base_url}/shared/{raw_token}"
-
-    return {
-        "share_url": share_url,
-        "share_token": raw_token,
-        "expires_at": link["expires_at"],
-    }
+    return link
 
 
 async def list_share_links(
@@ -129,6 +194,7 @@ async def get_shared_job(token: str) -> dict:
     Uses admin client because this is a public (no-auth) endpoint.
     Validates the token is not expired or revoked.
     """
+    start = time.perf_counter()
     token_hash = _hash_token(token)
     admin = await get_supabase_admin_client()
 
@@ -184,7 +250,7 @@ async def get_shared_job(token: str) -> dict:
 
     # Fetch photos with signed URLs (batch call to avoid N+1)
     photos_result = await (
-        admin.table("photos").select("*").eq("job_id", job_id).order("created_at").execute()
+        admin.table("photos").select("*").eq("job_id", job_id).order("uploaded_at").execute()
     )
     photos = photos_result.data or []
     storage_paths = [p["storage_url"] for p in photos if p.get("storage_url")]
@@ -231,6 +297,14 @@ async def get_shared_job(token: str) -> dict:
         .execute()
     )
     company = company_result.data or {}
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    logger.info("share_link_resolved", extra={"extra_data": {
+        "job_id": job_id,
+        "scope": scope,
+        "photo_count": len(photos),
+        "duration_ms": duration_ms,
+    }})
 
     return {
         "job": job,

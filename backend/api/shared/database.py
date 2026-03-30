@@ -47,7 +47,9 @@ def _get_shared_httpx_client() -> httpx.AsyncClient:
                 pool=30.0,   # fail fast if pool exhausted
             ),
         )
-        logger.info("Initialized shared async httpx connection pool (max=100, keepalive=30)")
+        logger.info("httpx_pool_init", extra={"extra_data": {
+            "max_connections": 100, "max_keepalive": 30, "keepalive_expiry_s": 30.0,
+        }})
     return _shared_httpx_client
 
 

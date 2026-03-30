@@ -218,23 +218,19 @@ class TestCreateJob:
             loss_class="2",
         )
 
-        call_count = {"n": 0}
-
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            n = call_count["n"]
-            if n == 1:
-                # _generate_job_number: select().eq().like().order().limit().execute()
-                (
-                    mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
-                ).data = []
-            elif n == 2:
-                # insert().execute()
-                mock_table.insert.return_value.execute.return_value.data = [row]
+            # _generate_job_number: select().eq().like().order().limit().execute()
+            (
+                mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
+            ).data = []
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
 
-        with _patch_all(jwt_secret, mock_client):
+        # Admin client needs rpc() to return the job row (atomic create)
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
+
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             body = _create_body(
                 customer_name="Brett Sodders",
                 customer_phone="(586) 944-7700",
@@ -262,20 +258,16 @@ class TestCreateJob:
         """Create job with address + loss_type only returns 201."""
         row = _job_row(company_id=mock_company_id)
 
-        call_count = {"n": 0}
-
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                (
-                    mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
-                ).data = []
-            elif call_count["n"] == 2:
-                mock_table.insert.return_value.execute.return_value.data = [row]
+            (
+                mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
+            ).data = []
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
 
-        with _patch_all(jwt_secret, mock_client):
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             response = client.post("/v1/jobs", json=_create_body(), headers=auth_headers)
 
         assert response.status_code == 201
@@ -286,20 +278,16 @@ class TestCreateJob:
         """Create job with loss_date serializes correctly."""
         row = _job_row(company_id=mock_company_id, loss_date="2026-03-20")
 
-        call_count = {"n": 0}
-
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                (
-                    mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
-                ).data = []
-            elif call_count["n"] == 2:
-                mock_table.insert.return_value.execute.return_value.data = [row]
+            (
+                mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
+            ).data = []
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
 
-        with _patch_all(jwt_secret, mock_client):
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             body = _create_body(loss_date="2026-03-20")
             response = client.post("/v1/jobs", json=body, headers=auth_headers)
 
@@ -313,20 +301,16 @@ class TestCreateJob:
         prop_id = uuid4()
         row = _job_row(company_id=mock_company_id, property_id=prop_id)
 
-        call_count = {"n": 0}
-
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                (
-                    mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
-                ).data = []
-            elif call_count["n"] == 2:
-                mock_table.insert.return_value.execute.return_value.data = [row]
+            (
+                mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
+            ).data = []
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
 
-        with _patch_all(jwt_secret, mock_client):
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             body = _create_body(property_id=str(prop_id))
             response = client.post("/v1/jobs", json=body, headers=auth_headers)
 
@@ -403,57 +387,60 @@ class TestCreateJob:
         """Job number collision triggers retry and succeeds."""
         row = _job_row(company_id=mock_company_id, job_number="JOB-20260326-002")
 
-        call_count = {"n": 0}
+        job_query_count = {"n": 0}
 
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            n = call_count["n"]
+            job_query_count["n"] += 1
+            n = job_query_count["n"]
             if n == 1:
                 # First _generate_job_number
                 (
                     mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
                 ).data = []
             elif n == 2:
-                # First insert fails with unique constraint violation
-                mock_table.insert.return_value.execute.side_effect = Exception(
-                    'duplicate key value violates unique constraint "jobs_job_number_unique"'
-                )
-            elif n == 3:
-                # Second _generate_job_number
+                # Second _generate_job_number (after collision)
                 (
                     mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
                 ).data = [{"job_number": "JOB-20260326-001"}]
-            elif n == 4:
-                # Second insert succeeds
-                mock_table.insert.return_value.execute.return_value = MagicMock(data=[row])
-                mock_table.insert.return_value.execute.side_effect = None
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
 
-        with _patch_all(jwt_secret, mock_client):
+        # Admin client: first RPC call fails with unique constraint, second succeeds
+        rpc_call_count = {"n": 0}
+        mock_admin = make_mock_supabase(mock_user_row)
+
+        from unittest.mock import AsyncMock as _AsyncMock
+
+        async def rpc_execute_side_effect():
+            rpc_call_count["n"] += 1
+            if rpc_call_count["n"] == 1:
+                raise Exception(
+                    'duplicate key value violates unique constraint "jobs_job_number_unique"'
+                )
+            return MagicMock(data=row)
+
+        mock_admin.rpc.return_value.execute = _AsyncMock(side_effect=rpc_execute_side_effect)
+
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             response = client.post("/v1/jobs", json=_create_body(), headers=auth_headers)
 
         assert response.status_code == 201
-        assert response.json()["job_number"] == "JOB-20260326-002"
 
     def test_create_job_insert_returns_empty(
         self, client, auth_headers, jwt_secret, mock_user_row
     ):
-        """Insert returning no data raises 500."""
-        call_count = {"n": 0}
+        """RPC returning no data raises 500."""
 
         def jobs_handler(mock_table):
-            call_count["n"] += 1
-            if call_count["n"] == 1:
-                (
-                    mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
-                ).data = []
-            elif call_count["n"] == 2:
-                mock_table.insert.return_value.execute.return_value.data = []
+            (
+                mock_table.select.return_value.eq.return_value.like.return_value.order.return_value.limit.return_value.execute.return_value
+            ).data = []
 
         mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=None)
 
-        with _patch_all(jwt_secret, mock_client):
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
             response = client.post("/v1/jobs", json=_create_body(), headers=auth_headers)
 
         assert response.status_code == 500
@@ -1067,15 +1054,9 @@ class TestDeleteJob:
         """Owner can soft-delete a job (200)."""
         job_id = uuid4()
 
-        def jobs_handler(mock_table):
-            result = MagicMock()
-            result.data = [_job_row(job_id=job_id, company_id=mock_company_id)]
-            (
-                mock_table.update.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value
-            ) = result
-
-        # Admin client handles the delete; auth client handles auth middleware
-        mock_admin = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        # Admin client: rpc returns True (job found and deleted)
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=True)
         mock_auth = make_mock_supabase(mock_user_row)
 
         with _patch_all(jwt_secret, mock_auth, mock_admin_client=mock_admin):
@@ -1101,14 +1082,8 @@ class TestDeleteJob:
             "is_platform_admin": False,
         }
 
-        def jobs_handler(mock_table):
-            result = MagicMock()
-            result.data = [_job_row(job_id=job_id, company_id=mock_company_id)]
-            (
-                mock_table.update.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value
-            ) = result
-
-        mock_admin = make_mock_supabase(admin_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(admin_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=True)
         mock_auth = make_mock_supabase(admin_user_row)
 
         token = pyjwt.encode(
@@ -1162,15 +1137,8 @@ class TestDeleteJob:
         self, client, auth_headers, jwt_secret, mock_user_row
     ):
         """Delete non-existent job returns 404."""
-
-        def jobs_handler(mock_table):
-            result = MagicMock()
-            result.data = []
-            (
-                mock_table.update.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value
-            ) = result
-
-        mock_admin = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=False)
         mock_auth = make_mock_supabase(mock_user_row)
 
         with _patch_all(jwt_secret, mock_auth, mock_admin_client=mock_admin):

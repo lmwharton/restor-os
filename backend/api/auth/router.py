@@ -14,6 +14,7 @@ from api.auth.service import (
     update_user_profile,
 )
 from api.shared.exceptions import AppException
+from api.shared.upload import read_upload_with_limit
 
 router = APIRouter(tags=["auth"])
 
@@ -51,12 +52,10 @@ async def upload_avatar(file: UploadFile, ctx: AuthContext = Depends(get_auth_co
             status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
         )
 
-    if file.size and file.size > 2 * 1024 * 1024:
-        raise AppException(
-            status_code=400, detail="File too large (max 2MB)", error_code="FILE_TOO_LARGE"
-        )
+    # Read file with enforced size limit (handles chunked uploads where file.size is None)
+    content = await read_upload_with_limit(file)
 
-    user = await update_user_avatar(ctx.user_id, file)
+    user = await update_user_avatar(ctx.user_id, file, content=content)
     return user
 
 
@@ -134,12 +133,10 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
             status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
         )
 
-    if file.size and file.size > 2 * 1024 * 1024:
-        raise AppException(
-            status_code=400, detail="File too large (max 2MB)", error_code="FILE_TOO_LARGE"
-        )
+    # Read file with enforced size limit (handles chunked uploads where file.size is None)
+    content = await read_upload_with_limit(file)
 
-    logo_url = await update_company_logo(ctx.company_id, file)
+    logo_url = await update_company_logo(ctx.company_id, file, content=content)
     return {"logo_url": logo_url}
 
 

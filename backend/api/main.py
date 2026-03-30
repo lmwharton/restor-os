@@ -17,19 +17,12 @@ from api.properties.router import router as properties_router
 from api.reports.router import router as reports_router
 from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
+from api.shared.logging import generate_request_id, request_id_var, setup_logging
 from api.sharing.router import router as sharing_router
 
 VERSION = "26.3.1"
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s — %(message)s",
-    datefmt="%H:%M:%S",
-)
-# Silence noisy internal loggers to keep output clean
-logging.getLogger("uvicorn.access").disabled = True
-logging.getLogger("httpx").setLevel(logging.WARNING)
-logging.getLogger("httpcore").setLevel(logging.WARNING)
+setup_logging()
 logger = logging.getLogger("api")
 
 app = FastAPI(
@@ -51,36 +44,40 @@ app.add_exception_handler(AppException, app_exception_handler)
 
 
 @app.middleware("http")
-async def log_request_timing(request: Request, call_next):
-    """Log every request with method, path, status, and duration in ms."""
-    start = time.perf_counter()
-    response = await call_next(request)
-    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+async def request_context(request: Request, call_next):
+    """Set request-scoped context and log structured request timing.
 
-    status = response.status_code
-    method = request.method
-    path = request.url.path
+    - Generates a unique request_id (8-char hex) per request
+    - Propagates it via contextvars so ALL log lines include it
+    - Adds X-Request-ID response header for client-side debugging
+    - Logs method, path, status, duration_ms as structured JSON
+    """
+    req_id = generate_request_id()
+    request_id_var.set(req_id)
+    start = time.perf_counter()
+
+    response = await call_next(request)
+
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    response.headers["X-Request-ID"] = req_id
 
     # Skip noisy OPTIONS preflight
-    if method == "OPTIONS":
-        return response
+    if request.method != "OPTIONS":
+        status = response.status_code
+        if status < 400:
+            level = logging.INFO
+        elif status < 500:
+            level = logging.WARNING
+        else:
+            level = logging.ERROR
 
-    # Color-code by status for terminal readability
-    if status < 400:
-        level = logging.INFO
-    elif status < 500:
-        level = logging.WARNING
-    else:
-        level = logging.ERROR
+        logger.log(level, "request", extra={"extra_data": {
+            "method": request.method,
+            "path": request.url.path,
+            "status": status,
+            "duration_ms": duration_ms,
+        }})
 
-    logger.log(
-        level,
-        "%s %s → %s (%sms)",
-        method,
-        path,
-        status,
-        duration_ms,
-    )
     return response
 
 

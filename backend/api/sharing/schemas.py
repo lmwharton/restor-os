@@ -37,3 +37,8 @@ class SharedJobResponse(BaseModel):
     moisture_readings: list[dict]
     line_items: list[dict]
     company: dict
+
+
+class ShareResolveRequest(BaseModel):
+    """Request body for POST /shared/resolve -- token in body, not URL path."""
+    token: str = Field(..., min_length=1, max_length=128)

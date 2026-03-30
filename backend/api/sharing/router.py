@@ -20,6 +20,7 @@ from api.sharing.schemas import (
     ShareLinkCreate,
     ShareLinkListResponse,
     ShareLinkResponse,
+    ShareResolveRequest,
 )
 from api.sharing.service import (
     create_share_link,
@@ -88,6 +89,19 @@ async def revoke_job_share_link(
     )
 
 
+@router.post(
+    "/shared/resolve",
+    response_model=SharedJobResponse,
+)
+async def resolve_shared_job(body: ShareResolveRequest):
+    """Resolve a share token passed in the request body.
+
+    Preferred over GET /shared/{token} because the token is not logged
+    in URL paths by middleware or reverse proxies.
+    """
+    return await get_shared_job(body.token)
+
+
 @router.get(
     "/shared/{token}",
     response_model=SharedJobResponse,
@@ -95,5 +109,9 @@ async def revoke_job_share_link(
 async def get_shared_job_data(
     token: str = Path(..., description="Share token"),
 ):
-    """Public read-only view of a shared job. NO AUTH required."""
+    """Public read-only view of a shared job. NO AUTH required.
+
+    DEPRECATED: Use POST /shared/resolve instead to avoid token exposure
+    in server logs. Kept for backward compatibility.
+    """
     return await get_shared_job(token)
