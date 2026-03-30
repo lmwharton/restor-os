@@ -19,11 +19,11 @@ export function GoogleMapsProvider({ children }: { children: React.ReactNode }) 
       return;
     }
     // Check if already loaded (e.g., hot reload)
-    if (window.google?.maps?.places) {
+    if (window.google?.maps) {
       setLoaded(true);
       return;
     }
-    setOptions({ key: apiKey, libraries: ["places"] });
+    setOptions({ key: apiKey, libraries: ["places", "geocoding", "maps", "marker"] });
     importLibrary("places").then(() => setLoaded(true));
   }, []);
 

@@ -10,6 +10,7 @@ import {
   useCompanyEvents,
 } from "@/lib/hooks/use-dashboard";
 import { useJobs } from "@/lib/hooks/use-jobs";
+import DashboardMap from "@/components/dashboard-map";
 import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
@@ -104,15 +105,6 @@ const PIN_COLOR: Record<PipelineStage, string> = {
   collected: "#9ca3af",
 };
 
-const MAP_PIN_POSITIONS: { top: string; left: string }[] = [
-  { top: "28%", left: "32%" },
-  { top: "55%", left: "72%" },
-  { top: "70%", left: "22%" },
-  { top: "18%", left: "60%" },
-  { top: "42%", left: "48%" },
-  { top: "62%", left: "82%" },
-  { top: "35%", left: "15%" },
-];
 
 // ---------------------------------------------------------------------------
 //  Skeleton
@@ -299,33 +291,18 @@ function JobsList({
 // ---------------------------------------------------------------------------
 
 function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineStage | null; jobs: JobDetail[] }) {
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const ZOOM_STEPS = [0.8, 1, 1.2, 1.5];
-
-  function zoomIn() {
-    setZoomLevel((prev) => {
-      const idx = ZOOM_STEPS.indexOf(prev);
-      return idx < ZOOM_STEPS.length - 1 ? ZOOM_STEPS[idx + 1] : prev;
-    });
-  }
-
-  function zoomOut() {
-    setZoomLevel((prev) => {
-      const idx = ZOOM_STEPS.indexOf(prev);
-      return idx > 0 ? ZOOM_STEPS[idx - 1] : prev;
-    });
-  }
-
   const activeJobs = jobs.filter((job) => getJobStage(job) !== "collected");
-  const pins = activeJobs.map((job, i) => {
+  const mapJobs = activeJobs.map((job) => {
     const stage = getJobStage(job);
-    const pos = MAP_PIN_POSITIONS[i % MAP_PIN_POSITIONS.length];
     return {
-      address: job.address_line1,
-      color: PIN_COLOR[stage],
+      id: job.id,
+      address_line1: job.address_line1,
+      city: job.city,
+      state: job.state,
+      zip: job.zip,
       stage,
-      top: pos.top,
-      left: pos.left,
+      stageLabel: STAGE_META[stage].label,
+      color: PIN_COLOR[stage],
     };
   });
 
@@ -335,78 +312,10 @@ function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineSta
         <h2 className="text-[16px] font-bold text-on-surface">
           Live Operations
         </h2>
-        <span className={`${LABEL_STYLE}`}>{pins.length} Pins</span>
+        <span className={`${LABEL_STYLE}`}>{mapJobs.length} Pins</span>
       </div>
 
-      <div className="relative min-h-[400px] flex-1 bg-surface-container-high rounded-xl overflow-hidden">
-        {/* Zoom controls */}
-        <div className="absolute top-3 right-3 z-20 flex flex-col gap-1.5">
-          <button
-            type="button"
-            onClick={zoomIn}
-            disabled={zoomLevel === ZOOM_STEPS[ZOOM_STEPS.length - 1]}
-            className="w-7 h-7 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[14px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Zoom in"
-          >
-            +
-          </button>
-          <button
-            type="button"
-            onClick={zoomOut}
-            disabled={zoomLevel === ZOOM_STEPS[0]}
-            className="w-7 h-7 rounded-lg bg-surface-container-lowest shadow-sm text-on-surface flex items-center justify-center text-[14px] font-bold hover:bg-surface-container transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            aria-label="Zoom out"
-          >
-            &minus;
-          </button>
-        </div>
-
-        <div
-          className="absolute inset-0 transition-transform duration-300 origin-center"
-          style={{ transform: `scale(${zoomLevel})` }}
-        >
-          {/* Grid pattern */}
-          <svg className="absolute inset-0 w-full h-full opacity-[0.08]" aria-hidden="true">
-            <defs>
-              <pattern id="mapGrid" width="32" height="32" patternUnits="userSpaceOnUse">
-                <path d="M 32 0 L 0 0 0 32" fill="none" stroke="currentColor" strokeWidth="0.5" />
-              </pattern>
-            </defs>
-            <rect width="100%" height="100%" fill="url(#mapGrid)" />
-          </svg>
-
-          {/* Pins */}
-          {pins.map((pin) => {
-            const isMatch = selectedStage === null || pin.stage === selectedStage;
-            return (
-              <div
-                key={pin.address}
-                className={`absolute flex items-center gap-1.5 transition-opacity duration-300 ${
-                  !isMatch ? "opacity-20" : ""
-                }`}
-                style={{ top: pin.top, left: pin.left }}
-              >
-                {isMatch && (
-                  <span
-                    className="absolute w-5 h-5 rounded-full opacity-20 animate-ping"
-                    style={{ backgroundColor: pin.color }}
-                  />
-                )}
-                <span
-                  className="relative w-3 h-3 rounded-full border-2 border-white shadow-sm z-10"
-                  style={{ backgroundColor: pin.color }}
-                />
-                <span
-                  className="relative z-10 text-[11px] font-medium text-white rounded px-2 py-0.5 shadow-sm whitespace-nowrap"
-                  style={{ backgroundColor: pin.color }}
-                >
-                  {pin.address}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      <DashboardMap jobs={mapJobs} selectedStage={selectedStage} />
     </Card>
   );
 }
