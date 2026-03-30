@@ -18,7 +18,7 @@ from api.shared.dependencies import _get_token, get_valid_job
 from api.sharing.schemas import (
     SharedJobResponse,
     ShareLinkCreate,
-    ShareLinkListItem,
+    ShareLinkListResponse,
     ShareLinkResponse,
 )
 from api.sharing.service import (
@@ -43,7 +43,7 @@ async def create_job_share_link(
     job: dict = Depends(get_valid_job),
 ):
     """Create a share link for a job. Returns the raw token (shown once)."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await create_share_link(
         client,
         job_id=UUID(job["id"]),
@@ -55,7 +55,7 @@ async def create_job_share_link(
 
 @router.get(
     "/jobs/{job_id}/share",
-    response_model=list[ShareLinkListItem],
+    response_model=ShareLinkListResponse,
 )
 async def list_job_share_links(
     request: Request,
@@ -63,7 +63,7 @@ async def list_job_share_links(
     job: dict = Depends(get_valid_job),
 ):
     """List all share links for a job (including revoked)."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await list_share_links(client, job_id=UUID(job["id"]))
 
 
@@ -78,7 +78,7 @@ async def revoke_job_share_link(
     job: dict = Depends(get_valid_job),
 ):
     """Revoke a share link (sets revoked_at, link stops working)."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     await revoke_share_link(
         client,
         job_id=UUID(job["id"]),

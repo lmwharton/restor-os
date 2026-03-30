@@ -5,9 +5,10 @@ from datetime import UTC, date, datetime
 from uuid import UUID
 
 from api.jobs.schemas import JobCreate, JobDetailResponse, JobResponse, JobUpdate
-from api.shared.database import get_authenticated_client
+from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+from api.shared.sanitize import sanitize_postgrest_search
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,12 @@ def _validate_enums(
         )
 
 
-def _generate_job_number(client, company_id: UUID) -> str:
+async def _generate_job_number(client, company_id: UUID) -> str:
     """Generate JOB-YYYYMMDD-XXX. Queries max existing for today."""
     today = datetime.now(UTC).strftime("%Y%m%d")
     prefix = f"JOB-{today}-"
 
-    result = (
+    result = await (
         client.table("jobs")
         .select("job_number")
         .eq("company_id", str(company_id))
@@ -163,7 +164,7 @@ def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
     )
 
 
-def _get_job_counts(client, job_id: str) -> dict:
+async def _get_job_counts(client, job_id: str) -> dict:
     """Query counts of related entities for a job."""
     counts: dict[str, int] = {}
 
@@ -174,7 +175,9 @@ def _get_job_counts(client, job_id: str) -> dict:
         ("line_items", "line_item_count"),
     ]:
         try:
-            result = client.table(table).select("id", count="exact").eq("job_id", job_id).execute()
+            result = await (
+                client.table(table).select("id", count="exact").eq("job_id", job_id).execute()
+            )
             counts[key] = result.count if result.count is not None else 0
         except Exception:
             counts[key] = 0
@@ -195,7 +198,7 @@ async def create_job(
         loss_class=body.loss_class,
     )
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     insert_data: dict = {
         "company_id": str(company_id),
@@ -242,10 +245,10 @@ async def create_job(
     # that specific error and regenerate the number.
     job_data = None
     for attempt in range(JOB_NUMBER_MAX_RETRIES):
-        job_number = _generate_job_number(client, company_id)
+        job_number = await _generate_job_number(client, company_id)
         insert_data["job_number"] = job_number
         try:
-            result = client.table("jobs").insert(insert_data).execute()
+            result = await client.table("jobs").insert(insert_data).execute()
             if not result.data:
                 raise AppException(
                     status_code=500,
@@ -275,6 +278,8 @@ async def create_job(
             error_code="JOB_CREATE_FAILED",
         )
 
+    # Non-transactional: job insert succeeded, event logging is fire-and-forget.
+    # See api/shared/events.py for rationale. Acceptable for V1.
     await log_event(
         company_id,
         "job_created",
@@ -305,7 +310,7 @@ async def list_jobs(
         sort_by = "created_at"
     desc = sort_dir.lower() != "asc"
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Build query for items
     query = (
@@ -320,11 +325,19 @@ async def list_jobs(
     if loss_type:
         query = query.eq("loss_type", loss_type)
     if search:
-        # ILIKE search on address_line1 and customer_name
-        query = query.or_(f"address_line1.ilike.%{search}%,customer_name.ilike.%{search}%")
+        safe_search = sanitize_postgrest_search(search)
+        if safe_search:
+            query = query.or_(
+                f"address_line1.ilike.%{safe_search}%,"
+                f"customer_name.ilike.%{safe_search}%,"
+                f"job_number.ilike.%{safe_search}%,"
+                f"city.ilike.%{safe_search}%,"
+                f"carrier.ilike.%{safe_search}%,"
+                f"claim_number.ilike.%{safe_search}%"
+            )
 
     query = query.order(sort_by, desc=desc).range(offset, offset + limit - 1)
-    result = query.execute()
+    result = await query.execute()
 
     total = result.count if result.count is not None else 0
     items = [_parse_job(row) for row in (result.data or [])]
@@ -334,9 +347,9 @@ async def list_jobs(
 
 async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailResponse:
     """Get a single job with computed counts."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
-    result = (
+    result = await (
         client.table("jobs")
         .select("*")
         .eq("id", str(job_id))
@@ -349,7 +362,7 @@ async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailRespon
     if not result.data:
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
-    counts = _get_job_counts(client, str(job_id))
+    counts = await _get_job_counts(client, str(job_id))
     return _parse_job_detail(result.data, counts)
 
 
@@ -383,9 +396,9 @@ async def update_job(
 
     updates["updated_by"] = str(user_id)
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
-    result = (
+    result = await (
         client.table("jobs")
         .update(updates)
         .eq("id", str(job_id))
@@ -407,21 +420,25 @@ async def update_job(
         event_data={"updated_fields": list(updates.keys())},
     )
 
-    counts = _get_job_counts(client, str(job_id))
+    counts = await _get_job_counts(client, str(job_id))
     return _parse_job_detail(job_data, counts)
 
 
 async def delete_job(
-    token: str,
     company_id: UUID,
     user_id: UUID,
     job_id: UUID,
 ) -> None:
-    """Soft delete a job by setting deleted_at."""
-    client = get_authenticated_client(token)
+    """Soft delete a job by setting deleted_at.
+
+    Uses admin client because RLS update policy requires deleted_at IS NULL,
+    which conflicts with setting deleted_at to a non-null value.
+    company_id + job_id are verified explicitly.
+    """
+    client = await get_supabase_admin_client()
 
     now = datetime.now(UTC).isoformat()
-    result = (
+    result = await (
         client.table("jobs")
         .update({"deleted_at": now, "updated_by": str(user_id)})
         .eq("id", str(job_id))

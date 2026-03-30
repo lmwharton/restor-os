@@ -52,7 +52,7 @@ function statusLabel(status: string): string {
     contracted: "Contracted",
     mitigation: "Mitigation",
     drying: "Drying",
-    completed: "Complete",
+    job_complete: "Complete",
     submitted: "Submitted",
     collected: "Collected",
   };

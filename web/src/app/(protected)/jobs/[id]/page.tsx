@@ -5,13 +5,36 @@ import { useParams, useRouter } from "next/navigation";
 import {
   useJob,
   useRooms,
-  useReadings,
+  useAllReadings,
   usePhotos,
   useJobEvents,
   useDeleteJob,
   useCreateShareLink,
+  useFloorPlans,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
+
+/* ------------------------------------------------------------------ */
+/*  Types                                                              */
+/* ------------------------------------------------------------------ */
+
+interface CanvasWall {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+interface CanvasRoom {
+  vertices: Array<{ x: number; y: number }>;
+  color?: string;
+  name?: string;
+}
+
+interface CanvasData {
+  walls?: CanvasWall[];
+  rooms?: CanvasRoom[];
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -33,7 +56,7 @@ function statusLabel(status: string): string {
       return "Mitigation";
     case "drying":
       return "Drying";
-    case "completed":
+    case "job_complete":
       return "Complete";
     case "submitted":
       return "Submitted";
@@ -121,35 +144,6 @@ function ChartIcon({ size = 22 }: { size?: number }) {
   );
 }
 
-function MicIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <rect x="9" y="1" width="6" height="11" rx="3" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M19 10v1a7 7 0 0 1-14 0v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="12" y1="19" x2="12" y2="23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-      <line x1="8" y1="23" x2="16" y2="23" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PencilIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
-function BellIcon({ size = 20 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-    </svg>
-  );
-}
-
 function ShareIcon({ size = 18 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -175,6 +169,86 @@ function TrashIcon({ size = 18 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Floor Plan Preview (SVG thumbnail)                                 */
+/* ------------------------------------------------------------------ */
+
+function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
+  const rawWalls = canvasData?.walls;
+  const walls = Array.isArray(rawWalls) ? rawWalls : [];
+  const rawRooms = canvasData?.rooms;
+  const rooms = Array.isArray(rawRooms) ? rawRooms : [];
+
+  if (walls.length === 0) {
+    return (
+      <>
+        <div
+          className="absolute inset-0 opacity-[0.08]"
+          style={{
+            backgroundImage:
+              "linear-gradient(to right, var(--on-surface) 1px, transparent 1px), linear-gradient(to bottom, var(--on-surface) 1px, transparent 1px)",
+            backgroundSize: "32px 32px",
+          }}
+        />
+        <div className="relative z-10 flex flex-col items-center gap-2 text-on-surface-variant">
+          <svg width={32} height={32} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">No floor plan yet</span>
+        </div>
+      </>
+    );
+  }
+
+  const allX = walls.flatMap((w) => [w.x1, w.x2]);
+  const allY = walls.flatMap((w) => [w.y1, w.y2]);
+  const minX = Math.min(...allX);
+  const maxX = Math.max(...allX);
+  const minY = Math.min(...allY);
+  const maxY = Math.max(...allY);
+  const padding = 20;
+  const vbW = maxX - minX + padding * 2;
+  const vbH = maxY - minY + padding * 2;
+
+  return (
+    <>
+      <svg
+        className="absolute inset-0 w-full h-full"
+        viewBox={`${minX - padding} ${minY - padding} ${vbW} ${vbH}`}
+        preserveAspectRatio="xMidYMid meet"
+        aria-label="Floor plan preview"
+      >
+        {rooms.map((room, i) => (
+          <polygon
+            key={`room-${i}`}
+            points={room.vertices.map((v) => `${v.x},${v.y}`).join(" ")}
+            fill={room.color ?? "rgba(232,93,38,0.08)"}
+            stroke="none"
+          />
+        ))}
+        {walls.map((w, i) => (
+          <line
+            key={`wall-${i}`}
+            x1={w.x1}
+            y1={w.y1}
+            x2={w.x2}
+            y2={w.y2}
+            stroke="var(--on-surface)"
+            strokeWidth={Math.max(2, vbW / 150)}
+            strokeLinecap="round"
+          />
+        ))}
+      </svg>
+      <div className="absolute bottom-3 left-3 z-10">
+        <span className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant bg-surface-container/80 px-2 py-1 rounded">
+          {rooms.length} room{rooms.length !== 1 ? "s" : ""} · {walls.length} wall{walls.length !== 1 ? "s" : ""}
+        </span>
+      </div>
+    </>
   );
 }
 
@@ -223,16 +297,9 @@ function AccordionSection({
             </span>
           )}
         </span>
-        {!compact && (
-          <span className="shrink-0 text-on-surface-variant">
-            {open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
-          </span>
-        )}
-        {compact && (
-          <span className="shrink-0 text-on-surface-variant">
-            <ChevronRight size={18} />
-          </span>
-        )}
+        <span className="shrink-0 text-on-surface-variant">
+          {!compact && open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
+        </span>
       </button>
       {!compact && open && children && (
         <div className="px-5 pb-5 pt-0">
@@ -399,6 +466,7 @@ export default function JobDetailPage() {
 
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
+  const { data: floorPlans } = useFloorPlans(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const deleteJob = useDeleteJob();
@@ -445,9 +513,7 @@ export default function JobDetailPage() {
     }
   }, [shareModal]);
 
-  // Use first room for readings
-  const firstRoomId = rooms?.[0]?.id ?? "";
-  const { data: readings } = useReadings(jobId, firstRoomId);
+  const { data: readings } = useAllReadings(jobId);
 
   const dayNumber = job?.loss_date ? daysSinceLoss(job.loss_date) : null;
 
@@ -505,20 +571,10 @@ export default function JobDetailPage() {
               <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight">
                 {job.job_number}
               </p>
-              {job.assigned_to ? (
+              {job.assigned_to && (
                 <span className="text-[11px] text-on-surface-variant">
                   · Assigned to <span className="font-medium text-on-surface">{job.assigned_to}</span>
                 </span>
-              ) : (
-                <button
-                  type="button"
-                  className="text-[11px] text-brand-accent hover:underline cursor-pointer"
-                  onClick={() => {
-                    // TODO: open assign modal with team member list
-                  }}
-                >
-                  + Assign
-                </button>
               )}
             </div>
           </div>
@@ -642,12 +698,6 @@ export default function JobDetailPage() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                className="text-[13px] font-semibold text-brand-accent hover:underline cursor-pointer"
-              >
-                Edit &rarr;
-              </button>
             </div>
           </AccordionSection>
 
@@ -658,7 +708,7 @@ export default function JobDetailPage() {
             defaultOpen
           >
             <div className="space-y-3">
-              {/* Floor plan placeholder — links to sketch tool */}
+              {/* Floor plan preview — renders saved sketch or empty state */}
               <div
                 role="button"
                 tabIndex={0}
@@ -666,25 +716,8 @@ export default function JobDetailPage() {
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
                 className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
-                {/* Grid pattern */}
-                <div
-                  className="absolute inset-0 opacity-[0.08]"
-                  style={{
-                    backgroundImage: "linear-gradient(to right, var(--on-surface) 1px, transparent 1px), linear-gradient(to bottom, var(--on-surface) 1px, transparent 1px)",
-                    backgroundSize: "32px 32px",
-                  }}
-                />
-                {/* Room shapes placeholder */}
-                <div className="relative z-10 flex flex-col items-center gap-2 text-on-surface-variant">
-                  <svg width={32} height={32} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
-                    <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5" />
-                  </svg>
-                  <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">
-                    {rooms?.length ?? 0} rooms mapped
-                  </span>
-                </div>
-                <span className="absolute bottom-3 right-3 text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
+                <FloorPlanPreview canvasData={(floorPlans?.[0]?.canvas_data as CanvasData) ?? null} />
+                <span className="absolute bottom-3 right-3 z-10 text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
                   View Plan &rarr;
                 </span>
               </div>
@@ -694,7 +727,7 @@ export default function JobDetailPage() {
                 {rooms?.map((room) => (
                   <span
                     key={room.id}
-                    className="px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
+                    className="px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface"
                   >
                     {room.room_name}
                   </span>
@@ -721,28 +754,22 @@ export default function JobDetailPage() {
           >
             <div className="space-y-3">
               <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
-                {(photos && photos.length > 0
-                  ? photos.slice(0, 4)
-                  : Array.from({ length: 4 }, () => null)
-                ).map((photo, i) => (
+                {photos && photos.length > 0 && photos.slice(0, 4).map((photo) => (
                   <div
-                    key={photo?.id ?? `placeholder-${i}`}
+                    key={photo.id}
                     className="relative w-24 h-24 rounded-lg bg-surface-container-high shrink-0 overflow-hidden flex items-center justify-center"
                   >
-                    {photo ? (
-                      <img src={photo.storage_url} alt={photo.room_name || "Job photo"} className="w-full h-full object-cover" />
-                    ) : (
-                      <CameraIcon size={18} />
-                    )}
+                    <img src={photo.storage_url} alt={photo.room_name || "Job photo"} className="w-full h-full object-cover" />
                     {/* Untagged dot */}
-                    {photo && !photo.room_id && (
+                    {!photo.room_id && (
                       <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-brand-accent" />
                     )}
                   </div>
                 ))}
-                {/* Add more */}
+                {/* Add button */}
                 <button
                   type="button"
+                  onClick={() => router.push(`/jobs/${jobId}/photos`)}
                   className="w-24 h-24 rounded-lg border-2 border-dashed border-outline-variant/40 shrink-0 flex flex-col items-center justify-center gap-1 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
                 >
                   <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -755,7 +782,7 @@ export default function JobDetailPage() {
               {photos && photos.length > 4 && (
                 <p className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
                   {photos.length} total photos &middot;{" "}
-                  <button type="button" className="text-brand-accent hover:underline cursor-pointer font-semibold">
+                  <button type="button" onClick={() => router.push(`/jobs/${jobId}/photos`)} className="text-brand-accent hover:underline cursor-pointer font-semibold">
                     View all &rarr;
                   </button>
                 </p>
@@ -800,12 +827,6 @@ export default function JobDetailPage() {
                 <p className="text-[13px] text-on-surface leading-relaxed">
                   {job.tech_notes}
                 </p>
-                <button
-                  type="button"
-                  className="text-[13px] font-semibold text-brand-accent hover:underline cursor-pointer"
-                >
-                  Edit
-                </button>
               </div>
             ) : (
               <p className="text-[13px] text-on-surface-variant py-2">
@@ -853,6 +874,7 @@ export default function JobDetailPage() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
+                onClick={() => router.push(`/jobs/${jobId}/photos`)}
                 className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
               >
                 <CameraIcon size={22} />
@@ -862,29 +884,12 @@ export default function JobDetailPage() {
               </button>
               <button
                 type="button"
+                onClick={() => router.push(`/jobs/${jobId}/readings`)}
                 className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
               >
                 <ChartIcon size={22} />
                 <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
                   Log Reading
-                </span>
-              </button>
-              <button
-                type="button"
-                className="flex flex-col items-center justify-center h-20 rounded-xl bg-surface-container text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
-              >
-                <MicIcon size={22} />
-                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
-                  Voice Note
-                </span>
-              </button>
-              <button
-                type="button"
-                className="flex flex-col items-center justify-center h-20 rounded-xl bg-surface-container text-on-surface cursor-pointer hover:bg-surface-container-high transition-colors"
-              >
-                <PencilIcon size={22} />
-                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1.5 uppercase tracking-[0.04em]">
-                  Edit Job
                 </span>
               </button>
             </div>
@@ -896,17 +901,23 @@ export default function JobDetailPage() {
               Upcoming Task Requirements
             </h3>
             <div className="space-y-3">
-              <div className="flex gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
-                <div>
-                  <p className="text-[13px] font-semibold text-brand-accent">
-                    Day {dayNumber ?? 3} readings not logged
-                  </p>
-                  <p className="text-[11px] text-on-surface-variant mt-0.5">
-                    Required for AI scoping engine
-                  </p>
+              {(!readings || readings.length === 0 || !readings.some((r) => {
+                const now = new Date();
+                const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+                return r.reading_date === localDate;
+              })) && (
+                <div className="flex gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
+                  <div>
+                    <p className="text-[13px] font-semibold text-brand-accent">
+                      Day {dayNumber ?? 3} readings not logged
+                    </p>
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">
+                      Required for AI scoping engine
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
               <div className="flex gap-2.5">
                 <span className="w-2 h-2 rounded-full bg-surface-container-highest mt-1.5 shrink-0" />
                 <div>
@@ -948,6 +959,7 @@ export default function JobDetailPage() {
             </div>
             <button
               type="button"
+              onClick={() => router.push(`/jobs/${jobId}/timeline`)}
               className="mt-3 text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold text-brand-accent hover:underline cursor-pointer uppercase tracking-[0.06em]"
             >
               View Full Log
@@ -1002,6 +1014,7 @@ export default function JobDetailPage() {
           <div className="bg-surface-container-lowest rounded-2xl shadow-[0_-2px_20px_rgba(31,27,23,0.08),0_-1px_4px_rgba(31,27,23,0.04)] p-2 flex items-stretch gap-1">
             <button
               type="button"
+              onClick={() => router.push(`/jobs/${jobId}/photos`)}
               className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
             >
               <CameraIcon size={22} />
@@ -1011,20 +1024,12 @@ export default function JobDetailPage() {
             </button>
             <button
               type="button"
+              onClick={() => router.push(`/jobs/${jobId}/readings`)}
               className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
             >
               <ChartIcon size={22} />
               <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
                 Reading
-              </span>
-            </button>
-            <button
-              type="button"
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl text-on-surface-variant hover:bg-surface-container active:bg-surface-container-high transition-colors cursor-pointer"
-            >
-              <MicIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">
-                Voice
               </span>
             </button>
           </div>

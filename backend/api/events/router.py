@@ -28,7 +28,7 @@ async def get_job_events(
     job: dict = Depends(get_valid_job),
 ):
     """Get event timeline for a specific job."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await list_job_events(
         client,
         job_id=UUID(job["id"]),
@@ -49,7 +49,7 @@ async def get_company_events(
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Get company-wide activity feed."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await list_company_events(
         client,
         company_id=ctx.company_id,

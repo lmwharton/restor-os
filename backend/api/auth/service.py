@@ -49,6 +49,7 @@ def _parse_user(data: dict, company: CompanyResponse | None = None) -> UserRespo
         last_name=data.get("last_name"),
         phone=data.get("phone"),
         avatar_url=data.get("avatar_url"),
+        title=data.get("title"),
         role=data["role"],
         is_platform_admin=data.get("is_platform_admin", False),
         company=company,
@@ -57,9 +58,9 @@ def _parse_user(data: dict, company: CompanyResponse | None = None) -> UserRespo
 
 async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
     """Look up user by auth_user_id, include company data. Returns None if not found."""
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
 
-    result = (
+    result = await (
         client.table("users")
         .select("*, companies(*)")
         .eq("auth_user_id", str(auth_user_id))
@@ -97,10 +98,10 @@ async def get_or_create_company(
 
     Uses get_supabase_admin_client() (service_role, bypasses RLS).
     """
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
 
     # Check if user already has a company
-    existing = (
+    existing = await (
         client.table("users")
         .select("*, companies(*)")
         .eq("auth_user_id", str(auth_user_id))
@@ -117,7 +118,7 @@ async def get_or_create_company(
 
     # Create company
     slug = _slugify(name)
-    company_result = (
+    company_result = await (
         client.table("companies")
         .insert(
             {
@@ -148,7 +149,7 @@ async def get_or_create_company(
     # Create or update user
     if existing_data:
         # User exists but has no company -- update them
-        user_result = (
+        user_result = await (
             client.table("users")
             .update(
                 {
@@ -165,7 +166,7 @@ async def get_or_create_company(
         )
     else:
         # Create new user
-        user_result = (
+        user_result = await (
             client.table("users")
             .insert(
                 {
@@ -195,9 +196,9 @@ async def get_or_create_company(
 
 async def list_jobs(company_id: UUID) -> list[JobResponse]:
     """List all active jobs for a company. Returns empty list for new companies."""
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
 
-    result = (
+    result = await (
         client.table("jobs")
         .select("*")
         .eq("company_id", str(company_id))
@@ -230,18 +231,20 @@ async def list_jobs(company_id: UUID) -> list[JobResponse]:
 
 async def update_user_profile(user_id: UUID, body: UserUpdate) -> UserResponse:
     """Update user name/phone."""
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
 
-    # Split name into first/last if name is provided
+    # Split name into first/last if name is provided (but don't overwrite explicit values)
     if "name" in updates:
         name_parts = updates["name"].strip().split(" ", 1)
-        updates["first_name"] = name_parts[0]
-        updates["last_name"] = name_parts[1] if len(name_parts) > 1 else None
+        if "first_name" not in updates:
+            updates["first_name"] = name_parts[0]
+        if "last_name" not in updates:
+            updates["last_name"] = name_parts[1] if len(name_parts) > 1 else None
 
-    result = client.table("users").update(updates).eq("id", str(user_id)).execute()
+    result = await client.table("users").update(updates).eq("id", str(user_id)).execute()
     if not result.data:
         raise AppException(status_code=404, detail="User not found", error_code="USER_NOT_FOUND")
     return _parse_user(result.data[0])
@@ -249,12 +252,12 @@ async def update_user_profile(user_id: UUID, body: UserUpdate) -> UserResponse:
 
 async def update_company(company_id: UUID, body: CompanyUpdate) -> CompanyResponse:
     """Update company name/phone."""
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
     updates = {k: v for k, v in body.model_dump().items() if v is not None}
     if not updates:
         raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
 
-    result = client.table("companies").update(updates).eq("id", str(company_id)).execute()
+    result = await client.table("companies").update(updates).eq("id", str(company_id)).execute()
     if not result.data:
         raise AppException(
             status_code=404, detail="Company not found", error_code="COMPANY_NOT_FOUND"
@@ -264,7 +267,7 @@ async def update_company(company_id: UUID, body: CompanyUpdate) -> CompanyRespon
 
 async def update_company_logo(company_id: UUID, file) -> str:
     """Upload logo to Supabase Storage and update company.logo_url."""
-    client = get_supabase_admin_client()
+    client = await get_supabase_admin_client()
 
     # Read file content
     content = await file.read()
@@ -272,24 +275,57 @@ async def update_company_logo(company_id: UUID, file) -> str:
     path = f"{company_id}/logo.{ext}"
 
     # Upload to logos bucket (upsert replaces existing)
-    client.storage.from_("logos").upload(
+    await client.storage.from_("logos").upload(
         path,
         content,
         file_options={"content-type": file.content_type or "image/png", "upsert": "true"},
     )
 
     # Get public URL
-    public_url = client.storage.from_("logos").get_public_url(path)
+    public_url = await client.storage.from_("logos").get_public_url(path)
 
     # Update company record
-    client.table("companies").update({"logo_url": public_url}).eq("id", str(company_id)).execute()
+    await (
+        client.table("companies")
+        .update({"logo_url": public_url})
+        .eq("id", str(company_id))
+        .execute()
+    )
 
     return public_url
 
 
+async def update_user_avatar(user_id: UUID, file) -> UserResponse:
+    """Upload avatar to Supabase Storage and update user.avatar_url."""
+    client = await get_supabase_admin_client()
+
+    # Read file content
+    content = await file.read()
+    ext = file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "png"
+    path = f"{user_id}/avatar.{ext}"
+
+    # Upload to avatars bucket (upsert replaces existing)
+    await client.storage.from_("avatars").upload(
+        path,
+        content,
+        file_options={"content-type": file.content_type or "image/png", "upsert": "true"},
+    )
+
+    # Get public URL
+    public_url = await client.storage.from_("avatars").get_public_url(path)
+
+    # Update user record
+    result = await (
+        client.table("users").update({"avatar_url": public_url}).eq("id", str(user_id)).execute()
+    )
+    if not result.data:
+        raise AppException(status_code=404, detail="User not found", error_code="USER_NOT_FOUND")
+    return _parse_user(result.data[0])
+
+
 async def update_last_login(user_id: UUID) -> None:
     """Update last_login_at timestamp."""
-    client = get_supabase_admin_client()
-    client.table("users").update({"last_login_at": datetime.now(UTC).isoformat()}).eq(
+    client = await get_supabase_admin_client()
+    await client.table("users").update({"last_login_at": datetime.now(UTC).isoformat()}).eq(
         "id", str(user_id)
     ).execute()

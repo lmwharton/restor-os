@@ -17,6 +17,7 @@ from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.floor_plans.schemas import (
     FloorPlanCreate,
+    FloorPlanListResponse,
     FloorPlanResponse,
     FloorPlanUpdate,
     SketchCleanupRequest,
@@ -54,7 +55,7 @@ async def create_floor_plan_endpoint(
     )
 
 
-@router.get("/jobs/{job_id}/floor-plans", response_model=list[FloorPlanResponse])
+@router.get("/jobs/{job_id}/floor-plans", response_model=FloorPlanListResponse)
 async def list_floor_plans_endpoint(
     request: Request,
     job: dict = Depends(get_valid_job),
@@ -189,8 +190,8 @@ async def edit_endpoint(
     # Fetch current floor plan
     from api.shared.database import get_authenticated_client
 
-    client = get_authenticated_client(token)
-    result = (
+    client = await get_authenticated_client(token)
+    result = await (
         client.table("floor_plans")
         .select("*")
         .eq("id", str(floor_plan_id))

@@ -77,7 +77,6 @@ async def update_job_endpoint(
 @router.delete("/{job_id}")
 async def delete_job_endpoint(
     job_id: UUID,
-    request: Request,
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Soft delete a job. Owner or admin only."""
@@ -87,6 +86,5 @@ async def delete_job_endpoint(
             detail="Only owners and admins can delete jobs",
             error_code="FORBIDDEN",
         )
-    token = _get_token(request)
-    await delete_job(token, ctx.company_id, ctx.user_id, job_id)
+    await delete_job(ctx.company_id, ctx.user_id, job_id)
     return {"deleted": True}

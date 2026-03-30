@@ -1,11 +1,13 @@
 """Properties CRUD service. All queries use authenticated client (RLS-enforced)."""
 
+from datetime import UTC, datetime
 from uuid import UUID
 
 from api.properties.schemas import PropertyCreate, PropertyUpdate
-from api.shared.database import get_authenticated_client
+from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+from api.shared.sanitize import sanitize_postgrest_search
 
 
 def _build_usps_standardized(
@@ -36,14 +38,14 @@ async def create_property(
     body: PropertyCreate,
 ) -> dict:
     """Create a new property. Checks uniqueness on (company_id, usps_standardized)."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     usps = _build_usps_standardized(
         body.address_line1, body.address_line2, body.city, body.state, body.zip
     )
 
     # Check for duplicate address within the company
-    existing = (
+    existing = await (
         client.table("properties")
         .select("id")
         .eq("company_id", str(company_id))
@@ -74,7 +76,7 @@ async def create_property(
         "total_sqft": body.total_sqft,
     }
 
-    result = client.table("properties").insert(insert_data).execute()
+    result = await client.table("properties").insert(insert_data).execute()
     row = result.data[0]
 
     await log_event(
@@ -99,7 +101,7 @@ async def list_properties(
 
     Returns {"items": [...], "total": N}.
     """
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     query = (
         client.table("properties")
@@ -110,17 +112,18 @@ async def list_properties(
     )
 
     if search:
-        # ilike search across address fields
-        search_pattern = f"%{search}%"
-        query = query.or_(
-            f"address_line1.ilike.{search_pattern},"
-            f"city.ilike.{search_pattern},"
-            f"state.ilike.{search_pattern},"
-            f"zip.ilike.{search_pattern}"
-        )
+        safe_search = sanitize_postgrest_search(search)
+        if safe_search:
+            search_pattern = f"%{safe_search}%"
+            query = query.or_(
+                f"address_line1.ilike.{search_pattern},"
+                f"city.ilike.{search_pattern},"
+                f"state.ilike.{search_pattern},"
+                f"zip.ilike.{search_pattern}"
+            )
 
     query = query.range(offset, offset + limit - 1)
-    result = query.execute()
+    result = await query.execute()
 
     return {"items": result.data, "total": result.count or 0}
 
@@ -131,9 +134,9 @@ async def get_property(
     property_id: UUID,
 ) -> dict:
     """Get a single property by ID. Must belong to the company."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
-    result = (
+    result = await (
         client.table("properties")
         .select("*")
         .eq("id", str(property_id))
@@ -161,10 +164,10 @@ async def update_property(
     body: PropertyUpdate,
 ) -> dict:
     """Update a property. Recalculates usps_standardized if address fields change."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Fetch current property to merge address fields for usps recalculation
-    current = (
+    current = await (
         client.table("properties")
         .select("*")
         .eq("id", str(property_id))
@@ -198,7 +201,7 @@ async def update_property(
 
         # Check uniqueness if address actually changed
         if new_usps != current.data.get("usps_standardized"):
-            dup = (
+            dup = await (
                 client.table("properties")
                 .select("id")
                 .eq("company_id", str(company_id))
@@ -217,7 +220,7 @@ async def update_property(
 
             update_data["usps_standardized"] = new_usps
 
-    result = (
+    result = await (
         client.table("properties")
         .update(update_data)
         .eq("id", str(property_id))
@@ -237,3 +240,41 @@ async def update_property(
     )
 
     return result.data
+
+
+async def delete_property(
+    company_id: UUID,
+    user_id: UUID,
+    property_id: UUID,
+) -> None:
+    """Soft delete a property by setting deleted_at.
+
+    Uses admin client because RLS update policy requires deleted_at IS NULL,
+    which conflicts with setting deleted_at to a non-null value.
+    company_id + property_id are verified explicitly.
+    """
+    client = await get_supabase_admin_client()
+
+    now = datetime.now(UTC).isoformat()
+    result = await (
+        client.table("properties")
+        .update({"deleted_at": now})
+        .eq("id", str(property_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .execute()
+    )
+
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail="Property not found",
+            error_code="PROPERTY_NOT_FOUND",
+        )
+
+    await log_event(
+        company_id,
+        "property_deleted",
+        user_id=user_id,
+        event_data={"property_id": str(property_id)},
+    )

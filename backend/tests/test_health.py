@@ -1,12 +1,14 @@
 """Tests for the health check endpoint."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+from tests.conftest import AsyncSupabaseMock
 
 
 def test_health_check_returns_200(client):
     """GET /health returns 200 with status and version."""
     # Mock Supabase client so health check doesn't try to connect
-    mock_client = MagicMock()
+    mock_client = AsyncSupabaseMock()
     mock_client.table.return_value.select.return_value.limit.return_value.execute.return_value.data = [
         {"id": "test"}
     ]
@@ -21,7 +23,7 @@ def test_health_check_returns_200(client):
 
 def test_health_check_includes_version(client):
     """GET /health response includes the current API version."""
-    mock_client = MagicMock()
+    mock_client = AsyncSupabaseMock()
     mock_client.table.return_value.select.return_value.limit.return_value.execute.return_value.data = [
         {"id": "test"}
     ]
@@ -34,7 +36,7 @@ def test_health_check_includes_version(client):
 
 def test_health_check_degraded_on_db_failure(client):
     """GET /health returns degraded when database is unreachable."""
-    mock_client = MagicMock()
+    mock_client = AsyncSupabaseMock()
     mock_client.table.return_value.select.return_value.limit.return_value.execute.side_effect = Exception(
         "Connection refused"
     )

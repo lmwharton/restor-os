@@ -9,7 +9,7 @@ from decimal import Decimal
 from math import exp
 from uuid import UUID
 
-from supabase import Client
+from supabase import AsyncClient
 
 from api.moisture.schemas import (
     DehuOutputCreate,
@@ -59,7 +59,7 @@ def calculate_day_number(reading_date: date, loss_date: date | None) -> int | No
 
 
 async def create_reading(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
     room_id: UUID,
     company_id: UUID,
@@ -69,7 +69,7 @@ async def create_reading(
 ) -> dict:
     """Create a moisture reading for a room. Checks uniqueness on (room_id, reading_date)."""
     # Check for duplicate reading on same date + room
-    existing = (
+    existing = await (
         client.table("moisture_readings")
         .select("id")
         .eq("room_id", str(room_id))
@@ -104,7 +104,7 @@ async def create_reading(
         "atmospheric_gpp": float(gpp) if gpp is not None else None,
     }
 
-    result = client.table("moisture_readings").insert(row).execute()
+    result = await client.table("moisture_readings").insert(row).execute()
     reading = result.data[0]
 
     # Attach empty nested arrays
@@ -123,42 +123,52 @@ async def create_reading(
 
 
 async def list_room_readings(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
     room_id: UUID,
-) -> list[dict]:
-    """List all readings for a specific room, ordered by reading_date ASC."""
-    result = (
+) -> dict:
+    """List all readings for a specific room, ordered by reading_date ASC.
+
+    Returns {"items": [...], "total": N}.
+    """
+    result = await (
         client.table("moisture_readings")
-        .select("*")
+        .select("*", count="exact")
         .eq("job_id", str(job_id))
         .eq("room_id", str(room_id))
         .order("reading_date")
         .execute()
     )
     readings = result.data or []
-    return await _attach_nested(client, readings)
+    total = result.count if isinstance(result.count, int) else len(readings)
+    items = await _attach_nested(client, readings)
+    return {"items": items, "total": total}
 
 
 async def list_job_readings(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
-) -> list[dict]:
-    """List ALL readings across all rooms for a job. Ordered by reading_date ASC, room_id."""
-    result = (
+) -> dict:
+    """List ALL readings across all rooms for a job. Ordered by reading_date ASC, room_id.
+
+    Returns {"items": [...], "total": N}.
+    """
+    result = await (
         client.table("moisture_readings")
-        .select("*")
+        .select("*", count="exact")
         .eq("job_id", str(job_id))
         .order("reading_date")
         .order("room_id")
         .execute()
     )
     readings = result.data or []
-    return await _attach_nested(client, readings)
+    total = result.count if isinstance(result.count, int) else len(readings)
+    items = await _attach_nested(client, readings)
+    return {"items": items, "total": total}
 
 
 async def update_reading(
-    client: Client,
+    client: AsyncClient,
     reading_id: UUID,
     company_id: UUID,
     user_id: UUID,
@@ -203,7 +213,7 @@ async def update_reading(
 
         # Check uniqueness for new date
         room_id = reading_data.get("room_id")
-        existing = (
+        existing = await (
             client.table("moisture_readings")
             .select("id")
             .eq("room_id", str(room_id))
@@ -218,7 +228,9 @@ async def update_reading(
                 error_code="READING_EXISTS",
             )
 
-    result = client.table("moisture_readings").update(updates).eq("id", str(reading_id)).execute()
+    result = await (
+        client.table("moisture_readings").update(updates).eq("id", str(reading_id)).execute()
+    )
     reading = result.data[0]
     readings_with_nested = await _attach_nested(client, [reading])
 
@@ -234,7 +246,7 @@ async def update_reading(
 
 
 async def delete_reading(
-    client: Client,
+    client: AsyncClient,
     reading_id: UUID,
     company_id: UUID,
     user_id: UUID,
@@ -242,9 +254,9 @@ async def delete_reading(
 ) -> None:
     """Hard-delete a moisture reading and its child points/dehus."""
     # Delete children first
-    client.table("moisture_points").delete().eq("reading_id", str(reading_id)).execute()
-    client.table("dehu_outputs").delete().eq("reading_id", str(reading_id)).execute()
-    client.table("moisture_readings").delete().eq("id", str(reading_id)).execute()
+    await client.table("moisture_points").delete().eq("reading_id", str(reading_id)).execute()
+    await client.table("dehu_outputs").delete().eq("reading_id", str(reading_id)).execute()
+    await client.table("moisture_readings").delete().eq("id", str(reading_id)).execute()
 
     await log_event(
         company_id,
@@ -259,7 +271,7 @@ async def delete_reading(
 
 
 async def create_point(
-    client: Client,
+    client: AsyncClient,
     reading_id: UUID,
     company_id: UUID,
     user_id: UUID,
@@ -274,7 +286,7 @@ async def create_point(
         "meter_photo_url": body.meter_photo_url,
         "sort_order": body.sort_order,
     }
-    result = client.table("moisture_points").insert(row).execute()
+    result = await client.table("moisture_points").insert(row).execute()
     point = result.data[0]
 
     await log_event(
@@ -289,7 +301,7 @@ async def create_point(
 
 
 async def update_point(
-    client: Client,
+    client: AsyncClient,
     point_id: UUID,
     reading_id: UUID,
     company_id: UUID,
@@ -306,7 +318,7 @@ async def update_point(
     if "reading_value" in data and data["reading_value"] is not None:
         data["reading_value"] = float(data["reading_value"])
 
-    result = (
+    result = await (
         client.table("moisture_points")
         .update(data)
         .eq("id", str(point_id))
@@ -328,7 +340,7 @@ async def update_point(
 
 
 async def delete_point(
-    client: Client,
+    client: AsyncClient,
     point_id: UUID,
     reading_id: UUID,
     company_id: UUID,
@@ -336,7 +348,7 @@ async def delete_point(
     job_id: UUID,
 ) -> None:
     """Hard-delete a moisture point."""
-    (
+    await (
         client.table("moisture_points")
         .delete()
         .eq("id", str(point_id))
@@ -357,7 +369,7 @@ async def delete_point(
 
 
 async def create_dehu(
-    client: Client,
+    client: AsyncClient,
     reading_id: UUID,
     company_id: UUID,
     user_id: UUID,
@@ -372,7 +384,7 @@ async def create_dehu(
         "temp_out_f": float(body.temp_out_f) if body.temp_out_f is not None else None,
         "sort_order": body.sort_order,
     }
-    result = client.table("dehu_outputs").insert(row).execute()
+    result = await client.table("dehu_outputs").insert(row).execute()
     dehu = result.data[0]
 
     await log_event(
@@ -387,7 +399,7 @@ async def create_dehu(
 
 
 async def update_dehu(
-    client: Client,
+    client: AsyncClient,
     dehu_id: UUID,
     reading_id: UUID,
     company_id: UUID,
@@ -405,7 +417,7 @@ async def update_dehu(
         if field in data and data[field] is not None:
             data[field] = float(data[field])
 
-    result = (
+    result = await (
         client.table("dehu_outputs")
         .update(data)
         .eq("id", str(dehu_id))
@@ -431,7 +443,7 @@ async def update_dehu(
 
 
 async def delete_dehu(
-    client: Client,
+    client: AsyncClient,
     dehu_id: UUID,
     reading_id: UUID,
     company_id: UUID,
@@ -439,7 +451,7 @@ async def delete_dehu(
     job_id: UUID,
 ) -> None:
     """Hard-delete a dehu output."""
-    (
+    await (
         client.table("dehu_outputs")
         .delete()
         .eq("id", str(dehu_id))
@@ -459,7 +471,7 @@ async def delete_dehu(
 # --- Helpers ---
 
 
-async def _attach_nested(client: Client, readings: list[dict]) -> list[dict]:
+async def _attach_nested(client: AsyncClient, readings: list[dict]) -> list[dict]:
     """Attach points[] and dehus[] to each reading."""
     if not readings:
         return readings
@@ -467,7 +479,7 @@ async def _attach_nested(client: Client, readings: list[dict]) -> list[dict]:
     reading_ids = [r["id"] for r in readings]
 
     # Fetch all points for these readings
-    points_result = (
+    points_result = await (
         client.table("moisture_points")
         .select("*")
         .in_("reading_id", reading_ids)
@@ -479,7 +491,7 @@ async def _attach_nested(client: Client, readings: list[dict]) -> list[dict]:
         points_by_reading.setdefault(p["reading_id"], []).append(p)
 
     # Fetch all dehus for these readings
-    dehus_result = (
+    dehus_result = await (
         client.table("dehu_outputs")
         .select("*")
         .in_("reading_id", reading_ids)

@@ -6,6 +6,21 @@ Usage:
         company_id, "job_created", job_id=job_id, user_id=user_id,
         event_data={"job_number": "JOB-20260326-001"},
     )
+
+Non-transactional pattern (V1):
+    Supabase PostgREST does not support multi-table transactions. Our
+    current pattern is: primary operation first (raises on failure), then
+    fire-and-forget event logging (swallows errors). This is acceptable
+    because event_history is an audit trail, not business-critical state.
+
+    If the primary operation succeeds but event logging fails, a warning
+    is logged and the user's request still succeeds. The worst case is a
+    missing audit entry — not data corruption.
+
+    TODO(Spec-02): For scope_run + line_item creation (AI Photo Scope),
+    atomicity IS critical. Use a PostgreSQL RPC function via
+    client.rpc("create_scope_run_with_items", {...}) to wrap both inserts
+    in a single database transaction.
 """
 
 import logging
@@ -32,8 +47,8 @@ async def log_event(
     which user triggered them (including system/AI actions).
     """
     try:
-        client = get_supabase_admin_client()
-        client.table("event_history").insert(
+        client = await get_supabase_admin_client()
+        await client.table("event_history").insert(
             {
                 "company_id": str(company_id),
                 "job_id": str(job_id) if job_id else None,

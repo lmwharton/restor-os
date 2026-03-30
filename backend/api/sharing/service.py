@@ -9,7 +9,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from supabase import Client
+from supabase import AsyncClient
 
 from api.config import settings
 from api.shared.database import get_supabase_admin_client
@@ -24,7 +24,7 @@ def _hash_token(token: str) -> str:
 
 
 async def create_share_link(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
     company_id: UUID,
     user_id: UUID,
@@ -50,7 +50,7 @@ async def create_share_link(
         "scope": body.scope,
         "expires_at": expires_at.isoformat(),
     }
-    result = client.table("share_links").insert(row).execute()
+    result = await client.table("share_links").insert(row).execute()
     link = result.data[0]
 
     await log_event(
@@ -73,29 +73,34 @@ async def create_share_link(
 
 
 async def list_share_links(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
-) -> list[dict]:
-    """List all share links for a job (including revoked, for audit trail)."""
-    result = (
+) -> dict:
+    """List all share links for a job (including revoked, for audit trail).
+
+    Returns {"items": [...], "total": N}.
+    """
+    result = await (
         client.table("share_links")
-        .select("id, scope, expires_at, revoked_at, created_at")
+        .select("id, scope, expires_at, revoked_at, created_at", count="exact")
         .eq("job_id", str(job_id))
         .order("created_at", desc=True)
         .execute()
     )
-    return result.data or []
+    items = result.data or []
+    total = result.count if isinstance(result.count, int) else len(items)
+    return {"items": items, "total": total}
 
 
 async def revoke_share_link(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
     link_id: UUID,
     company_id: UUID,
     user_id: UUID,
 ) -> None:
     """Revoke a share link by setting revoked_at."""
-    result = (
+    result = await (
         client.table("share_links")
         .update({"revoked_at": datetime.now(UTC).isoformat()})
         .eq("id", str(link_id))
@@ -125,10 +130,12 @@ async def get_shared_job(token: str) -> dict:
     Validates the token is not expired or revoked.
     """
     token_hash = _hash_token(token)
-    admin = get_supabase_admin_client()
+    admin = await get_supabase_admin_client()
 
     # Look up the share link by token hash
-    result = admin.table("share_links").select("*").eq("token_hash", token_hash).single().execute()
+    result = await (
+        admin.table("share_links").select("*").eq("token_hash", token_hash).single().execute()
+    )
     if not result.data:
         raise AppException(
             status_code=404,
@@ -160,7 +167,7 @@ async def get_shared_job(token: str) -> dict:
     scope = link.get("scope", "full")
 
     # Fetch job (redact sensitive fields)
-    job_result = admin.table("jobs").select("*").eq("id", job_id).single().execute()
+    job_result = await admin.table("jobs").select("*").eq("id", job_id).single().execute()
     if not job_result.data:
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
@@ -170,19 +177,19 @@ async def get_shared_job(token: str) -> dict:
         job.pop(field, None)
 
     # Fetch rooms
-    rooms_result = (
+    rooms_result = await (
         admin.table("job_rooms").select("*").eq("job_id", job_id).order("sort_order").execute()
     )
     rooms = rooms_result.data or []
 
     # Fetch photos with signed URLs (batch call to avoid N+1)
-    photos_result = (
+    photos_result = await (
         admin.table("photos").select("*").eq("job_id", job_id).order("created_at").execute()
     )
     photos = photos_result.data or []
     storage_paths = [p["storage_url"] for p in photos if p.get("storage_url")]
     if storage_paths:
-        signed_results = admin.storage.from_("photos").create_signed_urls(storage_paths, 3600)
+        signed_results = await admin.storage.from_("photos").create_signed_urls(storage_paths, 3600)
         url_map = {
             item.get("path", ""): item.get("signedURL") or item.get("signedUrl") or ""
             for item in signed_results
@@ -195,7 +202,7 @@ async def get_shared_job(token: str) -> dict:
     # Fetch moisture readings (if scope allows)
     moisture_readings: list[dict] = []
     if scope in ("full", "restoration_only"):
-        readings_result = (
+        readings_result = await (
             admin.table("moisture_readings")
             .select("*")
             .eq("job_id", job_id)
@@ -208,13 +215,15 @@ async def get_shared_job(token: str) -> dict:
     line_items: list[dict] = []
     if scope in ("full", "restoration_only"):
         try:
-            items_result = admin.table("line_items").select("*").eq("job_id", job_id).execute()
+            items_result = await (
+                admin.table("line_items").select("*").eq("job_id", job_id).execute()
+            )
             line_items = items_result.data or []
         except Exception:
             pass  # Table may not exist yet
 
     # Fetch company info (public fields only)
-    company_result = (
+    company_result = await (
         admin.table("companies")
         .select("name, phone, logo_url")
         .eq("id", company_id)

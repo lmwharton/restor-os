@@ -1,12 +1,24 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import {
   useJob,
   useRooms,
   usePhotos,
   useAllReadings,
 } from "@/lib/hooks/use-jobs";
+import { apiGet } from "@/lib/api";
+
+interface ReportCompany {
+  name: string;
+  phone: string | null;
+  email: string | null;
+}
+
+interface ReportUserProfile {
+  company: ReportCompany;
+}
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -46,7 +58,7 @@ function statusLabel(s: string): string {
     contracted: "Contracted",
     mitigation: "Mitigation",
     drying: "Drying",
-    completed: "Complete",
+    job_complete: "Complete",
     submitted: "Submitted",
     collected: "Collected",
   };
@@ -67,6 +79,12 @@ export default function ReportPage() {
   const { data: rooms } = useRooms(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: readings } = useAllReadings(jobId);
+  const { data: profile } = useQuery<ReportUserProfile>({
+    queryKey: ["me"],
+    queryFn: () => apiGet<ReportUserProfile>("/v1/me"),
+    staleTime: 5 * 60 * 1000,
+  });
+  const company = profile?.company;
 
   if (jobLoading) {
     return (
@@ -149,9 +167,9 @@ export default function ReportPage() {
               </p>
             </div>
             <div className="text-right">
-              <p className="text-[15px] font-bold text-neutral-900">DryPros Restoration</p>
-              <p className="text-[12px] text-neutral-500">(555) 234-5678</p>
-              <p className="text-[12px] text-neutral-500">contact@drypros.com</p>
+              <p className="text-[15px] font-bold text-neutral-900">{company?.name ?? "Your Company"}</p>
+              {company?.phone && <p className="text-[12px] text-neutral-500">{company.phone}</p>}
+              {company?.email && <p className="text-[12px] text-neutral-500">{company.email}</p>}
             </div>
           </div>
           <p className="text-[11px] text-neutral-400 mt-4">

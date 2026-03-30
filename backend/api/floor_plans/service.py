@@ -34,11 +34,14 @@ _SNAP_THRESHOLD_PX = 20
 # Angle threshold in degrees for straightening walls to H/V
 _STRAIGHTEN_ANGLE_DEG = 15
 
-# Maximum walls to process (O(n²) snap becomes slow above this)
+# Maximum walls to process (O(n^2) snap becomes slow above this)
 _MAX_WALLS = 500
 
 # Required keys for a valid wall dict
 _WALL_REQUIRED_KEYS = {"x1", "y1", "x2", "y2"}
+
+# Canvas keys preserved through cleanup (walls/rooms/scale/offset always set explicitly)
+_CANVAS_PASSTHROUGH_KEYS = {"doors", "windows", "openings", "labels", "annotations"}
 
 
 def cleanup_sketch(canvas_data: dict) -> dict:
@@ -59,15 +62,13 @@ def cleanup_sketch(canvas_data: dict) -> dict:
         return canvas_data
 
     # --- Step 1: Validate wall data --------------------------------------
-    validated_walls = []
-    for wall in walls:
-        if not isinstance(wall, dict):
-            continue
-        if not _WALL_REQUIRED_KEYS.issubset(wall.keys()):
-            continue
-        if not all(isinstance(wall[k], (int, float)) for k in _WALL_REQUIRED_KEYS):
-            continue
-        validated_walls.append(wall)
+    validated_walls = [
+        wall
+        for wall in walls
+        if isinstance(wall, dict)
+        and _WALL_REQUIRED_KEYS.issubset(wall.keys())
+        and all(isinstance(wall[k], (int, float)) for k in _WALL_REQUIRED_KEYS)
+    ]
 
     if not validated_walls:
         return canvas_data
@@ -90,15 +91,20 @@ def cleanup_sketch(canvas_data: dict) -> dict:
     # --- Step 4: Snap endpoints within threshold (AFTER standardize) -----
     straightened = _snap_endpoints(straightened, scale)
 
+    # --- Step 4b: Join pass — force endpoints within a tight threshold
+    # to share exact coordinates (standardize can drift them apart)
+    straightened = _join_endpoints(straightened)
+
     # --- Step 5 & 6: Detect rooms using Shapely --------------------------
     rooms = _detect_rooms(straightened, scale)
 
-    return {
-        "walls": straightened,
-        "rooms": rooms,
-        "scale": scale,
-        "offset": canvas_data.get("offset", {"x": 0, "y": 0}),
-    }
+    # Preserve allowlisted canvas keys (doors, windows, openings, labels, etc.)
+    result = {k: v for k, v in canvas_data.items() if k in _CANVAS_PASSTHROUGH_KEYS}
+    result["walls"] = straightened
+    result["rooms"] = rooms
+    result["scale"] = scale
+    result["offset"] = canvas_data.get("offset", {"x": 0, "y": 0})
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -128,17 +134,22 @@ def _straighten_walls(walls: list[dict], scale: int) -> list[dict]:
     return result
 
 
-def _snap_endpoints(walls: list[dict], scale: int) -> list[dict]:
-    """Merge wall endpoints that are within _SNAP_THRESHOLD_PX of each other,
-    then align merged positions to the nearest grid point.
-    """
-    # Collect every endpoint as (wall_index, which_end)
-    endpoints: list[tuple[int, str, float, float]] = []
-    for i, w in enumerate(walls):
-        endpoints.append((i, "start", w["x1"], w["y1"]))
-        endpoints.append((i, "end", w["x2"], w["y2"]))
+def _collect_endpoints(
+    walls: list[dict],
+) -> list[tuple[int, str, float, float]]:
+    """Return (wall_index, "start"|"end", x, y) for every wall endpoint."""
+    return [
+        pt
+        for i, w in enumerate(walls)
+        for pt in ((i, "start", w["x1"], w["y1"]), (i, "end", w["x2"], w["y2"]))
+    ]
 
-    # Greedy clustering
+
+def _cluster_endpoints(
+    endpoints: list[tuple[int, str, float, float]],
+    threshold: float,
+) -> list[list[int]]:
+    """Greedy-cluster endpoint indices whose coordinates are within threshold px."""
     used: set[int] = set()
     clusters: list[list[int]] = []
     for i in range(len(endpoints)):
@@ -151,27 +162,65 @@ def _snap_endpoints(walls: list[dict], scale: int) -> list[dict]:
             if j in used:
                 continue
             qx, qy = endpoints[j][2], endpoints[j][3]
-            if math.hypot(px - qx, py - qy) < _SNAP_THRESHOLD_PX:
+            if math.hypot(px - qx, py - qy) < threshold:
                 cluster.append(j)
                 used.add(j)
         clusters.append(cluster)
+    return clusters
 
-    # For each cluster, compute grid-snapped average and write back
+
+def _apply_to_walls(
+    walls: list[dict],
+    endpoints: list[tuple[int, str, float, float]],
+    cluster: list[int],
+    x: float,
+    y: float,
+) -> None:
+    """Set all endpoints in a cluster to (x, y) on the walls list (mutates)."""
+    for k in cluster:
+        wall_idx, which_end, _, _ = endpoints[k]
+        if which_end == "start":
+            walls[wall_idx]["x1"] = x
+            walls[wall_idx]["y1"] = y
+        else:
+            walls[wall_idx]["x2"] = x
+            walls[wall_idx]["y2"] = y
+
+
+def _snap_endpoints(walls: list[dict], scale: int) -> list[dict]:
+    """Merge wall endpoints that are within _SNAP_THRESHOLD_PX of each other,
+    then align merged positions to the nearest grid point.
+    """
+    endpoints = _collect_endpoints(walls)
+    clusters = _cluster_endpoints(endpoints, _SNAP_THRESHOLD_PX)
+
     walls = [dict(w) for w in walls]  # shallow copy
     for cluster in clusters:
         avg_x = sum(endpoints[k][2] for k in cluster) / len(cluster)
         avg_y = sum(endpoints[k][3] for k in cluster) / len(cluster)
         snapped_x = round(avg_x / scale) * scale
         snapped_y = round(avg_y / scale) * scale
+        _apply_to_walls(walls, endpoints, cluster, snapped_x, snapped_y)
 
-        for k in cluster:
-            wall_idx, which_end, _, _ = endpoints[k]
-            if which_end == "start":
-                walls[wall_idx]["x1"] = snapped_x
-                walls[wall_idx]["y1"] = snapped_y
-            else:
-                walls[wall_idx]["x2"] = snapped_x
-                walls[wall_idx]["y2"] = snapped_y
+    return walls
+
+
+def _join_endpoints(walls: list[dict], threshold: float = 5.0) -> list[dict]:
+    """Force-join endpoints that are nearly coincident (within threshold px).
+
+    Unlike _snap_endpoints which grid-snaps, this picks the exact coordinate
+    of the first point in each cluster so lines physically meet.
+    """
+    endpoints = _collect_endpoints(walls)
+    clusters = _cluster_endpoints(endpoints, threshold)
+
+    walls = [dict(w) for w in walls]
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        # Use the first point's coords as the join target
+        px, py = endpoints[cluster[0]][2], endpoints[cluster[0]][3]
+        _apply_to_walls(walls, endpoints, cluster, px, py)
 
     return walls
 
@@ -211,12 +260,11 @@ def _standardize_lengths(walls: list[dict], scale: int) -> list[dict]:
 
 def _detect_rooms(walls: list[dict], scale: int) -> list[dict]:
     """Use Shapely polygonize to find closed regions formed by wall segments."""
-    lines = []
-    for w in walls:
-        p1 = (w["x1"], w["y1"])
-        p2 = (w["x2"], w["y2"])
-        if p1 != p2:  # skip zero-length walls
-            lines.append((p1, p2))
+    lines = [
+        ((w["x1"], w["y1"]), (w["x2"], w["y2"]))
+        for w in walls
+        if (w["x1"], w["y1"]) != (w["x2"], w["y2"])  # skip zero-length walls
+    ]
 
     if not lines:
         return []
@@ -263,10 +311,10 @@ async def create_floor_plan(
     body: FloorPlanCreate,
 ) -> dict:
     """Create a floor plan. Enforces unique (job_id, floor_number)."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Check uniqueness of (job_id, floor_number)
-    existing = (
+    existing = await (
         client.table("floor_plans")
         .select("id")
         .eq("job_id", str(job_id))
@@ -289,7 +337,7 @@ async def create_floor_plan(
     }
 
     try:
-        result = client.table("floor_plans").insert(row).execute()
+        result = await client.table("floor_plans").insert(row).execute()
     except APIError as e:
         raise AppException(
             status_code=500,
@@ -314,20 +362,25 @@ async def list_floor_plans(
     token: str,
     job_id: UUID,
     company_id: UUID,
-) -> list[dict]:
-    """List all floor plans for a job, ordered by floor_number."""
-    client = get_authenticated_client(token)
+) -> dict:
+    """List all floor plans for a job, ordered by floor_number.
 
-    result = (
+    Returns {"items": [...], "total": N}.
+    """
+    client = await get_authenticated_client(token)
+
+    result = await (
         client.table("floor_plans")
-        .select("*")
+        .select("*", count="exact")
         .eq("job_id", str(job_id))
         .eq("company_id", str(company_id))
         .order("floor_number")
         .execute()
     )
 
-    return result.data
+    items = result.data or []
+    total = result.count if isinstance(result.count, int) else len(items)
+    return {"items": items, "total": total}
 
 
 async def update_floor_plan(
@@ -339,10 +392,10 @@ async def update_floor_plan(
     body: FloorPlanUpdate,
 ) -> dict:
     """Update a floor plan. Validates floor_number uniqueness if changed."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Get existing
-    existing = (
+    existing = await (
         client.table("floor_plans")
         .select("*")
         .eq("id", str(floor_plan_id))
@@ -364,7 +417,7 @@ async def update_floor_plan(
 
     # If floor_number is being changed, check uniqueness
     if "floor_number" in updates and updates["floor_number"] != existing.data["floor_number"]:
-        dup = (
+        dup = await (
             client.table("floor_plans")
             .select("id")
             .eq("job_id", str(job_id))
@@ -380,7 +433,7 @@ async def update_floor_plan(
             )
 
     try:
-        result = (
+        result = await (
             client.table("floor_plans")
             .update(updates)
             .eq("id", str(floor_plan_id))
@@ -388,6 +441,10 @@ async def update_floor_plan(
             .execute()
         )
     except APIError as e:
+        logger.error(
+            "Floor plan update failed: %s (code=%s, details=%s)",
+            e.message, e.code, e.details,
+        )
         raise AppException(
             status_code=500,
             detail=f"Failed to update floor plan: {e.message}",
@@ -415,10 +472,10 @@ async def delete_floor_plan(
     user_id: UUID,
 ) -> None:
     """Hard delete a floor plan. Sets floor_plan_id=NULL on linked job_rooms."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Verify it exists
-    existing = (
+    existing = await (
         client.table("floor_plans")
         .select("id")
         .eq("id", str(floor_plan_id))
@@ -435,12 +492,12 @@ async def delete_floor_plan(
         )
 
     # Unlink rooms that reference this floor plan
-    client.table("job_rooms").update({"floor_plan_id": None}).eq(
+    await client.table("job_rooms").update({"floor_plan_id": None}).eq(
         "floor_plan_id", str(floor_plan_id)
     ).execute()
 
     # Hard delete the floor plan
-    client.table("floor_plans").delete().eq("id", str(floor_plan_id)).execute()
+    await client.table("floor_plans").delete().eq("id", str(floor_plan_id)).execute()
 
     await log_event(
         company_id,
@@ -467,10 +524,10 @@ async def cleanup_floor_plan(
 
     Returns SketchCleanupResponse with cleaned canvas_data, changes_made, event_id.
     """
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Fetch floor plan (always needed to verify ownership + for saving back)
-    result = (
+    result = await (
         client.table("floor_plans")
         .select("*")
         .eq("id", str(floor_plan_id))
@@ -506,30 +563,29 @@ async def cleanup_floor_plan(
     changes_made = []
     cleaned_walls = cleaned.get("walls", [])
     if len(cleaned_walls) != original_wall_count:
-        changes_made.append(f"Wall count: {original_wall_count} → {len(cleaned_walls)}")
+        changes_made.append(f"Wall count: {original_wall_count} -> {len(cleaned_walls)}")
 
     cleaned_rooms = cleaned.get("rooms", [])
     if cleaned_rooms:
         room_names = [r.get("name", f"Room {i + 1}") for i, r in enumerate(cleaned_rooms)]
         changes_made.append(f"Detected {len(cleaned_rooms)} room(s): {', '.join(room_names)}")
 
+    coord_keys = ("x1", "y1", "x2", "y2")
     for w_orig, w_clean in zip(original_walls, cleaned_walls):
-        if (
-            w_orig.get("x1") != w_clean.get("x1")
-            or w_orig.get("y1") != w_clean.get("y1")
-            or w_orig.get("x2") != w_clean.get("x2")
-            or w_orig.get("y2") != w_clean.get("y2")
-        ):
-            wid = w_clean.get("id", "?")
-            changes_made.append(f"Adjusted wall {wid}")
+        if any(w_orig.get(k) != w_clean.get(k) for k in coord_keys):
+            changes_made.append(f"Adjusted wall {w_clean.get('id', '?')}")
 
     if not changes_made:
-        changes_made.append("Sketch already clean — no changes needed")
+        changes_made.append("Sketch already clean -- no changes needed")
 
     # Save cleaned canvas_data back to DB (with company_id for defense-in-depth)
-    client.table("floor_plans").update({"canvas_data": cleaned}).eq("id", str(floor_plan_id)).eq(
-        "company_id", str(company_id)
-    ).execute()
+    await (
+        client.table("floor_plans")
+        .update({"canvas_data": cleaned})
+        .eq("id", str(floor_plan_id))
+        .eq("company_id", str(company_id))
+        .execute()
+    )
 
     # Log event
     await log_event(

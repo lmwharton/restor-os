@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Request
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
-from api.reports.schemas import ReportCreate, ReportResponse
+from api.reports.schemas import ReportCreate, ReportListResponse, ReportResponse
 from api.reports.service import create_report, list_reports
 from api.shared.dependencies import _get_token, get_valid_job
 
@@ -44,7 +44,7 @@ async def record_report(
 
 @router.get(
     "/jobs/{job_id}/reports",
-    response_model=list[ReportResponse],
+    response_model=ReportListResponse,
 )
 async def get_job_reports(
     request: Request,

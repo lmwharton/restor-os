@@ -3,11 +3,11 @@ so this module only exposes read operations."""
 
 from uuid import UUID
 
-from supabase import Client
+from supabase import AsyncClient
 
 
 async def list_job_events(
-    client: Client,
+    client: AsyncClient,
     job_id: UUID,
     company_id: UUID,
     event_type: str | None = None,
@@ -26,12 +26,12 @@ async def list_job_events(
     if event_type:
         query = query.eq("event_type", event_type)
 
-    result = query.execute()
+    result = await query.execute()
     return {"items": result.data or [], "total": result.count or 0}
 
 
 async def list_company_events(
-    client: Client,
+    client: AsyncClient,
     company_id: UUID,
     event_type: str | None = None,
     job_id: UUID | None = None,
@@ -51,5 +51,5 @@ async def list_company_events(
     if job_id:
         query = query.eq("job_id", str(job_id))
 
-    result = query.execute()
+    result = await query.execute()
     return {"items": result.data or [], "total": result.count or 0}

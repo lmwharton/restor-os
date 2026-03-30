@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Path, Request
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
-from api.rooms.schemas import RoomCreate, RoomResponse, RoomUpdate
+from api.rooms.schemas import RoomCreate, RoomListResponse, RoomResponse, RoomUpdate
 from api.rooms.service import create_room, delete_room, list_rooms, update_room
 from api.shared.dependencies import _get_token, get_valid_job
 
@@ -29,7 +29,7 @@ async def create_room_endpoint(
     )
 
 
-@router.get("/jobs/{job_id}/rooms", response_model=list[RoomResponse])
+@router.get("/jobs/{job_id}/rooms", response_model=RoomListResponse)
 async def list_rooms_endpoint(
     request: Request,
     job: dict = Depends(get_valid_job),

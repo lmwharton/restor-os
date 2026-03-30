@@ -12,7 +12,7 @@ import type {
 // ─── Pipeline — derived from real jobs ────────────────────────────────
 
 const PIPELINE_ORDER: PipelineStage[] = [
-  "new", "contracted", "mitigation", "drying", "completed", "submitted", "collected",
+  "new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected",
 ];
 
 const PIPELINE_COLORS: Record<PipelineStage, string> = {
@@ -20,7 +20,7 @@ const PIPELINE_COLORS: Record<PipelineStage, string> = {
   contracted: "#f59e0b",
   mitigation: "#e85d26",
   drying: "#2563eb",
-  completed: "#6b7280",
+  job_complete: "#6b7280",
   submitted: "#0891b2",
   collected: "#16a34a",
 };
@@ -30,13 +30,13 @@ const PIPELINE_LABELS: Record<PipelineStage, string> = {
   contracted: "Contracted",
   mitigation: "Mitigation",
   drying: "Drying",
-  completed: "Job Complete",
+  job_complete: "Job Complete",
   submitted: "Submitted",
   collected: "Collected",
 };
 
-export function usePipeline() {
-  const { data: jobs, isLoading } = useJobs();
+export function usePipeline(initialJobs?: JobDetail[]) {
+  const { data: jobs, isLoading } = useJobs(undefined, initialJobs);
 
   const pipeline = useMemo<PipelineStageData[]>(() => {
     if (!jobs) return PIPELINE_ORDER.map((stage) => ({
@@ -68,8 +68,8 @@ export function usePipeline() {
 
 // ─── KPIs — derived from real jobs ────────────────────────────────────
 
-export function useDashboardKPIs() {
-  const { data: jobs, isLoading } = useJobs();
+export function useDashboardKPIs(initialJobs?: JobDetail[]) {
+  const { data: jobs, isLoading } = useJobs(undefined, initialJobs);
 
   const kpis = useMemo(() => {
     if (!jobs) return null;
@@ -91,8 +91,8 @@ export function useDashboardKPIs() {
 
 // ─── Priority Tasks — derived from real jobs ──────────────────────────
 
-export function usePriorityTasks() {
-  const { data: jobs, isLoading } = useJobs();
+export function usePriorityTasks(initialJobs?: JobDetail[]) {
+  const { data: jobs, isLoading } = useJobs(undefined, initialJobs);
 
   const tasks = useMemo(() => {
     if (!jobs) return [];
@@ -135,4 +135,4 @@ export function useTeamMembers() {
 
 // ─── Company Events (for activity feed) ───────────────────────────────
 
-export { useCompanyEvents };
+export { useCompanyEvents } from "./use-jobs";

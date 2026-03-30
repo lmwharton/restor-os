@@ -10,6 +10,7 @@ from api.auth.service import (
     update_company,
     update_company_logo,
     update_last_login,
+    update_user_avatar,
     update_user_profile,
 )
 from api.shared.exceptions import AppException
@@ -41,6 +42,24 @@ async def patch_me(body: UserUpdate, ctx: AuthContext = Depends(get_auth_context
     return user
 
 
+@router.post("/me/avatar")
+async def upload_avatar(file: UploadFile, ctx: AuthContext = Depends(get_auth_context)):
+    """Upload user avatar. Replaces existing avatar."""
+    allowed_types = {"image/jpeg", "image/png", "image/webp"}
+    if not file.content_type or file.content_type not in allowed_types:
+        raise AppException(
+            status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
+        )
+
+    if file.size and file.size > 2 * 1024 * 1024:
+        raise AppException(
+            status_code=400, detail="File too large (max 2MB)", error_code="FILE_TOO_LARGE"
+        )
+
+    user = await update_user_avatar(ctx.user_id, file)
+    return user
+
+
 @router.get("/company")
 async def get_company(auth_user_id: UUID = Depends(get_auth_user_id)):
     """Get current user's company. Returns 404 if no company (triggers onboarding)."""
@@ -63,8 +82,8 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
     # Since get_auth_user_id only returns the UUID, we fetch from Supabase auth.
     from api.shared.database import get_supabase_admin_client
 
-    client = get_supabase_admin_client()
-    auth_response = client.auth.admin.get_user_by_id(str(auth_user_id))
+    client = await get_supabase_admin_client()
+    auth_response = await client.auth.admin.get_user_by_id(str(auth_user_id))
 
     if not auth_response or not auth_response.user:
         raise AppException(
@@ -109,9 +128,10 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
             status_code=403, detail="Only owners can update logo", error_code="FORBIDDEN"
         )
 
-    if not file.content_type or not file.content_type.startswith("image/"):
+    allowed_types = {"image/jpeg", "image/png", "image/webp"}
+    if not file.content_type or file.content_type not in allowed_types:
         raise AppException(
-            status_code=400, detail="File must be an image", error_code="INVALID_FILE_TYPE"
+            status_code=400, detail="File must be JPEG, PNG, or WebP", error_code="INVALID_FILE_TYPE"
         )
 
     if file.size and file.size > 2 * 1024 * 1024:

@@ -69,11 +69,11 @@ async def create_room(
     """Create a room for a job."""
     _validate_water_fields(body.water_category, body.water_class)
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # If floor_plan_id is provided, verify it exists and belongs to this job
     if body.floor_plan_id:
-        fp_check = (
+        fp_check = await (
             client.table("floor_plans")
             .select("id")
             .eq("id", str(body.floor_plan_id))
@@ -112,7 +112,7 @@ async def create_room(
     )
 
     try:
-        result = client.table("job_rooms").insert(row).execute()
+        result = await client.table("job_rooms").insert(row).execute()
     except APIError as e:
         raise AppException(
             status_code=500,
@@ -140,13 +140,16 @@ async def list_rooms(
     token: str,
     job_id: UUID,
     company_id: UUID,
-) -> list[dict]:
-    """List all rooms for a job, ordered by sort_order then room_name."""
-    client = get_authenticated_client(token)
+) -> dict:
+    """List all rooms for a job, ordered by sort_order then room_name.
 
-    result = (
+    Returns {"items": [...], "total": N}.
+    """
+    client = await get_authenticated_client(token)
+
+    result = await (
         client.table("job_rooms")
-        .select("*")
+        .select("*", count="exact")
         .eq("job_id", str(job_id))
         .eq("company_id", str(company_id))
         .order("sort_order")
@@ -154,12 +157,13 @@ async def list_rooms(
         .execute()
     )
 
-    rooms = result.data
+    rooms = result.data or []
+    total = result.count if isinstance(result.count, int) else len(rooms)
 
     # Fetch reading counts and latest dates for all rooms in one query
     if rooms:
         room_ids = [r["id"] for r in rooms]
-        readings = (
+        readings = await (
             client.table("moisture_readings")
             .select("room_id, reading_date")
             .in_("room_id", room_ids)
@@ -180,7 +184,7 @@ async def list_rooms(
             room["reading_count"] = counts.get(room["id"], 0)
             room["latest_reading_date"] = latest.get(room["id"])
 
-    return rooms
+    return {"items": rooms, "total": total}
 
 
 async def update_room(
@@ -192,10 +196,10 @@ async def update_room(
     body: RoomUpdate,
 ) -> dict:
     """Update a room. Re-calculates square_footage if dimensions change."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Get existing room
-    existing = (
+    existing = await (
         client.table("job_rooms")
         .select("*")
         .eq("id", str(room_id))
@@ -226,7 +230,7 @@ async def update_room(
 
     # If floor_plan_id is being set, verify it exists
     if "floor_plan_id" in updates and updates["floor_plan_id"] is not None:
-        fp_check = (
+        fp_check = await (
             client.table("floor_plans")
             .select("id")
             .eq("id", str(updates["floor_plan_id"]))
@@ -257,7 +261,7 @@ async def update_room(
     serialized = _serialize_decimals(updates)
 
     try:
-        result = (
+        result = await (
             client.table("job_rooms")
             .update(serialized)
             .eq("id", str(room_id))
@@ -274,7 +278,7 @@ async def update_room(
     room = result.data[0]
 
     # Fetch reading stats for this room
-    readings = (
+    readings = await (
         client.table("moisture_readings")
         .select("reading_date")
         .eq("room_id", str(room_id))
@@ -304,10 +308,10 @@ async def delete_room(
     user_id: UUID,
 ) -> None:
     """Hard delete a room. Photos get room_id=NULL, CASCADE handles moisture readings."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Verify room exists
-    existing = (
+    existing = await (
         client.table("job_rooms")
         .select("id, room_name")
         .eq("id", str(room_id))
@@ -326,10 +330,10 @@ async def delete_room(
     room_name = existing.data.get("room_name", "")
 
     # Unlink photos that reference this room
-    client.table("photos").update({"room_id": None}).eq("room_id", str(room_id)).execute()
+    await client.table("photos").update({"room_id": None}).eq("room_id", str(room_id)).execute()
 
     # Hard delete the room (CASCADE will handle moisture_readings)
-    client.table("job_rooms").delete().eq("id", str(room_id)).execute()
+    await client.table("job_rooms").delete().eq("id", str(room_id)).execute()
 
     await log_event(
         company_id,

@@ -12,11 +12,19 @@ class CompanyCreate(BaseModel):
 class CompanyUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
+    email: str | None = None
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
 
 
 class UserUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    title: str | None = None
 
 
 class CompanyResponse(BaseModel):
@@ -43,6 +51,7 @@ class UserResponse(BaseModel):
     last_name: str | None
     phone: str | None
     avatar_url: str | None
+    title: str | None
     role: str
     is_platform_admin: bool
     company: CompanyResponse | None = None

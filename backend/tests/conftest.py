@@ -14,6 +14,7 @@ os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "test-service-role-key"
 os.environ["SUPABASE_JWT_SECRET"] = "test-jwt-secret"
 
 from datetime import UTC, datetime, timedelta  # noqa: E402
+from unittest.mock import AsyncMock, MagicMock  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
 import jwt  # noqa: E402
@@ -24,6 +25,35 @@ from api.main import app  # noqa: E402
 
 # Restore original cwd after imports
 os.chdir(_original_cwd)
+
+
+class AsyncSupabaseMock(MagicMock):
+    """MagicMock subclass where .execute() always returns an AsyncMock.
+
+    This allows service code like `await client.table("x").select().eq().execute()`
+    to work in tests. All chained method calls return regular MagicMocks (for
+    assertion/configuration), but .execute() returns a coroutine so `await` works.
+
+    Storage methods (upload, download, create_signed_url, etc.) are also async.
+    Auth admin methods (get_user_by_id) are also async.
+    """
+
+    _ASYNC_METHODS = frozenset({
+        "execute",
+        # Storage methods
+        "upload", "download", "create_signed_url", "create_signed_urls",
+        "create_signed_upload_url", "get_public_url", "remove",
+        # Auth admin methods
+        "get_user_by_id",
+    })
+
+    def _get_child_mock(self, /, **kw):
+        """Override child mock creation to use AsyncSupabaseMock for chaining."""
+        # For attributes named in _ASYNC_METHODS, return AsyncMock
+        name = kw.get("name", "") or kw.get("_new_name", "")
+        if name in self._ASYNC_METHODS:
+            return AsyncMock(**kw)
+        return super()._get_child_mock(**kw)
 
 
 @pytest.fixture
@@ -98,24 +128,23 @@ def mock_user_row(mock_user_id, mock_company_id):
 
 
 def make_mock_supabase(user_row, table_handlers=None):
-    """Create a MagicMock Supabase client with auth middleware support.
+    """Create an AsyncSupabaseMock Supabase client with auth middleware support.
 
     Args:
         user_row: Dict to return for users table lookup (auth context).
                   Set to None to simulate user-not-found.
         table_handlers: Optional dict mapping table names to callables
-                        that receive a fresh MagicMock table and configure it.
+                        that receive a fresh AsyncSupabaseMock table and configure it.
                         Tables not in this dict get a default unconfigured mock.
 
     Returns:
-        A MagicMock that behaves like a Supabase client.
+        An AsyncSupabaseMock that behaves like an async Supabase client.
+        All .execute() calls return coroutines (AsyncMock).
     """
-    from unittest.mock import MagicMock
-
-    mock_client = MagicMock()
+    mock_client = AsyncSupabaseMock()
 
     def table_side_effect(table_name):
-        mock_table = MagicMock()
+        mock_table = AsyncSupabaseMock()
         if table_name == "users":
             # Auth middleware: select().eq().is_().single().execute().data
             (

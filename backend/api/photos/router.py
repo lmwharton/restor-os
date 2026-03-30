@@ -113,7 +113,7 @@ async def remove_photo(
     job: dict = Depends(get_valid_job),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Delete a photo (removes from storage + soft-deletes DB record)."""
+    """Delete a photo (removes from storage + hard-deletes DB record)."""
     await delete_photo(
         photo_id=photo_id,
         job_id=UUID(job["id"]),

@@ -22,6 +22,7 @@ from api.moisture.schemas import (
     MoisturePointResponse,
     MoisturePointUpdate,
     MoistureReadingCreate,
+    MoistureReadingListResponse,
     MoistureReadingResponse,
     MoistureReadingUpdate,
 )
@@ -60,7 +61,7 @@ async def create_moisture_reading(
     room: dict = Depends(get_valid_room),
 ):
     """Create a moisture reading for a room."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await create_reading(
         client,
         job_id=UUID(job["id"]),
@@ -74,7 +75,7 @@ async def create_moisture_reading(
 
 @router.get(
     "/jobs/{job_id}/rooms/{room_id}/readings",
-    response_model=list[MoistureReadingResponse],
+    response_model=MoistureReadingListResponse,
 )
 async def list_room_moisture_readings(
     request: Request,
@@ -83,13 +84,13 @@ async def list_room_moisture_readings(
     room: dict = Depends(get_valid_room),
 ):
     """List all moisture readings for a specific room."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await list_room_readings(client, job_id=UUID(job["id"]), room_id=UUID(room["id"]))
 
 
 @router.get(
     "/jobs/{job_id}/readings",
-    response_model=list[MoistureReadingResponse],
+    response_model=MoistureReadingListResponse,
 )
 async def list_all_job_readings(
     request: Request,
@@ -97,7 +98,7 @@ async def list_all_job_readings(
     job: dict = Depends(get_valid_job),
 ):
     """List ALL moisture readings across all rooms for a job."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await list_job_readings(client, job_id=UUID(job["id"]))
 
 
@@ -113,7 +114,7 @@ async def update_moisture_reading(
     reading: dict = Depends(get_valid_reading),
 ):
     """Update a moisture reading."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await update_reading(
         client,
         reading_id=UUID(reading["id"]),
@@ -137,7 +138,7 @@ async def delete_moisture_reading(
     reading: dict = Depends(get_valid_reading),
 ):
     """Delete a moisture reading and all its points and dehus."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     await delete_reading(
         client,
         reading_id=UUID(reading["id"]),
@@ -163,7 +164,7 @@ async def add_moisture_point(
     reading: dict = Depends(get_valid_reading),
 ):
     """Add a moisture measurement point to a reading."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await create_point(
         client,
         reading_id=UUID(reading["id"]),
@@ -187,7 +188,7 @@ async def update_moisture_point(
     reading: dict = Depends(get_valid_reading),
 ):
     """Update a moisture measurement point."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await update_point(
         client,
         point_id=point_id,
@@ -211,7 +212,7 @@ async def delete_moisture_point(
     reading: dict = Depends(get_valid_reading),
 ):
     """Delete a moisture measurement point."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     await delete_point(
         client,
         point_id=point_id,
@@ -238,7 +239,7 @@ async def add_dehu_output(
     reading: dict = Depends(get_valid_reading),
 ):
     """Add a dehumidifier output reading."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await create_dehu(
         client,
         reading_id=UUID(reading["id"]),
@@ -262,7 +263,7 @@ async def update_dehu_output(
     reading: dict = Depends(get_valid_reading),
 ):
     """Update a dehumidifier output reading."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     return await update_dehu(
         client,
         dehu_id=dehu_id,
@@ -286,7 +287,7 @@ async def delete_dehu_output(
     reading: dict = Depends(get_valid_reading),
 ):
     """Delete a dehumidifier output reading."""
-    client = get_authenticated_client(_get_token(request))
+    client = await get_authenticated_client(_get_token(request))
     await delete_dehu(
         client,
         dehu_id=dehu_id,

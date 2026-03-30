@@ -87,3 +87,8 @@ class MoistureReadingResponse(BaseModel):
     dehus: list[DehuOutputResponse] = []
     created_at: datetime
     updated_at: datetime
+
+
+class MoistureReadingListResponse(BaseModel):
+    items: list[MoistureReadingResponse]
+    total: int

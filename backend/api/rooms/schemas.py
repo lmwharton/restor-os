@@ -59,3 +59,8 @@ class RoomResponse(BaseModel):
     latest_reading_date: date | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class RoomListResponse(BaseModel):
+    items: list[RoomResponse]
+    total: int

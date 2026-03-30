@@ -33,7 +33,7 @@ async def create_report(
             error_code="INVALID_REPORT_TYPE",
         )
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     row = {
         "job_id": str(job_id),
@@ -42,7 +42,7 @@ async def create_report(
         "status": "ready",
         "generated_at": datetime.now(UTC).isoformat(),
     }
-    result = client.table("reports").insert(row).execute()
+    result = await client.table("reports").insert(row).execute()
     report = result.data[0]
 
     await log_event(
@@ -60,14 +60,19 @@ async def list_reports(
     *,
     job_id: UUID,
     token: str,
-) -> list[dict]:
-    """List all reports for a job, ordered by created_at DESC."""
-    client = get_authenticated_client(token)
-    result = (
+) -> dict:
+    """List all reports for a job, ordered by created_at DESC.
+
+    Returns {"items": [...], "total": N}.
+    """
+    client = await get_authenticated_client(token)
+    result = await (
         client.table("reports")
-        .select("*")
+        .select("*", count="exact")
         .eq("job_id", str(job_id))
         .order("created_at", desc=True)
         .execute()
     )
-    return result.data or []
+    items = result.data or []
+    total = result.count if isinstance(result.count, int) else len(items)
+    return {"items": items, "total": total}

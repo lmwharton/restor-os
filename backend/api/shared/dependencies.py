@@ -8,16 +8,19 @@ from uuid import UUID
 
 from fastapi import Depends, Path, Query, Request
 
-from api.auth.middleware import get_auth_context
+from api.auth.middleware import _extract_token, get_auth_context
 from api.auth.schemas import AuthContext
 from api.shared.database import get_authenticated_client
 from api.shared.exceptions import AppException
 
 
 def _get_token(request: Request) -> str:
-    """Extract raw JWT token from Authorization header."""
-    auth_header = request.headers.get("authorization", "")
-    return auth_header[7:] if auth_header.startswith("Bearer ") else ""
+    """Extract raw JWT token from Authorization header.
+
+    Delegates to the canonical _extract_token() in auth.middleware,
+    which raises 401 on missing/invalid header.
+    """
+    return _extract_token(request)
 
 
 class PaginationParams:
@@ -39,16 +42,10 @@ async def get_valid_job(
 ) -> dict:
     """Validate job exists, belongs to user's company, and is not deleted.
     Returns the job row dict. Used by 7+ modules."""
-    token = _get_token(request) if request else ""
-    if not token:
-        raise AppException(
-            status_code=401,
-            detail="Missing authentication token",
-            error_code="UNAUTHORIZED",
-        )
-    client = get_authenticated_client(token)
+    token = _get_token(request)
+    client = await get_authenticated_client(token)
 
-    result = (
+    result = await (
         client.table("jobs")
         .select("*")
         .eq("id", str(job_id))
@@ -69,28 +66,30 @@ async def get_valid_room(
     request: Request = None,
 ) -> dict:
     """Validate room exists and belongs to the job + company.
-    Returns the room row dict."""
-    token = _get_token(request) if request else ""
-    if not token:
-        raise AppException(
-            status_code=401,
-            detail="Missing authentication token",
-            error_code="UNAUTHORIZED",
-        )
-    client = get_authenticated_client(token)
 
-    result = (
+    Uses PostgREST embedded resource syntax to fetch the room WITH its
+    parent job in a single query, validating both ownership and existence
+    without an extra roundtrip. Returns the room row dict (without the
+    nested jobs key).
+    """
+    token = _get_token(request)
+    client = await get_authenticated_client(token)
+
+    result = await (
         client.table("job_rooms")
-        .select("*")
+        .select("*, jobs!inner(id, company_id, deleted_at)")
         .eq("id", str(room_id))
         .eq("job_id", str(job_id))
-        .eq("company_id", str(ctx.company_id))
+        .eq("jobs.company_id", str(ctx.company_id))
+        .is_("jobs.deleted_at", "null")
         .single()
         .execute()
     )
     if not result.data:
         raise AppException(status_code=404, detail="Room not found", error_code="ROOM_NOT_FOUND")
-    return result.data
+    # Remove the embedded jobs data before returning — callers expect a flat room dict
+    room = {k: v for k, v in result.data.items() if k != "jobs"}
+    return room
 
 
 async def get_valid_reading(
@@ -100,22 +99,22 @@ async def get_valid_reading(
     request: Request = None,
 ) -> dict:
     """Validate moisture reading exists and belongs to the job + company.
-    Returns the reading row dict."""
-    token = _get_token(request) if request else ""
-    if not token:
-        raise AppException(
-            status_code=401,
-            detail="Missing authentication token",
-            error_code="UNAUTHORIZED",
-        )
-    client = get_authenticated_client(token)
 
-    result = (
+    Uses PostgREST embedded resource syntax to fetch the reading WITH its
+    parent job in a single query, validating both ownership and existence
+    without an extra roundtrip. Returns the reading row dict (without the
+    nested jobs key).
+    """
+    token = _get_token(request)
+    client = await get_authenticated_client(token)
+
+    result = await (
         client.table("moisture_readings")
-        .select("*")
+        .select("*, jobs!inner(id, company_id, deleted_at)")
         .eq("id", str(reading_id))
         .eq("job_id", str(job_id))
-        .eq("company_id", str(ctx.company_id))
+        .eq("jobs.company_id", str(ctx.company_id))
+        .is_("jobs.deleted_at", "null")
         .single()
         .execute()
     )
@@ -125,4 +124,6 @@ async def get_valid_reading(
             detail="Reading not found",
             error_code="READING_NOT_FOUND",
         )
-    return result.data
+    # Remove the embedded jobs data before returning — callers expect a flat reading dict
+    reading = {k: v for k, v in result.data.items() if k != "jobs"}
+    return reading

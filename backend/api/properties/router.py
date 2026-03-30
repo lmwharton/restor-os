@@ -7,11 +7,13 @@ from api.auth.schemas import AuthContext
 from api.properties.schemas import PropertyCreate, PropertyResponse, PropertyUpdate
 from api.properties.service import (
     create_property,
+    delete_property,
     get_property,
     list_properties,
     update_property,
 )
 from api.shared.dependencies import PaginationParams, _get_token
+from api.shared.exceptions import AppException
 
 router = APIRouter(prefix="/properties", tags=["properties"])
 
@@ -70,3 +72,20 @@ async def update_property_endpoint(
     token = _get_token(request)
     row = await update_property(token, ctx.company_id, ctx.user_id, property_id, body)
     return row
+
+
+@router.delete("/{property_id}")
+async def delete_property_endpoint(
+    property_id: UUID,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Soft delete a property. Owner or admin only."""
+    if ctx.role not in ("owner", "admin"):
+        raise AppException(
+            status_code=403,
+            detail="Only owners and admins can delete properties",
+            error_code="FORBIDDEN",
+        )
+    await delete_property(ctx.company_id, ctx.user_id, property_id)
+    return {"deleted": True}

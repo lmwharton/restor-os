@@ -29,6 +29,11 @@ class FloorPlanResponse(BaseModel):
     updated_at: datetime
 
 
+class FloorPlanListResponse(BaseModel):
+    items: list[FloorPlanResponse]
+    total: int
+
+
 # --- Sketch Cleanup (deterministic, no AI) ---
 
 

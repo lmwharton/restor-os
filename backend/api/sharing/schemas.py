@@ -25,6 +25,11 @@ class ShareLinkListItem(BaseModel):
     created_at: datetime
 
 
+class ShareLinkListResponse(BaseModel):
+    items: list[ShareLinkListItem]
+    total: int
+
+
 class SharedJobResponse(BaseModel):
     job: dict
     rooms: list[dict]

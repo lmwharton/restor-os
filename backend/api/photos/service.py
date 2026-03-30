@@ -31,14 +31,17 @@ SIGNED_URL_EXPIRY_SECONDS = 15 * 60  # 15 minutes
 STORAGE_BUCKET = "photos"
 
 
-def _resize_photo(storage_path: str) -> None:
-    """Resize photo to max 1920px on longest edge. Overwrites in storage."""
-    admin = get_supabase_admin_client()
+async def _resize_photo(storage_path: str) -> None:
+    """Resize photo to max 1920px on longest edge. Overwrites in storage.
 
-    # Download from storage
-    file_bytes = admin.storage.from_(STORAGE_BUCKET).download(storage_path)
+    Downloads and uploads are async. Pillow resize is CPU-bound (fine in-thread).
+    """
+    admin = await get_supabase_admin_client()
 
-    # Open with Pillow
+    # Download from storage (async)
+    file_bytes = await admin.storage.from_(STORAGE_BUCKET).download(storage_path)
+
+    # Open with Pillow (CPU-bound, but fast for single images)
     img = Image.open(io.BytesIO(file_bytes))
 
     # Check if resize needed
@@ -67,8 +70,8 @@ def _resize_photo(storage_path: str) -> None:
     img.save(output, **save_kwargs)
     output.seek(0)
 
-    # Upload back to same path (overwrite)
-    admin.storage.from_(STORAGE_BUCKET).upload(
+    # Upload back to same path (overwrite) (async)
+    await admin.storage.from_(STORAGE_BUCKET).upload(
         storage_path,
         output.getvalue(),
         file_options={"content-type": f"image/{img_format.lower()}", "upsert": "true"},
@@ -123,7 +126,7 @@ def _build_photo_response(row: dict, signed_url: str) -> PhotoResponse:
     )
 
 
-def _get_signed_url(storage_path: str, *, admin: object | None = None) -> str:
+async def _get_signed_url(storage_path: str, *, admin: object | None = None) -> str:
     """Generate a signed URL for a storage path using the admin client.
 
     Parameters
@@ -135,8 +138,8 @@ def _get_signed_url(storage_path: str, *, admin: object | None = None) -> str:
         single calls; for loops, pass a shared client to avoid N+1 overhead).
     """
     if admin is None:
-        admin = get_supabase_admin_client()
-    result = admin.storage.from_(STORAGE_BUCKET).create_signed_url(
+        admin = await get_supabase_admin_client()
+    result = await admin.storage.from_(STORAGE_BUCKET).create_signed_url(
         storage_path, SIGNED_URL_EXPIRY_SECONDS
     )
     if isinstance(result, dict) and result.get("signedURL"):
@@ -150,15 +153,15 @@ def _get_signed_url(storage_path: str, *, admin: object | None = None) -> str:
     return ""
 
 
-def _get_signed_urls_batch(storage_paths: list[str]) -> dict[str, str]:
+async def _get_signed_urls_batch(storage_paths: list[str]) -> dict[str, str]:
     """Generate signed URLs for multiple storage paths in a single API call.
 
     Returns a dict mapping storage_path -> signed URL.
     """
     if not storage_paths:
         return {}
-    admin = get_supabase_admin_client()
-    results = admin.storage.from_(STORAGE_BUCKET).create_signed_urls(
+    admin = await get_supabase_admin_client()
+    results = await admin.storage.from_(STORAGE_BUCKET).create_signed_urls(
         storage_paths, SIGNED_URL_EXPIRY_SECONDS
     )
     url_map: dict[str, str] = {}
@@ -182,8 +185,8 @@ async def generate_upload_url(
     _validate_content_type(content_type)
 
     # Check photo count for this job
-    client = get_authenticated_client(token)
-    count_result = (
+    client = await get_authenticated_client(token)
+    count_result = await (
         client.table("photos").select("id", count="exact").eq("job_id", str(job_id)).execute()
     )
     current_count = count_result.count if count_result.count is not None else 0
@@ -199,8 +202,8 @@ async def generate_upload_url(
     storage_path = f"{company_id}/{job_id}/{photo_uuid}.{ext}"
 
     # Generate presigned upload URL using admin client (service role needed)
-    admin = get_supabase_admin_client()
-    result = admin.storage.from_(STORAGE_BUCKET).create_signed_upload_url(storage_path)
+    admin = await get_supabase_admin_client()
+    result = await admin.storage.from_(STORAGE_BUCKET).create_signed_upload_url(storage_path)
 
     # Extract the upload URL from the response
     upload_url = ""
@@ -226,8 +229,8 @@ async def confirm_photo(
     """Create photo record after successful upload to storage."""
     _validate_photo_type(body.photo_type)
 
-    client = get_authenticated_client(token)
-    row = (
+    client = await get_authenticated_client(token)
+    row = await (
         client.table("photos")
         .insert(
             {
@@ -252,7 +255,7 @@ async def confirm_photo(
         )
 
     photo = row.data[0]
-    signed_url = _get_signed_url(photo["storage_url"]) if photo.get("storage_url") else ""
+    signed_url = await _get_signed_url(photo["storage_url"]) if photo.get("storage_url") else ""
 
     await log_event(
         company_id,
@@ -264,7 +267,7 @@ async def confirm_photo(
 
     # Best-effort resize — reduces AI token cost ~4x but non-critical
     try:
-        _resize_photo(body.storage_path)
+        await _resize_photo(body.storage_path)
     except Exception:
         logger.warning(
             "Failed to resize photo %s, continuing with original",
@@ -290,7 +293,7 @@ async def list_photos(
     if photo_type:
         _validate_photo_type(photo_type)
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
     query = (
         client.table("photos")
         .select("*", count="exact")
@@ -307,16 +310,16 @@ async def list_photos(
 
     # For grouped response, fetch all matching photos (no pagination on the outer query)
     if group_by == "room":
-        result = query.execute()
+        result = await query.execute()
     else:
-        result = query.range(offset, offset + limit - 1).execute()
+        result = await query.range(offset, offset + limit - 1).execute()
 
     rows = result.data or []
     total = result.count if result.count is not None else len(rows)
 
     # Generate signed URLs for all photos in a single batch API call
     storage_paths = [row["storage_url"] for row in rows if row.get("storage_url")]
-    url_map = _get_signed_urls_batch(storage_paths)
+    url_map = await _get_signed_urls_batch(storage_paths)
 
     photos = []
     for row in rows:
@@ -354,7 +357,7 @@ async def update_photo(
     if body.photo_type is not None:
         _validate_photo_type(body.photo_type)
 
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Build update dict with only non-None fields
     updates: dict = {}
@@ -362,7 +365,7 @@ async def update_photo(
         updates["room_id"] = str(body.room_id)
         # Auto-resolve room_name from job_rooms if not explicitly provided
         if body.room_name is None:
-            room_result = (
+            room_result = await (
                 client.table("job_rooms")
                 .select("room_name")
                 .eq("id", str(body.room_id))
@@ -387,7 +390,7 @@ async def update_photo(
             error_code="NO_UPDATE_FIELDS",
         )
 
-    result = (
+    result = await (
         client.table("photos")
         .update(updates)
         .eq("id", str(photo_id))
@@ -403,7 +406,7 @@ async def update_photo(
         )
 
     photo = result.data[0]
-    signed_url = _get_signed_url(photo["storage_url"]) if photo.get("storage_url") else ""
+    signed_url = await _get_signed_url(photo["storage_url"]) if photo.get("storage_url") else ""
 
     await log_event(
         company_id,
@@ -425,10 +428,10 @@ async def delete_photo(
     token: str,
 ) -> None:
     """Delete photo from storage and remove the DB record."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     # Fetch the photo to get storage_url
-    fetch = (
+    fetch = await (
         client.table("photos")
         .select("id, storage_url")
         .eq("id", str(photo_id))
@@ -449,13 +452,13 @@ async def delete_photo(
     # Remove file from storage (admin client needed)
     if storage_url:
         try:
-            admin = get_supabase_admin_client()
-            admin.storage.from_(STORAGE_BUCKET).remove([storage_url])
+            admin = await get_supabase_admin_client()
+            await admin.storage.from_(STORAGE_BUCKET).remove([storage_url])
         except Exception:
             pass  # Storage deletion is best-effort
 
     # Hard delete the DB record
-    client.table("photos").delete().eq("id", str(photo_id)).execute()
+    await client.table("photos").delete().eq("id", str(photo_id)).execute()
 
     await log_event(
         company_id,
@@ -476,10 +479,10 @@ async def bulk_select(
     token: str,
 ) -> int:
     """Bulk update selected_for_ai for multiple photos. Returns count of updated rows."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
 
     ids_str = [str(pid) for pid in photo_ids]
-    result = (
+    result = await (
         client.table("photos")
         .update({"selected_for_ai": selected_for_ai})
         .in_("id", ids_str)
@@ -514,12 +517,12 @@ async def bulk_tag(
     token: str,
 ) -> int:
     """Bulk assign rooms to photos. Returns count of updated rows."""
-    client = get_authenticated_client(token)
+    client = await get_authenticated_client(token)
     updated = 0
 
     # Fetch room names for the assigned room_ids (for denormalized room_name)
     room_ids = list({str(a.room_id) for a in assignments})
-    rooms_result = (
+    rooms_result = await (
         client.table("job_rooms")
         .select("id, room_name")
         .in_("id", room_ids)
@@ -532,7 +535,7 @@ async def bulk_tag(
 
     for assignment in assignments:
         room_name = room_names.get(str(assignment.room_id))
-        result = (
+        result = await (
             client.table("photos")
             .update(
                 {

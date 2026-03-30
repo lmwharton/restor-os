@@ -1,32 +1,104 @@
-from supabase import Client, create_client
+"""Async Supabase client factory with connection pooling.
+
+Patterns borrowed from ArceusX (QueuePool + per-loop caching) and ServeOS
+(pool_size=30, pool_recycle=300, pool_pre_ping=True), adapted for supabase-py.
+
+Key design decisions:
+  - ONE shared httpx.AsyncClient with connection pooling (max 30 keepalive, 100 total)
+  - Admin + anon clients are singletons (immutable auth state)
+  - Authenticated clients are per-request (each carries a different user JWT)
+    but reuse the shared httpx connection pool via AsyncClientOptions(httpx_client=...)
+  - Keepalive expiry 30s aligns with Supabase pooler idle timeout
+"""
+
+import logging
+
+import httpx
+from supabase import AsyncClient, AsyncClientOptions, acreate_client
 
 from api.config import settings
 
+logger = logging.getLogger(__name__)
 
-def get_supabase_client() -> Client:
+# Shared httpx async connection pool — reused across ALL supabase clients.
+# This is the critical fix: without it, every acreate_client() opens new
+# TCP + SSL connections that never get reused, exhausting file descriptors.
+_shared_httpx_client: httpx.AsyncClient | None = None
+
+# Module-level singletons for clients with fixed auth state
+_anon_client: AsyncClient | None = None
+_admin_client: AsyncClient | None = None
+
+
+def _get_shared_httpx_client() -> httpx.AsyncClient:
+    """Lazy-init shared httpx.AsyncClient with connection pooling."""
+    global _shared_httpx_client
+    if _shared_httpx_client is None:
+        _shared_httpx_client = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=30,
+                keepalive_expiry=30.0,  # 30s, under Supabase 60s idle timeout
+            ),
+            timeout=httpx.Timeout(
+                connect=10.0,
+                read=120.0,  # match postgrest_client_timeout
+                write=30.0,
+                pool=30.0,   # fail fast if pool exhausted
+            ),
+        )
+        logger.info("Initialized shared async httpx connection pool (max=100, keepalive=30)")
+    return _shared_httpx_client
+
+
+def _make_options(**overrides) -> AsyncClientOptions:
+    """Build AsyncClientOptions with shared httpx pool."""
+    return AsyncClientOptions(
+        httpx_client=_get_shared_httpx_client(),
+        postgrest_client_timeout=120,
+        **overrides,
+    )
+
+
+async def get_supabase_client() -> AsyncClient:
     """Supabase client using anon key, for unauthenticated operations.
-    Does NOT carry a user JWT, so RLS policies that check auth.uid() will block access.
-    Use this only for operations that don't require user context (e.g., public lookups)."""
-    return create_client(settings.supabase_url, settings.supabase_key)
+    Singleton — reuses HTTP connections across requests."""
+    global _anon_client
+    if _anon_client is None:
+        _anon_client = await acreate_client(
+            settings.supabase_url,
+            settings.supabase_key,
+            options=_make_options(),
+        )
+    return _anon_client
 
 
-def get_authenticated_client(token: str) -> Client:
+async def get_authenticated_client(token: str) -> AsyncClient:
     """Supabase client with the user's JWT set, so RLS enforces tenant isolation.
-    Use this for ALL normal user operations — every query runs as the authenticated user,
-    and RLS policies automatically filter by company_id via auth.uid().
 
-    Args:
-        token: The user's Supabase JWT (from Authorization header).
+    Per-request (each user has a different JWT), but reuses the shared httpx
+    connection pool so no new TCP/SSL connections are opened.
     """
-    client = create_client(settings.supabase_url, settings.supabase_key)
-    client.auth.set_session(token, token)
+    client = await acreate_client(
+        settings.supabase_url,
+        settings.supabase_key,
+        options=_make_options(),
+    )
+    # Set the JWT on the PostgREST client so RLS sees the user's claims.
+    # Using postgrest.auth() rather than auth.set_session() avoids faking
+    # a refresh token and triggering unnecessary auth-side state.
+    client.postgrest.auth(token)
     return client
 
 
-def get_supabase_admin_client() -> Client:
+async def get_supabase_admin_client() -> AsyncClient:
     """Supabase client using service role key (bypasses RLS).
-    Use ONLY for platform admin operations and onboarding (e.g., creating initial
-    company/user records, public share link access). Never use for normal user queries."""
-    return create_client(
-        settings.supabase_url, settings.supabase_service_role_key.get_secret_value()
-    )
+    Singleton — reuses HTTP connections across requests."""
+    global _admin_client
+    if _admin_client is None:
+        _admin_client = await acreate_client(
+            settings.supabase_url,
+            settings.supabase_service_role_key.get_secret_value(),
+            options=_make_options(),
+        )
+    return _admin_client

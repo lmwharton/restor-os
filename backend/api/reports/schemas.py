@@ -22,3 +22,8 @@ class ReportResponse(BaseModel):
     generated_at: datetime | None
     created_at: datetime
     updated_at: datetime
+
+
+class ReportListResponse(BaseModel):
+    items: list[ReportResponse]
+    total: int

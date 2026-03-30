@@ -10,7 +10,7 @@ import type {
 
 // ─── Job Queries ──────────────────────────────────────────────────────
 
-export function useJobs(filters?: { status?: string; search?: string }) {
+export function useJobs(filters?: { status?: string; search?: string }, initialData?: JobDetail[]) {
   return useQuery<JobDetail[]>({
     queryKey: ["jobs", filters],
     queryFn: async () => {
@@ -19,9 +19,11 @@ export function useJobs(filters?: { status?: string; search?: string }) {
       if (filters?.search) params.set("search", filters.search);
       params.set("limit", "100");
       const qs = params.toString();
-      const data = await apiGet<PaginatedResponse<JobDetail>>(`/v1/jobs${qs ? `?${qs}` : ""}`);
-      return data.items;
+      const data = await apiGet<JobDetail[] | PaginatedResponse<JobDetail>>(`/v1/jobs${qs ? `?${qs}` : ""}`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
+    initialData,
   });
 }
 
@@ -72,8 +74,9 @@ export function useRooms(jobId: string) {
   return useQuery<Room[]>({
     queryKey: ["rooms", jobId],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<Room>>(`/v1/jobs/${jobId}/rooms`);
-      return data.items;
+      const data = await apiGet<Room[] | PaginatedResponse<Room>>(`/v1/jobs/${jobId}/rooms`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId,
   });
@@ -118,8 +121,9 @@ export function usePhotos(jobId: string) {
   return useQuery<Photo[]>({
     queryKey: ["photos", jobId],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<Photo>>(`/v1/jobs/${jobId}/photos?limit=200`);
-      return data.items;
+      const data = await apiGet<Photo[] | PaginatedResponse<Photo>>(`/v1/jobs/${jobId}/photos?limit=200`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId,
   });
@@ -198,10 +202,11 @@ export function useReadings(jobId: string, roomId: string) {
   return useQuery<MoistureReading[]>({
     queryKey: ["readings", jobId, roomId],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<MoistureReading>>(
+      const data = await apiGet<MoistureReading[] | PaginatedResponse<MoistureReading>>(
         `/v1/jobs/${jobId}/rooms/${roomId}/readings`
       );
-      return data.items;
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId && !!roomId,
   });
@@ -211,10 +216,11 @@ export function useAllReadings(jobId: string) {
   return useQuery<MoistureReading[]>({
     queryKey: ["readings", jobId, "all"],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<MoistureReading>>(
+      const data = await apiGet<MoistureReading[] | PaginatedResponse<MoistureReading>>(
         `/v1/jobs/${jobId}/readings`
       );
-      return data.items;
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId,
   });
@@ -259,20 +265,23 @@ export function useJobEvents(jobId: string) {
   return useQuery<Event[]>({
     queryKey: ["events", jobId],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<Event>>(`/v1/jobs/${jobId}/events`);
-      return data.items;
+      const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/jobs/${jobId}/events`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId,
   });
 }
 
-export function useCompanyEvents() {
+export function useCompanyEvents(initialData?: Event[]) {
   return useQuery<Event[]>({
     queryKey: ["events", "company"],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<Event>>(`/v1/events?limit=20`);
-      return data.items;
+      const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/events?limit=20`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
+    initialData,
   });
 }
 
@@ -282,8 +291,10 @@ export function useFloorPlans(jobId: string) {
   return useQuery<FloorPlan[]>({
     queryKey: ["floor-plans", jobId],
     queryFn: async () => {
-      const data = await apiGet<PaginatedResponse<FloorPlan>>(`/v1/jobs/${jobId}/floor-plans`);
-      return data.items;
+      // Backend returns a plain array (not paginated), but handle both shapes defensively
+      const data = await apiGet<FloorPlan[] | PaginatedResponse<FloorPlan>>(`/v1/jobs/${jobId}/floor-plans`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
     },
     enabled: !!jobId,
   });

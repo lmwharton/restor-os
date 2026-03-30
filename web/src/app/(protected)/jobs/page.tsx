@@ -56,7 +56,7 @@ const statusConfig: Record<
     label: "Drying",
     className: "bg-blue-500/15 text-blue-600",
   },
-  completed: {
+  job_complete: {
     label: "Complete",
     className: "bg-slate-400/15 text-slate-600",
   },
@@ -301,10 +301,10 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
           <span aria-hidden="true">&rarr;</span>
         </Link>
 
-        {/* Three stacked action buttons */}
+        {/* Action links */}
         <div className="flex flex-col gap-2">
-          <button
-            type="button"
+          <Link
+            href={`/jobs/${job.id}/photos`}
             className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
@@ -313,9 +313,9 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
               <path d="M2 17l5-5 3 3 4-4 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             Add Photo
-          </button>
-          <button
-            type="button"
+          </Link>
+          <Link
+            href={`/jobs/${job.id}/readings`}
             className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
@@ -323,24 +323,13 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
               <path d="M3 20h18" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
             Log Reading
-          </button>
-          <button
-            type="button"
-            className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center gap-2.5 px-3.5 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
-              <path d="M12 2a4 4 0 0 1 4 4v5a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z" stroke="currentColor" strokeWidth="1.5" />
-              <path d="M19 11a7 7 0 0 1-14 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M12 18v4M9 22h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            Voice Note
-          </button>
+          </Link>
         </div>
 
-        {/* Footer row — Share & Export */}
-        <div className="flex items-center justify-center gap-6 pt-2 border-t border-outline-variant/20">
-          <button
-            type="button"
+        {/* Footer row — Share */}
+        <div className="flex items-center justify-center pt-2 border-t border-outline-variant/20">
+          <Link
+            href={`/jobs/${job.id}`}
             className="flex items-center gap-1.5 text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold hover:text-on-surface transition-colors"
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -348,19 +337,7 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
               <path d="M12 3v12M8 7l4-4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             Share
-          </button>
-          <span className="text-on-surface-variant/40 text-xs" aria-hidden="true">&middot;</span>
-          <button
-            type="button"
-            className="flex items-center gap-1.5 text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-on-surface-variant font-semibold hover:text-on-surface transition-colors"
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <path d="M6 2h9l5 5v15H6z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-              <path d="M15 2v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M9 13h6M9 17h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-            Export
-          </button>
+          </Link>
         </div>
       </div>
     </div>
