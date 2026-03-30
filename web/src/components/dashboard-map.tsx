@@ -28,22 +28,20 @@ interface DashboardMapProps {
 const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
   { elementType: "geometry", stylers: [{ color: "#1c1917" }] },
   { elementType: "labels.text.stroke", stylers: [{ color: "#1c1917" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#57534e" }] },
+  { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
   { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#292524" }] },
-  { featureType: "administrative.land_parcel", elementType: "labels.text.fill", stylers: [{ color: "#57534e" }] },
-  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#292524" }] },
-  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
-  { featureType: "poi.park", elementType: "geometry.fill", stylers: [{ color: "#1a2e1a" }] },
-  { featureType: "poi.park", elementType: "labels.text.fill", stylers: [{ color: "#4d7c4d" }] },
+  { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
+  { featureType: "poi", stylers: [{ visibility: "off" }] },
+  { featureType: "transit", stylers: [{ visibility: "off" }] },
   { featureType: "road", elementType: "geometry", stylers: [{ color: "#292524" }] },
   { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1c1917" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#44403c" }] },
-  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#292524" }] },
-  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#a8a29e" }] },
-  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#292524" }] },
-  { featureType: "transit.station", elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#57534e" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3a3530" }] },
+  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
+  { featureType: "road.local", elementType: "labels", stylers: [{ visibility: "off" }] },
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#0c1821" }] },
-  { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#44403c" }] },
+  { featureType: "water", elementType: "labels", stylers: [{ visibility: "off" }] },
 ];
 
 // US center as default
@@ -58,7 +56,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
   const mapsLoaded = useGoogleMapsLoaded();
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const markersRef = useRef<google.maps.marker.AdvancedMarkerElement[]>([]);
+  const markersRef = useRef<google.maps.Marker[]>([]);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
   const geocodeCacheRef = useRef<Map<string, google.maps.LatLngLiteral | null>>(new Map());
   const [geocoding, setGeocoding] = useState(false);
@@ -107,12 +105,10 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
 
     // Clear existing markers
     for (const marker of markersRef.current) {
-      marker.map = null;
+      marker.setMap(null);
     }
     markersRef.current = [];
 
-    // Import marker library
-    const { AdvancedMarkerElement } = await importLibrary("marker") as google.maps.MarkerLibrary;
     const { Geocoder } = await importLibrary("geocoding") as google.maps.GeocodingLibrary;
     const geocoder = new Geocoder();
 
@@ -148,24 +144,18 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
 
       if (!position) continue;
 
-      // Create colored pin element
-      const pinEl = document.createElement("div");
-      pinEl.style.cssText = `
-        width: 14px;
-        height: 14px;
-        border-radius: 50%;
-        background-color: ${job.color};
-        border: 2.5px solid #fff;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.4);
-        cursor: pointer;
-        transition: opacity 0.3s, transform 0.3s;
-      `;
-
-      const marker = new AdvancedMarkerElement({
+      const marker = new google.maps.Marker({
         map,
         position,
-        content: pinEl,
         title: job.address_line1,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 8,
+          fillColor: job.color,
+          fillOpacity: 1,
+          strokeColor: "#ffffff",
+          strokeWeight: 2.5,
+        },
       });
 
       // Info window on click
@@ -234,11 +224,9 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
   useEffect(() => {
     markersRef.current.forEach((marker, i) => {
       const job = jobs[i];
-      if (!job || !marker.content) return;
-      const el = marker.content as HTMLElement;
+      if (!job) return;
       const isMatch = selectedStage === null || job.stage === selectedStage;
-      el.style.opacity = isMatch ? "1" : "0.2";
-      el.style.transform = isMatch ? "scale(1)" : "scale(0.7)";
+      marker.setOpacity(isMatch ? 1 : 0.25);
     });
   }, [selectedStage, jobs]);
 

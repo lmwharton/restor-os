@@ -23,7 +23,7 @@ export function GoogleMapsProvider({ children }: { children: React.ReactNode }) 
       setLoaded(true);
       return;
     }
-    setOptions({ key: apiKey, libraries: ["places", "geocoding", "maps", "marker"] });
+    setOptions({ key: apiKey, libraries: ["places", "geocoding", "maps"] });
     importLibrary("places").then(() => setLoaded(true));
   }, []);
 
