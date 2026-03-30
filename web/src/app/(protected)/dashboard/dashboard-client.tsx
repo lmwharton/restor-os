@@ -227,9 +227,17 @@ function JobsList({
             ? `${STAGE_META[selectedStage].label} Jobs`
             : "Active Jobs"}
         </h2>
-        <span className={`${LABEL_STYLE}`}>
-          {filteredTasks.length} {filteredTasks.length === 1 ? "job" : "jobs"}
-        </span>
+        <div className="flex items-center gap-3">
+          <span className={`${LABEL_STYLE}`}>
+            {filteredTasks.length} {filteredTasks.length === 1 ? "job" : "jobs"}
+          </span>
+          <Link
+            href="/jobs/new"
+            className="flex items-center gap-1.5 px-3 h-7 rounded-lg bg-brand-accent text-white text-[11px] font-semibold uppercase tracking-[0.05em] hover:brightness-110 transition-all cursor-pointer"
+          >
+            <span className="text-[14px] leading-none">+</span> New Job
+          </Link>
+        </div>
       </div>
 
       <div className="flex-1 space-y-1" role="list">
