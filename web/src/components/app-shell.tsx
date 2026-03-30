@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Dashboard, Clipboard, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
+import { useJobs } from "@/lib/hooks/use-jobs";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -369,19 +370,52 @@ function DesktopSidebar({ user }: { user: UserProfile | null }) {
 
 function GlobalSearch() {
   const router = useRouter();
+  const { data: jobs } = useJobs();
   const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  const results = useMemo(() => {
+    if (!query.trim() || !jobs) return [];
+    const q = query.toLowerCase();
+    return jobs.filter((j) =>
+      j.address_line1.toLowerCase().includes(q) ||
+      (j.customer_name && j.customer_name.toLowerCase().includes(q)) ||
+      (j.job_number && j.job_number.toLowerCase().includes(q)) ||
+      (j.city && j.city.toLowerCase().includes(q))
+    ).slice(0, 6);
+  }, [query, jobs]);
+
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, []);
+
+  function navigate(jobId: string) {
+    setOpen(false);
+    setQuery("");
+    router.push(`/jobs/${jobId}`);
+  }
 
   function handleKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === "Enter" && query.trim()) {
-      router.push(`/jobs?search=${encodeURIComponent(query.trim())}`);
+    if (e.key === "Escape") { setOpen(false); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setActiveIdx((i) => Math.min(i + 1, results.length - 1)); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); setActiveIdx((i) => Math.max(i - 1, 0)); return; }
+    if (e.key === "Enter") {
+      if (activeIdx >= 0 && results[activeIdx]) { navigate(results[activeIdx].id); }
+      else if (query.trim()) { setOpen(false); setQuery(""); router.push(`/jobs?search=${encodeURIComponent(query.trim())}`); }
     }
   }
 
   return (
-    <div className="relative flex-1 max-w-md">
+    <div ref={wrapperRef} className="relative flex-1 max-w-md">
       <svg
         width="16" height="16" viewBox="0 0 24 24" fill="none"
-        className="absolute left-3 top-1/2 -translate-y-1/2 text-outline"
+        className="absolute left-3 top-1/2 -translate-y-1/2 text-outline z-10"
         aria-hidden="true"
       >
         <circle cx="11" cy="11" r="8" stroke="currentColor" strokeWidth="1.5" />
@@ -390,11 +424,41 @@ function GlobalSearch() {
       <input
         type="text"
         value={query}
-        onChange={(e) => setQuery(e.target.value)}
+        onChange={(e) => { setQuery(e.target.value); setOpen(true); setActiveIdx(-1); }}
+        onFocus={() => query.trim() && setOpen(true)}
         onKeyDown={handleKeyDown}
         placeholder="Search jobs, addresses..."
         className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container/60 text-[13px] text-on-surface placeholder:text-outline border-none outline-none focus:bg-surface-container focus:ring-1 focus:ring-brand-accent/30 transition-colors"
       />
+      {open && results.length > 0 && (
+        <div className="absolute top-full left-0 right-0 mt-1.5 bg-surface-container-lowest rounded-xl shadow-lg border border-outline-variant/30 overflow-hidden z-50">
+          {results.map((job, i) => (
+            <button
+              key={job.id}
+              type="button"
+              onMouseDown={() => navigate(job.id)}
+              onMouseEnter={() => setActiveIdx(i)}
+              className={`w-full text-left px-3.5 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
+                i === activeIdx ? "bg-surface-container" : "hover:bg-surface-container/50"
+              }`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-brand-accent shrink-0" />
+              <div className="min-w-0 flex-1">
+                <p className="text-[13px] font-medium text-on-surface truncate">
+                  {job.address_line1}
+                </p>
+                <p className="text-[11px] text-outline truncate">
+                  {[job.city, job.state].filter(Boolean).join(", ")}
+                  {job.customer_name ? ` · ${job.customer_name}` : ""}
+                </p>
+              </div>
+              <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-outline shrink-0">
+                {job.job_number}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
