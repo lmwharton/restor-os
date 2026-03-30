@@ -25,22 +25,23 @@ interface DashboardMapProps {
 }
 
 // Dark map style that matches the dashboard aesthetic
-const DARK_MAP_STYLES: google.maps.MapTypeStyle[] = [
-  { elementType: "geometry", stylers: [{ color: "#1c1917" }] },
-  { elementType: "labels.text.stroke", stylers: [{ color: "#1c1917" }] },
-  { elementType: "labels.text.fill", stylers: [{ color: "#57534e" }] },
+// Light map style matching the dashboard surface colors
+const MAP_STYLES: google.maps.MapTypeStyle[] = [
+  { elementType: "geometry", stylers: [{ color: "#f5f0eb" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#faf8f5" }] },
   { elementType: "labels.icon", stylers: [{ visibility: "off" }] },
-  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#292524" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#e7e0d9" }] },
   { featureType: "administrative.land_parcel", stylers: [{ visibility: "off" }] },
   { featureType: "poi", stylers: [{ visibility: "off" }] },
   { featureType: "transit", stylers: [{ visibility: "off" }] },
-  { featureType: "road", elementType: "geometry", stylers: [{ color: "#292524" }] },
-  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#1c1917" }] },
-  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#57534e" }] },
-  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#3a3530" }] },
-  { featureType: "road.highway", elementType: "labels.text.fill", stylers: [{ color: "#78716c" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#ffffff" }] },
+  { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#e7e0d9" }] },
+  { featureType: "road", elementType: "labels.text.fill", stylers: [{ color: "#a8a29e" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#f0e8e0" }] },
+  { featureType: "road.highway", elementType: "geometry.stroke", stylers: [{ color: "#e7e0d9" }] },
   { featureType: "road.local", elementType: "labels", stylers: [{ visibility: "off" }] },
-  { featureType: "water", elementType: "geometry", stylers: [{ color: "#0c1821" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#dce8f0" }] },
   { featureType: "water", elementType: "labels", stylers: [{ visibility: "off" }] },
 ];
 
@@ -77,14 +78,14 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
       const map = new GoogleMap(mapRef.current, {
         center: DEFAULT_CENTER,
         zoom: DEFAULT_ZOOM,
-        styles: DARK_MAP_STYLES,
+        styles: MAP_STYLES,
         disableDefaultUI: true,
         zoomControl: true,
         zoomControlOptions: {
           position: google.maps.ControlPosition.RIGHT_TOP,
         },
         gestureHandling: "cooperative",
-        backgroundColor: "#1c1917",
+        backgroundColor: "#f5f0eb",
       });
 
       mapInstanceRef.current = map;
@@ -154,7 +155,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
           fillColor: job.color,
           fillOpacity: 1,
           strokeColor: "#ffffff",
-          strokeWeight: 2.5,
+          strokeWeight: 2,
         },
       });
 
