@@ -32,9 +32,13 @@ interface CanvasWall {
 }
 
 interface CanvasRoom {
-  vertices: Array<{ x: number; y: number }>;
-  color?: string;
-  name?: string;
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  name: string;
+  fill: string;
 }
 
 interface CanvasData {
@@ -196,7 +200,7 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
   const rawRooms = canvasData?.rooms;
   const rooms = Array.isArray(rawRooms) ? rawRooms : [];
 
-  if (walls.length === 0) {
+  if (walls.length === 0 && rooms.length === 0) {
     return (
       <>
         <div
@@ -218,8 +222,15 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
     );
   }
 
-  const allX = walls.flatMap((w) => [w.x1, w.x2]);
-  const allY = walls.flatMap((w) => [w.y1, w.y2]);
+  // Compute bounding box from rooms and walls
+  const allX = [
+    ...walls.flatMap((w) => [w.x1, w.x2]),
+    ...rooms.flatMap((r) => [r.x, r.x + r.width]),
+  ];
+  const allY = [
+    ...walls.flatMap((w) => [w.y1, w.y2]),
+    ...rooms.flatMap((r) => [r.y, r.y + r.height]),
+  ];
   const minX = Math.min(...allX);
   const maxX = Math.max(...allX);
   const minY = Math.min(...allY);
@@ -236,12 +247,16 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
         preserveAspectRatio="xMidYMid meet"
         aria-label="Floor plan preview"
       >
-        {rooms.map((room, i) => (
-          <polygon
-            key={`room-${i}`}
-            points={room.vertices.map((v) => `${v.x},${v.y}`).join(" ")}
-            fill={room.color ?? "rgba(232,93,38,0.08)"}
-            stroke="none"
+        {rooms.map((room) => (
+          <rect
+            key={room.id}
+            x={room.x}
+            y={room.y}
+            width={room.width}
+            height={room.height}
+            fill={room.fill ?? "rgba(232,93,38,0.08)"}
+            stroke="#e85d26"
+            strokeWidth={Math.max(1, vbW / 200)}
           />
         ))}
         {walls.map((w, i) => (

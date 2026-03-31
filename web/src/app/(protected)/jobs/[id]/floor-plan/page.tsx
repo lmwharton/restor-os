@@ -1,17 +1,18 @@
 "use client";
 
-import { use, useState, useCallback, useEffect } from "react";
+import { use, useState, useCallback, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import FloorPlanCanvas from "@/components/sketch/floor-plan-canvas";
+import dynamic from "next/dynamic";
 import {
   useFloorPlans,
   useCreateFloorPlan,
-  useUpdateFloorPlan,
-  useCleanupSketch,
 } from "@/lib/hooks/use-jobs";
 import { apiGet, apiPost, apiPatch } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
+import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
+
+const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
 
 export default function FloorPlanPage({
   params,
@@ -24,11 +25,11 @@ export default function FloorPlanPage({
 
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
-  const updateFloorPlan = useUpdateFloorPlan(jobId);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
-  // Track the active floor plan ID separately to survive refetches
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync activeFloorId when floor plans load
   useEffect(() => {
@@ -41,23 +42,20 @@ export default function FloorPlanPage({
     ?? floorPlans?.[activeFloorIdx]
     ?? null;
 
-  const cleanupMutation = useCleanupSketch(jobId, activeFloor?.id ?? "");
-
   /* ---------------------------------------------------------------- */
-  /*  Save — create or update, handle 409 gracefully                   */
+  /*  Save — create or update                                          */
   /* ---------------------------------------------------------------- */
 
-  const handleSave = useCallback(
-    async (canvasData: Record<string, unknown>) => {
+  const handleChange = useCallback(
+    async (canvasData: FloorPlanData) => {
+      setSaveStatus("saving");
       try {
         if (activeFloor) {
-          // Update existing floor plan
           await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${activeFloor.id}`, {
             canvas_data: canvasData,
           });
           queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
         } else {
-          // Create new floor plan
           const floorNum = (floorPlans?.length ?? 0) + 1;
           try {
             const created = await apiPost<FloorPlan>(`/v1/jobs/${jobId}/floor-plans`, {
@@ -68,13 +66,10 @@ export default function FloorPlanPage({
             setActiveFloorId(created.id);
             queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
           } catch (err: unknown) {
-            // 409 = floor plan already exists — refetch and update instead
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
-              // Fetch fresh list directly from API (bypass cache to avoid stale/undefined data)
               const refetched = await apiGet<FloorPlan[]>(`/v1/jobs/${jobId}/floor-plans`);
               const plans = Array.isArray(refetched) ? refetched : [];
-              // Update the query cache with the fresh data
               queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], plans);
               if (plans.length > 0) {
                 const fp = plans[0];
@@ -89,35 +84,15 @@ export default function FloorPlanPage({
             }
           }
         }
+        setSaveStatus("saved");
+        if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+        saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
       } catch (err) {
         console.error("Failed to save floor plan:", err);
+        setSaveStatus("error");
       }
     },
     [activeFloor, floorPlans, jobId, queryClient]
-  );
-
-  /* ---------------------------------------------------------------- */
-  /*  Cleanup — send to Shapely backend                                */
-  /* ---------------------------------------------------------------- */
-
-  const handleCleanup = useCallback(
-    async (canvasData: Record<string, unknown>): Promise<Record<string, unknown>> => {
-      // If no floor plan saved yet, save first then cleanup
-      if (!activeFloor) {
-        await handleSave(canvasData);
-        // After save, activeFloor should be set — but we need the ID
-        // For now, return the data as-is and let user click cleanup again
-        return canvasData;
-      }
-      try {
-        const result = await cleanupMutation.mutateAsync(canvasData);
-        return result.canvas_data;
-      } catch (err) {
-        console.error("Cleanup failed:", err);
-        return canvasData;
-      }
-    },
-    [activeFloor, cleanupMutation, handleSave]
   );
 
   /* ---------------------------------------------------------------- */
@@ -176,6 +151,13 @@ export default function FloorPlanPage({
           Back to Job
         </button>
 
+        {/* Save status */}
+        <div className="ml-2 text-[11px] font-[family-name:var(--font-geist-mono)]">
+          {saveStatus === "saving" && <span className="text-on-surface-variant">Saving...</span>}
+          {saveStatus === "saved" && <span className="text-green-600">Saved</span>}
+          {saveStatus === "error" && <span className="text-red-600">Save failed</span>}
+        </div>
+
         {/* Floor tabs */}
         <div className="flex items-center gap-1 ml-auto">
           {floorPlans?.map((fp, idx) => (
@@ -208,12 +190,10 @@ export default function FloorPlanPage({
 
       {/* Canvas */}
       <div className="flex-1 min-h-0">
-        <FloorPlanCanvas
+        <KonvaFloorPlan
           key={activeFloor?.id ?? "new"}
-          canvasData={activeFloor?.canvas_data}
-          onSave={handleSave}
-          onCleanup={handleCleanup}
-          floorName={activeFloor?.floor_name ?? "Floor 1"}
+          initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
+          onChange={handleChange}
         />
       </div>
     </div>
