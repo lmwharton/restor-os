@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { useQuery } from "@tanstack/react-query";
 import {
   useJob,
   useRooms,
@@ -16,6 +17,7 @@ import {
   useCreateRoom,
   useDeleteRoom,
 } from "@/lib/hooks/use-jobs";
+import { apiGet } from "@/lib/api";
 // Types used via hook return inference — no direct imports needed
 
 /* ------------------------------------------------------------------ */
@@ -105,8 +107,9 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
   }
 }
 
-function eventActor(evt: { is_ai: boolean; user_id: string | null }): string {
+function eventActor(evt: { is_ai: boolean; user_id: string | null }, currentUserId?: string, currentUserName?: string): string {
   if (evt.is_ai) return "Crewmatic AI";
+  if (currentUserId && evt.user_id === currentUserId && currentUserName) return currentUserName;
   return "Team Member";
 }
 
@@ -437,6 +440,7 @@ function InlineReadingForm({ jobId, roomId, roomName, dayNumber, onSaved }: {
   const createReading = useCreateReading(jobId, roomId);
   const [temp, setTemp] = useState("72");
   const [rh, setRh] = useState("45");
+  const [dirty, setDirty] = useState(false);
 
   const gpp = (() => {
     const t = parseFloat(temp);
@@ -460,20 +464,24 @@ function InlineReadingForm({ jobId, roomId, roomName, dayNumber, onSaved }: {
       <div className="flex items-center gap-3">
         <div className="flex-1">
           <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">Temp °F</label>
-          <input type="number" value={temp} onChange={(e) => setTemp(e.target.value)}
+          <input type="number" value={temp} onChange={(e) => { setTemp(e.target.value); setDirty(true); }}
             className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
         </div>
         <div className="flex-1">
           <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">RH %</label>
-          <input type="number" value={rh} onChange={(e) => setRh(e.target.value)}
+          <input type="number" value={rh} onChange={(e) => { setRh(e.target.value); setDirty(true); }}
             className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
         </div>
         <div className="flex-1">
           <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">GPP</label>
           <p className="h-8 flex items-center text-[13px] font-[family-name:var(--font-geist-mono)] font-semibold text-on-surface">{gpp}</p>
         </div>
-        <button type="button" onClick={handleSave} disabled={createReading.isPending}
-          className="self-end h-8 px-3 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer hover:opacity-90 disabled:opacity-50 transition-opacity">
+        <button type="button" onClick={handleSave} disabled={!dirty || createReading.isPending}
+          className={`self-end h-8 px-3 rounded-lg text-[12px] font-semibold transition-all ${
+            dirty
+              ? "bg-brand-accent text-on-primary cursor-pointer hover:opacity-90"
+              : "bg-surface-container text-on-surface-variant/50 cursor-default"
+          } disabled:opacity-50`}>
           {createReading.isPending ? "..." : "Save"}
         </button>
       </div>
@@ -644,6 +652,11 @@ export default function JobDetailPage() {
   const { data: floorPlans } = useFloorPlans(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
+  const { data: me } = useQuery<{ id: string; name: string; first_name: string | null; last_name: string | null }>({
+    queryKey: ["me"],
+    queryFn: () => apiGet("/v1/me"),
+    staleTime: 5 * 60 * 1000,
+  });
   const deleteJob = useDeleteJob();
   const createShareLink = useCreateShareLink(jobId);
   const updateJob = useUpdateJob(jobId);
@@ -796,7 +809,11 @@ export default function JobDetailPage() {
             icon={<IconJobInfo />}
             title="Job Info"
             preview={
-              [job.customer_name, job.carrier, job.claim_number ? `#${job.claim_number}` : null]
+              [
+                job.customer_name,
+                job.loss_category ? `Cat ${job.loss_category}` : null,
+                job.loss_class ? `Class ${job.loss_class}` : null,
+              ]
                 .filter(Boolean)
                 .join(" \u00B7 ")
             }
@@ -854,6 +871,7 @@ export default function JobDetailPage() {
           <AccordionSection
             icon={<IconLayout />}
             title="Property Layout"
+            defaultOpen={!!(rooms && rooms.length > 0)}
             preview={rooms && rooms.length > 0 ? `${rooms.length} room${rooms.length !== 1 ? "s" : ""}` : "No rooms added yet"}
           >
             <div className="space-y-3">
@@ -977,9 +995,10 @@ export default function JobDetailPage() {
           <AccordionSection
             icon={<IconReadings />}
             title="Moisture Readings"
+            defaultOpen={!!(readings && readings.length > 0)}
             preview={
-              gppData.length > 0
-                ? `GPP: ${gppData.map((d) => (d.gpp ?? 0).toFixed(0)).join(" \u2192 ")} \u2193 Target: 45`
+              readings && readings.length > 0
+                ? `${readings.length} reading${readings.length !== 1 ? "s" : ""} logged`
                 : "No readings yet"
             }
           >
@@ -1138,7 +1157,7 @@ export default function JobDetailPage() {
                   />
                   <div className="flex-1 min-w-0">
                     <p className={`text-[13px] ${evt.is_ai ? "text-brand-accent" : "text-on-surface"}`}>
-                      <span className="font-medium">{eventActor(evt)}</span>{" "}
+                      <span className="font-medium">{eventActor(evt, me?.id, me?.name || [me?.first_name, me?.last_name].filter(Boolean).join(" ") || undefined)}</span>{" "}
                       {eventDescription(evt)}
                     </p>
                     <p className="text-[10px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant mt-0.5">
