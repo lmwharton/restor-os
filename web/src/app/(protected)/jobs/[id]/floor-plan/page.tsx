@@ -9,6 +9,7 @@ import {
   useCreateFloorPlan,
   useRooms,
   useCreateRoom,
+  useUpdateRoom,
 } from "@/lib/hooks/use-jobs";
 import { apiGet, apiPost, apiPatch } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
@@ -29,15 +30,22 @@ export default function FloorPlanPage({
   const createFloorPlan = useCreateFloorPlan(jobId);
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
+  const updateRoom = useUpdateRoom(jobId);
   const handleCreateRoom = useCallback((name: string, dimensions?: { width: number; height: number }) => {
-    // Check if room already exists in Property Layout
-    if (jobRooms?.some((r) => r.room_name === name)) return;
+    // Check if room already exists in Property Layout — update dimensions if so
+    const existing = jobRooms?.find((r) => r.room_name === name);
+    if (existing) {
+      if (dimensions) {
+        updateRoom.mutate({ roomId: existing.id, width_ft: dimensions.width, length_ft: dimensions.height } as Record<string, unknown> & { roomId: string });
+      }
+      return;
+    }
     createRoom.mutate({
       room_name: name,
       length_ft: dimensions?.height ?? null,
       width_ft: dimensions?.width ?? null,
     } as Record<string, unknown>);
-  }, [jobRooms, createRoom]);
+  }, [jobRooms, createRoom, updateRoom]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
@@ -97,6 +105,21 @@ export default function FloorPlanPage({
             }
           }
         }
+        // Sync room dimensions from sketch to Property Layout rooms
+        if (canvasData.rooms && jobRooms) {
+          const gs = canvasData.gridSize || 20;
+          for (const drawnRoom of canvasData.rooms) {
+            const match = jobRooms.find((r) => r.room_name === drawnRoom.name);
+            if (match) {
+              const widthFt = Math.round((drawnRoom.width / gs) * 10) / 10;
+              const lengthFt = Math.round((drawnRoom.height / gs) * 10) / 10;
+              if (widthFt !== match.width_ft || lengthFt !== match.length_ft) {
+                updateRoom.mutate({ roomId: match.id, width_ft: widthFt, length_ft: lengthFt } as Record<string, unknown> & { roomId: string });
+              }
+            }
+          }
+        }
+
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
@@ -105,7 +128,7 @@ export default function FloorPlanPage({
         setSaveStatus("error");
       }
     },
-    [activeFloor, floorPlans, jobId, queryClient]
+    [activeFloor, floorPlans, jobId, queryClient, jobRooms, updateRoom]
   );
 
   /* ---------------------------------------------------------------- */
