@@ -59,8 +59,8 @@ Crewmatic starts with water restoration, then expands into adjacent trades that 
 
 | Phase | Vertical | Status | Key Differentiator |
 |-------|----------|--------|-------------------|
-| V1 | Water Restoration | **Building now** | AI Photo Scope + S500/OSHA justifications |
-| V2 | Insurance Repair (Reconstruction) | Next | Post-mitigation rebuild — supplements, code upgrades, O&P, holdback tracking |
+| V1 | Water Restoration (Mitigation) | **Building now** | AI Photo Scope + S500/OSHA justifications |
+| V1B | Insurance Repair (Reconstruction) | **Next — spec drafted** | Separate job type, linked to mitigation via claim. Flexible phase tracking, reconstruction scope builder, supplements |
 | V3 | Remodeling | Future | Voice-to-proposal, change orders, permit tracking, punch lists |
 | V4 | Plumbing | Future | Photo diagnostics, repipe triggers, water heater EOL, source-of-loss referrals |
 | V5 | Electrical | Future | Panel photo diagnosis, load calc, EV charger workflows, hazard docs |

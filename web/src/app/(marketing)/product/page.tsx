@@ -328,6 +328,16 @@ export default async function ProductPage() {
               Clean documentation with S500/OSHA justifications wins on both paths.
             </p>
           </div>
+
+          <div className="mt-3 px-3 py-2.5 bg-[#faf9f7] border-l-2 border-[#8a847e] rounded-r">
+            <p className="text-[12px] text-[#6b6560] leading-relaxed">
+              <span className="font-semibold text-[#1a1a1a]">Two job types:</span>{" "}
+              Mitigation and reconstruction are separate jobs with separate invoices &mdash; always.
+              80% of the time the same company handles both, with a 2&ndash;3 week gap between phases.
+              Different crews, different P&amp;L targets (40% vs 30% margins), and adjusters expect them separated.
+              Crewmatic models them as linked but independent jobs sharing claim data.
+            </p>
+          </div>
         </section>
 
         {/* All Functionalities */}
@@ -464,17 +474,17 @@ export default async function ProductPage() {
               {
                 phase: "V1",
                 label: "Now",
-                title: "Water Restoration",
+                title: "Water Restoration (Mitigation)",
                 desc: "AI Photo Scope, job management, moisture tracking, PDF reports, adjuster portal. The foundation everything else builds on.",
                 color: "bg-[#2a9d5c]",
                 border: "border-[#2a9d5c]",
                 bg: "bg-[#f6faf7]",
               },
               {
-                phase: "V2",
+                phase: "V1B",
                 label: "Next",
                 title: "Insurance Repair (Reconstruction)",
-                desc: "Post-mitigation rebuild scoping. Same adjusters, same Xactimate language. Supplement management, code upgrade tracking, O&P monitoring, ACV/RCV holdback tracking. Turns Crewmatic from a mitigation tool into a full-lifecycle claim tool.",
+                desc: "Separate job type for post-mitigation rebuild. Linked to mitigation jobs via shared claim data. Flexible phase tracking, reconstruction scope builder, supplement management. Two jobs, two invoices \u2014 matching how the industry actually works.",
                 color: "bg-[#e85d26]",
                 border: "border-[#e85d26]",
                 bg: "bg-[#fff8f5]",

@@ -1964,4 +1964,118 @@ Take your time on W15 (the end-to-end job walkthrough) — that one answer alone
 
 ---
 
+## Appendix C: Reconstruction Interview — Brett Sodders (March 2026)
+
+> **Context:** Brett built a vibe-coded prototype called "ScopeFlow" to explore what a combined restoration + reconstruction product could look like. He shared the ScopeFlow Product Spec v2 (33 pages covering Restoration, Insurance Repair, Plumbing, Electrical, HVAC verticals). The interview below was conducted to validate whether reconstruction should be modeled as a mode within a single job or as a separate job type. 9 questions, all answered.
+
+---
+
+### R1. Billing & Estimates — Are mitigation and reconstruction always two separate estimates/invoices to the carrier?
+
+**Brett's answer (March 2026):**
+
+> Yes, generally mitigation and reconstruction are always two separate estimates/invoices to the carrier. Usually just easier that way. You can send them in the same email but usually separate them on a PDF. You don't want to commingle them because you want to get paid on the mitigation as soon as possible.
+
+**Insight:** Separate invoices are standard practice. Financial urgency drives the separation — contractors don't want reconstruction delays to hold up mitigation payment.
+
+---
+
+### R2. Job Lifecycle — When mitigation converts to reconstruction, does the same crew do the rebuild?
+
+**Brett's answer (March 2026):**
+
+> Usually, it's the same company, but they'll just see it and they a lot of times they will sub it out. But generally if Servpro goes and does the mitigation they're gonna also do the reconstruction and they might just sub it all out to global contractors.
+
+**Insight:** Same company, different crews. The company manages both but may sub out reconstruction work. The sub doesn't need their own login — the GC manages it.
+
+---
+
+### R3. Timing — How long between "drying complete" and "reconstruction starts"?
+
+**Brett's answer (March 2026):**
+
+> Usually a week or two, actually take that back. It's probably more like three weeks, no more than that. I would think it is probably about 2 to 3 weeks.
+
+**Insight:** 2-3 week gap between phases. Significant enough that a single job sitting in limbo feels wrong. Two separate jobs with their own lifecycles is cleaner.
+
+---
+
+### R4. Standalone Reconstruction — How often do you get reconstruction-only jobs?
+
+**Brett's answer (March 2026):**
+
+> I would think that most of the time if the mitigation comes there and the customer was happy with their work they're gonna use them for the reconstruction. Now having said that there are some contractors that will only do like mitigation, but that's pretty rare. I would say at least 80% of the time they're using the same company and maybe 20% of the time I would get a call for a reconstruction job. Actually I have really haven't really gotten a lot where I've gone there and another mitigation company came into the work and then they called me after.
+
+**Insight:** 80% same company does both, 20% standalone reconstruction. Reconstruction-only needs to be a first-class flow, not an edge case.
+
+---
+
+### R5. Shared Data — What data carries over from mitigation to reconstruction?
+
+**Brett's answer (March 2026):**
+
+> The only shared data is like the carrier, claim number, customer name, address, stuff like that. Nothing to do with it — once the mitigation is done, it's completely done.
+
+**Insight:** Only header data is shared (carrier, claim number, customer, address, adjuster). Zero work data crosses over. Moisture readings, equipment logs, drying data are irrelevant to reconstruction.
+
+---
+
+### R6. Reconstruction Pipeline — Is there a standard phase sequence for reconstruction?
+
+**Brett's answer (March 2026):**
+
+> This is definitely a case by case basis. I mean a lot of times it's just drywall and paint, maybe some carpet or something, so it just totally depends. Generally there's always gonna be drywall involved, maybe some moldings, flooring — that's pretty common. But there's no like method to the madness really when it comes to the work needed. I will say this — like mitigation is only gonna do what is necessary to dry the structure. So like they might only tear out a few cabinets, but reality is the entire kitchen might have to be replaced because you can't find matching cabinets or whatever. But they're only gonna do the minimal amount to get the structure dried, which is what their goal is — to prevent mold. So they're not gonna do like all of the demo. So like reconstruction we have to do some demo a lot of times, but there really is no method to it.
+
+**Insight:** Reconstruction has NO fixed pipeline (unlike mitigation's predictable dry → monitor → complete flow). Scope varies wildly — could be drywall + paint, could be full kitchen gut. Needs a flexible task/phase system, not a hardcoded pipeline. Mitigation only does minimal demo to dry; reconstruction handles the rest of the demo + full rebuild.
+
+---
+
+### R7. Adjuster Interaction — Does the adjuster want to see mitigation and reconstruction as one view or separated?
+
+**Brett's answer (March 2026):**
+
+> Yeah I definitely think they're used to seeing it separated. Now if it's like a real small claim, I think that that's no big deal. But if it's like a whole kitchen that gets flooded out or whatever, it's just easier to separate them. I just feel like you definitely want to get paid as soon as possible on mitigation — you don't want to do anything to jeopardize that.
+
+**Insight:** Adjusters expect separation. Small claims might not care, but standard practice is separate. The financial incentive to close out mitigation fast reinforces keeping them independent.
+
+---
+
+### R8. Multiple Trades — If a water loss needs mitigation + reconstruction + plumbing, is that 2 or 3 jobs?
+
+**Brett's answer (March 2026):**
+
+> So typically the actual cause of the loss is not a covered event by the insurance company. So if you have a burst pipe, like it has to be repaired by a plumber, that's not covered by the insurance company. So a lot of times the insurance company will not notify them and then the customer called their own plumber. They'll get the pipe fixed and then in the meantime they're calling us and having us come dry the structure. So it's like it's almost kind of like not our problem. I would say — so I don't think it really affects us. Nothing that I can think of off the top of my head.
+
+**Insight:** Plumbing (the cause) is typically not insurance-covered and handled separately by the homeowner with their own plumber. It's outside the mitigation/reconstruction workflow entirely — different payer, different contractor. Job linking only needs to handle mitigation ↔ reconstruction pairs, not N-way clusters.
+
+---
+
+### R9. Revenue Tracking — Does Brett track revenue per job or per property/claim?
+
+**Brett's answer (March 2026):**
+
+> So a lot — most of these companies have like separate departments. Right? Honestly I'm really small so I just can't hold everything myself and it's all convoluted and I don't do things the right way clearly. But most of these companies that have more than 5-10 employees, they have like completely separate divisions. They'll have like a mitigation division and then reconstruction division and they're just focused on different numbers. Mitigation should probably get at least 40% profit margins and then reconstruction might be around 30%.
+
+**Insight:** Larger companies run separate divisions with separate P&L. Different margin targets: ~40% for mitigation, ~30% for reconstruction. This confirms they are fundamentally separate business units that happen to share customers, not two views of the same job.
+
+---
+
+### Summary: Key Findings from Reconstruction Interview
+
+| # | Question | Answer | Architectural Implication |
+|---|----------|--------|--------------------------|
+| R1 | Billing | Always separate invoices | Two separate jobs |
+| R2 | Who does it | Same company, different crews/subs | Same account, different assignments |
+| R3 | Timing gap | 2-3 weeks | Jobs have independent lifecycles |
+| R4 | Standalone recon | 20% are recon-only | Recon is first-class, not edge case |
+| R5 | Shared data | Only header (claim, customer, address) | Link via pointer, not shared state |
+| R6 | Recon pipeline | Ad-hoc, no fixed stages | Flexible task system, not hardcoded |
+| R7 | Adjuster view | Expects separation | Separate portal views |
+| R8 | Plumbing | Not our problem, separate payer | Only mit ↔ recon linking needed |
+| R9 | Revenue | Separate divisions, separate P&L | Two jobs, two financial entities |
+
+**Conclusion:** 9/9 answers point to modeling mitigation and reconstruction as **two separate job types** with optional linking via shared claim data. The ScopeFlow single-job-with-modes model was architecturally incorrect for how the industry actually works.
+
+---
+
 *— The Crewmatic Team*
