@@ -2097,101 +2097,9 @@ export default function FloorPlanCanvas({
         )}
       </div>
 
-      {/* Canvas area */}
-      <div ref={containerRef} className="flex-1 relative overflow-hidden touch-none">
-        <canvas
-          ref={canvasRef}
-          className="absolute inset-0 cursor-crosshair"
-          style={{
-            cursor:
-              tool === "select"
-                ? "default"
-                : tool === "erase"
-                ? "pointer"
-                : tool === "label"
-                ? "text"
-                : tool === "door" || tool === "window" || tool === "opening"
-                ? "copy"
-                : SHAPE_TOOLS.includes(tool)
-                ? "crosshair"
-                : "crosshair",
-          }}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-        />
-
-        {/* Counts indicator */}
-        <div className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 bg-inverse-surface/80 text-inverse-on-surface px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-[family-name:var(--font-geist-mono)] backdrop-blur-sm pointer-events-none whitespace-nowrap">
-          {walls.length}W &middot; {rooms.length}R
-          {elementCount > 0 && (
-            <>
-              {" "}&middot; {elementCount}E
-            </>
-          )}
-        </div>
-
-        {/* Label text input overlay */}
-        {editingLabel && labelInputPos && (
-          <div
-            className="absolute z-10"
-            style={{
-              left: labelInputPos.x - 80,
-              top: labelInputPos.y - 18,
-            }}
-          >
-            <input
-              type="text"
-              autoFocus
-              defaultValue={editingLabel.text}
-              placeholder="Label text..."
-              className="w-40 px-2 py-1 text-[13px] rounded-md border border-outline-variant bg-surface text-on-surface shadow-lg font-[family-name:var(--font-geist-sans)] focus:outline-none focus:ring-2 focus:ring-brand-accent/50"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleLabelSubmit((e.target as HTMLInputElement).value);
-                } else if (e.key === "Escape") {
-                  setEditingLabel(null);
-                  setLabelInputPos(null);
-                }
-              }}
-              onBlur={(e) => handleLabelSubmit(e.target.value)}
-            />
-          </div>
-        )}
-
-        {/* Room name edit overlay */}
-        {editingRoomId && roomNameInputPos && (
-          <div
-            className="absolute z-10"
-            style={{
-              left: roomNameInputPos.x - 60,
-              top: roomNameInputPos.y - 18,
-            }}
-          >
-            <input
-              type="text"
-              autoFocus
-              defaultValue={editingRoomName}
-              placeholder="Room name..."
-              className="w-32 px-2 py-1 text-[13px] rounded-md border border-outline-variant bg-surface text-on-surface shadow-lg font-[family-name:var(--font-geist-sans)] focus:outline-none focus:ring-2 focus:ring-brand-accent/50"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  handleRoomNameSubmit((e.target as HTMLInputElement).value);
-                } else if (e.key === "Escape") {
-                  setEditingRoomId(null);
-                  setRoomNameInputPos(null);
-                }
-              }}
-              onBlur={(e) => handleRoomNameSubmit(e.target.value)}
-            />
-          </div>
-        )}
-      </div>
-
       {/* Toolbar — mobile: two-row with category tabs; desktop: single scrollable row */}
       {!readOnly && (
-        <div className="border-t border-outline-variant/40 bg-surface-container-low">
+        <div className="border-b border-outline-variant/40 bg-surface-container-low">
           {/* Mobile: category tabs + tool row */}
           <div className="sm:hidden">
             {/* Category tabs */}
@@ -2321,6 +2229,98 @@ export default function FloorPlanCanvas({
           </div>
         </div>
       )}
+
+      {/* Canvas area */}
+      <div ref={containerRef} className="flex-1 relative overflow-hidden touch-none">
+        <canvas
+          ref={canvasRef}
+          className="absolute inset-0 cursor-crosshair"
+          style={{
+            cursor:
+              tool === "select"
+                ? "default"
+                : tool === "erase"
+                ? "pointer"
+                : tool === "label"
+                ? "text"
+                : tool === "door" || tool === "window" || tool === "opening"
+                ? "copy"
+                : SHAPE_TOOLS.includes(tool)
+                ? "crosshair"
+                : "crosshair",
+          }}
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+        />
+
+        {/* Counts indicator */}
+        <div className="absolute top-2 sm:top-3 left-1/2 -translate-x-1/2 bg-inverse-surface/80 text-inverse-on-surface px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-[10px] sm:text-[11px] font-[family-name:var(--font-geist-mono)] backdrop-blur-sm pointer-events-none whitespace-nowrap">
+          {walls.length}W &middot; {rooms.length}R
+          {elementCount > 0 && (
+            <>
+              {" "}&middot; {elementCount}E
+            </>
+          )}
+        </div>
+
+        {/* Label text input overlay */}
+        {editingLabel && labelInputPos && (
+          <div
+            className="absolute z-10"
+            style={{
+              left: labelInputPos.x - 80,
+              top: labelInputPos.y - 18,
+            }}
+          >
+            <input
+              type="text"
+              autoFocus
+              defaultValue={editingLabel.text}
+              placeholder="Label text..."
+              className="w-40 px-2 py-1 text-[13px] rounded-md border border-outline-variant bg-surface text-on-surface shadow-lg font-[family-name:var(--font-geist-sans)] focus:outline-none focus:ring-2 focus:ring-brand-accent/50"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleLabelSubmit((e.target as HTMLInputElement).value);
+                } else if (e.key === "Escape") {
+                  setEditingLabel(null);
+                  setLabelInputPos(null);
+                }
+              }}
+              onBlur={(e) => handleLabelSubmit(e.target.value)}
+            />
+          </div>
+        )}
+
+        {/* Room name edit overlay */}
+        {editingRoomId && roomNameInputPos && (
+          <div
+            className="absolute z-10"
+            style={{
+              left: roomNameInputPos.x - 60,
+              top: roomNameInputPos.y - 18,
+            }}
+          >
+            <input
+              type="text"
+              autoFocus
+              defaultValue={editingRoomName}
+              placeholder="Room name..."
+              className="w-32 px-2 py-1 text-[13px] rounded-md border border-outline-variant bg-surface text-on-surface shadow-lg font-[family-name:var(--font-geist-sans)] focus:outline-none focus:ring-2 focus:ring-brand-accent/50"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  handleRoomNameSubmit((e.target as HTMLInputElement).value);
+                } else if (e.key === "Escape") {
+                  setEditingRoomId(null);
+                  setRoomNameInputPos(null);
+                }
+              }}
+              onBlur={(e) => handleRoomNameSubmit(e.target.value)}
+            />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
