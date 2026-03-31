@@ -223,7 +223,7 @@ First time opening floor plan:
 
 ```typescript
 interface FloorPlanData {
-  version: 2;  // v1 = old custom canvas, v2 = Konva
+  // No version field needed — only one format exists (Konva)
   gridSize: number;  // px per foot (default 20)
   rooms: Array<{
     id: string;
@@ -255,13 +255,9 @@ interface FloorPlanData {
 }
 ```
 
-### Migration from v1
+### No Migration — Clean Slate
 
-On load, check `canvas_data.version`:
-- If `undefined` or `1` → old format, render read-only preview with "Upgrade to new editor" button
-- If `2` → Konva format, load normally
-
-No automatic migration — old sketches are simple enough to redraw. Show the old preview so the user can reference it while redrawing.
+We're pre-launch. No migration code, no version checks, no if-else. Delete old `floor-plan-canvas.tsx`, wipe any existing floor plan data in dev/staging, and only support the Konva format. One format, zero dead code.
 
 ---
 
@@ -366,7 +362,7 @@ Touch gestures (all breakpoints):
 
 **Auto-save: 2-second debounce** with "saving..." indicator. No manual save button needed.
 
-**v1 migration: read-only preview.** Old sketches show as read-only image with "Upgrade to new editor" button. No automatic conversion.
+**No migration.** Pre-launch, clean slate. Delete old canvas code, wipe dev data, only support Konva format. Zero dead code.
 
 ## NOT in scope
 
