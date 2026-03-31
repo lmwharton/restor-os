@@ -18,6 +18,7 @@ import {
   wallsForRoom,
   doorPosition,
   TOOLS,
+  projectOntoWall,
 } from "./floor-plan-tools";
 
 /* ------------------------------------------------------------------ */
@@ -385,6 +386,12 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
   /*  Computed: is empty                                                */
   /* ---------------------------------------------------------------- */
 
+  const wallMap = useMemo(() => {
+    const map = new Map<string, WallData>();
+    for (const w of state.walls) map.set(w.id, w);
+    return map;
+  }, [state.walls]);
+
   const isEmpty = state.rooms.length === 0 && state.walls.length === 0;
 
   /* ---------------------------------------------------------------- */
@@ -436,7 +443,8 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Canvas + Instructions */}
+      <div className="flex-1 min-h-0 flex">
       <div ref={containerRef} className="flex-1 min-h-0 relative bg-white">
         {isEmpty && !drawStart && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
@@ -641,7 +649,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
           {/* Doors & Windows layer */}
           <Layer>
             {state.doors.map((door) => {
-              const wall = state.walls.find((w) => w.id === door.wallId);
+              const wall = wallMap.get(door.wallId);
               if (!wall) return null;
               const { px, py, angle } = doorPosition(door, wall);
               const doorPx = door.width * gs;
@@ -651,6 +659,19 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               const hingeX = (swing === 0 || swing === 1) ? -doorPx / 2 : doorPx / 2;
               const leafDir = (swing === 0 || swing === 3) ? -1 : 1; // -1=up (negative Y), 1=down (positive Y)
               const isSelected = selectedId === door.id;
+              const handleDoorInteract = () => {
+                if (tool === "select") {
+                  if (isSelected) {
+                    const updated = state.doors.map((d) =>
+                      d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
+                    );
+                    push({ ...state, doors: updated });
+                  } else {
+                    setSelectedId(door.id);
+                  }
+                }
+                if (tool === "delete") deleteElement(door.id);
+              };
               return (
                 <Group
                   key={door.id}
@@ -658,60 +679,20 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   y={py}
                   rotation={(angle * 180) / Math.PI}
                   draggable={tool === "select" && !readOnly}
-                  onClick={() => {
-                    if (tool === "select") {
-                      if (isSelected) {
-                        // Already selected: cycle through 4 swing directions
-                        const updated = state.doors.map((d) =>
-                          d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
-                        );
-                        push({ ...state, doors: updated });
-                      } else {
-                        setSelectedId(door.id);
-                      }
-                    }
-                    if (tool === "delete") deleteElement(door.id);
-                  }}
-                  onTap={() => {
-                    if (tool === "select") {
-                      if (isSelected) {
-                        const updated = state.doors.map((d) =>
-                          d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
-                        );
-                        push({ ...state, doors: updated });
-                      } else {
-                        setSelectedId(door.id);
-                      }
-                    }
-                    if (tool === "delete") deleteElement(door.id);
-                  }}
+                  onClick={handleDoorInteract}
+                  onTap={handleDoorInteract}
                   onDragMove={(e) => {
                     if (tool !== "select") return;
                     const node = e.target;
-                    const mx = node.x();
-                    const my = node.y();
-                    const wx1 = wall.x1, wy1 = wall.y1;
-                    const wx2 = wall.x2, wy2 = wall.y2;
-                    const dx = wx2 - wx1, dy = wy2 - wy1;
-                    const len2 = dx * dx + dy * dy;
-                    if (len2 === 0) return;
-                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
-                    t = Math.max(0.1, Math.min(0.9, t));
-                    node.x(wx1 + t * dx);
-                    node.y(wy1 + t * dy);
+                    const t = projectOntoWall(node.x(), node.y(), wall);
+                    if (t === null) return;
+                    node.x(wall.x1 + t * (wall.x2 - wall.x1));
+                    node.y(wall.y1 + t * (wall.y2 - wall.y1));
                   }}
                   onDragEnd={(e) => {
                     if (tool !== "select") return;
-                    const node = e.target;
-                    const mx = node.x();
-                    const my = node.y();
-                    const wx1 = wall.x1, wy1 = wall.y1;
-                    const wx2 = wall.x2, wy2 = wall.y2;
-                    const dx = wx2 - wx1, dy = wy2 - wy1;
-                    const len2 = dx * dx + dy * dy;
-                    if (len2 === 0) return;
-                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
-                    t = Math.max(0.1, Math.min(0.9, t));
+                    const t = projectOntoWall(e.target.x(), e.target.y(), wall);
+                    if (t === null) return;
                     const updated = state.doors.map((d) =>
                       d.id === door.id ? { ...d, position: t } : d
                     );
@@ -757,7 +738,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             })}
 
             {state.windows.map((win) => {
-              const wall = state.walls.find((w) => w.id === win.wallId);
+              const wall = wallMap.get(win.wallId);
               if (!wall) return null;
               const { px, py, angle } = doorPosition(win, wall);
               const winPx = win.width * gs;
@@ -774,42 +755,27 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   onDragMove={(e) => {
                     if (tool !== "select") return;
                     const node = e.target;
-                    const mx = node.x();
-                    const my = node.y();
-                    const wx1 = wall.x1, wy1 = wall.y1;
-                    const wx2 = wall.x2, wy2 = wall.y2;
-                    const dx = wx2 - wx1, dy = wy2 - wy1;
-                    const len2 = dx * dx + dy * dy;
-                    if (len2 === 0) return;
-                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
-                    t = Math.max(0.1, Math.min(0.9, t));
-                    node.x(wx1 + t * dx);
-                    node.y(wy1 + t * dy);
+                    const t = projectOntoWall(node.x(), node.y(), wall);
+                    if (t === null) return;
+                    node.x(wall.x1 + t * (wall.x2 - wall.x1));
+                    node.y(wall.y1 + t * (wall.y2 - wall.y1));
                   }}
                   onDragEnd={(e) => {
                     if (tool !== "select") return;
-                    const node = e.target;
-                    const mx = node.x();
-                    const my = node.y();
-                    const wx1 = wall.x1, wy1 = wall.y1;
-                    const wx2 = wall.x2, wy2 = wall.y2;
-                    const dx = wx2 - wx1, dy = wy2 - wy1;
-                    const len2 = dx * dx + dy * dy;
-                    if (len2 === 0) return;
-                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
-                    t = Math.max(0.1, Math.min(0.9, t));
+                    const t = projectOntoWall(e.target.x(), e.target.y(), wall);
+                    if (t === null) return;
                     const updated = state.windows.map((w) =>
                       w.id === win.id ? { ...w, position: t } : w
                     );
                     push({ ...state, windows: updated });
                   }}
                 >
-                  {/* Invisible hit area for easier clicking */}
+                  {/* Invisible hit area for easier clicking (44px minimum touch target) */}
                   <Rect
                     x={-winPx / 2 - 5}
-                    y={-10}
+                    y={-22}
                     width={winPx + 10}
-                    height={20}
+                    height={44}
                     fill="transparent"
                     hitStrokeWidth={0}
                   />
@@ -826,6 +792,89 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             })}
           </Layer>
         </Stage>
+      </div>
+
+      {/* Instructions Panel — desktop only */}
+      {!readOnly && (
+        <div className="hidden lg:flex flex-col w-[220px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-4 overflow-y-auto">
+          <h3 className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#6b6560] font-semibold mb-3">
+            {tool === "room" ? "Room Tool" : tool === "wall" ? "Wall Tool" : tool === "door" ? "Door Tool" : tool === "window" ? "Window Tool" : tool === "select" ? "Select Tool" : tool === "delete" ? "Delete Tool" : "How to Use"}
+          </h3>
+
+          {tool === "room" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click and drag</span> to draw a room rectangle.</p>
+              <p>Dimensions show live as you draw.</p>
+              <p>Release to set the room, then enter a name.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Rooms auto-create walls on all 4 edges. Doors snap to these.</p>
+            </div>
+          )}
+
+          {tool === "wall" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click</span> to start a wall.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Click again</span> to end it.</p>
+              <p>Measurements show in feet as you draw.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Endpoints snap to nearby walls automatically.</p>
+            </div>
+          )}
+
+          {tool === "door" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click on a wall</span> to place a door.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Click a selected door</span> to cycle swing direction (4 positions).</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Drag</span> a selected door to slide it along the wall.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Switch to Select tool to move doors. Press Delete to remove.</p>
+            </div>
+          )}
+
+          {tool === "window" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click on a wall</span> to place a window.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Drag</span> a selected window to slide it along the wall.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Windows show as double lines. Press Delete to remove.</p>
+            </div>
+          )}
+
+          {tool === "select" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click</span> any element to select it.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Drag rooms</span> to reposition.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Drag doors/windows</span> along their wall.</p>
+              <p><span className="font-semibold text-[#1a1a1a]">Delete or Backspace</span> removes selected.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Escape to deselect. Click door twice to flip swing.</p>
+            </div>
+          )}
+
+          {tool === "delete" && (
+            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+              <p><span className="font-semibold text-[#1a1a1a]">Click</span> any element to delete it.</p>
+              <p>Deleting a room removes its walls, doors, and windows too.</p>
+              <p className="text-[11px] text-[#8a847e] mt-3">Tip: use Select tool + Delete key instead for precision.</p>
+            </div>
+          )}
+
+          <div className="mt-auto pt-4 border-t border-[#eae6e1]">
+            <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] font-semibold mb-2">
+              Keyboard
+            </h4>
+            <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px]">
+              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">⌘Z</kbd>
+              <span className="text-[#6b6560]">Undo</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">⌘⇧Z</kbd>
+              <span className="text-[#6b6560]">Redo</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Del</kbd>
+              <span className="text-[#6b6560]">Remove selected</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Esc</kbd>
+              <span className="text-[#6b6560]">Deselect</span>
+            </div>
+          </div>
+
+          <p className="text-[10px] text-[#b5b0aa] mt-3 font-[family-name:var(--font-geist-mono)]">
+            1 square = 1 foot
+          </p>
+        </div>
+      )}
       </div>
     </div>
   );
