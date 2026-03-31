@@ -498,7 +498,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
 
       {/* Canvas + Instructions */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
-      <div ref={containerRef} className="flex-1 min-h-0 min-w-0 relative bg-white">
+      <div ref={containerRef} className="flex-1 min-h-0 min-w-0 relative bg-white overflow-hidden border border-[#eae6e1] rounded-sm">
         {isEmpty && !drawStart && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
             <div className="flex flex-col items-center gap-3 text-center px-6">
@@ -545,15 +545,6 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             {gridLines.map((line, i) => (
               <Line key={i} points={line.points} stroke="#eae6e1" strokeWidth={1} />
             ))}
-            {/* Scale indicator */}
-            <Text
-              x={8}
-              y={stageSize.height - 22}
-              text="1 sq = 1 ft"
-              fontSize={10}
-              fontFamily="var(--font-geist-mono), monospace"
-              fill="#6b6560"
-            />
           </Layer>
 
           {/* Rooms layer */}
@@ -860,7 +851,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
 
       {/* Instructions Panel — desktop only */}
       {!readOnly && (
-        <div className="hidden md:flex flex-col w-[200px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-3 overflow-y-auto">
+        <div className="hidden md:flex flex-col w-[240px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-4 overflow-y-auto">
           <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[#eae6e1]">
             <div className="w-3 h-3 border border-[#eae6e1]" />
             <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-[#6b6560]">= 1 foot</span>
