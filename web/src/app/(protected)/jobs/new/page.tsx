@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import type { LossType, WaterCategory, WaterClass } from "@/lib/types";
@@ -270,8 +270,14 @@ export default function NewJobPage() {
   const [address, setAddress] = useState("");
   const [addressParts, setAddressParts] = useState<AddressParts | null>(null);
 
-  // Expanded details
+  // Expanded details — auto-expand on desktop
   const [showDetails, setShowDetails] = useState(false);
+
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      setShowDetails(true);
+    }
+  }, []);
 
   // Customer
   const [customerName, setCustomerName] = useState("");
@@ -345,13 +351,13 @@ export default function NewJobPage() {
           <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
             Loss Type
           </label>
-          <div className="flex gap-3">
+          <div className="grid grid-cols-3 gap-3 lg:grid-cols-5">
             {lossTypes.map((lt) => (
               <button
                 key={lt.value}
                 type="button"
                 onClick={() => setLossType(lt.value)}
-                className={`flex-1 lg:w-40 h-20 rounded-xl flex flex-col items-center justify-center gap-1.5 text-sm font-semibold transition-all duration-150 cursor-pointer ${
+                className={`h-20 rounded-xl flex flex-col items-center justify-center gap-1.5 text-sm font-semibold transition-all duration-150 cursor-pointer ${
                   lossType === lt.value
                     ? "primary-gradient text-on-primary shadow-md shadow-primary/20"
                     : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low hover:border-outline"
@@ -396,7 +402,7 @@ export default function NewJobPage() {
           <button
             type="button"
             onClick={() => setShowDetails(!showDetails)}
-            className="flex items-center gap-1.5 text-sm font-medium text-brand-accent hover:text-primary transition-colors cursor-pointer"
+            className="flex items-center gap-1.5 text-sm font-medium text-brand-accent hover:text-primary transition-colors cursor-pointer lg:hidden"
           >
             Add more details
             <ChevronDown open={showDetails} />
