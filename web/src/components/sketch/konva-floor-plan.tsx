@@ -444,8 +444,8 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       )}
 
       {/* Canvas + Instructions */}
-      <div className="flex-1 min-h-0 flex">
-      <div ref={containerRef} className="flex-1 min-h-0 relative bg-white">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+      <div ref={containerRef} className="flex-1 min-h-0 min-w-0 relative bg-white">
         {isEmpty && !drawStart && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
             <div className="flex flex-col items-center gap-3 text-center px-6">
