@@ -118,5 +118,5 @@ class JobDetailResponse(JobResponse):
 
 
 class JobListResponse(BaseModel):
-    items: list[JobResponse]
+    items: list[JobDetailResponse]
     total: int

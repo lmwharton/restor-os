@@ -6,7 +6,7 @@ import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobResponse, JobUpdate
+from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
@@ -98,41 +98,23 @@ async def _generate_job_number(
     return f"{prefix}{seq:03d}"
 
 
-def _parse_job(data: dict) -> JobResponse:
-    """Parse a job row dict into JobResponse."""
-    return JobResponse(
-        id=data["id"],
-        company_id=data["company_id"],
-        property_id=data.get("property_id"),
-        job_number=data["job_number"],
-        address_line1=data["address_line1"],
-        city=data.get("city", ""),
-        state=data.get("state", ""),
-        zip=data.get("zip", ""),
-        customer_name=data.get("customer_name"),
-        customer_phone=data.get("customer_phone"),
-        customer_email=data.get("customer_email"),
-        claim_number=data.get("claim_number"),
-        carrier=data.get("carrier"),
-        adjuster_name=data.get("adjuster_name"),
-        adjuster_phone=data.get("adjuster_phone"),
-        adjuster_email=data.get("adjuster_email"),
-        loss_type=data["loss_type"],
-        loss_category=data.get("loss_category"),
-        loss_class=data.get("loss_class"),
-        loss_cause=data.get("loss_cause"),
-        loss_date=data.get("loss_date"),
-        status=data["status"],
-        assigned_to=data.get("assigned_to"),
-        notes=data.get("notes"),
-        tech_notes=data.get("tech_notes"),
-        latitude=data.get("latitude"),
-        longitude=data.get("longitude"),
-        created_by=data.get("created_by"),
-        updated_by=data.get("updated_by"),
-        created_at=data["created_at"],
-        updated_at=data["updated_at"],
-    )
+def _extract_embedded_count(data: dict, key: str) -> int:
+    """Extract count from PostgREST embedded resource format: [{"count": N}]."""
+    embedded = data.get(key)
+    if isinstance(embedded, list) and len(embedded) > 0:
+        return embedded[0].get("count", 0)
+    return 0
+
+
+def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
+    """Parse a job row with PostgREST embedded counts into JobDetailResponse."""
+    counts = {
+        "room_count": _extract_embedded_count(data, "job_rooms"),
+        "photo_count": _extract_embedded_count(data, "photos"),
+        "floor_plan_count": _extract_embedded_count(data, "floor_plans"),
+        "line_item_count": _extract_embedded_count(data, "line_items"),
+    }
+    return _parse_job_detail(data, counts)
 
 
 def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
@@ -384,7 +366,7 @@ async def list_jobs(
     offset: int = 0,
     sort_by: str = "created_at",
     sort_dir: str = "desc",
-) -> tuple[list[JobResponse], int]:
+) -> tuple[list[JobDetailResponse], int]:
     """List jobs with filtering, search, pagination, and sorting."""
     if sort_by not in VALID_SORT_FIELDS:
         sort_by = "created_at"
@@ -392,10 +374,13 @@ async def list_jobs(
 
     client = await get_authenticated_client(token)
 
-    # Build query for items
+    # Use PostgREST embedded counts to get photo/room/floor_plan/line_item
+    # counts in a single query (no N+1).
+    select_str = "*, job_rooms(count), photos(count), floor_plans(count), line_items(count)"
+
     query = (
         client.table("jobs")
-        .select("*", count="exact")
+        .select(select_str, count="exact")
         .eq("company_id", str(company_id))
         .is_("deleted_at", "null")
     )
@@ -420,7 +405,7 @@ async def list_jobs(
     result = await query.execute()
 
     total = result.count if result.count is not None else 0
-    items = [_parse_job(row) for row in (result.data or [])]
+    items = [_parse_job_detail_from_embedded(row) for row in (result.data or [])]
 
     return items, total
 
