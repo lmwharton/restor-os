@@ -12,6 +12,7 @@ import {
   useCreateShareLink,
   useFloorPlans,
   useUpdateJob,
+  useCreateReading,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
 
@@ -411,6 +412,72 @@ function IconReport() {
   );
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  Inline Moisture Quick-Entry                                        */
+/* ------------------------------------------------------------------ */
+
+function calculateGPP(tempF: number, rh: number): number {
+  const tc = (tempF - 32) * (5 / 9);
+  const es = 6.112 * Math.exp((17.67 * tc) / (tc + 243.5));
+  const ea = es * (rh / 100);
+  const w = (621.97 * ea) / (1013.25 - ea);
+  return Math.round(w * 7 * 10) / 10;
+}
+
+function InlineReadingForm({ jobId, roomId, roomName, dayNumber, onSaved }: {
+  jobId: string;
+  roomId: string;
+  roomName: string;
+  dayNumber: number;
+  onSaved: () => void;
+}) {
+  const createReading = useCreateReading(jobId, roomId);
+  const [temp, setTemp] = useState("72");
+  const [rh, setRh] = useState("45");
+
+  const gpp = (() => {
+    const t = parseFloat(temp);
+    const r = parseFloat(rh);
+    if (isNaN(t) || isNaN(r) || r <= 0 || r > 100) return "--";
+    return calculateGPP(t, r).toFixed(1);
+  })();
+
+  const handleSave = () => {
+    const today = new Date();
+    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    createReading.mutate(
+      { reading_date: dateStr, atmospheric_temp_f: parseFloat(temp) || undefined, atmospheric_rh_pct: parseFloat(rh) || undefined },
+      { onSuccess: onSaved }
+    );
+  };
+
+  return (
+    <div className="rounded-lg bg-surface-container/50 p-3 space-y-2">
+      <p className="text-[12px] font-semibold text-on-surface font-[family-name:var(--font-geist-mono)]">{roomName}</p>
+      <div className="flex items-center gap-3">
+        <div className="flex-1">
+          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">Temp °F</label>
+          <input type="number" value={temp} onChange={(e) => setTemp(e.target.value)}
+            className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
+        </div>
+        <div className="flex-1">
+          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">RH %</label>
+          <input type="number" value={rh} onChange={(e) => setRh(e.target.value)}
+            className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
+        </div>
+        <div className="flex-1">
+          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">GPP</label>
+          <p className="h-8 flex items-center text-[13px] font-[family-name:var(--font-geist-mono)] font-semibold text-on-surface">{gpp}</p>
+        </div>
+        <button type="button" onClick={handleSave} disabled={createReading.isPending}
+          className="self-end h-8 px-3 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer hover:opacity-90 disabled:opacity-50 transition-opacity">
+          {createReading.isPending ? "..." : "Save"}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Inline Editable Field                                              */
@@ -888,39 +955,40 @@ export default function JobDetailPage() {
                 : "No readings yet"
             }
           >
-            {gppData.length > 0 ? (
-              <div>
+            <div className="space-y-3">
+              {gppData.length > 0 && (
                 <GppTrendChart readings={gppData} target={45} />
-                <button
-                  type="button"
-                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                  className="mt-3 flex items-center gap-2 text-[13px] font-medium text-brand-accent hover:underline cursor-pointer"
-                >
-                  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  Log Day {(gppData.length || 0) + 1} readings
-                </button>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <p className="text-[13px] text-on-surface-variant leading-relaxed">
-                  Track drying progress with daily moisture readings. Log temperature, humidity, and point readings for each room.
+              )}
+
+              {(!rooms || rooms.length === 0) ? (
+                <p className="text-[13px] text-on-surface-variant">
+                  Add rooms first to log moisture readings.
                 </p>
-                <button
-                  type="button"
-                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-outline-variant/50 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                >
-                  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  Add Day 1 readings
-                </button>
-              </div>
-            )}
+              ) : (
+                <>
+                  <p className="text-[12px] text-on-surface-variant/70 font-[family-name:var(--font-geist-mono)]">
+                    Day {(gppData.length || 0) + 1} — Log temperature and humidity per room
+                  </p>
+                  {rooms.map((room) => (
+                    <InlineReadingForm
+                      key={room.id}
+                      jobId={jobId}
+                      roomId={room.id}
+                      roomName={room.room_name}
+                      dayNumber={(gppData.length || 0) + 1}
+                      onSaved={() => {}}
+                    />
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                    className="text-[12px] font-medium text-brand-accent hover:underline cursor-pointer"
+                  >
+                    Open full readings view →
+                  </button>
+                </>
+              )}
+            </div>
           </AccordionSection>
 
           {/* Section 5: Tech Notes */}
