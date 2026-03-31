@@ -912,29 +912,42 @@ export default function JobDetailPage() {
                 </span>
               </div>
 
-              {/* Room pills */}
+              {/* Room list with dimensions */}
+              {rooms && rooms.length > 0 && (
+                <div className="space-y-1">
+                  {floorPlans && floorPlans.length > 0 && (
+                    <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1">
+                      Floor 1 {floorPlans.length > 1 && `of ${floorPlans.length}`}
+                    </p>
+                  )}
+                  {rooms.map((room) => (
+                    <div key={room.id} className="group flex items-center gap-3 py-1.5 px-3 rounded-lg hover:bg-surface-container/50 transition-colors">
+                      <span className="text-[13px] font-medium text-on-surface flex-1 min-w-0 truncate">{room.room_name}</span>
+                      {(room.width_ft || room.length_ft) ? (
+                        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums shrink-0">
+                          {room.width_ft || "—"} × {room.length_ft || "—"} ft
+                          {room.square_footage ? ` · ${room.square_footage} sf` : ""}
+                        </span>
+                      ) : (
+                        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/40 shrink-0">
+                          No dimensions
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
+                        className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-error transition-all cursor-pointer shrink-0"
+                        aria-label={`Remove ${room.room_name}`}
+                      >
+                        <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Add room */}
               <div className="flex flex-wrap gap-2">
-                {rooms?.map((room) => (
-                  <span
-                    key={room.id}
-                    className="group px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface flex items-center gap-1.5"
-                  >
-                    {room.room_name}
-                    {room.width_ft && room.length_ft && (
-                      <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] ml-1">
-                        {room.width_ft}&times;{room.length_ft}
-                      </span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
-                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-error transition-all cursor-pointer"
-                      aria-label={`Remove ${room.room_name}`}
-                    >
-                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-                    </button>
-                  </span>
-                ))}
                 {showAddRoom ? (
                   <div className="flex items-center gap-1.5">
                     <input
