@@ -30,7 +30,7 @@ interface KonvaFloorPlanProps {
   onChange?: (data: FloorPlanData) => void;
   readOnly?: boolean;
   rooms?: Array<{ id: string; room_name: string }>;
-  onCreateRoom?: (name: string) => void;
+  onCreateRoom?: (name: string, dimensions?: { width: number; height: number }) => void;
 }
 
 /* Common room presets for quick selection */
@@ -370,10 +370,14 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       walls: [...state.walls, ...roomWalls],
     });
     // Also create room in Property Layout if callback provided
-    if (onCreateRoom) onCreateRoom(name);
+    if (onCreateRoom) {
+      const widthFt = Math.round((pendingRoom.width / gs) * 10) / 10;
+      const heightFt = Math.round((pendingRoom.height / gs) * 10) / 10;
+      onCreateRoom(name, { width: widthFt, height: heightFt });
+    }
     setPendingRoom(null);
     setCustomRoomName("");
-  }, [pendingRoom, state, push, onCreateRoom]);
+  }, [pendingRoom, state, push, onCreateRoom, gs]);
 
   /* ---------------------------------------------------------------- */
   /*  Drag handlers for select tool                                    */

@@ -29,10 +29,14 @@ export default function FloorPlanPage({
   const createFloorPlan = useCreateFloorPlan(jobId);
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
-  const handleCreateRoom = useCallback((name: string) => {
+  const handleCreateRoom = useCallback((name: string, dimensions?: { width: number; height: number }) => {
     // Check if room already exists in Property Layout
     if (jobRooms?.some((r) => r.room_name === name)) return;
-    createRoom.mutate({ room_name: name } as Record<string, string>);
+    createRoom.mutate({
+      room_name: name,
+      length_ft: dimensions?.height ?? null,
+      width_ft: dimensions?.width ?? null,
+    } as Record<string, unknown>);
   }, [jobRooms, createRoom]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);

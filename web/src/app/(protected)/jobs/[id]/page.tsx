@@ -887,7 +887,15 @@ export default function JobDetailPage() {
             icon={<IconLayout />}
             title="Property Layout"
             defaultOpen={!!(rooms && rooms.length > 0)}
-            preview={rooms && rooms.length > 0 ? `${rooms.length} room${rooms.length !== 1 ? "s" : ""}` : "No rooms added yet"}
+            preview={
+              rooms && rooms.length > 0
+                ? [
+                    `${rooms.length} room${rooms.length !== 1 ? "s" : ""}`,
+                    floorPlans && floorPlans.length > 0 ? `${floorPlans.length} floor${floorPlans.length !== 1 ? "s" : ""}` : null,
+                    rooms.slice(0, 3).map(r => r.room_name).join(", "),
+                  ].filter(Boolean).join(" \u00b7 ")
+                : "No rooms added yet"
+            }
           >
             <div className="space-y-3">
               {/* Floor plan preview — renders saved sketch or empty state */}
@@ -912,6 +920,11 @@ export default function JobDetailPage() {
                     className="group px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface flex items-center gap-1.5"
                   >
                     {room.room_name}
+                    {room.width_ft && room.length_ft && (
+                      <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] ml-1">
+                        {room.width_ft}&times;{room.length_ft}
+                      </span>
+                    )}
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
