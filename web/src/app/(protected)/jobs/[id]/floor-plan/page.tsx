@@ -139,7 +139,7 @@ export default function FloorPlanPage({
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="flex flex-col h-dvh bg-surface">
+    <div className="flex flex-col min-h-dvh bg-surface">
       {/* Navigation bar */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest">
         <button
@@ -190,14 +190,21 @@ export default function FloorPlanPage({
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="flex-1 min-h-0">
+      {/* Canvas — constrained height so footer stays visible */}
+      <div className="h-[calc(100dvh-120px)] max-h-[700px] min-h-[400px]">
         <KonvaFloorPlan
           key={activeFloor?.id ?? "new"}
           initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
           onChange={handleChange}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
         />
+      </div>
+
+      {/* Footer */}
+      <div className="py-3 px-4 text-center">
+        <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.15em] text-on-surface-variant/50">
+          Precision scoping powered by Crewmatic AI
+        </p>
       </div>
     </div>
   );

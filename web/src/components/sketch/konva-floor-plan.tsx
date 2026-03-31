@@ -796,7 +796,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
 
       {/* Instructions Panel — desktop only */}
       {!readOnly && (
-        <div className="hidden lg:flex flex-col w-[220px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-4 overflow-y-auto">
+        <div className="hidden md:flex flex-col w-[200px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-3 overflow-y-auto">
           <h3 className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#6b6560] font-semibold mb-3">
             {tool === "room" ? "Room Tool" : tool === "wall" ? "Wall Tool" : tool === "door" ? "Door Tool" : tool === "window" ? "Window Tool" : tool === "select" ? "Select Tool" : tool === "delete" ? "Delete Tool" : "How to Use"}
           </h3>
