@@ -40,7 +40,7 @@ function extractTextFromChildren(children: React.ReactNode): string {
 
 const SECTION_SUMMARIES: Record<string, string> = {
   "executive-summary":
-    "$180-360M TAM · $149/mo vs $700-1,900/mo · 0 competitors with AI photo-to-Xactimate",
+    "$180-360M TAM · $49-299/mo vs $700-1,900/mo · 0 competitors with AI photo-to-Xactimate",
   "the-contractors-reality":
     "30% documentation / 70% field · Scheduling is #1 pain · Tool fragmentation leads to paper",
   "the-problem":

@@ -187,6 +187,12 @@ const PLATFORM_BLOCKS = [
     color: "border-[#3b82f6]",
     bg: "bg-[#f5f8ff]",
   },
+  {
+    title: "Growth Engine",
+    items: ["Gamified Referral Loyalty", "Automated Drip Campaigns", "SEO & Geo Audits", "Social Presence Automation", "Revenue Attribution"],
+    color: "border-[#ec4899]",
+    bg: "bg-[#fdf2f8]",
+  },
 ];
 
 export default async function ProductPage() {
@@ -386,7 +392,7 @@ export default async function ProductPage() {
             </div>
             <div className="px-3 py-3 bg-[#faf9f7] rounded-lg border border-[#eae6e1]">
               <p className="text-[22px] font-bold text-[#1a1a1a] tracking-[-0.5px]">
-                $149/mo
+                $49&ndash;299/mo
               </p>
               <p className="text-[12px] text-[#8a847e]">
                 replaces $700&ndash;$1,900/mo in tools
@@ -546,6 +552,35 @@ export default async function ProductPage() {
               Electrician finds moisture near wiring &rarr; refers restoration.
               The more trades, the more valuable the platform becomes for
               everyone on it.
+            </p>
+          </div>
+
+          {/* Gamified Referral Loyalty */}
+          <div className="mt-3 px-3 py-3 bg-[#fdf2f8] border-l-2 border-[#ec4899] rounded-r-lg">
+            <h3 className="text-[13px] font-semibold text-[#1a1a1a] mb-1">
+              Gamified Referral Loyalty Engine
+            </h3>
+            <p className="text-[12px] text-[#6b6560] leading-relaxed mb-2">
+              Crewmatic doesn&apos;t just help contractors manage work &mdash; it helps them
+              bring in new revenue. A tier-based loyalty program (inspired by Duolingo
+              streaks, Marriott Bonvoy status, and United MileagePlus) turns plumbers,
+              property managers, and other trades into habitual referral partners.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {[
+                { title: "Tier-Based Status", desc: "Bronze \u2192 Silver \u2192 Gold \u2192 Platinum. Higher tiers unlock better per-referral payouts and priority scheduling." },
+                { title: "Streak Mechanics", desc: "Consecutive referral weeks build streaks. Loss aversion keeps partners engaged \u2014 \u201C2 referrals from Gold!\u201D" },
+                { title: "Automated Drip Campaigns", desc: "AI-generated blogs, SMS/email sequences, tier-up celebrations. The referral network runs on autopilot." },
+                { title: "Revenue Attribution", desc: "Owners see which referral channels generate the most revenue, best close rates, and highest average job size." },
+              ].map((item) => (
+                <div key={item.title} className="px-2 py-2 bg-white/60 rounded border border-[#f0ede9]">
+                  <p className="text-[11px] font-semibold text-[#1a1a1a] mb-0.5">{item.title}</p>
+                  <p className="text-[10px] text-[#8a847e] leading-snug">{item.desc}</p>
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-[#ec4899] font-medium mt-2">
+              Prototype live &mdash; validated with first plumber set, March 2026
             </p>
           </div>
 

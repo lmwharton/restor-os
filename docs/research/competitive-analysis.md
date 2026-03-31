@@ -15,7 +15,7 @@
 **Key numbers:**
 - **$180-360M** addressable market (75%+ of 62,500 restoration businesses are small shops with <25 employees)
 - **$700-1,900/mo** what contractors pay today across 4-6 tools (Xactimate alone is $350/mo)
-- **$149/mo** Crewmatic replaces all of them — validated as "no-brainer" pricing
+- **$49-299/mo** Crewmatic replaces all of them — Solo $49, Team $149, Pro $299
 - **3 hours/day** saved per contractor — tool pays for itself in 1 day
 - **0 competitors** offer AI photo-to-Xactimate line items
 
@@ -108,19 +108,42 @@ The most popular field documentation app for restoration. Photos, floor plans, m
 
 | | Detail |
 |---|---|
-| **Pricing** | Small: $270/mo, Medium: $455/mo, Large: $650/mo — flat rate, unlimited users |
+| **Pricing** | Small: $270/mo, Medium: $455/mo, Large: $650/mo — flat rate, unlimited users. **With Sketch + Scope add-on: ~$780/mo** (per Brett, March 2026). Pricing now hidden behind sales calculator at getencircle.com/pricing/. |
 | **Mobile** | Native iOS + Android |
 | **AI** | **Encircle Scope is LIVE (as of March 2026)** — AI-generated mitigation scopes from field documentation. Free trial through March 31, 2026. Additional AI features previewed: video summarization, smart moisture readings from photos, auto contents descriptions, full AI scoping (coming later 2026). Also acquired The Edge (ROM estimating tool) in Nov 2025. |
-| **Xactimate** | Floor plan import into Xactimate sketches |
+| **Xactimate** | Floor plan import into Xactimate sketches — but **Scope does NOT export directly to Xactimate** (manual transfer required) |
 | **Strengths** | Brand recognition, comprehensive documentation, unlimited users, Xactimate sketch integration, **actively shipping AI features** |
-| **Weaknesses** | $270/mo minimum is steep for small shops, documentation only (not job management), AI is embedded in existing workflow (not standalone) |
+| **Weaknesses** | $270/mo minimum is steep for small shops, documentation only (not job management), AI is embedded in existing workflow (not standalone), **no direct Xactimate export from Scope**, AI only works on data already in Encircle (not standalone photo-in/scope-out) |
+
+**Encircle Scope AI Deep Dive** (source: [getencircle.com/solutions/scoping/](https://www.getencircle.com/solutions/scoping/), March 2026):
+
+- **"Purpose-built AI... trained on restoration, not the internet"** — they claim it's not generic AI like ChatGPT. However, they almost certainly did NOT build their own foundation model. Most likely: RAG layer + fine-tuning on top of an existing LLM, trained on restoration-specific data. "Four layers working together" suggests a pipeline (input processing → context retrieval → LLM generation → output formatting).
+- **What it does:** Auto-identifies billable tasks, equipment, and safety measures from field photos/notes/moisture readings. Room-by-room organization. Project narrative generation. IICRC S500/S520/S700 citations. Thermal/FLIR image analysis. Equipment calculations based on room dimensions. Multi-peril: water, fire, mold, asbestos, impact.
+- **Claims:** "80-90% of job variables captured on Day 1." Scope generation "in minutes."
+- **Critical limitation:** Encircle Scope only works on data already captured in the Encircle app. You can't snap a standalone photo and get a scope. Must use full Encircle documentation workflow first.
+- **No direct Xactimate export.** Output uses "familiar restoration language" but requires manual transfer. This is a major gap.
+- **Standards cited:** IICRC (S500, S520, S700), OSHA, EPA for hazardous materials.
+
+| Encircle Scope | Crewmatic (Planned) |
+|---------------|-------------------|
+| Photo → line items (from Encircle docs only) | Photo → line items (from any photo, standalone) |
+| IICRC S500/S520/S700 citations | S500, S520, EPA, OSHA, IRC, IBC, NIOSH |
+| Equipment calculations (room dims) | Equipment calculations |
+| Thermal/FLIR analysis | Planned V2 |
+| Multi-peril (fire, mold, asbestos) | Water-first, then expand |
+| **No direct Xactimate export** | **Direct Xactimate-ready output** |
+| Requires full Encircle workflow | **Standalone — any photo** |
+| No voice-guided scoping | **Voice-guided scoping** |
+| ~$780/mo (with Sketch + Scope) | **$49-299/mo (all tiers include AI)** |
 
 **What this means for Crewmatic:**
 - Encircle is the benchmark for field documentation quality
-- Their $270/mo floor creates a pricing opportunity — Crewmatic at $149/mo with MORE features
+- Their pricing creates a massive opportunity — **Crewmatic Pro at $299/mo vs Encircle at $780/mo with fewer AI features**
 - **Encircle AI is no longer hypothetical — Encircle Scope is live and shipping.** Speed-to-market is critical.
 - Their AI approach is "disruption without interruption" — embedded into existing docs workflow, not a standalone AI tool. Crewmatic's advantage: AI-first from day one, not bolted on.
-- **Threat level: CRITICAL** (upgraded from HIGH — they are actively shipping AI)
+- **Their AI isn't magic.** Same approach anyone would use (LLM + restoration context). Our edge: standalone photo scoping, voice guidance, broader standards, direct Xactimate output, and 3-5x cheaper.
+- **$780/mo for Sketch + Scope is our best sales pitch.** "Everything Encircle Scope does + more, starting at $49/mo."
+- **Threat level: CRITICAL** (upgraded from HIGH — they are actively shipping AI, but meaningful product gaps remain)
 
 ---
 
@@ -144,13 +167,19 @@ The most comprehensive all-in-one platform. Job management, compliance automatio
 - Real-time drying data audits validate psychrometric and moisture readings against carrier program rules.
 - DASH is the business OS; Mitigate is the specialized field tool for water jobs. They work together.
 
+**Carrier-Mandated Software (Field Intel — March 2026, via Brett/Altimeter manager):**
+- **MICA (Cotality)** and **Fire and Ice** are software platforms that **AAA, Allstate, and State Farm require contractors to use** when on their preferred vendor programs. This is broader than the 2-carrier MICA mandate previously identified — large national carriers actively enforce specific tooling.
+- Cracking a large national carrier program (AAA, Allstate, State Farm) will be very difficult early on due to these entrenched software mandates.
+- **GTM insight: target smaller local/regional insurance companies that only cover 1-4 states first.** These carriers are less likely to mandate specific software, giving Crewmatic a path to build momentum and a track record before approaching nationals.
+- Source: Brett's current Alacrity (now Altimeter) project manager, actively working with these carrier programs.
+
 **What this means for Crewmatic:**
 - DASH is the incumbent to displace at the enterprise level (later)
 - Their legacy tech is a liability — modern mobile-first UX is a real differentiator
 - Small shops actively avoid DASH due to cost and complexity
-- **The MICA carrier mandate is a barrier** — contractors on those 2 carriers must use Mitigate regardless. Focus on the other 98% of carriers first.
+- **The MICA/Fire and Ice carrier mandate is a barrier** — contractors on AAA, Allstate, State Farm programs must use mandated software. Focus on contractors NOT on these programs, and on smaller regional carriers first.
 - Mitigate's LiDAR scanning is a strong feature — consider LiDAR integration in V2.
-- **Threat level: MEDIUM** (slow to innovate, but carrier mandates create lock-in)
+- **Threat level: MEDIUM** (slow to innovate, but carrier mandates create lock-in for national programs)
 
 ---
 
@@ -275,6 +304,11 @@ Founded 2020, Lindon, Utah. Bootstrapped, 2-10 employees. Built by restoration c
 | **Job Management** | **YES** | -- | YES | YES | YES | -- | -- | YES |
 | **Team Management** | **YES** | Unlimited | YES | YES | Unlimited | -- | YES | Per-user |
 | **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | -- | Sharing | Collab | -- |
+| **Insurance Repair / Reconstruction** | Planned | -- | -- | -- | -- | -- | -- | -- |
+| **Supplement Management** | Planned | -- | -- | -- | -- | -- | -- | -- |
+| **ACV/RCV Financial Tracking** | Planned | -- | -- | -- | -- | -- | -- | -- |
+| **Multi-Vertical (Plumbing/Elec/HVAC)** | Planned | -- | -- | -- | -- | -- | -- | -- |
+| **Cross-Trade Referral Network** | Planned | -- | -- | -- | -- | -- | -- | -- |
 | **Accounting / Job Costing** | V2+ | -- | YES | YES | **YES** | -- | -- | **YES** |
 | **Invoicing & Payments** | -- | -- | Partial | Partial | **YES** | -- | -- | YES |
 | **Time Clock / Labor Tracking** | -- | -- | Partial | -- | **YES** | -- | -- | -- |
@@ -472,9 +506,11 @@ Crewmatic replaces Encircle + job management + CompanyCam + magicplan. Contracto
 
 | Scenario | Before Crewmatic | With Crewmatic | Monthly Savings |
 |----------|----------------|---------------|----------------|
-| Solo contractor | $692-914/mo | $149 (Team) | **$543-765/mo** |
-| 5-person shop | $892-1,364/mo | $149 (Team) | **$743-1,215/mo** |
-| 15-person company | $1,400-2,300+/mo | $299 (Pro) | **$1,101-2,001/mo** |
+| Solo contractor | $692-914/mo | $49 (Solo) | **$643-865/mo** |
+| 3-5 person shop | $892-1,364/mo | $149 (Team) | **$743-1,215/mo** |
+| 10-25 person company | $1,400-2,300+/mo | $299 (Pro) | **$1,101-2,001/mo** |
+
+**Encircle comparison (March 2026):** A contractor paying Encircle $780/mo for Sketch + Scope gets less AI capability than Crewmatic Team at $149/mo. That's a **$631/mo savings** with better features.
 
 ---
 
@@ -492,7 +528,7 @@ The AI Photo Scope demo sells itself. Upload a photo of water-damaged drywall. W
 
 ### 3. Win on Price for Small Shops
 
-The vast majority of restoration businesses (94.6% have <50 employees per Census data) can't afford $500-1,500/month in software. Crewmatic at $49-149/month replaces 3-4 tools.
+The vast majority of restoration businesses (94.6% have <50 employees per Census data) can't afford $500-1,500/month in software. Crewmatic at $49-299/month replaces 3-4 tools. Even Pro at $299 is less than half what Encircle charges for Sketch + Scope ($780/mo).
 
 ### 4. Voice-First for Field Credibility
 
@@ -565,8 +601,9 @@ ESX is a ZIP-compressed archive containing XML data files. The format is proprie
 | **IICRC / RIA Conferences** | Booth + live "bring your own damage photo" demo |
 | **Supply distributors** | Aramsco, DKI ProSupply, Jon-Don — bundle with equipment |
 | **Training organizations** | IICRC, Reets Drying Academy — get into curriculum |
-| **Insurance carrier networks** | Preferred vendor partnerships |
+| **Insurance carrier networks** | Start with smaller regional carriers (1-4 states) — no mandated software. Build track record before approaching nationals (AAA, Allstate, State Farm mandate MICA/Fire and Ice) |
 | **Referral program** | 1 free month for each referral that converts |
+| **Gamified referral loyalty (plumber network)** | Tier-based loyalty (Duolingo streaks + Marriott status) for plumber/trade referral partners. Automated drip campaigns (Make + Brevo). Prototype live March 2026. |
 | **Franchise networks** | SERVPRO, ServiceMaster — enterprise deals |
 
 ---
@@ -575,11 +612,16 @@ ESX is a ZIP-compressed archive containing XML data files. The format is proprie
 
 | Phase | Vertical | Why |
 |-------|----------|-----|
-| **V1 (Now)** | Water restoration | Most documentation-heavy, highest compliance |
-| **V2** | Fire & smoke | Same insurance workflow, same Xactimate |
-| **V3** | Mold remediation | Heavily regulated, caused by water damage |
-| **V4** | Contents restoration | High-value — catalog damaged property |
-| **V5** | Adjacent trades | Plumbing, general contractors |
+| **V1 (Now)** | Water restoration | Most documentation-heavy, highest compliance. Target contractors NOT on national carrier programs |
+| **V2** | Insurance Repair (Reconstruction) | Natural second half of every water/fire/storm job. Same claim, same adjuster. Supplement management is highest-value feature. Full spec: `docs/specs/draft/05-future-features.md` Phase 5 |
+| **V3** | Fire & smoke + Mold remediation | Same insurance workflow, same Xactimate. Fire-specific AI tools (smoke/char classifier, C&O doc, fire scope quick-start). Mold adds S520 standard |
+| **V4** | Plumbing | First trade on scene for water losses = natural referral partner. Killer feature: Water Heater EOL Detection. Full spec: `docs/specs/draft/07-future-verticals.md` |
+| **V5** | Electrical | Most liability-driven trade. Killer feature: Panel Photo Diagnosis (Federal Pacific/Zinsco flagging). Full spec: `docs/specs/draft/07-future-verticals.md` |
+| **V6** | HVAC | Unique business model (maintenance contracts = recurring revenue). Killer feature: Symptom-to-Diagnosis Engine. Full spec: `docs/specs/draft/07-future-verticals.md` |
+| **V7** | Remodeling | Shares infrastructure with Insurance Repair (phase tracking, permits, change orders) but non-insurance context. Customer is the budget holder |
+| **V8** | National carrier compliance | MICA/Fire and Ice compatibility to compete for AAA, Allstate, State Farm program contractors |
+| **V9** | Revenue generation platform | Gamified referral loyalty (plumber/trade networks), automated drip campaigns, SEO/social automation. Prototype validated March 2026 with Perplexity Computer + Make + Brevo. Shifts value prop from "save on tools" to "bring in new revenue." |
+| **V10** | Cross-trade referral network | Platform flywheel — each new vertical increases value of every existing vertical. One-tap referrals between trades with pre-populated job data. Pricing database as long-term moat |
 
 ---
 
@@ -594,7 +636,7 @@ ESX is a ZIP-compressed archive containing XML data files. The format is proprie
 | **Insurance pushback on AI** | "AI-assisted, human-verified." Contractor is the professional |
 | **Speed to market** | Brett's #1 concern. Ship fast, iterate. First mover with AI scoping builds data moat |
 | **magicplan ships AI Capture** | They've announced but not shipped. We need to be live before they are |
-| **MICA carrier mandates** | 2 carriers mandate MICA/Mitigate. Focus on the other 98% of carriers first. Long-term: match MICA compliance features to compete for mandated contractors |
+| **Carrier software mandates** | AAA, Allstate, State Farm mandate MICA/Fire and Ice for program contractors. **GTM: target smaller regional carriers (1-4 states) first** to build momentum before approaching nationals. Long-term: match compliance features to compete for mandated contractors |
 
 ---
 
