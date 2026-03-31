@@ -16,6 +16,7 @@ import {
   useCreateReading,
   useCreateRoom,
   useDeleteRoom,
+  useUpdateRoom,
 } from "@/lib/hooks/use-jobs";
 import { apiGet } from "@/lib/api";
 // Types used via hook return inference — no direct imports needed
@@ -677,6 +678,7 @@ export default function JobDetailPage() {
   const updateJob = useUpdateJob(jobId);
   const createRoom = useCreateRoom(jobId);
   const deleteRoom = useDeleteRoom(jobId);
+  const updateRoom = useUpdateRoom(jobId);
   const [newRoomName, setNewRoomName] = useState("");
   const [showAddRoom, setShowAddRoom] = useState(false);
 
@@ -912,27 +914,48 @@ export default function JobDetailPage() {
                 </span>
               </div>
 
-              {/* Room list with dimensions */}
+              {/* Room list with editable dimensions */}
               {rooms && rooms.length > 0 && (
-                <div className="space-y-1">
+                <div className="space-y-0.5">
                   {floorPlans && floorPlans.length > 0 && (
-                    <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1">
+                    <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1.5 px-1">
                       Floor 1 {floorPlans.length > 1 && `of ${floorPlans.length}`}
                     </p>
                   )}
+                  {/* Header row */}
+                  <div className="grid grid-cols-[1fr_60px_60px_50px_auto] gap-1.5 px-1 mb-1">
+                    <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">Room</span>
+                    <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">W ft</span>
+                    <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">L ft</span>
+                    <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">SF</span>
+                    <span />
+                  </div>
                   {rooms.map((room) => (
-                    <div key={room.id} className="group flex items-center gap-3 py-1.5 px-3 rounded-lg hover:bg-surface-container/50 transition-colors">
-                      <span className="text-[13px] font-medium text-on-surface flex-1 min-w-0 truncate">{room.room_name}</span>
-                      {(room.width_ft || room.length_ft) ? (
-                        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums shrink-0">
-                          {room.width_ft || "—"} × {room.length_ft || "—"} ft
-                          {room.square_footage ? ` · ${room.square_footage} sf` : ""}
-                        </span>
-                      ) : (
-                        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/40 shrink-0">
-                          No dimensions
-                        </span>
-                      )}
+                    <div key={room.id} className="group grid grid-cols-[1fr_60px_60px_50px_auto] gap-1.5 items-center px-1 py-1 rounded-lg hover:bg-surface-container/50 transition-colors">
+                      <span className="text-[13px] font-medium text-on-surface truncate">{room.room_name}</span>
+                      <input
+                        type="number"
+                        defaultValue={room.width_ft ?? ""}
+                        placeholder="—"
+                        onBlur={(e) => {
+                          const v = parseFloat(e.target.value) || null;
+                          if (v !== room.width_ft) updateRoom.mutate({ roomId: room.id, width_ft: v } as Record<string, unknown> & { roomId: string });
+                        }}
+                        className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <input
+                        type="number"
+                        defaultValue={room.length_ft ?? ""}
+                        placeholder="—"
+                        onBlur={(e) => {
+                          const v = parseFloat(e.target.value) || null;
+                          if (v !== room.length_ft) updateRoom.mutate({ roomId: room.id, length_ft: v } as Record<string, unknown> & { roomId: string });
+                        }}
+                        className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                      />
+                      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
+                        {room.width_ft && room.length_ft ? Math.round(room.width_ft * room.length_ft) : "—"}
+                      </span>
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
