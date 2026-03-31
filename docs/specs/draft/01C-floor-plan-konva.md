@@ -2,7 +2,7 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (Design Review In Progress) |
+| Status | Draft (Design + Eng Review Complete) |
 | Priority | High — blocking first customer demo |
 | Depends on | Spec 01 (Jobs) |
 | Estimate | 1 session (4-6 hours) |
@@ -355,3 +355,34 @@ Touch gestures (all breakpoints):
 - [ ] Works on desktop and mobile
 - [ ] Toolbar is visible at top without scrolling
 - [ ] Less than 500 lines of custom code (vs 2326 today)
+
+---
+
+## Eng Review Decisions
+
+**Room edges = walls.** Drawing a room rectangle automatically creates 4 wall segments. Doors snap to room edges directly. One action, not two. This is the key architectural decision.
+
+**React state drives Konva (controlled).** All elements in useState, Konva renders from state. For <100 elements this is fine and keeps things React-idiomatic.
+
+**Auto-save: 2-second debounce** with "saving..." indicator. No manual save button needed.
+
+**v1 migration: read-only preview.** Old sketches show as read-only image with "Upgrade to new editor" button. No automatic conversion.
+
+## NOT in scope
+
+- LiDAR integration (Brett: "skip for now")
+- Equipment icons on floor plan (Spec 04)
+- 3D view (overkill for water jobs)
+- AI cleanup/straightening (defer until Konva base is solid)
+- Multi-user collaboration
+
+## GSTACK REVIEW REPORT
+
+| Review | Trigger | Why | Runs | Status | Findings |
+|--------|---------|-----|------|--------|----------|
+| CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | — |
+| Codex Review | `/codex review` | Independent 2nd opinion | 0 | — | — |
+| Eng Review | `/plan-eng-review` | Architecture & tests (required) | 1 | CLEAR | 0 issues, 1 key decision (room=walls) |
+| Design Review | `/plan-design-review` | UI/UX gaps | 1 | CLEAR | score: 5/10 → 8/10, library changed to Konva |
+
+**VERDICT:** ENG + DESIGN CLEARED — ready to implement
