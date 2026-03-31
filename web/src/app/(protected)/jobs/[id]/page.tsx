@@ -11,6 +11,7 @@ import {
   useDeleteJob,
   useCreateShareLink,
   useFloorPlans,
+  useUpdateJob,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
 
@@ -70,17 +71,32 @@ function statusLabel(status: string): string {
 function eventDescription(evt: { event_type: string; is_ai: boolean; event_data: Record<string, unknown> }): string {
   switch (evt.event_type) {
     case "photo_uploaded":
-      return `uploaded ${evt.event_data.count ?? ""} photos`;
+      return `added ${evt.event_data.count ?? ""} photo${(evt.event_data.count as number) !== 1 ? "s" : ""}`;
     case "moisture_reading_added":
-      return `logged Day ${evt.event_data.day_number ?? "?"} readings`;
+      return `logged Day ${evt.event_data.day_number ?? "?"} moisture readings`;
     case "ai_sketch_cleanup":
-      return `cleaned up floor plan`;
+      return "cleaned up floor plan with AI";
     case "ai_photo_analysis":
       return `generated ${evt.event_data.line_items_generated ?? ""} line items from photos`;
     case "job_created":
-      return `created the job`;
+      return "created the job";
+    case "job_updated": {
+      const fields = evt.event_data.fields as string[] | undefined;
+      if (fields && fields.length > 0) return `updated ${fields.join(", ")}`;
+      return "updated job details";
+    }
+    case "room_added":
+      return `added room "${evt.event_data.room_name ?? ""}"`;
+    case "room_deleted":
+      return `removed room "${evt.event_data.room_name ?? ""}"`;
+    case "photo_tagged":
+      return `tagged photo to ${evt.event_data.room_name ?? "a room"}`;
+    case "status_changed":
+      return `changed status to ${evt.event_data.new_status ?? ""}`;
     case "report_generated":
-      return `generated ${evt.event_data.report_type ?? "report"}`;
+      return "generated scope report";
+    case "share_link_created":
+      return "created a share link";
     default:
       return evt.event_type.replace(/_/g, " ");
   }
@@ -155,14 +171,6 @@ function ShareIcon({ size = 18 }: { size?: number }) {
   );
 }
 
-function DocumentIcon({ size = 18 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-      <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
-    </svg>
-  );
-}
 
 function TrashIcon({ size = 18 }: { size?: number }) {
   return (
@@ -338,50 +346,148 @@ function PageSkeleton() {
 /*  Status icon helpers                                                */
 /* ------------------------------------------------------------------ */
 
-function StatusCheck() {
+/* Section icons — simple outline strokes, no backgrounds, consistent 18px */
+
+function IconJobInfo() {
   return (
-    <span className="w-5 h-5 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center text-[12px] font-bold shrink-0">
-      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </span>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="9" y="3" width="6" height="4" rx="1" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M9 12h6M9 16h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   );
 }
 
-function StatusWarning() {
+function IconLayout() {
   return (
-    <span className="w-5 h-5 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-[12px] font-bold shrink-0">
-      !
-    </span>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M3 12h18M12 3v18" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
   );
 }
 
-function StatusLock() {
+function IconCamera() {
   return (
-    <span className="w-5 h-5 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center shrink-0">
-      <svg width={11} height={11} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <rect x="5" y="11" width="14" height="11" rx="2" stroke="currentColor" strokeWidth="2" />
-        <path d="M8 11V7a4 4 0 0 1 8 0v4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-      </svg>
-    </span>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
+    </svg>
   );
 }
 
-function StatusSparkle() {
+function IconReadings() {
   return (
-    <span className="w-5 h-5 rounded-full bg-violet-100 text-violet-600 flex items-center justify-center shrink-0">
-      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2Z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-      </svg>
-    </span>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M14 4h-4a2 2 0 00-2 2v12a2 2 0 002 2h4a2 2 0 002-2V6a2 2 0 00-2-2Z" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M12 18v2M10 8h4M10 11h4M10 14h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
   );
 }
 
-function StatusGray() {
+function IconNotes() {
   return (
-    <span className="w-5 h-5 rounded-full bg-surface-container-high text-on-surface-variant flex items-center justify-center text-[12px] shrink-0">
-      --
-    </span>
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 2v6h6M8 13h8M8 17h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconAIScope() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8L12 2Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function IconReport() {
+  return (
+    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
+      <path d="M4 4a2 2 0 012-2h8l6 6v12a2 2 0 01-2 2H6a2 2 0 01-2-2V4z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+
+/* ------------------------------------------------------------------ */
+/*  Inline Editable Field                                              */
+/* ------------------------------------------------------------------ */
+
+function EditableField({
+  label,
+  value,
+  field,
+  onSave,
+  mono = false,
+  type = "text",
+}: {
+  label: string;
+  value: string | null;
+  field: string;
+  onSave: (field: string, value: string) => void;
+  mono?: boolean;
+  type?: string;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(value || "");
+
+  const handleSave = () => {
+    onSave(field, draft.trim());
+    setEditing(false);
+  };
+
+  const handleCancel = () => {
+    setDraft(value || "");
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <>
+        <span className="text-on-surface-variant text-[13px]">{label}</span>
+        <div className="flex items-center gap-1.5">
+          <input
+            type={type}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleSave();
+              if (e.key === "Escape") handleCancel();
+            }}
+            autoFocus
+            className={`flex-1 h-7 px-2 rounded bg-surface-container text-[13px] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40 ${mono ? "font-[family-name:var(--font-geist-mono)]" : ""}`}
+          />
+          <button type="button" onClick={handleSave} className="text-emerald-600 hover:text-emerald-700 cursor-pointer" aria-label="Save">
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          </button>
+          <button type="button" onClick={handleCancel} className="text-on-surface-variant hover:text-error cursor-pointer" aria-label="Cancel">
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <span className="text-on-surface-variant text-[13px]">{label}</span>
+      <div className="flex items-center gap-2 group">
+        <span className={`${mono ? "font-[family-name:var(--font-geist-mono)]" : ""} ${value ? "text-on-surface" : "text-on-surface-variant/50"} text-[13px]`}>
+          {value || "Not set"}
+        </span>
+        <button
+          type="button"
+          onClick={() => { setDraft(value || ""); setEditing(true); }}
+          className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-brand-accent transition-all cursor-pointer"
+          aria-label={`Edit ${label}`}
+        >
+          <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        </button>
+      </div>
+    </>
   );
 }
 
@@ -471,12 +577,18 @@ export default function JobDetailPage() {
   const { data: events } = useJobEvents(jobId);
   const deleteJob = useDeleteJob();
   const createShareLink = useCreateShareLink(jobId);
+  const updateJob = useUpdateJob(jobId);
+
+  const handleFieldSave = useCallback((field: string, value: string) => {
+    updateJob.mutate({ [field]: value || null } as Record<string, string | null>);
+  }, [updateJob]);
 
   const [shareModal, setShareModal] = useState<{
     url: string;
     expires_at: string;
   } | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const handleShareJob = useCallback(async () => {
     try {
@@ -571,6 +683,9 @@ export default function JobDetailPage() {
               <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight">
                 {job.job_number}
               </p>
+              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant text-[10px] font-semibold font-[family-name:var(--font-geist-mono)]">
+                {statusLabel(job.status)}
+              </span>
               {job.assigned_to && (
                 <span className="text-[11px] text-on-surface-variant">
                   · Assigned to <span className="font-medium text-on-surface">{job.assigned_to}</span>
@@ -579,16 +694,13 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* Right: Day pill + Status badge + Bell + Avatar */}
+          {/* Right: Day pill */}
           <div className="flex items-center gap-2 shrink-0">
             {dayNumber !== null && (
               <span className="px-2.5 py-1 rounded-full bg-brand-accent text-on-primary text-[11px] font-bold font-[family-name:var(--font-geist-mono)] tracking-wide">
                 Day {dayNumber}
               </span>
             )}
-            <span className="px-2.5 py-1 rounded-full bg-surface-container-high text-on-surface-variant text-[11px] font-semibold font-[family-name:var(--font-geist-mono)]">
-              {statusLabel(job.status)}
-            </span>
           </div>
         </div>
       </header>
@@ -601,7 +713,7 @@ export default function JobDetailPage() {
 
           {/* Section 1: Job Info */}
           <AccordionSection
-            icon={<StatusCheck />}
+            icon={<IconJobInfo />}
             title="Job Info"
             preview={
               [job.customer_name, job.carrier, job.claim_number ? `#${job.claim_number}` : null]
@@ -615,25 +727,10 @@ export default function JobDetailPage() {
                 <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
                   Customer
                 </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-                  {job.customer_name && (
-                    <>
-                      <span className="text-on-surface-variant">Name</span>
-                      <span className="text-on-surface font-medium">{job.customer_name}</span>
-                    </>
-                  )}
-                  {job.customer_phone && (
-                    <>
-                      <span className="text-on-surface-variant">Phone</span>
-                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.customer_phone}</span>
-                    </>
-                  )}
-                  {job.customer_email && (
-                    <>
-                      <span className="text-on-surface-variant">Email</span>
-                      <span className="text-on-surface">{job.customer_email}</span>
-                    </>
-                  )}
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+                  <EditableField label="Name" value={job.customer_name} field="customer_name" onSave={handleFieldSave} />
+                  <EditableField label="Phone" value={job.customer_phone} field="customer_phone" onSave={handleFieldSave} mono type="tel" />
+                  <EditableField label="Email" value={job.customer_email} field="customer_email" onSave={handleFieldSave} type="email" />
                 </div>
               </div>
 
@@ -642,32 +739,17 @@ export default function JobDetailPage() {
                 <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
                   Loss Info
                 </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-                  {job.loss_date && (
-                    <>
-                      <span className="text-on-surface-variant">Date</span>
-                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.loss_date}</span>
-                    </>
-                  )}
-                  {job.loss_cause && (
-                    <>
-                      <span className="text-on-surface-variant">Cause</span>
-                      <span className="text-on-surface">{job.loss_cause}</span>
-                    </>
-                  )}
-                  <span className="text-on-surface-variant">Category</span>
-                  <div className="flex gap-2">
-                    {job.loss_category && (
-                      <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 text-[11px] font-bold font-[family-name:var(--font-geist-mono)]">
-                        Cat {job.loss_category}
-                      </span>
-                    )}
-                    {job.loss_class && (
-                      <span className="px-2 py-0.5 rounded-full bg-blue-100 text-blue-700 text-[11px] font-bold font-[family-name:var(--font-geist-mono)]">
-                        Class {job.loss_class}
-                      </span>
-                    )}
-                  </div>
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+                  <EditableField label="Date" value={job.loss_date} field="loss_date" onSave={handleFieldSave} mono type="date" />
+                  <EditableField label="Cause" value={job.loss_cause} field="loss_cause" onSave={handleFieldSave} />
+                  <span className="text-on-surface-variant text-[13px]">Category</span>
+                  <span className={job.loss_category ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                    {job.loss_category ? `Cat ${job.loss_category}` : "Not set"}
+                  </span>
+                  <span className="text-on-surface-variant text-[13px]">Class</span>
+                  <span className={job.loss_class ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                    {job.loss_class ? `Class ${job.loss_class}` : "Not set"}
+                  </span>
                 </div>
               </div>
 
@@ -676,25 +758,12 @@ export default function JobDetailPage() {
                 <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
                   Insurance
                 </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-[13px]">
-                  {job.carrier && (
-                    <>
-                      <span className="text-on-surface-variant">Carrier</span>
-                      <span className="text-on-surface font-medium">{job.carrier}</span>
-                    </>
-                  )}
-                  {job.claim_number && (
-                    <>
-                      <span className="text-on-surface-variant">Claim #</span>
-                      <span className="font-[family-name:var(--font-geist-mono)] text-on-surface">{job.claim_number}</span>
-                    </>
-                  )}
-                  {job.adjuster_name && (
-                    <>
-                      <span className="text-on-surface-variant">Adjuster</span>
-                      <span className="text-on-surface">{job.adjuster_name}</span>
-                    </>
-                  )}
+                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+                  <EditableField label="Carrier" value={job.carrier} field="carrier" onSave={handleFieldSave} />
+                  <EditableField label="Claim #" value={job.claim_number} field="claim_number" onSave={handleFieldSave} mono />
+                  <EditableField label="Adjuster" value={job.adjuster_name} field="adjuster_name" onSave={handleFieldSave} />
+                  <EditableField label="Email" value={job.adjuster_email} field="adjuster_email" onSave={handleFieldSave} type="email" />
+                  <EditableField label="Phone" value={job.adjuster_phone} field="adjuster_phone" onSave={handleFieldSave} mono type="tel" />
                 </div>
               </div>
 
@@ -703,9 +772,9 @@ export default function JobDetailPage() {
 
           {/* Section 2: Property Layout */}
           <AccordionSection
-            icon={<StatusCheck />}
+            icon={<IconLayout />}
             title="Property Layout"
-            defaultOpen
+            preview={rooms && rooms.length > 0 ? `${rooms.length} room${rooms.length !== 1 ? "s" : ""}` : "No rooms added yet"}
           >
             <div className="space-y-3">
               {/* Floor plan preview — renders saved sketch or empty state */}
@@ -732,8 +801,27 @@ export default function JobDetailPage() {
                     {room.room_name}
                   </span>
                 ))}
+                {rooms && rooms.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/jobs/${jobId}/rooms/new`)}
+                    className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                  >
+                    + Add
+                  </button>
+                )}
                 {(!rooms || rooms.length === 0) && (
-                  <span className="text-[13px] text-on-surface-variant">No rooms added yet</span>
+                  <button
+                    type="button"
+                    onClick={() => router.push(`/jobs/${jobId}/rooms/new`)}
+                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-outline-variant/50 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                  >
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                      <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    </svg>
+                    Add rooms
+                  </button>
                 )}
               </div>
             </div>
@@ -741,7 +829,7 @@ export default function JobDetailPage() {
 
           {/* Section 3: Photos */}
           <AccordionSection
-            icon={untaggedPhotos.length > 0 ? <StatusWarning /> : <StatusCheck />}
+            icon={<IconCamera />}
             title="Photos"
             badge={
               untaggedPhotos.length > 0 ? (
@@ -792,8 +880,8 @@ export default function JobDetailPage() {
 
           {/* Section 4: Readings */}
           <AccordionSection
-            icon={<StatusWarning />}
-            title="Readings"
+            icon={<IconReadings />}
+            title="Moisture Readings"
             preview={
               gppData.length > 0
                 ? `GPP: ${gppData.map((d) => d.gpp.toFixed(0)).join(" \u2192 ")} \u2193 Target: 45`
@@ -801,17 +889,43 @@ export default function JobDetailPage() {
             }
           >
             {gppData.length > 0 ? (
-              <GppTrendChart readings={gppData} target={45} />
+              <div>
+                <GppTrendChart readings={gppData} target={45} />
+                <button
+                  type="button"
+                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                  className="mt-3 flex items-center gap-2 text-[13px] font-medium text-brand-accent hover:underline cursor-pointer"
+                >
+                  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  Log Day {(gppData.length || 0) + 1} readings
+                </button>
+              </div>
             ) : (
-              <p className="text-[13px] text-on-surface-variant py-2">
-                No moisture readings logged yet. Use the &quot;Log Reading&quot; action to start tracking.
-              </p>
+              <div className="space-y-3">
+                <p className="text-[13px] text-on-surface-variant leading-relaxed">
+                  Track drying progress with daily moisture readings. Log temperature, humidity, and point readings for each room.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-outline-variant/50 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                >
+                  <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  Add Day 1 readings
+                </button>
+              </div>
             )}
           </AccordionSection>
 
           {/* Section 5: Tech Notes */}
           <AccordionSection
-            icon={hasTechNotes ? <StatusCheck /> : <StatusGray />}
+            icon={<IconNotes />}
             title="Tech Notes"
             badge={
               hasTechNotes ? (
@@ -822,22 +936,27 @@ export default function JobDetailPage() {
             }
             preview={hasTechNotes ? undefined : "No notes yet"}
           >
-            {hasTechNotes ? (
-              <div className="space-y-3">
-                <p className="text-[13px] text-on-surface leading-relaxed">
-                  {job.tech_notes}
-                </p>
-              </div>
-            ) : (
-              <p className="text-[13px] text-on-surface-variant py-2">
-                No tech notes yet. Add notes from the field.
+            <div>
+              <textarea
+                defaultValue={job.tech_notes || ""}
+                placeholder="Add field notes, observations, site conditions..."
+                onBlur={(e) => {
+                  const val = e.target.value.trim();
+                  if (val !== (job.tech_notes || "")) {
+                    updateJob.mutate({ tech_notes: val || null });
+                  }
+                }}
+                className="w-full min-h-[80px] px-3 py-2 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-1 focus:ring-brand-accent/40 resize-y font-[family-name:var(--font-geist-mono)]"
+              />
+              <p className="text-[11px] text-on-surface-variant/50 mt-1.5">
+                Auto-saves on blur. Voice input coming soon.
               </p>
-            )}
+            </div>
           </AccordionSection>
 
           {/* Section 6: AI Scope */}
           <AccordionSection
-            icon={<StatusSparkle />}
+            icon={<IconAIScope />}
             title="AI Scope"
             badge={
               hasPhotos ? (
@@ -845,7 +964,7 @@ export default function JobDetailPage() {
                   Ready
                 </span>
               ) : (
-                <span className="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
+                <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant/70 text-[9px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
                   Needs Photos
                 </span>
               )
@@ -855,10 +974,10 @@ export default function JobDetailPage() {
 
           {/* Section 7: Final Report */}
           <AccordionSection
-            icon={<StatusLock />}
+            icon={<IconReport />}
             title="Final Report"
             badge={
-              <span className="px-2 py-0.5 rounded-full bg-surface-container-high text-on-surface-variant text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
+              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant/70 text-[9px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
                 Locked
               </span>
             }
@@ -869,36 +988,10 @@ export default function JobDetailPage() {
         {/* ── RIGHT COLUMN: Sticky Sidebar ──────────────────────── */}
         <div className="hidden lg:block lg:sticky lg:top-20 lg:self-start space-y-4">
 
-          {/* Quick Actions */}
-          <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => router.push(`/jobs/${jobId}/photos`)}
-                className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
-              >
-                <CameraIcon size={22} />
-                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
-                  Take Photo
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                className="flex flex-col items-center justify-center h-20 rounded-xl primary-gradient text-on-primary cursor-pointer hover:opacity-90 transition-opacity"
-              >
-                <ChartIcon size={22} />
-                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1.5 uppercase tracking-[0.04em]">
-                  Log Reading
-                </span>
-              </button>
-            </div>
-          </section>
-
           {/* Upcoming Task Requirements */}
           <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
             <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
-              Upcoming Task Requirements
+              To Complete This Job
             </h3>
             <div className="space-y-3">
               {(!readings || readings.length === 0 || !readings.some((r) => {
@@ -910,25 +1003,27 @@ export default function JobDetailPage() {
                   <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
                   <div>
                     <p className="text-[13px] font-semibold text-brand-accent">
-                      Day {dayNumber ?? 3} readings not logged
+                      Day {dayNumber ?? 1} readings not logged
                     </p>
                     <p className="text-[11px] text-on-surface-variant mt-0.5">
-                      Required for AI scoping engine
+                      Needed for drying documentation
                     </p>
                   </div>
                 </div>
               )}
-              <div className="flex gap-2.5">
-                <span className="w-2 h-2 rounded-full bg-surface-container-highest mt-1.5 shrink-0" />
-                <div>
-                  <p className="text-[13px] font-medium text-on-surface">
-                    {untaggedPhotos.length} photos need room tags
-                  </p>
-                  <p className="text-[11px] text-on-surface-variant mt-0.5">
-                    Tag rooms before AI scope
-                  </p>
+              {photos && photos.length > 0 && (
+                <div className="flex gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-surface-container-highest mt-1.5 shrink-0" />
+                  <div>
+                    <p className="text-[13px] font-medium text-on-surface">
+                      {untaggedPhotos.length} photos need room tags
+                    </p>
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">
+                      Tag rooms before AI scope
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
           </section>
 
@@ -972,37 +1067,32 @@ export default function JobDetailPage() {
               type="button"
               onClick={handleShareJob}
               disabled={createShareLink.isPending}
+              title="Creates a read-only link for adjusters and customers"
               className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer disabled:opacity-50"
             >
               <ShareIcon size={14} />
               {createShareLink.isPending ? "Creating..." : "Share Job"}
             </button>
-            <a
-              href={`/jobs/${jobId}/report`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-1.5 text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
-            >
-              <DocumentIcon size={14} />
-              Export PDF
-            </a>
             <button
               type="button"
-              onClick={async () => {
-                if (window.confirm("Are you sure you want to delete this job?")) {
-                  try {
-                    await deleteJob.mutateAsync(jobId);
-                    router.push("/jobs");
-                  } catch (err) {
-                    alert(err instanceof Error ? err.message : "Failed to delete job. Please try again.");
-                  }
+              onClick={() => {
+                if (!confirmDelete) {
+                  setConfirmDelete(true);
+                  setTimeout(() => setConfirmDelete(false), 3000);
+                  return;
                 }
+                deleteJob.mutateAsync(jobId).then(() => router.push("/jobs")).catch((err) => {
+                  alert(err instanceof Error ? err.message : "Failed to delete job.");
+                  setConfirmDelete(false);
+                });
               }}
               disabled={deleteJob.isPending}
-              className="flex items-center gap-1.5 text-[12px] font-medium text-error hover:text-error/80 transition-colors cursor-pointer ml-auto disabled:opacity-50"
+              className={`flex items-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer ml-auto disabled:opacity-50 ${
+                confirmDelete ? "text-on-primary bg-error px-3 py-1.5 rounded-lg" : "text-error hover:text-error/80"
+              }`}
             >
               <TrashIcon size={14} />
-              {deleteJob.isPending ? "Deleting..." : "Delete Job"}
+              {deleteJob.isPending ? "Deleting..." : confirmDelete ? "Confirm Delete?" : "Delete Job"}
             </button>
           </div>
         </div>

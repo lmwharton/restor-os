@@ -107,16 +107,26 @@ function SegmentedButtons<T extends string>({
   value,
   onChange,
   label,
+  tooltip,
 }: {
-  options: { value: T; label: string }[];
+  options: { value: T; label: string; subtitle?: string }[];
   value: T | null;
   onChange: (v: T) => void;
   label: string;
+  tooltip?: string;
 }) {
+  const selected = options.find((o) => o.value === value);
   return (
     <div>
-      <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
-        {label}
+      <label className="flex items-center gap-1.5 mb-2">
+        <span className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">
+          {label}
+        </span>
+        {tooltip && (
+          <span className="text-[10px] text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)]">
+            — {tooltip}
+          </span>
+        )}
       </label>
       <div className="flex gap-1.5">
         {options.map((opt) => (
@@ -124,6 +134,7 @@ function SegmentedButtons<T extends string>({
             key={opt.value}
             type="button"
             onClick={() => onChange(opt.value)}
+            title={opt.subtitle}
             className={`flex-1 h-12 rounded-lg text-sm font-semibold transition-all duration-150 cursor-pointer ${
               value === opt.value
                 ? "primary-gradient text-on-primary shadow-sm"
@@ -134,6 +145,11 @@ function SegmentedButtons<T extends string>({
           </button>
         ))}
       </div>
+      {selected?.subtitle && (
+        <p className="mt-1.5 text-[12px] text-on-surface-variant/70 font-[family-name:var(--font-geist-mono)]">
+          {selected.subtitle}
+        </p>
+      )}
     </div>
   );
 }
@@ -248,17 +264,17 @@ const lossTypes: { value: LossType; label: string; icon: React.ReactNode }[] = [
   { value: "other", label: "Other", icon: <OtherIcon /> },
 ];
 
-const categoryOptions: { value: WaterCategory; label: string }[] = [
-  { value: "1", label: "Cat 1" },
-  { value: "2", label: "Cat 2" },
-  { value: "3", label: "Cat 3" },
+const categoryOptions: { value: WaterCategory; label: string; subtitle: string }[] = [
+  { value: "1", label: "Cat 1", subtitle: "Clean water — supply line, rain" },
+  { value: "2", label: "Cat 2", subtitle: "Gray water — dishwasher, washing machine, toilet overflow (no solids)" },
+  { value: "3", label: "Cat 3", subtitle: "Black water — sewage, river flooding, standing water >72hrs" },
 ];
 
-const classOptions: { value: WaterClass; label: string }[] = [
-  { value: "1", label: "Class 1" },
-  { value: "2", label: "Class 2" },
-  { value: "3", label: "Class 3" },
-  { value: "4", label: "Class 4" },
+const classOptions: { value: WaterClass; label: string; subtitle: string }[] = [
+  { value: "1", label: "Class 1", subtitle: "Least water — small area, minimal absorption" },
+  { value: "2", label: "Class 2", subtitle: "Large amount — carpet + walls wet <24 inches" },
+  { value: "3", label: "Class 3", subtitle: "Greatest amount — walls, ceilings, insulation saturated" },
+  { value: "4", label: "Class 4", subtitle: "Specialty — deep saturation in hardwood, concrete, stone" },
 ];
 
 export default function NewJobPage() {
@@ -331,7 +347,7 @@ export default function NewJobPage() {
   return (
     <div className="min-h-[100dvh] bg-surface flex flex-col">
       {/* ── Header ─────────────────────────────────────────────── */}
-      <header className="flex items-center gap-3 px-5 pt-6 pb-2 lg:max-w-2xl lg:mx-auto lg:w-full">
+      <header className="flex items-center gap-3 px-5 pt-6 pb-2">
         <Link
           href="/jobs"
           className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
@@ -345,7 +361,7 @@ export default function NewJobPage() {
       </header>
 
       {/* ── Form Body ──────────────────────────────────────────── */}
-      <div className="flex-1 px-5 pt-4 pb-8 space-y-6 max-w-lg mx-auto w-full lg:max-w-2xl lg:bg-surface-container-lowest lg:rounded-2xl lg:shadow-[0_1px_3px_rgba(31,27,23,0.04)] lg:p-8 lg:mt-8">
+      <div className="flex-1 px-5 pt-4 pb-8 space-y-6 max-w-lg mx-auto w-full lg:max-w-none lg:mx-0 lg:px-5">
         {/* Loss Type Selector */}
         <div>
           <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
@@ -454,18 +470,24 @@ export default function NewJobPage() {
                   value={lossCause}
                   onChange={setLossCause}
                 />
-                <SegmentedButtons
-                  label="Category"
-                  options={categoryOptions}
-                  value={category}
-                  onChange={setCategory}
-                />
-                <SegmentedButtons
-                  label="Class"
-                  options={classOptions}
-                  value={waterClass}
-                  onChange={setWaterClass}
-                />
+                {lossType === "water" && (
+                  <>
+                    <SegmentedButtons
+                      label="Category"
+                      tooltip="IICRC S500 contamination level"
+                      options={categoryOptions}
+                      value={category}
+                      onChange={setCategory}
+                    />
+                    <SegmentedButtons
+                      label="Class"
+                      tooltip="IICRC S500 damage severity"
+                      options={classOptions}
+                      value={waterClass}
+                      onChange={setWaterClass}
+                    />
+                  </>
+                )}
               </section>
 
               {/* Insurance Section — spans full width on desktop */}
