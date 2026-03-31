@@ -139,7 +139,7 @@ export default function FloorPlanPage({
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="flex flex-col h-dvh bg-surface overflow-hidden">
+    <div className="flex flex-col h-[calc(100dvh-48px)] bg-surface overflow-hidden">
       {/* Navigation bar */}
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest">
         <button

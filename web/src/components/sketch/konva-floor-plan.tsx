@@ -861,6 +861,10 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       {/* Instructions Panel — desktop only */}
       {!readOnly && (
         <div className="hidden md:flex flex-col w-[200px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-3 overflow-y-auto">
+          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[#eae6e1]">
+            <div className="w-3 h-3 border border-[#eae6e1]" />
+            <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-[#6b6560]">= 1 foot</span>
+          </div>
           <h3 className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#6b6560] font-semibold mb-3">
             {tool === "room" ? "Room Tool" : tool === "wall" ? "Wall Tool" : tool === "door" ? "Door Tool" : tool === "window" ? "Window Tool" : tool === "select" ? "Select Tool" : tool === "delete" ? "Delete Tool" : "How to Use"}
           </h3>
@@ -939,9 +943,6 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             </p>
           </div>
 
-          <p className="text-[10px] text-[#b5b0aa] mt-3 font-[family-name:var(--font-geist-mono)]">
-            1 square = 1 foot
-          </p>
         </div>
       )}
       </div>
