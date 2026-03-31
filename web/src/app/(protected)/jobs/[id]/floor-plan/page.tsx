@@ -113,7 +113,9 @@ export default function FloorPlanPage({
             if (match) {
               const widthFt = Math.round((drawnRoom.width / gs) * 10) / 10;
               const lengthFt = Math.round((drawnRoom.height / gs) * 10) / 10;
-              if (widthFt !== match.width_ft || lengthFt !== match.length_ft) {
+              const currentW = Math.round((match.width_ft ?? 0) * 10) / 10;
+              const currentL = Math.round((match.length_ft ?? 0) * 10) / 10;
+              if (widthFt !== currentW || lengthFt !== currentL) {
                 updateRoom.mutate({ roomId: match.id, width_ft: widthFt, length_ft: lengthFt } as Record<string, unknown> & { roomId: string });
               }
             }

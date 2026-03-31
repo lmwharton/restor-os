@@ -673,14 +673,16 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   align="center"
                   offsetX={feetLabel(room.width).length * 3}
                 />
+                {/* Height dimension on left edge */}
                 <Text
-                  x={room.width + 4}
+                  x={-14}
                   y={room.height / 2}
                   text={feetLabel(room.height)}
                   fontSize={11}
                   fontFamily="var(--font-geist-mono), monospace"
                   fill="#6b6560"
-                  rotation={90}
+                  rotation={-90}
+                  offsetX={feetLabel(room.height).length * 3}
                 />
                 {/* Selection handles */}
                 {selectedId === room.id && (

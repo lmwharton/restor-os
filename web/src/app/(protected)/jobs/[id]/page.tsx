@@ -249,16 +249,30 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
         aria-label="Floor plan preview"
       >
         {rooms.map((room) => (
-          <rect
-            key={room.id}
-            x={room.x}
-            y={room.y}
-            width={room.width}
-            height={room.height}
-            fill={room.fill ?? "rgba(232,93,38,0.08)"}
-            stroke="#e85d26"
-            strokeWidth={Math.max(1, vbW / 200)}
-          />
+          <g key={room.id}>
+            <rect
+              x={room.x}
+              y={room.y}
+              width={room.width}
+              height={room.height}
+              fill={room.fill ?? "rgba(232,93,38,0.08)"}
+              stroke="#e85d26"
+              strokeWidth={Math.max(1, vbW / 200)}
+            />
+            {room.name && (
+              <text
+                x={room.x + room.width / 2}
+                y={room.y + room.height / 2}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
+                fill="#6b6560"
+                fontFamily="var(--font-geist-mono), monospace"
+              >
+                {room.name}
+              </text>
+            )}
+          </g>
         ))}
         {walls.map((w, i) => (
           <line
