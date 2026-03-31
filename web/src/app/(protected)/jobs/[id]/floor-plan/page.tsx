@@ -8,6 +8,7 @@ import {
   useFloorPlans,
   useCreateFloorPlan,
   useRooms,
+  useCreateRoom,
 } from "@/lib/hooks/use-jobs";
 import { apiGet, apiPost, apiPatch } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
@@ -27,6 +28,12 @@ export default function FloorPlanPage({
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
   const { data: jobRooms } = useRooms(jobId);
+  const createRoom = useCreateRoom(jobId);
+  const handleCreateRoom = useCallback((name: string) => {
+    // Check if room already exists in Property Layout
+    if (jobRooms?.some((r) => r.room_name === name)) return;
+    createRoom.mutate({ room_name: name } as Record<string, string>);
+  }, [jobRooms, createRoom]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
@@ -197,6 +204,7 @@ export default function FloorPlanPage({
           initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
           onChange={handleChange}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
+          onCreateRoom={handleCreateRoom}
         />
       </div>
 

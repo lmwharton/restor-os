@@ -30,7 +30,11 @@ interface KonvaFloorPlanProps {
   onChange?: (data: FloorPlanData) => void;
   readOnly?: boolean;
   rooms?: Array<{ id: string; room_name: string }>;
+  onCreateRoom?: (name: string) => void;
 }
+
+/* Common room presets for quick selection */
+const ROOM_PRESETS = ["Kitchen", "Living Room", "Master Bedroom", "Bedroom", "Bathroom", "Hallway", "Garage", "Office", "Dining Room", "Laundry"];
 
 /* ------------------------------------------------------------------ */
 /*  Undo/redo                                                          */
@@ -133,7 +137,7 @@ function ToolIcon({ type }: { type: string }) {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-export default function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms }: KonvaFloorPlanProps) {
+export default function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom }: KonvaFloorPlanProps) {
   const data = initialData ?? emptyFloorPlan();
   const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
@@ -146,6 +150,10 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
   const [wallStart, setWallStart] = useState<{ x: number; y: number } | null>(null);
+
+  // Room naming picker
+  const [pendingRoom, setPendingRoom] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [customRoomName, setCustomRoomName] = useState("");
 
   // Zoom/pan state
   const [stageScale, setStageScale] = useState(1);
@@ -344,24 +352,28 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       const h = Math.abs(drawCurrent.y - drawStart.y);
 
       if (w >= gs && h >= gs) {
-        const existingNames = propertyRooms?.map((r) => r.room_name).filter(Boolean) ?? [];
-        const hint = existingNames.length > 0
-          ? `Available rooms: ${existingNames.join(", ")}\n\nEnter room name:`
-          : "Room name:";
-        const defaultName = existingNames[0] ?? "Room";
-        const name = prompt(hint, defaultName) ?? "Room";
-        const newRoom: RoomData = { id: uid("room"), x, y, width: w, height: h, name, fill: "#fff3ed" };
-        const roomWalls = wallsForRoom(newRoom);
-        push({
-          ...state,
-          rooms: [...state.rooms, newRoom],
-          walls: [...state.walls, ...roomWalls],
-        });
+        setPendingRoom({ x, y, width: w, height: h });
+        setCustomRoomName("");
       }
       setDrawStart(null);
       setDrawCurrent(null);
     }
-  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push, propertyRooms]);
+  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push]);
+
+  const finalizePendingRoom = useCallback((name: string) => {
+    if (!pendingRoom) return;
+    const newRoom: RoomData = { id: uid("room"), ...pendingRoom, name, fill: "#fff3ed" };
+    const roomWalls = wallsForRoom(newRoom);
+    push({
+      ...state,
+      rooms: [...state.rooms, newRoom],
+      walls: [...state.walls, ...roomWalls],
+    });
+    // Also create room in Property Layout if callback provided
+    if (onCreateRoom) onCreateRoom(name);
+    setPendingRoom(null);
+    setCustomRoomName("");
+  }, [pendingRoom, state, push, onCreateRoom]);
 
   /* ---------------------------------------------------------------- */
   /*  Drag handlers for select tool                                    */
@@ -512,6 +524,74 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               <p className="text-[12px] text-[#6b6560] max-w-[240px]">
                 Select the Room tool from the toolbar above, then click and drag on the canvas to create a room.
               </p>
+            </div>
+          </div>
+        )}
+
+        {/* Room name picker overlay */}
+        {pendingRoom && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20">
+            <div className="bg-white rounded-xl shadow-lg p-4 w-[280px] max-h-[400px] overflow-y-auto">
+              <h3 className="text-[13px] font-semibold text-[#1a1a1a] mb-3">Name this room</h3>
+
+              {/* Existing Property Layout rooms (not yet drawn) */}
+              {propertyRooms && propertyRooms.length > 0 && (
+                <div className="mb-3">
+                  <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">From Property Layout</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {propertyRooms
+                      .filter((r) => !state.rooms.some((sr) => sr.name === r.room_name))
+                      .map((r) => (
+                        <button key={r.id} type="button" onClick={() => finalizePendingRoom(r.room_name)}
+                          className="px-3 py-1.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[12px] font-medium hover:bg-[#e85d26] hover:text-white transition-colors cursor-pointer">
+                          {r.room_name}
+                        </button>
+                      ))}
+                    {propertyRooms.filter((r) => !state.rooms.some((sr) => sr.name === r.room_name)).length === 0 && (
+                      <p className="text-[11px] text-[#8a847e]">All rooms already drawn</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Preset room names */}
+              <div className="mb-3">
+                <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">Quick pick</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {ROOM_PRESETS
+                    .filter((name) => !state.rooms.some((r) => r.name === name))
+                    .slice(0, 6)
+                    .map((name) => (
+                      <button key={name} type="button" onClick={() => finalizePendingRoom(name)}
+                        className="px-3 py-1.5 rounded-full border border-[#eae6e1] text-[#1a1a1a] text-[12px] font-medium hover:bg-[#eae6e1] transition-colors cursor-pointer">
+                        {name}
+                      </button>
+                    ))}
+                </div>
+              </div>
+
+              {/* Custom name input */}
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customRoomName}
+                  onChange={(e) => setCustomRoomName(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && customRoomName.trim()) finalizePendingRoom(customRoomName.trim()); }}
+                  placeholder="Custom name..."
+                  autoFocus
+                  className="flex-1 h-8 px-3 rounded-lg border border-[#eae6e1] text-[13px] text-[#1a1a1a] outline-none focus:border-[#e85d26]"
+                />
+                <button type="button" onClick={() => { if (customRoomName.trim()) finalizePendingRoom(customRoomName.trim()); }}
+                  disabled={!customRoomName.trim()}
+                  className="h-8 px-3 rounded-lg bg-[#e85d26] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40 hover:opacity-90 transition-opacity">
+                  Add
+                </button>
+              </div>
+
+              <button type="button" onClick={() => { setPendingRoom(null); setCustomRoomName(""); }}
+                className="mt-2 text-[11px] text-[#8a847e] hover:text-[#1a1a1a] cursor-pointer transition-colors">
+                Cancel
+              </button>
             </div>
           </div>
         )}
