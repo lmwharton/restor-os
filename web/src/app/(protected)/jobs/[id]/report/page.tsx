@@ -160,7 +160,7 @@ export default function ReportPage() {
           <div className="flex items-start justify-between">
             <div>
               <h1 className="text-[28px] font-extrabold tracking-tight text-neutral-900 leading-tight">
-                {job.customer_name ?? "Property Owner"}
+                {job.customer_name || job.address_line1}
               </h1>
               <p className="text-[13px] text-neutral-500 mt-1 font-medium tracking-wide uppercase">
                 Scope Report

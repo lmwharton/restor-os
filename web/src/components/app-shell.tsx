@@ -241,66 +241,6 @@ function CompanyBrand({ company }: { company: Company }) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Sidebar Contractor Score (compact)                                 */
-/* ------------------------------------------------------------------ */
-
-function SidebarContractorScore() {
-  const score = 72;
-  const circumference = 2 * Math.PI * 14;
-  const dashArray = (score / 100) * circumference;
-
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <div className="relative w-10 h-10 shrink-0">
-        <svg viewBox="0 0 36 36" className="w-10 h-10" aria-hidden="true">
-          <circle cx="18" cy="18" r="14" fill="none" stroke="var(--surface-container)" strokeWidth="3" />
-          <circle
-            cx="18" cy="18" r="14" fill="none"
-            stroke="var(--brand-accent)" strokeWidth="3"
-            strokeDasharray={`${dashArray} ${circumference}`}
-            strokeLinecap="round"
-            transform="rotate(-90 18 18)"
-          />
-        </svg>
-        <span className={`absolute inset-0 flex items-center justify-center text-[13px] font-bold text-brand-accent ${MONO}`}>
-          {score}
-        </span>
-      </div>
-      <div className="min-w-0">
-        <p className="text-[12px] font-semibold text-[#0891b2] uppercase tracking-wider leading-tight">
-          Good Standing
-        </p>
-        <p className="text-[10px] text-outline leading-snug mt-0.5">
-          Top 10% response
-        </p>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Sidebar Google Reviews (compact)                                   */
-/* ------------------------------------------------------------------ */
-
-function SidebarGoogleReviews() {
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <span className={`text-[22px] font-bold text-on-surface ${MONO} leading-none shrink-0`}>
-        4.7
-      </span>
-      <div className="min-w-0">
-        <span className="text-[14px] tracking-tight text-[#f59e0b] block leading-none" aria-label="4.7 out of 5 stars">
-          {"★★★★★"}
-        </span>
-        <span className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline mt-0.5 block`}>
-          108 reviews
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /*  Desktop Left Sidebar                                               */
 /* ------------------------------------------------------------------ */
 
@@ -353,12 +293,6 @@ function DesktopSidebar({ user }: { user: UserProfile | null }) {
 
       {/* Bottom section */}
       <div className="mt-auto border-t border-outline-variant/15">
-        {/* Contractor Score + Google Reviews */}
-        <div className="py-2">
-          <SidebarContractorScore />
-          <SidebarGoogleReviews />
-        </div>
-
       </div>
     </aside>
   );

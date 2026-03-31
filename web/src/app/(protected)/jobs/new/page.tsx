@@ -213,10 +213,39 @@ function FormInputSmall({
 /*  Page                                                               */
 /* ------------------------------------------------------------------ */
 
+function StormIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M13 2L3 14h9l-1 8 10-12h-9l1-8Z"
+        stroke="currentColor"
+        strokeWidth="1.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="currentColor"
+        fillOpacity="0.15"
+      />
+    </svg>
+  );
+}
+
+function OtherIcon() {
+  return (
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
+      <circle cx="12" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="8" cy="12" r="1.5" fill="currentColor" />
+      <circle cx="16" cy="12" r="1.5" fill="currentColor" />
+    </svg>
+  );
+}
+
 const lossTypes: { value: LossType; label: string; icon: React.ReactNode }[] = [
   { value: "water", label: "Water", icon: <DropletIcon /> },
   { value: "fire", label: "Fire", icon: <FlameIcon /> },
   { value: "mold", label: "Mold", icon: <MoldIcon /> },
+  { value: "storm", label: "Storm", icon: <StormIcon /> },
+  { value: "other", label: "Other", icon: <OtherIcon /> },
 ];
 
 const categoryOptions: { value: WaterCategory; label: string }[] = [

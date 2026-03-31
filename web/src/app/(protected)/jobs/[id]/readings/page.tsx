@@ -400,6 +400,15 @@ export default function MoistureReadingsPage() {
           </div>
         </section>
 
+        {/* -- Empty state when no rooms ------------------------------ */}
+        {rooms.length === 0 && (
+          <div className="rounded-xl bg-surface-container-lowest p-6 text-center">
+            <p className="text-sm text-on-surface-variant">
+              Add rooms from the Property Layout section to start logging moisture readings per room.
+            </p>
+          </div>
+        )}
+
         {/* -- Mobile: single room view ------------------------------ */}
         <div className="lg:hidden space-y-6">
           {/* Room title */}

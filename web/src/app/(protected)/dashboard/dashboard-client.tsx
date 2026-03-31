@@ -251,7 +251,7 @@ function JobsList({
             const meta = STAGE_META[stage];
             const job = jobs.find((j) => j.id === t.job_id);
             const subtitle = job
-              ? `Day ${Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000))}, ${job.photo_count} photos, ${job.room_count} rooms`
+              ? `Day ${Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000))}, ${job.photo_count ?? 0} photos, ${job.room_count ?? 0} rooms`
               : t.description;
 
             return (

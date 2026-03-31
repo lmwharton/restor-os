@@ -6,9 +6,7 @@ import { useParams } from "next/navigation";
 import { usePhotos, useRooms, useUpdatePhoto, useDeletePhoto, useUploadPhoto } from "@/lib/hooks/use-jobs";
 import {
   ArrowBack,
-  Shield,
   Tag,
-  Sparkle,
   Camera,
   Upload,
   Check,
@@ -203,18 +201,8 @@ export default function PhotosPage() {
       {/* ─── Toolbar ────────────────────────────────────────────── */}
       <div className="flex items-stretch px-4 py-1">
         <ToolbarButton
-          label="Hazard"
-          icon={<Shield size={20} />}
-          disabled
-        />
-        <ToolbarButton
           label="Tag Rooms"
           icon={<Tag size={20} />}
-          disabled
-        />
-        <ToolbarButton
-          label="AI Scope"
-          icon={<Sparkle size={20} />}
           disabled
         />
         <ToolbarButton
