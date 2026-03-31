@@ -97,6 +97,8 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
     }
     case "room_added":
       return `added room "${evt.event_data.room_name ?? ""}"`;
+    case "room_updated":
+      return `updated room${evt.event_data.room_name ? ` "${evt.event_data.room_name}"` : ""} dimensions`;
     case "room_deleted":
       return `removed room "${evt.event_data.room_name ?? ""}"`;
     case "photo_tagged":

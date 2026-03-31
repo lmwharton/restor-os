@@ -942,6 +942,26 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             <div className="w-3 h-3 border border-[#eae6e1]" />
             <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-[#6b6560]">= 1 foot</span>
           </div>
+
+          {/* Unmapped rooms from Property Layout */}
+          {propertyRooms && propertyRooms.length > 0 && (() => {
+            const drawnNames = new Set(state.rooms.map(r => r.name));
+            const unmapped = propertyRooms.filter(r => !drawnNames.has(r.room_name));
+            if (unmapped.length === 0) return null;
+            return (
+              <div className="mb-3 pb-3 border-b border-[#eae6e1]">
+                <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">Not yet drawn</p>
+                <div className="flex flex-wrap gap-1">
+                  {unmapped.map(r => (
+                    <span key={r.id} className="px-2 py-0.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[11px] font-medium">
+                      {r.room_name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
+
           <h3 className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#6b6560] font-semibold mb-3">
             {tool === "room" ? "Room Tool" : tool === "wall" ? "Wall Tool" : tool === "door" ? "Door Tool" : tool === "window" ? "Window Tool" : tool === "select" ? "Select Tool" : tool === "delete" ? "Delete Tool" : "How to Use"}
           </h3>
