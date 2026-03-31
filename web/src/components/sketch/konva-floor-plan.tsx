@@ -147,6 +147,25 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
   const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
   const [wallStart, setWallStart] = useState<{ x: number; y: number } | null>(null);
 
+  // Zoom/pan state
+  const [stageScale, setStageScale] = useState(1);
+  const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+
+  const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    e.evt.preventDefault();
+    const stage = stageRef.current;
+    if (!stage) return;
+    const oldScale = stageScale;
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+    const scaleBy = 1.08;
+    const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+    const clampedScale = Math.max(0.3, Math.min(3, newScale));
+    const mousePointTo = { x: (pointer.x - stagePos.x) / oldScale, y: (pointer.y - stagePos.y) / oldScale };
+    setStageScale(clampedScale);
+    setStagePos({ x: pointer.x - mousePointTo.x * clampedScale, y: pointer.y - mousePointTo.y * clampedScale });
+  }, [stageScale, stagePos]);
+
   const gs = state.gridSize;
 
   // Auto-save debounce
@@ -237,8 +256,13 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
     const stage = stageRef.current;
     if (!stage) return { x: 0, y: 0 };
     const pos = stage.getPointerPosition();
-    return pos ?? { x: 0, y: 0 };
-  }, []);
+    if (!pos) return { x: 0, y: 0 };
+    // Convert screen coords to canvas coords (account for zoom/pan)
+    return {
+      x: (pos.x - stagePos.x) / stageScale,
+      y: (pos.y - stagePos.y) / stageScale,
+    };
+  }, [stageScale, stagePos]);
 
   const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (readOnly) return;
@@ -440,6 +464,35 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M21 10H7a4 4 0 0 0 0 8h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M17 6l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
             <span className="mt-0.5">Redo</span>
           </button>
+          <div className="w-px h-8 bg-[#eae6e1] mx-1" />
+          <button
+            type="button"
+            onClick={() => setStageScale((s) => Math.min(3, s * 1.2))}
+            aria-label="Zoom in"
+            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+            <span className="mt-0.5">Zoom+</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setStageScale((s) => Math.max(0.3, s / 1.2))}
+            aria-label="Zoom out"
+            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+            <span className="mt-0.5">Zoom-</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => { setStageScale(1); setStagePos({ x: 0, y: 0 }); }}
+            aria-label="Reset view"
+            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+          >
+            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M9 3v18M3 9h18" stroke="currentColor" strokeWidth="1" opacity="0.3" /></svg>
+            <span className="mt-0.5">Fit</span>
+          </button>
+          <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1">{Math.round(stageScale * 100)}%</span>
         </div>
       )}
 
@@ -467,13 +520,24 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
           ref={stageRef}
           width={stageSize.width}
           height={stageSize.height}
+          scaleX={stageScale}
+          scaleY={stageScale}
+          x={stagePos.x}
+          y={stagePos.y}
+          draggable={tool === "select" && !selectedId}
+          onDragEnd={(e) => {
+            if (e.target === stageRef.current) {
+              setStagePos({ x: e.target.x(), y: e.target.y() });
+            }
+          }}
+          onWheel={handleWheel}
           onMouseDown={handleMouseDown}
           onMouseMove={handleMouseMove}
           onMouseUp={handleMouseUp}
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
-          style={{ cursor: tool === "room" ? "crosshair" : tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
+          style={{ cursor: tool === "select" && !selectedId ? "grab" : tool === "room" ? "crosshair" : tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
         >
           {/* Grid layer */}
           <Layer listening={false}>
@@ -867,7 +931,12 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               <span className="text-[#6b6560]">Remove selected</span>
               <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Esc</kbd>
               <span className="text-[#6b6560]">Deselect</span>
+              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Scroll</kbd>
+              <span className="text-[#6b6560]">Zoom in/out</span>
             </div>
+            <p className="text-[11px] text-[#8a847e] mt-2">
+              Use Select tool + drag empty area to pan.
+            </p>
           </div>
 
           <p className="text-[10px] text-[#b5b0aa] mt-3 font-[family-name:var(--font-geist-mono)]">
