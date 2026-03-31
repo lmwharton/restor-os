@@ -27,7 +27,7 @@ export interface DoorData {
   wallId: string;
   position: number; // 0-1 parametric
   width: number; // feet
-  swing: "left" | "right";
+  swing: 0 | 1 | 2 | 3; // 4 quadrants: 0=hinge-left-swing-up, 1=hinge-left-swing-down, 2=hinge-right-swing-down, 3=hinge-right-swing-up
 }
 
 export interface WindowData {

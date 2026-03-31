@@ -7,6 +7,7 @@ import dynamic from "next/dynamic";
 import {
   useFloorPlans,
   useCreateFloorPlan,
+  useRooms,
 } from "@/lib/hooks/use-jobs";
 import { apiGet, apiPost, apiPatch } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
@@ -25,6 +26,7 @@ export default function FloorPlanPage({
 
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
+  const { data: jobRooms } = useRooms(jobId);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
@@ -194,6 +196,7 @@ export default function FloorPlanPage({
           key={activeFloor?.id ?? "new"}
           initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
           onChange={handleChange}
+          rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
         />
       </div>
     </div>

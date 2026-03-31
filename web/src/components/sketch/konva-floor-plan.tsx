@@ -28,6 +28,7 @@ interface KonvaFloorPlanProps {
   initialData?: FloorPlanData | null;
   onChange?: (data: FloorPlanData) => void;
   readOnly?: boolean;
+  rooms?: Array<{ id: string; room_name: string }>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -131,7 +132,7 @@ function ToolIcon({ type }: { type: string }) {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-export default function KonvaFloorPlan({ initialData, onChange, readOnly = false }: KonvaFloorPlanProps) {
+export default function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms }: KonvaFloorPlanProps) {
   const data = initialData ?? emptyFloorPlan();
   const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
@@ -271,7 +272,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       const hit = findNearestWall(pos.x, pos.y, state.walls);
       if (hit) {
         if (tool === "door") {
-          const newDoor: DoorData = { id: uid("door"), wallId: hit.wall.id, position: hit.t, width: 3, swing: "left" };
+          const newDoor: DoorData = { id: uid("door"), wallId: hit.wall.id, position: hit.t, width: 3, swing: 0 };
           push({ ...state, doors: [...state.doors, newDoor] });
         } else {
           const newWindow: WindowData = { id: uid("win"), wallId: hit.wall.id, position: hit.t, width: 3 };
@@ -318,7 +319,12 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       const h = Math.abs(drawCurrent.y - drawStart.y);
 
       if (w >= gs && h >= gs) {
-        const name = prompt("Room name:", "Room") ?? "Room";
+        const existingNames = propertyRooms?.map((r) => r.room_name).filter(Boolean) ?? [];
+        const hint = existingNames.length > 0
+          ? `Available rooms: ${existingNames.join(", ")}\n\nEnter room name:`
+          : "Room name:";
+        const defaultName = existingNames[0] ?? "Room";
+        const name = prompt(hint, defaultName) ?? "Room";
         const newRoom: RoomData = { id: uid("room"), x, y, width: w, height: h, name, fill: "#fff3ed" };
         const roomWalls = wallsForRoom(newRoom);
         push({
@@ -330,7 +336,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       setDrawStart(null);
       setDrawCurrent(null);
     }
-  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push]);
+  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push, propertyRooms]);
 
   /* ---------------------------------------------------------------- */
   /*  Drag handlers for select tool                                    */
@@ -639,7 +645,11 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               if (!wall) return null;
               const { px, py, angle } = doorPosition(door, wall);
               const doorPx = door.width * gs;
-              const swingDir = door.swing === "left" ? 1 : -1;
+              // Normalize legacy string values to numeric swing
+              const swing: 0 | 1 | 2 | 3 = typeof door.swing === "number" ? door.swing : (door.swing === "left" ? 0 : 2);
+              // Quadrant: 0=hinge-left/up, 1=hinge-left/down, 2=hinge-right/down, 3=hinge-right/up
+              const hingeX = (swing === 0 || swing === 1) ? -doorPx / 2 : doorPx / 2;
+              const leafDir = (swing === 0 || swing === 3) ? -1 : 1; // -1=up (negative Y), 1=down (positive Y)
               const isSelected = selectedId === door.id;
               return (
                 <Group
@@ -651,13 +661,12 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   onClick={() => {
                     if (tool === "select") {
                       if (isSelected) {
-                        // Already selected: flip swing direction
+                        // Already selected: cycle through 4 swing directions
                         const updated = state.doors.map((d) =>
-                          d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
+                          d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
                         );
                         push({ ...state, doors: updated });
                       } else {
-                        // Not selected: just select it
                         setSelectedId(door.id);
                       }
                     }
@@ -667,7 +676,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                     if (tool === "select") {
                       if (isSelected) {
                         const updated = state.doors.map((d) =>
-                          d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
+                          d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
                         );
                         push({ ...state, doors: updated });
                       } else {
@@ -714,22 +723,27 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                     x={-doorPx / 2 - 5}
                     y={-doorPx - 5}
                     width={doorPx + 10}
-                    height={doorPx + 10}
+                    height={doorPx * 2 + 10}
                     fill="transparent"
                     hitStrokeWidth={0}
                   />
                   {/* Gap in wall */}
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
-                  {/* Door line */}
-                  <Line points={[-doorPx / 2, 0, -doorPx / 2, -doorPx * swingDir]} stroke="#1a1a1a" strokeWidth={2} />
-                  {/* Swing arc */}
+                  {/* Door leaf line — from hinge point perpendicular to the wall */}
+                  <Line points={[hingeX, 0, hingeX, doorPx * leafDir]} stroke="#1a1a1a" strokeWidth={2} />
+                  {/* Swing arc — quarter circle showing door sweep */}
                   <Arc
-                    x={-doorPx / 2}
+                    x={hingeX}
                     y={0}
                     innerRadius={doorPx - 2}
                     outerRadius={doorPx}
                     angle={90}
-                    rotation={swingDir === 1 ? -90 : 0}
+                    rotation={
+                      swing === 0 ? -90   // hinge-left, swing up: arc from -Y toward +X
+                        : swing === 1 ? 0    // hinge-left, swing down: arc from +X toward +Y
+                        : swing === 2 ? 90   // hinge-right, swing down: arc from +Y toward -X
+                        : 180                 // hinge-right, swing up: arc from -X toward -Y
+                    }
                     fill="transparent"
                     stroke="#1a1a1a"
                     strokeWidth={1}
