@@ -112,7 +112,7 @@ def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
         "room_count": _extract_embedded_count(data, "job_rooms"),
         "photo_count": _extract_embedded_count(data, "photos"),
         "floor_plan_count": _extract_embedded_count(data, "floor_plans"),
-        "line_item_count": _extract_embedded_count(data, "line_items"),
+        "line_item_count": 0,  # line_items table not created yet (Spec 02)
     }
     return _parse_job_detail(data, counts)
 
@@ -166,7 +166,7 @@ async def _get_job_counts(client, job_id: str) -> dict:
         ("job_rooms", "room_count"),
         ("photos", "photo_count"),
         ("floor_plans", "floor_plan_count"),
-        ("line_items", "line_item_count"),
+        # ("line_items", "line_item_count"),  # Not created yet (Spec 02)
     ]:
         try:
             result = await (
@@ -376,7 +376,7 @@ async def list_jobs(
 
     # Use PostgREST embedded counts to get photo/room/floor_plan/line_item
     # counts in a single query (no N+1).
-    select_str = "*, job_rooms(count), photos(count), floor_plans(count), line_items(count)"
+    select_str = "*, job_rooms(count), photos(count), floor_plans(count)"
 
     query = (
         client.table("jobs")
