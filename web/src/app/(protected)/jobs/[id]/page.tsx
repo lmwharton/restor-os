@@ -13,6 +13,8 @@ import {
   useFloorPlans,
   useUpdateJob,
   useCreateReading,
+  useCreateRoom,
+  useDeleteRoom,
 } from "@/lib/hooks/use-jobs";
 // Types used via hook return inference — no direct imports needed
 
@@ -574,7 +576,7 @@ function GppTrendChart({ readings, target }: { readings: { day: number; gpp: num
           return (
             <div key={r.day} className="flex-1 flex flex-col items-center gap-1">
               <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold text-on-surface tabular-nums">
-                {r.gpp.toFixed(0)}
+                {(r.gpp ?? 0).toFixed(0)}
               </span>
               <div className="w-full flex items-end" style={{ height: 80 }}>
                 <div
@@ -645,6 +647,17 @@ export default function JobDetailPage() {
   const deleteJob = useDeleteJob();
   const createShareLink = useCreateShareLink(jobId);
   const updateJob = useUpdateJob(jobId);
+  const createRoom = useCreateRoom(jobId);
+  const deleteRoom = useDeleteRoom(jobId);
+  const [newRoomName, setNewRoomName] = useState("");
+  const [showAddRoom, setShowAddRoom] = useState(false);
+
+  const handleAddRoom = () => {
+    if (!newRoomName.trim()) return;
+    createRoom.mutate({ room_name: newRoomName.trim() } as Record<string, string>, {
+      onSuccess: () => { setNewRoomName(""); setShowAddRoom(false); },
+    });
+  };
 
   const handleFieldSave = useCallback((field: string, value: string) => {
     updateJob.mutate({ [field]: value || null } as Record<string, string | null>);
@@ -707,8 +720,8 @@ export default function JobDetailPage() {
     if (!readings || readings.length === 0) return [];
     return [...readings]
       .sort((a, b) => new Date(a.reading_date).getTime() - new Date(b.reading_date).getTime())
-      .filter((r) => r.atmospheric_gpp !== null)
-      .map((r) => ({ day: r.day_number ?? 0, gpp: r.atmospheric_gpp! }));
+      .filter((r) => r.atmospheric_gpp != null && typeof r.atmospheric_gpp === "number")
+      .map((r) => ({ day: r.day_number ?? 0, gpp: Number(r.atmospheric_gpp) }));
   }, [readings]);
 
   // Job events for this job, sorted newest first
@@ -863,31 +876,46 @@ export default function JobDetailPage() {
                 {rooms?.map((room) => (
                   <span
                     key={room.id}
-                    className="px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface"
+                    className="group px-3 py-1.5 rounded-full bg-surface-container text-[13px] font-medium text-on-surface flex items-center gap-1.5"
                   >
                     {room.room_name}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
+                      className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-error transition-all cursor-pointer"
+                      aria-label={`Remove ${room.room_name}`}
+                    >
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+                    </button>
                   </span>
                 ))}
-                {rooms && rooms.length > 0 && (
+                {showAddRoom ? (
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="text"
+                      value={newRoomName}
+                      onChange={(e) => setNewRoomName(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") { setShowAddRoom(false); setNewRoomName(""); } }}
+                      placeholder="Kitchen, Bedroom 1..."
+                      autoFocus
+                      className="h-8 px-3 rounded-full bg-surface-container text-[13px] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40 w-40"
+                    />
+                    <button type="button" onClick={handleAddRoom} disabled={!newRoomName.trim() || createRoom.isPending}
+                      className="text-emerald-600 hover:text-emerald-700 cursor-pointer disabled:opacity-40" aria-label="Save room">
+                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                    <button type="button" onClick={() => { setShowAddRoom(false); setNewRoomName(""); }}
+                      className="text-on-surface-variant hover:text-error cursor-pointer" aria-label="Cancel">
+                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+                    </button>
+                  </div>
+                ) : (
                   <button
                     type="button"
-                    onClick={() => router.push(`/jobs/${jobId}/rooms/new`)}
+                    onClick={() => setShowAddRoom(true)}
                     className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
                   >
-                    + Add
-                  </button>
-                )}
-                {(!rooms || rooms.length === 0) && (
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/jobs/${jobId}/rooms/new`)}
-                    className="flex items-center gap-2 px-4 py-2.5 rounded-lg border border-dashed border-outline-variant/50 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                  >
-                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    </svg>
-                    Add rooms
+                    + Add room
                   </button>
                 )}
               </div>
@@ -951,7 +979,7 @@ export default function JobDetailPage() {
             title="Moisture Readings"
             preview={
               gppData.length > 0
-                ? `GPP: ${gppData.map((d) => d.gpp.toFixed(0)).join(" \u2192 ")} \u2193 Target: 45`
+                ? `GPP: ${gppData.map((d) => (d.gpp ?? 0).toFixed(0)).join(" \u2192 ")} \u2193 Target: 45`
                 : "No readings yet"
             }
           >
