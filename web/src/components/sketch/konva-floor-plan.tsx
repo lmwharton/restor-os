@@ -640,34 +640,84 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               const { px, py, angle } = doorPosition(door, wall);
               const doorPx = door.width * gs;
               const swingDir = door.swing === "left" ? 1 : -1;
+              const isSelected = selectedId === door.id;
               return (
                 <Group
                   key={door.id}
                   x={px}
                   y={py}
                   rotation={(angle * 180) / Math.PI}
+                  draggable={tool === "select" && !readOnly}
                   onClick={() => {
                     if (tool === "select") {
-                      // Flip swing on click
-                      const updated = state.doors.map((d) =>
-                        d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
-                      );
-                      push({ ...state, doors: updated });
-                      setSelectedId(door.id);
+                      if (isSelected) {
+                        // Already selected: flip swing direction
+                        const updated = state.doors.map((d) =>
+                          d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
+                        );
+                        push({ ...state, doors: updated });
+                      } else {
+                        // Not selected: just select it
+                        setSelectedId(door.id);
+                      }
                     }
                     if (tool === "delete") deleteElement(door.id);
                   }}
                   onTap={() => {
                     if (tool === "select") {
-                      const updated = state.doors.map((d) =>
-                        d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
-                      );
-                      push({ ...state, doors: updated });
-                      setSelectedId(door.id);
+                      if (isSelected) {
+                        const updated = state.doors.map((d) =>
+                          d.id === door.id ? { ...d, swing: d.swing === "left" ? "right" as const : "left" as const } : d
+                        );
+                        push({ ...state, doors: updated });
+                      } else {
+                        setSelectedId(door.id);
+                      }
                     }
                     if (tool === "delete") deleteElement(door.id);
                   }}
+                  onDragMove={(e) => {
+                    if (tool !== "select") return;
+                    const node = e.target;
+                    const mx = node.x();
+                    const my = node.y();
+                    const wx1 = wall.x1, wy1 = wall.y1;
+                    const wx2 = wall.x2, wy2 = wall.y2;
+                    const dx = wx2 - wx1, dy = wy2 - wy1;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) return;
+                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
+                    t = Math.max(0.1, Math.min(0.9, t));
+                    node.x(wx1 + t * dx);
+                    node.y(wy1 + t * dy);
+                  }}
+                  onDragEnd={(e) => {
+                    if (tool !== "select") return;
+                    const node = e.target;
+                    const mx = node.x();
+                    const my = node.y();
+                    const wx1 = wall.x1, wy1 = wall.y1;
+                    const wx2 = wall.x2, wy2 = wall.y2;
+                    const dx = wx2 - wx1, dy = wy2 - wy1;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) return;
+                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
+                    t = Math.max(0.1, Math.min(0.9, t));
+                    const updated = state.doors.map((d) =>
+                      d.id === door.id ? { ...d, position: t } : d
+                    );
+                    push({ ...state, doors: updated });
+                  }}
                 >
+                  {/* Invisible hit area for easier clicking */}
+                  <Rect
+                    x={-doorPx / 2 - 5}
+                    y={-doorPx - 5}
+                    width={doorPx + 10}
+                    height={doorPx + 10}
+                    fill="transparent"
+                    hitStrokeWidth={0}
+                  />
                   {/* Gap in wall */}
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
                   {/* Door line */}
@@ -685,8 +735,8 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                     strokeWidth={1}
                     dash={[3, 2]}
                   />
-                  {selectedId === door.id && (
-                    <Circle x={0} y={0} radius={5} fill="#5b6abf" stroke="#ffffff" strokeWidth={2} />
+                  {isSelected && (
+                    <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />
                   )}
                 </Group>
               );
@@ -697,22 +747,65 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               if (!wall) return null;
               const { px, py, angle } = doorPosition(win, wall);
               const winPx = win.width * gs;
+              const isSelected = selectedId === win.id;
               return (
                 <Group
                   key={win.id}
                   x={px}
                   y={py}
                   rotation={(angle * 180) / Math.PI}
+                  draggable={tool === "select" && !readOnly}
                   onClick={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
                   onTap={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
+                  onDragMove={(e) => {
+                    if (tool !== "select") return;
+                    const node = e.target;
+                    const mx = node.x();
+                    const my = node.y();
+                    const wx1 = wall.x1, wy1 = wall.y1;
+                    const wx2 = wall.x2, wy2 = wall.y2;
+                    const dx = wx2 - wx1, dy = wy2 - wy1;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) return;
+                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
+                    t = Math.max(0.1, Math.min(0.9, t));
+                    node.x(wx1 + t * dx);
+                    node.y(wy1 + t * dy);
+                  }}
+                  onDragEnd={(e) => {
+                    if (tool !== "select") return;
+                    const node = e.target;
+                    const mx = node.x();
+                    const my = node.y();
+                    const wx1 = wall.x1, wy1 = wall.y1;
+                    const wx2 = wall.x2, wy2 = wall.y2;
+                    const dx = wx2 - wx1, dy = wy2 - wy1;
+                    const len2 = dx * dx + dy * dy;
+                    if (len2 === 0) return;
+                    let t = ((mx - wx1) * dx + (my - wy1) * dy) / len2;
+                    t = Math.max(0.1, Math.min(0.9, t));
+                    const updated = state.windows.map((w) =>
+                      w.id === win.id ? { ...w, position: t } : w
+                    );
+                    push({ ...state, windows: updated });
+                  }}
                 >
+                  {/* Invisible hit area for easier clicking */}
+                  <Rect
+                    x={-winPx / 2 - 5}
+                    y={-10}
+                    width={winPx + 10}
+                    height={20}
+                    fill="transparent"
+                    hitStrokeWidth={0}
+                  />
                   {/* Gap in wall */}
                   <Line points={[-winPx / 2, 0, winPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
                   {/* Double line for window */}
                   <Line points={[-winPx / 2, -3, winPx / 2, -3]} stroke="#5b6abf" strokeWidth={2} />
                   <Line points={[-winPx / 2, 3, winPx / 2, 3]} stroke="#5b6abf" strokeWidth={2} />
-                  {selectedId === win.id && (
-                    <Circle x={0} y={0} radius={5} fill="#5b6abf" stroke="#ffffff" strokeWidth={2} />
+                  {isSelected && (
+                    <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />
                   )}
                 </Group>
               );
