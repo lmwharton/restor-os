@@ -198,7 +198,7 @@ async def get_auth_context(request: Request) -> AuthContext:
         .execute()
     )
 
-    user = result.data
+    user = result.data if result else None
     if not user:
         raise AppException(
             status_code=401,
