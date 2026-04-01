@@ -49,6 +49,7 @@ export default function FloorPlanPage({
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
+  const lastCanvasRef = useRef<FloorPlanData | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -194,9 +195,18 @@ export default function FloorPlanPage({
           Back to Job
         </button>
 
-        {/* Save status */}
-        <div className="ml-2 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          {saveStatus === "saving" && <span className="text-on-surface-variant">Saving...</span>}
+        {/* Save button + status */}
+        <button
+          type="button"
+          onClick={() => {
+            if (lastCanvasRef.current) handleChange(lastCanvasRef.current);
+          }}
+          className="ml-2 px-3 py-1.5 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer hover:opacity-90 transition-opacity"
+        >
+          {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
+        </button>
+        <div className="ml-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
+          {saveStatus === "error" && <span className="text-error">Save failed</span>}
           {saveStatus === "saved" && <span className="text-green-600">Saved</span>}
           {saveStatus === "error" && <span className="text-red-600">Save failed</span>}
         </div>
@@ -245,7 +255,7 @@ export default function FloorPlanPage({
         <KonvaFloorPlan
           key={activeFloor?.id ?? "new"}
           initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
-          onChange={handleChange}
+          onChange={(data: FloorPlanData) => { lastCanvasRef.current = data; handleChange(data); }}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
           onCreateRoom={handleCreateRoom}
         />
