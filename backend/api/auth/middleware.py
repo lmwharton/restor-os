@@ -194,7 +194,7 @@ async def get_auth_context(request: Request) -> AuthContext:
         .select("id, company_id, role, is_platform_admin")
         .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
-        .single()
+        .maybe_single()
         .execute()
     )
 
