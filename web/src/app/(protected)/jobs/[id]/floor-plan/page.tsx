@@ -197,29 +197,38 @@ export default function FloorPlanPage({
         </div>
 
         {/* Floor tabs */}
-        <div className="flex items-center gap-1 ml-auto">
-          {floorPlans?.map((fp, idx) => (
-            <button
-              key={fp.id}
-              type="button"
-              onClick={() => {
-                setActiveFloorIdx(idx);
-                setActiveFloorId(fp.id);
-              }}
-              className={`px-3 py-1.5 rounded-lg text-[12px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
-                fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId)
-                  ? "bg-on-surface text-surface"
-                  : "text-on-surface-variant hover:bg-surface-container-high"
-              }`}
-            >
-              {fp.floor_name}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 ml-auto">
+          {floorPlans?.map((fp, idx) => {
+            const isActive = fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId);
+            const roomCount = (fp.canvas_data as FloorPlanData | null)?.rooms?.length ?? 0;
+            return (
+              <button
+                key={fp.id}
+                type="button"
+                onClick={() => {
+                  setActiveFloorIdx(idx);
+                  setActiveFloorId(fp.id);
+                }}
+                className={`px-4 py-2 rounded-lg text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
+                  isActive
+                    ? "bg-[#1a1a1a] text-white shadow-sm"
+                    : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
+                }`}
+              >
+                <span>{fp.floor_name}</span>
+                {roomCount > 0 && (
+                  <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
+                    {roomCount} {roomCount === 1 ? "rm" : "rms"}
+                  </span>
+                )}
+              </button>
+            );
+          })}
           <button
             type="button"
             onClick={handleAddFloor}
             disabled={createFloorPlan.isPending}
-            className="px-2.5 py-1.5 rounded-lg text-[12px] font-semibold text-brand-accent hover:bg-brand-accent/8 transition-colors cursor-pointer font-[family-name:var(--font-geist-mono)] disabled:opacity-40"
+            className="px-3.5 py-2 rounded-lg text-[13px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer font-[family-name:var(--font-geist-mono)] disabled:opacity-40"
           >
             + Floor
           </button>

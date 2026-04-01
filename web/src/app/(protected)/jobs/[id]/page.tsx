@@ -832,7 +832,7 @@ export default function JobDetailPage() {
       </header>
 
       {/* ── Main Content Grid ───────────────────────────────────── */}
-      <main className="max-w-6xl mx-auto px-4 py-6 pb-28 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 pb-40 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
 
         {/* ── LEFT COLUMN: Accordion Sections ───────────────────── */}
         <div className="space-y-3">

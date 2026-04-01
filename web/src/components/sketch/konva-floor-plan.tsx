@@ -852,13 +852,13 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   {/* Gap in wall */}
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
                   {/* Door leaf line — from hinge point perpendicular to the wall */}
-                  <Line points={[hingeX, 0, hingeX, doorPx * leafDir]} stroke="#1a1a1a" strokeWidth={2} />
+                  <Line points={[hingeX, 0, hingeX, doorPx * 0.7 * leafDir]} stroke="#1a1a1a" strokeWidth={2} />
                   {/* Swing arc — quarter circle showing door sweep */}
                   <Arc
                     x={hingeX}
                     y={0}
-                    innerRadius={doorPx - 2}
-                    outerRadius={doorPx}
+                    innerRadius={doorPx * 0.7 - 1}
+                    outerRadius={doorPx * 0.7}
                     angle={90}
                     rotation={
                       swing === 0 ? -90   // hinge-left, swing up: arc from -Y toward +X
