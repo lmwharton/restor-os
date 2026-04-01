@@ -45,6 +45,7 @@ interface CanvasRoom {
 interface CanvasData {
   walls?: CanvasWall[];
   rooms?: CanvasRoom[];
+  gridSize?: number;
 }
 
 /* ------------------------------------------------------------------ */
@@ -202,6 +203,7 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
   const walls = Array.isArray(rawWalls) ? rawWalls : [];
   const rawRooms = canvasData?.rooms;
   const rooms = Array.isArray(rawRooms) ? rawRooms : [];
+  const gs = canvasData?.gridSize || 20;
 
   if (walls.length === 0 && rooms.length === 0) {
     return (
@@ -262,17 +264,30 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
               strokeWidth={Math.max(1, vbW / 200)}
             />
             {room.name && (
-              <text
-                x={room.x + room.width / 2}
-                y={room.y + room.height / 2}
-                textAnchor="middle"
-                dominantBaseline="middle"
-                fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
-                fill="#6b6560"
-                fontFamily="var(--font-geist-mono), monospace"
-              >
-                {room.name}
-              </text>
+              <>
+                <text
+                  x={room.x + room.width / 2}
+                  y={room.y + room.height / 2 - 5}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
+                  fill="#6b6560"
+                  fontFamily="var(--font-geist-mono), monospace"
+                >
+                  {room.name}
+                </text>
+                <text
+                  x={room.x + room.width / 2}
+                  y={room.y + room.height / 2 + 7}
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                  fontSize={7}
+                  fill="#8a847e"
+                  fontFamily="var(--font-geist-mono), monospace"
+                >
+                  {Math.round((room.width / gs) * (room.height / gs))} SF
+                </text>
+              </>
             )}
           </g>
         ))}

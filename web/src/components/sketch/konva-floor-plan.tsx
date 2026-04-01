@@ -449,7 +449,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
               type="button"
               onClick={() => { setTool(t.id); setSelectedId(null); setDrawStart(null); setWallStart(null); }}
               aria-label={t.label}
-              className={`flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
+              className={`flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
                 tool === t.id
                   ? "bg-[#e85d26]/12 text-[#e85d26]"
                   : "text-[#6b6560] hover:bg-[#eae6e1]"
@@ -465,50 +465,50 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
             onClick={undo}
             disabled={!canUndo}
             aria-label="Undo"
-            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
+            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
           >
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M3 10h14a4 4 0 0 1 0 8H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 6L3 10l4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            <span className="mt-0.5">Undo</span>
+            <span className="mt-0.5 hidden sm:inline">Undo</span>
           </button>
           <button
             type="button"
             onClick={redo}
             disabled={!canRedo}
             aria-label="Redo"
-            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
+            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
           >
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M21 10H7a4 4 0 0 0 0 8h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M17 6l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            <span className="mt-0.5">Redo</span>
+            <span className="mt-0.5 hidden sm:inline">Redo</span>
           </button>
           <div className="w-px h-8 bg-[#eae6e1] mx-1" />
           <button
             type="button"
             onClick={() => setStageScale((s) => Math.min(3, s * 1.2))}
             aria-label="Zoom in"
-            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
           >
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-            <span className="mt-0.5">Zoom+</span>
+            <span className="mt-0.5 hidden sm:inline">Zoom+</span>
           </button>
           <button
             type="button"
             onClick={() => setStageScale((s) => Math.max(0.3, s / 1.2))}
             aria-label="Zoom out"
-            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
           >
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-            <span className="mt-0.5">Zoom-</span>
+            <span className="mt-0.5 hidden sm:inline">Zoom-</span>
           </button>
           <button
             type="button"
             onClick={() => { setStageScale(1); setStagePos({ x: 0, y: 0 }); }}
             aria-label="Reset view"
-            className="flex flex-col items-center justify-center w-[44px] h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
+            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
           >
             <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M9 3v18M3 9h18" stroke="currentColor" strokeWidth="1" opacity="0.3" /></svg>
-            <span className="mt-0.5">Fit</span>
+            <span className="mt-0.5 hidden sm:inline">Fit</span>
           </button>
-          <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1">{Math.round(stageScale * 100)}%</span>
+          <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1 hidden sm:inline">{Math.round(stageScale * 100)}%</span>
         </div>
       )}
 
@@ -851,14 +851,14 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                   />
                   {/* Gap in wall */}
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
-                  {/* Door leaf line — from hinge point perpendicular to the wall */}
-                  <Line points={[hingeX, 0, hingeX, doorPx * 0.7 * leafDir]} stroke="#1a1a1a" strokeWidth={2} />
-                  {/* Swing arc — quarter circle showing door sweep */}
+                  {/* Door leaf — solid line from hinge to end */}
+                  <Line points={[hingeX, 0, hingeX, doorPx * 0.75 * leafDir]} stroke="#1a1a1a" strokeWidth={2.5} lineCap="round" />
+                  {/* Swing arc — smooth, thin, solid quarter circle */}
                   <Arc
                     x={hingeX}
                     y={0}
-                    innerRadius={doorPx * 0.7 - 1}
-                    outerRadius={doorPx * 0.7}
+                    innerRadius={doorPx * 0.73}
+                    outerRadius={doorPx * 0.75}
                     angle={90}
                     rotation={
                       swing === 0 ? -90   // hinge-left, swing up: arc from -Y toward +X
@@ -869,7 +869,7 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
                     fill="transparent"
                     stroke="#1a1a1a"
                     strokeWidth={1}
-                    dash={[3, 2]}
+                    opacity={0.5}
                   />
                   {isSelected && (
                     <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />
