@@ -2,11 +2,21 @@
 
 | Field | Value |
 |-------|-------|
-| Status | Draft (Design + Eng Review Complete) |
+| Status | 90% implemented — remaining items below |
 | Priority | High — blocking first customer demo |
 | Depends on | Spec 01 (Jobs) |
 | Estimate | 1 session (4-6 hours) |
 | Library | react-konva (721K weekly downloads, MIT, best React integration) |
+| Completed | 2026-03-31 |
+
+## Remaining Items
+
+- [ ] **Multi-floor save bug** — Floor 2 drawings don't save correctly. The `handleChange` callback may still reference Floor 1's data. Need to debug the activeFloorRef + save flow for non-primary floors.
+- [ ] **Floor grouping on job detail** — rooms drawn on Floor 2 show as "Not on floor plan" instead of under "Floor 2". The canvas_data match may fail if Floor 2's save didn't persist.
+- [ ] **Export to PNG** — button exists but not wired up. Konva has `stage.toDataURL()` for this.
+- [ ] **Properties panel** — show selected element's dimensions in the sidebar (currently shows instructions only).
+- [ ] **Mobile floor plan** — toolbar compact mode works, but touch drawing/zooming needs testing.
+- [ ] **Code under 500 lines** — currently ~870 lines (still 63% reduction from 2326, but over target).
 
 ---
 
