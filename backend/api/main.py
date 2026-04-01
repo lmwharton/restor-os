@@ -20,6 +20,10 @@ from api.shared.exceptions import AppException, app_exception_handler
 from api.shared.logging import generate_request_id, request_id_var, setup_logging
 from api.sharing.router import router as sharing_router
 
+# Health check log throttle — log at INFO once per hour, DEBUG otherwise
+_last_health_log: float = 0.0
+_HEALTH_LOG_INTERVAL = 3600  # seconds
+
 VERSION = "26.3.1"
 
 setup_logging()
@@ -64,6 +68,8 @@ async def request_context(request: Request, call_next):
     # Skip noisy OPTIONS preflight
     if request.method != "OPTIONS":
         status = response.status_code
+        path = request.url.path
+
         if status < 400:
             level = logging.INFO
         elif status < 500:
@@ -71,9 +77,18 @@ async def request_context(request: Request, call_next):
         else:
             level = logging.ERROR
 
+        # Throttle health check logs — once per hour at INFO, DEBUG otherwise
+        if path == "/health" and status < 400:
+            global _last_health_log
+            now = time.monotonic()
+            if now - _last_health_log < _HEALTH_LOG_INTERVAL:
+                level = logging.DEBUG  # suppressed unless DEBUG is on
+            else:
+                _last_health_log = now
+
         logger.log(level, "request", extra={"extra_data": {
             "method": request.method,
-            "path": request.url.path,
+            "path": path,
             "status": status,
             "duration_ms": duration_ms,
         }})

@@ -46,15 +46,31 @@ class JSONFormatter(logging.Formatter):
     """
 
     def format(self, record: logging.LogRecord) -> str:
+        ts = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created))
+        req_id = request_id_var.get("")
+        msg = record.getMessage()
+        extra_data = getattr(record, "extra_data", None)
+
+        # Compact single-line format for request logs (INFO/WARNING level)
+        # Example: 2026-03-31T12:00:00 [a1b2c3d4] GET /v1/jobs 200 12.5ms
+        if msg == "request" and extra_data and isinstance(extra_data, dict):
+            method = extra_data.get("method", "?")
+            path = extra_data.get("path", "?")
+            status = extra_data.get("status", "?")
+            dur = extra_data.get("duration_ms", "?")
+            cid = company_id_var.get("")
+            ctx = f" co:{cid}" if cid else ""
+            return f"{ts} [{req_id}] {method} {path} {status} {dur}ms{ctx}"
+
+        # JSON format for errors, app events, and anything with structured data
         log_data: dict = {
-            "ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(record.created)),
+            "ts": ts,
             "level": record.levelname,
             "logger": record.name,
-            "msg": record.getMessage(),
-            "req_id": request_id_var.get(""),
+            "msg": msg,
+            "req_id": req_id,
         }
 
-        # Add tenant context if set
         cid = company_id_var.get("")
         uid = user_id_var.get("")
         if cid:
@@ -62,12 +78,9 @@ class JSONFormatter(logging.Formatter):
         if uid:
             log_data["user_id"] = uid
 
-        # Merge structured extra data (set via extra={"extra_data": {...}})
-        extra_data = getattr(record, "extra_data", None)
         if extra_data and isinstance(extra_data, dict):
             log_data.update(extra_data)
 
-        # Include exception info if present
         if record.exc_info and record.exc_info[1]:
             log_data["error"] = str(record.exc_info[1])
             log_data["error_type"] = type(record.exc_info[1]).__name__

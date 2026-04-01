@@ -32,10 +32,11 @@ Crewmatic/
 │   │       ├── README.md                # Product overview, tech stack, V1 scope
 │   │       ├── restoros-architecture.md # Full technical architecture (18 DB tables, 50+ APIs)
 │   │       └── restoros-consumer-workflows-v1.md  # 15 end-to-end user workflows
-│   └── specs/                           # Implementation specs (one per feature)
-│       ├── draft/                       # Specs being written
-│       ├── in-progress/                 # Specs currently being implemented
-│       └── implemented/                 # Completed specs
+│   ├── specs/                           # Implementation specs (one per feature)
+│   │   ├── draft/                       # Specs being written
+│   │   ├── in-progress/                 # Specs currently being implemented
+│   │   └── implemented/                 # Completed specs
+│   └── harness/                         # QA refine loop evaluations and summaries
 ├── environment.md                       # Staging/production URLs and service dashboard links
 └── web/                                 # Next.js 16 frontend (Vercel-hosted)
     └── src/app/
@@ -155,3 +156,4 @@ Key routing rules:
 - Design system, brand → invoke design-consultation
 - Visual audit, design polish → invoke design-review
 - Architecture review → invoke plan-eng-review
+- Refine, polish, iterate on design, museum quality, qa refine loop → invoke qa-refine-loop

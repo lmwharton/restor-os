@@ -130,6 +130,15 @@ export function doorPosition(door: DoorData | WindowData, wall: WallData) {
   return { px, py, angle };
 }
 
+/** Project a point onto a wall segment, returning clamped parametric position */
+export function projectOntoWall(mx: number, my: number, wall: WallData, margin = 0.1): number | null {
+  const dx = wall.x2 - wall.x1, dy = wall.y2 - wall.y1;
+  const len2 = dx * dx + dy * dy;
+  if (len2 === 0) return null;
+  const t = ((mx - wall.x1) * dx + (my - wall.y1) * dy) / len2;
+  return Math.max(margin, Math.min(1 - margin, t));
+}
+
 export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "draw" | "place" | "edit" }> = [
   { id: "room", label: "Room", icon: "rect", group: "draw" },
   { id: "wall", label: "Wall", icon: "line", group: "draw" },
