@@ -1243,19 +1243,25 @@ export default function JobDetailPage() {
               To Complete This Job
             </h3>
             <div className="space-y-3">
-              {(!readings || readings.length === 0 || !readings.some((r) => {
-                const now = new Date();
-                const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-                return r.reading_date === localDate;
-              })) && (
+              {(!readings || readings.length === 0) && (
                 <div className="flex gap-2.5">
                   <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
                   <div>
                     <p className="text-[13px] font-semibold text-brand-accent">
-                      Day {dayNumber ?? 1} readings not logged
+                      No moisture readings logged
                     </p>
                     <p className="text-[11px] text-on-surface-variant mt-0.5">
                       Needed for drying documentation
+                    </p>
+                  </div>
+                </div>
+              )}
+              {readings && readings.length > 0 && !rooms?.length && (
+                <div className="flex gap-2.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 shrink-0" />
+                  <div>
+                    <p className="text-[13px] font-medium text-on-surface">
+                      Add rooms to log per-room readings
                     </p>
                   </div>
                 </div>

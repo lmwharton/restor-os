@@ -63,16 +63,21 @@ export default function FloorPlanPage({
     ?? floorPlans?.[activeFloorIdx]
     ?? null;
 
+  // Keep a ref to activeFloor so the save callback always uses the latest
+  const activeFloorRef = useRef(activeFloor);
+  activeFloorRef.current = activeFloor;
+
   /* ---------------------------------------------------------------- */
   /*  Save — create or update                                          */
   /* ---------------------------------------------------------------- */
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
+      const currentFloor = activeFloorRef.current;
       setSaveStatus("saving");
       try {
-        if (activeFloor) {
-          await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${activeFloor.id}`, {
+        if (currentFloor) {
+          await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${currentFloor.id}`, {
             canvas_data: canvasData,
           });
           queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
@@ -130,7 +135,7 @@ export default function FloorPlanPage({
         setSaveStatus("error");
       }
     },
-    [activeFloor, floorPlans, jobId, queryClient, jobRooms, updateRoom]
+    [floorPlans, jobId, queryClient, jobRooms, updateRoom]
   );
 
   /* ---------------------------------------------------------------- */
