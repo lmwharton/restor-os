@@ -7,6 +7,8 @@ interface Step {
   detail?: string;
 }
 
+type SpecStatus = "implemented" | "in-progress" | "draft" | "not-started";
+
 interface Functionality {
   id: string;
   number: number;
@@ -17,13 +19,24 @@ interface Functionality {
   aiPowered?: boolean;
   noCompetitor?: boolean;
   brettQuote?: string;
+  specRef?: string;
+  specStatus?: SpecStatus;
 }
+
+const STATUS_STYLES: Record<SpecStatus, { bg: string; text: string; label: string }> = {
+  implemented: { bg: "bg-[#edf7f0]", text: "text-[#2a9d5c]", label: "Implemented" },
+  "in-progress": { bg: "bg-[#fff3ed]", text: "text-[#e85d26]", label: "In Progress" },
+  draft: { bg: "bg-[#f3eeff]", text: "text-[#7c5cbf]", label: "Spec Ready" },
+  "not-started": { bg: "bg-[#faf9f7]", text: "text-[#8a847e]", label: "Planned" },
+};
 
 const FUNCTIONALITIES: Functionality[] = [
   {
     id: "job-creation-dispatch",
     number: 1,
     name: "Job Creation & Dispatch",
+    specRef: "01 (Jobs) + 04B (Dispatch)",
+    specStatus: "implemented",
     tagline:
       "Emergency call comes in — capture job details, assign a tech, and dispatch them with push notifications. No more late-night group texts.",
     painPoint:
@@ -66,6 +79,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "site-assessment",
     number: 2,
     name: "Site Arrival & Assessment",
+    specRef: "01 (Jobs) + 04B (GPS Check-in)",
+    specStatus: "implemented",
     tagline:
       "Arrive on site, connect with the homeowner first, then systematically assess damage room by room.",
     steps: [
@@ -99,6 +114,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "photo-documentation",
     number: 3,
     name: "Photo Documentation",
+    specRef: "01 (Jobs)",
+    specStatus: "implemented",
     tagline:
       "Every photo auto-tagged with GPS, auto-associated to the active job, organized by room and type. ~60 photos per job.",
     painPoint:
@@ -135,6 +152,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "ai-photo-scope",
     number: 4,
     name: "AI Photo Scope",
+    specRef: "02 (AI Pipeline)",
+    specStatus: "draft",
     tagline:
       "Select damage photos, tap one button, get Xactimate line items with S500/OSHA justifications in seconds.",
     painPoint:
@@ -173,6 +192,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "ai-hazmat",
     number: 5,
     name: "AI Hazmat Scanner",
+    specRef: "02 (AI Pipeline)",
+    specStatus: "draft",
     tagline:
       "Every photo auto-scanned for asbestos-risk materials and lead paint. Flags dangers before techs touch anything.",
     aiPowered: true,
@@ -204,6 +225,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "scoping",
     number: 6,
     name: "Scoping (Voice & Manual)",
+    specRef: "03 (Voice)",
+    specStatus: "draft",
     tagline:
       "Speak naturally in any order \u2014 AI extracts and maps to the right fields in real-time. Or use manual keyboard entry with smart Xactimate code search. Every line item auto-backed by S500/OSHA.",
     painPoint:
@@ -248,6 +271,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "room-sketching",
     number: 7,
     name: "Room Sketching",
+    specRef: "01C (Floor Plan Konva)",
+    specStatus: "in-progress",
     tagline:
       "Draw floor plans with affected areas, equipment placement, and moisture point markers. Export compatible with Xactimate.",
     steps: [
@@ -276,6 +301,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "equipment-tracking",
     number: 8,
     name: "Equipment Tracking",
+    specRef: "04C (Equipment & Drying Cert)",
+    specStatus: "draft",
     tagline:
       "Log equipment by type and count. Track placement and removal dates. App auto-suggests sizing based on S500 formula. Bill by count × days.",
     steps: [
@@ -304,6 +331,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "site-log-monitoring",
     number: 9,
     name: "Site Log & Daily Monitoring",
+    specRef: "01 (Jobs)",
+    specStatus: "implemented",
     tagline:
       "Track moisture readings, equipment status, and drying progress across multiple days. Auto-calculate GPP. Trend charts replace paper logs and memory.",
     painPoint:
@@ -348,6 +377,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "job-review",
     number: 10,
     name: "Job Review & QA",
+    specRef: "02 (AI Pipeline)",
+    specStatus: "draft",
     tagline:
       "Before submitting to the adjuster, the owner reviews everything the tech documented. AI flags missing items.",
     aiPowered: true,
@@ -378,6 +409,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "reports",
     number: 11,
     name: "Report Generation",
+    specRef: "01 (Jobs) + 05 (ESX Export)",
+    specStatus: "implemented",
     tagline:
       "One tap generates a prosecution-grade PDF with branded header, line items, S500/OSHA justifications, and photo grids.",
     steps: [
@@ -400,7 +433,9 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Moisture trend charts and equipment log summary",
       },
       {
-        text: "Export as PDF (default) or Xactimate ESX format",
+        text: "Export as PDF (default)",
+        detail:
+          "ESX export (Xactimate native format) planned for V2 — eliminates manual re-entry into Xactimate",
       },
     ],
     brettQuote:
@@ -410,6 +445,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "auto-adjuster-reports",
     number: 12,
     name: "Auto Adjuster Reports",
+    specRef: "04E (Daily Auto-Reports)",
+    specStatus: "draft",
     tagline:
       "Daily progress updates auto-sent to the adjuster via secure link. Limited access — they see status, not everything.",
     noCompetitor: true,
@@ -438,6 +475,8 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "team-dashboard",
     number: 13,
     name: "Team Management & Dashboard",
+    specRef: "04A (Team Management)",
+    specStatus: "draft",
     tagline:
       "Invite techs, assign roles, control what they see. At-a-glance dashboard: active jobs, schedule, equipment deployed, metrics.",
     painPoint:
@@ -471,6 +510,82 @@ const FUNCTIONALITIES: Functionality[] = [
     brettQuote:
       "If this is THE app and this is what I expect them to do, there should be no problem. Right now I need them to go on Google Drive, then Notes, then check email — all these different things cause issues.",
   },
+  {
+    id: "reconstruction",
+    number: 14,
+    name: "Insurance Repair (Reconstruction)",
+    tagline:
+      "The natural second half of every water/fire/storm job. Same claim, same adjuster — separate job type with phase tracking, supplement management, and ACV/RCV holdback tracking.",
+    specRef: "01B (Reconstruction) + 05 Phase 5",
+    specStatus: "draft",
+    aiPowered: true,
+    steps: [
+      {
+        text: "Job mode selector: Restoration Only / Insurance Repair Only / Restoration + Repair",
+        detail:
+          "Mode can change mid-job when carrier confirms rebuild scope",
+      },
+      {
+        text: "Reconstruction scope builder with full Xactimate division coverage",
+        detail:
+          "Drywall, framing, flooring, painting, cabinetry, millwork, roofing, windows, doors, insulation, HVAC, plumbing, electrical",
+      },
+      {
+        text: "Mitigation-to-reconstruction handoff — pre-populate scope from mitigation phase",
+      },
+      {
+        text: "Phase tracking: Demo → Structural → Rough Mechanical → Insulation → Drywall → Paint → Finish → Walkthrough",
+      },
+      {
+        text: "Supplement management — AI drafts supplements when new damage is discovered during demo",
+      },
+      {
+        text: "ACV/RCV holdback tracking and release requests per phase milestone",
+      },
+      {
+        text: "Certificate of Completion triggers final holdback release",
+      },
+    ],
+    brettQuote:
+      "80% of the time the same company handles mitigation and reconstruction. Two jobs, two invoices — always. Different crews, different margins.",
+  },
+  {
+    id: "growth-engine",
+    number: 15,
+    name: "Growth Engine",
+    tagline:
+      "Crewmatic doesn't just help contractors manage work — it helps them bring in new revenue. Gamified referral loyalty, automated drip campaigns, and SEO/social automation.",
+    specRef: "05 Phase 9 (Revenue Generation)",
+    specStatus: "draft",
+    steps: [
+      {
+        text: "Tier-based referral loyalty program for plumbers, property managers, and other trades",
+        detail:
+          "Inspired by Duolingo streaks, Marriott Bonvoy status, and United MileagePlus. Higher tiers unlock better per-referral payouts and priority scheduling.",
+      },
+      {
+        text: "Streak mechanics — consecutive referral weeks build streaks with loss aversion",
+      },
+      {
+        text: "Automated drip campaigns via SMS + email to referral partners",
+        detail:
+          "Onboarding, nurture, win-back, and tier-up celebration sequences",
+      },
+      {
+        text: "SEO & geo audit for contractor's online presence",
+        detail:
+          "Google Business Profile optimization, social presence scoring, local search visibility",
+      },
+      {
+        text: "Social presence automation — auto-generate job completion posts, before/after galleries",
+      },
+      {
+        text: "Revenue attribution dashboard — see which referral channels generate the most revenue",
+      },
+    ],
+    brettQuote:
+      "We're not just helping contractors manage their workflow — we're helping them bring in new revenue.",
+  },
 ];
 
 export function ProductFunctionalities() {
@@ -483,7 +598,8 @@ export function ProductFunctionalities() {
       </h2>
       <p className="text-[14px] text-[#8a847e] mb-1">
         Every capability Crewmatic will offer, ordered by the natural workflow a
-        contractor follows from first call to getting paid.
+        contractor follows from first call to getting paid, plus reconstruction
+        and revenue growth.
       </p>
       <p className="text-[13px] text-[#b5b0aa] mb-6">
         Based on 16 validated workflows from co-founder Brett Sodders &mdash; 15
@@ -514,6 +630,11 @@ export function ProductFunctionalities() {
                     <span className="text-[15px] font-semibold text-[#1a1a1a] group-hover:text-[#e85d26] transition-colors">
                       {func.name}
                     </span>
+                    {func.specStatus && (
+                      <span className={`text-[10px] font-medium px-2 py-0.5 rounded-full ${STATUS_STYLES[func.specStatus].bg} ${STATUS_STYLES[func.specStatus].text}`}>
+                        {STATUS_STYLES[func.specStatus].label}
+                      </span>
+                    )}
                     {func.aiPowered && (
                       <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-[#f3eeff] text-[#7c5cbf]">
                         AI-Powered
@@ -591,6 +712,12 @@ export function ProductFunctionalities() {
                         &mdash; Brett Sodders, Co-founder
                       </p>
                     </div>
+                  )}
+
+                  {func.specRef && (
+                    <p className="mt-3 text-[11px] text-[#b5b0aa]">
+                      Spec: {func.specRef}
+                    </p>
                   )}
                 </div>
               )}

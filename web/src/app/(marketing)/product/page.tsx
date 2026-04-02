@@ -252,8 +252,9 @@ export default async function ProductPage() {
           Xactimate-ready reports, and get paid faster.
         </p>
         <p className="text-[14px] text-[#8a847e] leading-relaxed">
-          13 functionalities covering all 16 validated workflows. From the first
-          emergency call to the final payment &mdash; nothing is left out.
+          15 functionalities covering all 16 validated workflows. From the first
+          emergency call to the final payment, plus reconstruction and revenue
+          growth &mdash; nothing is left out.
         </p>
       </div>
 
@@ -265,7 +266,7 @@ export default async function ProductPage() {
             Platform Overview
           </h2>
           <p className="text-[14px] text-[#8a847e] mb-5">
-            Four pillars that make up the operating system for restoration contractors.
+            Five pillars that make up the operating system for restoration contractors.
           </p>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
