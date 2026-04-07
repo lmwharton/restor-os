@@ -22,14 +22,22 @@ router = APIRouter(tags=["notifications"])
 async def list_notifications(
     limit: int = Query(default=20, ge=1, le=50),
     ctx: AuthContext = Depends(get_auth_context),
+    debug: bool = Query(default=False),
 ):
     """Get recent notifications with unread count."""
-    return await get_notifications(
+    result = await get_notifications(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         last_seen_at=ctx.last_notifications_seen_at,
         limit=limit,
     )
+    if debug:
+        result["_debug"] = {
+            "company_id": str(ctx.company_id),
+            "user_id": str(ctx.user_id),
+            "last_seen_at": str(ctx.last_notifications_seen_at),
+        }
+    return result
 
 
 @router.get("/notifications/unread-count")
