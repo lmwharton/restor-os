@@ -68,7 +68,7 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
         .select("*, companies(*)")
         .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
-        .single()
+        .maybe_single()
         .execute()
     )
 
