@@ -35,8 +35,10 @@ export async function GET(request: NextRequest) {
   const { error } = await supabase.auth.exchangeCodeForSession(code);
 
   if (error) {
-    console.error("Auth callback error:", error.message);
-    const errorResponse = NextResponse.redirect(`${SITE_URL}/login`);
+    console.error("Auth callback error:", error.message, error);
+    const loginUrl = new URL(`${SITE_URL}/login`);
+    loginUrl.searchParams.set("auth_error", error.message);
+    const errorResponse = NextResponse.redirect(loginUrl);
     // Clear any partially-set auth cookies to prevent half-authenticated state
     request.cookies.getAll().forEach((cookie) => {
       if (cookie.name.startsWith("sb-")) {
