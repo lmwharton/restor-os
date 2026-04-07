@@ -19,12 +19,13 @@ async def get_notifications(
     """
     client = await get_supabase_admin_client()
 
-    # Get recent events (all company events except current user's)
+    # Get recent events: other users' actions + AI/system events (user_id IS NULL).
+    # PostgREST .neq() excludes NULLs, so we use .or_() to include both cases.
     result = await (
         client.table("event_history")
         .select("*")
         .eq("company_id", str(company_id))
-        .neq("user_id", str(user_id))
+        .or_(f"user_id.neq.{user_id},user_id.is.null")
         .order("created_at", desc=True)
         .limit(limit)
         .execute()
@@ -97,7 +98,7 @@ async def get_unread_count(
         client.table("event_history")
         .select("id", count="exact")
         .eq("company_id", str(company_id))
-        .neq("user_id", str(user_id))
+        .or_(f"user_id.neq.{user_id},user_id.is.null")
     )
 
     if last_seen_at:
