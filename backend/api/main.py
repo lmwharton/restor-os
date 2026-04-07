@@ -25,7 +25,7 @@ from api.sharing.router import router as sharing_router
 _last_health_log: float = 0.0
 _HEALTH_LOG_INTERVAL = 3600  # seconds
 
-VERSION = "26.3.1"
+VERSION = "26.4.1"
 
 setup_logging()
 logger = logging.getLogger("api")
