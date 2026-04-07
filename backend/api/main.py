@@ -18,6 +18,7 @@ from api.reports.router import router as reports_router
 from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
 from api.shared.logging import generate_request_id, request_id_var, setup_logging
+from api.notifications.router import router as notifications_router
 from api.sharing.router import router as sharing_router
 
 # Health check log throttle — log at INFO once per hour, DEBUG otherwise
@@ -102,6 +103,7 @@ app.include_router(events_router, prefix="/v1")
 app.include_router(floor_plans_router, prefix="/v1")
 app.include_router(jobs_router, prefix="/v1")
 app.include_router(moisture_router, prefix="/v1")
+app.include_router(notifications_router, prefix="/v1")
 app.include_router(photos_router, prefix="/v1")
 app.include_router(properties_router, prefix="/v1")
 app.include_router(reports_router, prefix="/v1")

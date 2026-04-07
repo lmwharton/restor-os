@@ -191,7 +191,7 @@ async def get_auth_context(request: Request) -> AuthContext:
     client = await get_supabase_admin_client()
     result = await (
         client.table("users")
-        .select("id, company_id, role, is_platform_admin")
+        .select("id, company_id, role, is_platform_admin, last_notifications_seen_at")
         .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
         .maybe_single()
@@ -213,12 +213,20 @@ async def get_auth_context(request: Request) -> AuthContext:
             error_code="AUTH_NO_COMPANY",
         )
 
+    # Parse last_notifications_seen_at if present
+    last_seen_raw = user.get("last_notifications_seen_at")
+    last_seen = None
+    if last_seen_raw:
+        from datetime import datetime, UTC
+        last_seen = datetime.fromisoformat(last_seen_raw.replace("Z", "+00:00"))
+
     ctx = AuthContext(
         auth_user_id=auth_user_id,
         user_id=UUID(user["id"]),
         company_id=UUID(user["company_id"]),
         role=user["role"],
         is_platform_admin=user.get("is_platform_admin", False),
+        last_notifications_seen_at=last_seen,
     )
     _set_cached_auth_context(auth_user_id, ctx)
 

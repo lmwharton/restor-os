@@ -80,3 +80,4 @@ class AuthContext(BaseModel):
     company_id: UUID  # from users.company_id
     role: str  # owner / employee
     is_platform_admin: bool
+    last_notifications_seen_at: datetime | None = None
