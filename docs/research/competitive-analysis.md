@@ -41,7 +41,7 @@ Water restoration contractors today juggle **4-6 separate tools** to document a 
 
 | What they need to do | Tool they use | Monthly cost |
 |---------------------|--------------|-------------|
-| Take photos | CompanyCam or phone camera | $19-27/user |
+| Take photos + voice notes | CompanyCam or phone camera | $79-199/user (CompanyCam w/ AI) |
 | Document damage | Encircle | $270-650 |
 | Log moisture readings | Paper/Excel or DryBook | $55-85/user |
 | Draw floor plans | magicplan or pen & paper | $40/project |
@@ -282,8 +282,37 @@ Founded 2020, Lindon, Utah. Bootstrapped, 2-10 employees. Built by restoration c
 | Clean Claims | IoT remote moisture monitoring | Unknown | Requires hardware sensors |
 | Xcelerate | Workflow automation | $55-85/user/mo | No field tools |
 | JobNimbus | CRM (roofing-first) | Custom | Not built for restoration |
-| CompanyCam | Photo docs only | $19-27/user/mo | Photos only |
+| CompanyCam | Photo docs + AI voice notes | $79-199/user/mo (3-user min) | No Xactimate codes, no damage classification, no insurance justifications — voice produces formatted text only |
 | Job-Dox | Project management | $350-650/mo | General PM |
+
+#### CompanyCam AI Deep Dive (Updated April 2026)
+
+CompanyCam raised to a **$2B valuation** (Feb 2026) on the strength of their photo data infrastructure. They've since launched AI features:
+
+**AI Note / Walkthrough Note (2025-2026):**
+- Walk the job site, snap photos, speak naturally about what you see
+- AI transcribes and formats speech into a structured bullet-point report
+- 15-minute max per recording, mobile-only
+- Output: formatted text notes (e.g., "Install new whip for water heater", "Replace undersized drain pan")
+- No Xactimate codes, no damage classification, no quantities/pricing, no insurance justifications
+- Pricing: $79/user/mo (Pro), $129 (Premium), $199 (Elite) — 3-user minimum required
+
+**Other AI features:** AI-generated photo captions, checklists, project updates. All text-formatting — no estimating intelligence.
+
+**Why Crewmatic wins:**
+
+| Capability | CompanyCam AI Note | Crewmatic Voice Walkthrough |
+|---|---|---|
+| Input | Voice + photos | Voice + photos |
+| Output | Formatted text notes | Structured site report + Xactimate line items |
+| Damage classification | No | Yes (Cat 1/2/3, Class 1-4 auto-detect) |
+| Xactimate codes | No | Yes (auto-mapped) |
+| S500/OSHA justifications | No | Yes (auto-attached) |
+| Quantities + pricing | No | Yes |
+| Insurance-ready | No | Yes |
+| Field extraction (form fill) | No | Yes (voice fills job forms) |
+
+CompanyCam's AI is a transcription overlay on a photo tool. Crewmatic's AI understands restoration — it turns the same voice + photo input into billable, insurance-defensible scope.
 
 ---
 
@@ -294,6 +323,7 @@ Founded 2020, Lindon, Utah. Bootstrapped, 2-10 employees. Built by restoration c
 | **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- | -- |
 | **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- | -- |
 | **Voice-Guided Scoping** | **YES** | Partial | -- | -- | -- | Partial | Announced | -- |
+| **Voice Walkthrough → Site Report** | **YES** | -- | -- | -- | -- | -- | -- | -- |
 | **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | YES | -- | YES | -- |
 | **Moisture Point Tracking** | **YES** | YES | YES | YES | YES | -- | YES | -- |
 | **Dehumidifier Output Logging** | **YES** | YES | YES | YES | YES | -- | Partial | -- |
@@ -479,7 +509,7 @@ Every photo automatically scanned for asbestos-risk materials and lead paint. Fl
 | Xactimate (required) | $350/mo per user ($2,690/yr) |
 | Encircle (documentation) | $270-455 |
 | Job management (Albi or PSA) | $165-325 |
-| CompanyCam (photos) | $57-135 |
+| CompanyCam (photos + AI notes) | $237-597 (3-user min at $79-199/user) |
 | magicplan (floor plans) | ~$400 (per project) |
 | **Total** | **$792 - $1,660+/month** |
 
