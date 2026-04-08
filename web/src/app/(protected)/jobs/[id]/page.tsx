@@ -38,6 +38,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -410,11 +411,11 @@ function AccordionSection({
 /*  Recon Phases Section (interactive)                                 */
 /* ------------------------------------------------------------------ */
 
-const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string }[] = [
-  { value: "pending", label: "Pending", color: "text-outline-variant", bg: "bg-[#b5b0aa]/10 border-[#b5b0aa]/30" },
-  { value: "in_progress", label: "In Progress", color: "text-type-mitigation", bg: "bg-type-mitigation/10 border-[#3b82f6]/30" },
-  { value: "on_hold", label: "On Hold", color: "text-status-in-progress", bg: "bg-status-in-progress/10 border-[#d97706]/30" },
-  { value: "complete", label: "Complete", color: "text-status-collected", bg: "bg-status-collected/10 border-[#2a9d5c]/30" },
+const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string; border: string }[] = [
+  { value: "pending",     label: "Pending",     color: "#b5b0aa",                  bg: withAlpha("#b5b0aa", 0.1),             border: withAlpha("#b5b0aa", 0.3) },
+  { value: "in_progress", label: "In Progress", color: JOB_TYPE_COLORS.mitigation, bg: withAlpha(JOB_TYPE_COLORS.mitigation, 0.1), border: withAlpha(JOB_TYPE_COLORS.mitigation, 0.3) },
+  { value: "on_hold",     label: "On Hold",     color: STATUS_COLORS.in_progress,  bg: withAlpha(STATUS_COLORS.in_progress, 0.1),  border: withAlpha(STATUS_COLORS.in_progress, 0.3) },
+  { value: "complete",    label: "Complete",     color: STATUS_COLORS.collected,    bg: withAlpha(STATUS_COLORS.collected, 0.1),    border: withAlpha("#2a9d5c", 0.3) },
 ];
 
 function PhaseStatusIcon({ status }: { status: ReconPhaseStatus }) {
@@ -514,12 +515,10 @@ function SortablePhaseRow({
           <span className="flex-1 text-[14px] font-medium text-on-surface">
             {phase.phase_name}
           </span>
-          <span className={`text-[12px] font-[family-name:var(--font-geist-mono)] ${
-            phase.status === "complete" ? "text-status-collected" :
-            phase.status === "in_progress" ? "text-type-mitigation" :
-            phase.status === "on_hold" ? "text-status-in-progress" :
-            "text-outline-variant"
-          }`}>
+          <span
+            className="text-[12px] font-[family-name:var(--font-geist-mono)]"
+            style={{ color: phase.status === "complete" ? "#10b981" : phase.status === "in_progress" ? "#3b82f6" : phase.status === "on_hold" ? "#d97706" : "#b5b0aa" }}
+          >
             {phase.status === "complete" && phase.completed_at
               ? `Completed ${new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
               : phase.status === "in_progress" ? "In Progress"
@@ -534,21 +533,23 @@ function SortablePhaseRow({
       {isExpanded && (
         <div className="px-2 pb-3 pt-1 ml-6 space-y-3 animate-[fadeSlideIn_150ms_ease-out]">
           <div className="flex gap-1.5">
-            {PHASE_STATUSES.map((s) => (
-              <button
-                key={s.value}
-                type="button"
-                onClick={() => onStatusChange(s.value)}
-                aria-label={`Set phase status to ${s.label}`}
-                className={`flex-1 h-8 rounded-md text-[11px] font-semibold border transition-all cursor-pointer ${
-                  phase.status === s.value
-                    ? `${s.bg} ${s.color}`
-                    : "bg-surface-container-lowest text-on-surface-variant/60 border-outline-variant/30 hover:border-outline-variant"
-                }`}
-              >
-                {s.label}
-              </button>
-            ))}
+            {PHASE_STATUSES.map((s) => {
+              const isActive = phase.status === s.value;
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => onStatusChange(s.value)}
+                  aria-label={`Set phase status to ${s.label}`}
+                  className={`flex-1 h-8 rounded-md text-[11px] font-semibold border transition-all cursor-pointer ${
+                    !isActive ? "bg-surface-container-lowest text-on-surface-variant/60 border-outline-variant/30 hover:border-outline-variant" : ""
+                  }`}
+                  style={isActive ? { backgroundColor: s.bg, color: s.color, borderColor: s.border } : undefined}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
           </div>
           {phase.notes && (
             <p className="text-[12px] text-on-surface-variant px-1">{phase.notes}</p>

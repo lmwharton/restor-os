@@ -8,6 +8,7 @@ import type {
   PipelineStage,
   TeamMember,
 } from "../types";
+import { STATUS_COLORS } from "../status-colors";
 
 // ─── Pipeline — derived from real jobs ────────────────────────────────
 
@@ -16,15 +17,15 @@ const PIPELINE_ORDER: PipelineStage[] = [
 ];
 
 const PIPELINE_COLORS: Record<PipelineStage, string> = {
-  new: "#dc2626",
-  contracted: "#f59e0b",
-  mitigation: "#e85d26",
-  drying: "#2563eb",
-  job_complete: "#6b7280",
-  submitted: "#0891b2",
-  collected: "#16a34a",
-  scoping: "#7c3aed",
-  in_progress: "#d97706",
+  new: STATUS_COLORS.new,
+  contracted: STATUS_COLORS.contracted,
+  mitigation: STATUS_COLORS.mitigation,
+  drying: STATUS_COLORS.drying,
+  job_complete: STATUS_COLORS.complete,
+  submitted: STATUS_COLORS.submitted,
+  collected: STATUS_COLORS.collected,
+  scoping: STATUS_COLORS.scoping,
+  in_progress: STATUS_COLORS.in_progress,
 };
 
 const PIPELINE_LABELS: Record<PipelineStage, string> = {

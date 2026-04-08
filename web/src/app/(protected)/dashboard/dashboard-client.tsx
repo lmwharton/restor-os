@@ -12,6 +12,7 @@ import {
 import { useJobs } from "@/lib/hooks/use-jobs";
 import DashboardMap from "@/components/dashboard-map";
 import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
+import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -115,16 +116,16 @@ function getEventMeta(event: Event): EventMeta {
 
 const MONO = "font-[family-name:var(--font-geist-mono)]";
 
-const STAGE_META: Record<PipelineStage, { label: string; dot: string; color: string; bg: string; text: string }> = {
-  new:          { label: "New",          dot: "bg-status-new",          color: "var(--status-new)",          bg: "bg-status-new/10",          text: "text-status-new" },
-  contracted:   { label: "Contracted",   dot: "bg-status-contracted",   color: "var(--status-contracted)",   bg: "bg-status-contracted/10",   text: "text-status-contracted" },
-  mitigation:   { label: "Mitigation",   dot: "bg-status-mitigation",   color: "var(--status-mitigation)",   bg: "bg-status-mitigation/10",   text: "text-status-mitigation" },
-  drying:       { label: "Drying",       dot: "bg-status-drying",       color: "var(--status-drying)",       bg: "bg-status-drying/10",       text: "text-status-drying" },
-  job_complete: { label: "Complete",     dot: "bg-status-complete",     color: "var(--status-complete)",     bg: "bg-status-complete/10",     text: "text-status-complete" },
-  submitted:    { label: "Submitted",    dot: "bg-status-submitted",    color: "var(--status-submitted)",    bg: "bg-status-submitted/10",    text: "text-status-submitted" },
-  collected:    { label: "Collected",    dot: "bg-status-collected",    color: "var(--status-collected)",    bg: "bg-status-collected/10",    text: "text-status-collected" },
-  scoping:      { label: "Scoping",      dot: "bg-status-scoping",      color: "var(--status-scoping)",      bg: "bg-status-scoping/10",      text: "text-status-scoping" },
-  in_progress:  { label: "In Progress",  dot: "bg-status-in-progress",  color: "var(--status-in-progress)",  bg: "bg-status-in-progress/10",  text: "text-status-in-progress" },
+const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string }> = {
+  new:          { label: "New",          color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.1) },
+  contracted:   { label: "Contracted",   color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.1) },
+  mitigation:   { label: "Mitigation",   color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.1) },
+  drying:       { label: "Drying",       color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.1) },
+  job_complete: { label: "Complete",     color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.1) },
+  submitted:    { label: "Submitted",    color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.1) },
+  collected:    { label: "Collected",    color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.1) },
+  scoping:      { label: "Scoping",      color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.1) },
+  in_progress:  { label: "In Progress",  color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.1) },
 };
 
 const MIT_STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected"];
@@ -157,15 +158,15 @@ function getTaskStage(task: PriorityTask, jobs: JobDetail[]): PipelineStage {
 }
 
 const PIN_COLOR: Record<PipelineStage, string> = {
-  new: "var(--status-new)",
-  contracted: "var(--status-contracted)",
-  mitigation: "var(--status-mitigation)",
-  drying: "var(--status-drying)",
-  job_complete: "var(--status-complete)",
-  submitted: "var(--status-submitted)",
-  collected: "var(--status-collected)",
-  scoping: "var(--status-scoping)",
-  in_progress: "var(--status-in-progress)",
+  new: STATUS_COLORS.new,
+  contracted: STATUS_COLORS.contracted,
+  mitigation: STATUS_COLORS.mitigation,
+  drying: STATUS_COLORS.drying,
+  job_complete: STATUS_COLORS.complete,
+  submitted: STATUS_COLORS.submitted,
+  collected: STATUS_COLORS.collected,
+  scoping: STATUS_COLORS.scoping,
+  in_progress: STATUS_COLORS.in_progress,
 };
 
 // ---------------------------------------------------------------------------
@@ -452,7 +453,10 @@ function JobsList({
                     Day {days}
                   </p>
                 </div>
-                <span className={`text-[9px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded ${meta.bg} ${meta.text} shrink-0`}>
+                <span
+                  className={`text-[9px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0`}
+                  style={{ backgroundColor: meta.bg, color: meta.color }}
+                >
                   {meta.label}
                 </span>
               </Link>

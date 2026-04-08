@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Plus } from "@/components/icons";
 import { useJobs, usePhotos } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus, JobType } from "@/lib/types";
+import { STATUS_COLORS, withAlpha } from "@/lib/status-colors";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -39,51 +40,25 @@ function categoryLabel(cat: string | null): string {
 
 const statusConfig: Record<
   JobStatus,
-  { label: string; className: string }
+  { label: string; color: string; bg: string }
 > = {
-  new: {
-    label: "New",
-    className: "bg-status-new/15 text-status-new",
-  },
-  contracted: {
-    label: "Contracted",
-    className: "bg-status-contracted/15 text-status-contracted",
-  },
-  mitigation: {
-    label: "Mitigation",
-    className: "bg-status-mitigation/15 text-status-mitigation",
-  },
-  drying: {
-    label: "Drying",
-    className: "bg-status-drying/15 text-status-drying",
-  },
-  job_complete: {
-    label: "Complete",
-    className: "bg-status-complete/15 text-status-complete",
-  },
-  submitted: {
-    label: "Submitted",
-    className: "bg-status-submitted/15 text-status-submitted",
-  },
-  collected: {
-    label: "Collected",
-    className: "bg-status-collected/15 text-status-collected",
-  },
-  scoping: {
-    label: "Scoping",
-    className: "bg-status-scoping/15 text-status-scoping",
-  },
-  in_progress: {
-    label: "In Progress",
-    className: "bg-status-in-progress/15 text-status-in-progress",
-  },
+  new:          { label: "New",         color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.15) },
+  contracted:   { label: "Contracted",  color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.15) },
+  mitigation:   { label: "Mitigation",  color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.15) },
+  drying:       { label: "Drying",      color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.15) },
+  job_complete: { label: "Complete",    color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.15) },
+  submitted:    { label: "Submitted",   color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.15) },
+  collected:    { label: "Collected",   color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.15) },
+  scoping:      { label: "Scoping",     color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.15) },
+  in_progress:  { label: "In Progress", color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.15) },
 };
 
 function StatusBadge({ status }: { status: JobStatus }) {
   const config = statusConfig[status];
   return (
     <span
-      className={`inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold ${config.className}`}
+      className="inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold"
+      style={{ backgroundColor: config.bg, color: config.color }}
     >
       {config.label}
     </span>
