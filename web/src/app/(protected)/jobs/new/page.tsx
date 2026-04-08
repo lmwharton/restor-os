@@ -419,7 +419,7 @@ export default function NewJobPage() {
         <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
           <Link
             href="/jobs"
-            className="w-8 h-8 -ml-1 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+            className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors"
             aria-label="Back to jobs"
           >
             <ArrowLeft />
