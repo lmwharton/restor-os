@@ -83,7 +83,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
   const config = statusConfig[status];
   return (
     <span
-      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${config.className}`}
+      className={`inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold ${config.className}`}
     >
       {config.label}
     </span>
@@ -413,60 +413,30 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
 /*  Job Card                                                           */
 /* ------------------------------------------------------------------ */
 
-function JobCard({ job, isFirst }: { job: JobDetail; isFirst: boolean }) {
+function JobCard({ job }: { job: JobDetail; isFirst?: boolean }) {
   const days = daysSince(job.created_at);
+  const typeColor = job.job_type === "mitigation" ? "bg-[#3b82f6]" : "bg-[#e85d26]";
 
   return (
     <Link href={`/jobs/${job.id}`} className="block group">
-      <div
-        className="bg-surface-container-lowest rounded-xl p-4 shadow-[0_1px_3px_rgba(31,27,23,0.04)] transition-shadow duration-150 group-hover:shadow-[0_2px_8px_rgba(31,27,23,0.08)]"
-      >
-        {/* Row 1: Address + job number */}
-        <div className="flex items-center gap-1.5">
-          <h3 className="text-base font-semibold text-on-surface truncate">
+      <div className="bg-surface-container-lowest rounded-xl px-3.5 py-3 shadow-[0_1px_3px_rgba(31,27,23,0.04)] flex items-center gap-3">
+        {/* Type dot */}
+        <span className={`w-2 h-2 rounded-full ${typeColor} shrink-0`} />
+
+        {/* Address + status */}
+        <div className="flex-1 min-w-0">
+          <h3 className="text-[14px] font-semibold text-on-surface truncate leading-tight">
             {job.address_line1}
           </h3>
-          {job.linked_job_id && (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-[#b5b0aa]">
-              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </svg>
-          )}
-        </div>
-        <p className="text-[11px] text-on-surface-variant/60 mt-0.5">
-          {job.customer_name || job.job_number}
-        </p>
-
-        {/* Row 2: Type + Status + Day count */}
-        <div className="flex items-center gap-2 mt-1.5">
-          <TypeBadge type={job.job_type} />
-          <StatusBadge status={job.status} />
-          <span className="text-xs text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-            Day {days}
-          </span>
+          <p className="text-[11px] text-on-surface-variant truncate mt-0.5">
+            {job.customer_name || "No customer"}
+          </p>
         </div>
 
-        {/* Row 3: Metadata + date */}
-        <div className="flex items-center justify-between mt-2.5">
-          <div className="flex items-center gap-3 text-xs text-on-surface-variant">
-            {job.room_count > 0 && (
-              <span className="font-[family-name:var(--font-geist-mono)]">
-                {job.room_count} {job.room_count === 1 ? "room" : "rooms"}
-              </span>
-            )}
-            {job.photo_count > 0 && (
-              <span className="font-[family-name:var(--font-geist-mono)]">
-                {job.photo_count} photos
-              </span>
-            )}
-            {job.loss_category && (
-              <span>{categoryLabel(job.loss_category)}</span>
-            )}
-          </div>
-          <span className="text-xs text-on-surface-variant shrink-0 ml-2">
-            {formatDate(job.created_at)}
-          </span>
-        </div>
+        {/* Date */}
+        <span className="text-[11px] text-on-surface-variant shrink-0 font-[family-name:var(--font-geist-mono)]">
+          {formatDate(job.created_at)}
+        </span>
       </div>
     </Link>
   );
@@ -732,10 +702,10 @@ export default function JobsPage() {
       <button
         type="button"
         onClick={() => setShowNewJobSheet(true)}
-        className="sm:hidden fixed bottom-6 right-6 z-40 w-16 h-16 rounded-full bg-brand-accent flex items-center justify-center shadow-lg shadow-primary/25 active:scale-95 transition-transform cursor-pointer"
+        className="sm:hidden fixed bottom-[84px] right-5 z-40 w-12 h-12 rounded-full bg-brand-accent flex items-center justify-center shadow-lg shadow-primary/25 active:scale-95 transition-transform cursor-pointer"
         aria-label="New Job"
       >
-        <Plus size={28} className="text-on-primary" />
+        <Plus size={22} className="text-on-primary" />
       </button>
 
       {/* Mobile bottom sheet — pick MIT or REC */}
@@ -747,7 +717,7 @@ export default function JobsPage() {
             onClick={() => setShowNewJobSheet(false)}
           />
           {/* Sheet */}
-          <div className="sm:hidden fixed bottom-0 left-0 right-0 z-50 bg-surface-container-lowest rounded-t-2xl shadow-lg px-5 pt-5 pb-8 animate-[slideUp_200ms_ease-out]">
+          <div className="sm:hidden fixed bottom-[68px] left-0 right-0 z-50 bg-surface-container-lowest rounded-t-2xl shadow-lg px-5 pt-5 pb-6 animate-[slideUp_200ms_ease-out]">
             <h2 className="text-[17px] font-semibold text-on-surface mb-4">New Job</h2>
             <div className="grid grid-cols-2 gap-3">
               <Link

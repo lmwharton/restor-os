@@ -298,14 +298,14 @@ export default function MoistureReadingsPage() {
     <div className="min-h-screen bg-surface">
       {/* -- Header -------------------------------------------------- */}
       <header className="sticky top-0 z-10 bg-surface/95 backdrop-blur-sm px-4 pt-4 pb-3">
-        <div className="flex items-center justify-between lg:max-w-5xl lg:mx-auto">
+        <div className="flex items-center justify-between lg:max-w-6xl lg:mx-auto">
           <div className="flex items-center gap-3">
             <Link
               href={`/jobs/${jobId}`}
-              className="flex items-center justify-center w-12 h-12 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors"
+              className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors"
               aria-label="Back to job"
             >
-              <ArrowBack size={22} className="text-on-surface-variant" />
+              <ArrowBack size={20} className="text-on-surface-variant" />
             </Link>
             <h1 className="text-lg font-semibold text-on-surface">
               Day {dayNumber} Readings
@@ -322,9 +322,9 @@ export default function MoistureReadingsPage() {
             type="button"
             onClick={handleSaveAll}
             disabled={isSaving}
-            className="hidden lg:flex h-10 px-6 bg-brand-accent text-on-primary font-semibold rounded-xl text-sm items-center transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+            className="hidden lg:flex h-10 px-6 bg-brand-accent text-on-primary font-semibold rounded-lg text-[13px] items-center gap-2 transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
           >
-            {isSaving ? "Saving..." : "Save All Rooms"}
+            {isSaving ? "Saving..." : "Save"}
           </button>
         </div>
 
@@ -346,16 +346,16 @@ export default function MoistureReadingsPage() {
       </header>
 
       {/* -- Main content -------------------------------------------- */}
-      <main className="px-4 pb-28 lg:pb-8 mt-2 lg:max-w-5xl lg:mx-auto">
+      <main className="px-4 pb-20 lg:pb-8 mt-2 lg:max-w-6xl lg:mx-auto">
         {/* -- Atmospheric (shared across all rooms) -- */}
-        <section className="mb-6">
-          <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
+        <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-3 lg:p-5 mb-4 lg:mb-6">
+          <label className="block text-[10px] lg:text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 lg:mb-3 font-[family-name:var(--font-geist-mono)]">
             Atmospheric
           </label>
-          <div className="grid grid-cols-3 gap-3 lg:max-w-md">
+          <div className="grid grid-cols-3 gap-2 lg:gap-3 lg:max-w-lg">
             {/* Temp */}
-            <div className="bg-surface-container-lowest rounded-xl p-3">
-              <span className="block text-[11px] text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3">
+              <span className="block text-[10px] lg:text-[11px] text-on-surface-variant mb-1 lg:mb-1.5 font-[family-name:var(--font-geist-mono)]">
                 Temp &deg;F
               </span>
               <input
@@ -363,13 +363,14 @@ export default function MoistureReadingsPage() {
                 inputMode="decimal"
                 value={tempF}
                 onChange={(e) => setTempF(e.target.value)}
-                className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                onFocus={(e) => e.target.select()}
+                className="w-full h-10 lg:h-14 bg-surface-container-low rounded-lg px-2 text-base lg:text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
               />
             </div>
 
             {/* RH */}
-            <div className="bg-surface-container-lowest rounded-xl p-3">
-              <span className="block text-[11px] text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3">
+              <span className="block text-[10px] lg:text-[11px] text-on-surface-variant mb-1 lg:mb-1.5 font-[family-name:var(--font-geist-mono)]">
                 RH %
               </span>
               <input
@@ -377,22 +378,23 @@ export default function MoistureReadingsPage() {
                 inputMode="decimal"
                 value={rhPct}
                 onChange={(e) => setRhPct(e.target.value)}
-                className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                onFocus={(e) => e.target.select()}
+                className="w-full h-10 lg:h-14 bg-surface-container-low rounded-lg px-2 text-base lg:text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
               />
             </div>
 
             {/* GPP (auto) */}
-            <div className="bg-surface-container-lowest rounded-xl p-3 relative">
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3 relative">
+              <div className="flex items-center gap-1 mb-1 lg:mb-1.5">
+                <span className="text-[10px] lg:text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
                   GPP
                 </span>
-                <span className="text-[9px] font-bold tracking-wider bg-tertiary-container/20 text-tertiary px-1.5 py-0.5 rounded font-[family-name:var(--font-geist-mono)]">
+                <span className="text-[8px] lg:text-[9px] font-bold tracking-wider bg-tertiary-container/20 text-tertiary px-1 py-px rounded font-[family-name:var(--font-geist-mono)]">
                   AUTO
                 </span>
               </div>
-              <div className="w-full h-14 bg-tertiary-container/10 rounded-lg px-3 flex items-center justify-center">
-                <span className="text-xl font-semibold text-tertiary font-[family-name:var(--font-geist-mono)]">
+              <div className="w-full h-10 lg:h-14 bg-tertiary-container/10 rounded-lg px-2 flex items-center justify-center">
+                <span className="text-base lg:text-xl font-semibold text-tertiary font-[family-name:var(--font-geist-mono)]">
                   {gpp}
                 </span>
               </div>
@@ -410,13 +412,13 @@ export default function MoistureReadingsPage() {
         )}
 
         {/* -- Mobile: single room view ------------------------------ */}
-        <div className="lg:hidden space-y-6">
+        <div className="lg:hidden space-y-4">
           {/* Room title */}
           <div className="text-center">
-            <h2 className="text-2xl font-bold text-on-surface">
+            <h2 className="text-lg font-bold text-on-surface">
               {currentRoom?.room_name}
             </h2>
-            <p className="text-xs text-on-surface-variant mt-1 font-[family-name:var(--font-geist-mono)]">
+            <p className="text-[10px] text-on-surface-variant mt-0.5 font-[family-name:var(--font-geist-mono)]">
               Room {roomIndex + 1} of {rooms.length}
             </p>
           </div>
@@ -426,7 +428,7 @@ export default function MoistureReadingsPage() {
             <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
               Moisture Points
             </label>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {points.map((point, i) => {
                 const val = parseFloat(point.reading_value);
                 const isWet = !isNaN(val) && val > dryStandard;
@@ -434,10 +436,10 @@ export default function MoistureReadingsPage() {
                 return (
                   <div
                     key={point.id}
-                    className="bg-surface-container-lowest rounded-xl p-3 flex items-center gap-3"
+                    className="bg-surface-container-lowest rounded-lg p-2 flex items-center gap-2"
                   >
-                    <div className="flex-shrink-0 w-9 h-9 rounded-full bg-surface-container-high flex items-center justify-center">
-                      <span className="text-sm font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center">
+                      <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
                         {i + 1}
                       </span>
                     </div>
@@ -447,8 +449,9 @@ export default function MoistureReadingsPage() {
                       onChange={(e) =>
                         updatePoint(currentRoomId, point.id, "location_name", e.target.value)
                       }
+                      onFocus={(e) => e.target.select()}
                       placeholder="Location..."
-                      className="flex-1 h-12 bg-surface-container-low rounded-lg px-3 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                      className="flex-1 h-9 bg-surface-container-low rounded-lg px-2.5 text-[13px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                     />
                     <div className="flex-shrink-0 relative">
                       <input
@@ -458,15 +461,16 @@ export default function MoistureReadingsPage() {
                         onChange={(e) =>
                           updatePoint(currentRoomId, point.id, "reading_value", e.target.value)
                         }
+                        onFocus={(e) => e.target.select()}
                         placeholder="--"
-                        className={`w-20 h-14 rounded-lg px-2 text-xl font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
+                        className={`w-16 h-10 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
                           isWet
-                            ? "bg-error-container/30 text-brand-accent"
+                            ? "bg-error-container/30 text-error"
                             : "bg-surface-container-low text-on-surface"
                         }`}
                       />
                       {isWet && (
-                        <span className="absolute -top-1.5 -right-1.5 text-sm" aria-label="Above dry standard">
+                        <span className="absolute -top-1 -right-1 text-[10px]" aria-label="Above dry standard">
                           &#x26A0;&#xFE0F;
                         </span>
                       )}
@@ -478,9 +482,9 @@ export default function MoistureReadingsPage() {
             <button
               type="button"
               onClick={() => addPoint(currentRoomId)}
-              className="mt-3 flex items-center gap-2 px-4 h-12 rounded-xl text-brand-accent font-semibold text-sm active:bg-brand-accent/10 transition-colors"
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
             >
-              <Plus size={18} />
+              <Plus size={14} />
               Add Point
             </button>
           </section>
@@ -490,11 +494,11 @@ export default function MoistureReadingsPage() {
             <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
               Dehu Output
             </label>
-            <div className="space-y-3">
+            <div className="space-y-2">
               {dehus.map((dehu) => (
                 <div
                   key={dehu.id}
-                  className="bg-surface-container-lowest rounded-xl p-3 space-y-3"
+                  className="bg-surface-container-lowest rounded-lg p-2 space-y-2"
                 >
                   <input
                     type="text"
@@ -502,12 +506,13 @@ export default function MoistureReadingsPage() {
                     onChange={(e) =>
                       updateDehu(currentRoomId, dehu.id, "dehu_model", e.target.value)
                     }
+                    onFocus={(e) => e.target.select()}
                     placeholder="Dehu model..."
-                    className="w-full h-12 bg-surface-container-low rounded-lg px-3 text-sm text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                    className="w-full h-9 bg-surface-container-low rounded-lg px-2.5 text-[13px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                   />
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <span className="block text-[11px] text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
                         RH Out %
                       </span>
                       <input
@@ -517,12 +522,13 @@ export default function MoistureReadingsPage() {
                         onChange={(e) =>
                           updateDehu(currentRoomId, dehu.id, "rh_out_pct", e.target.value)
                         }
+                        onFocus={(e) => e.target.select()}
                         placeholder="--"
-                        className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                       />
                     </div>
                     <div>
-                      <span className="block text-[11px] text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
                         Temp Out &deg;F
                       </span>
                       <input
@@ -532,8 +538,9 @@ export default function MoistureReadingsPage() {
                         onChange={(e) =>
                           updateDehu(currentRoomId, dehu.id, "temp_out_f", e.target.value)
                         }
+                        onFocus={(e) => e.target.select()}
                         placeholder="--"
-                        className="w-full h-14 bg-surface-container-low rounded-lg px-3 text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                       />
                     </div>
                   </div>
@@ -543,12 +550,27 @@ export default function MoistureReadingsPage() {
             <button
               type="button"
               onClick={() => addDehu(currentRoomId)}
-              className="mt-3 flex items-center gap-2 px-4 h-12 rounded-xl text-brand-accent font-semibold text-sm active:bg-brand-accent/10 transition-colors"
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
             >
-              <Plus size={18} />
+              <Plus size={14} />
               Add Dehu
             </button>
           </section>
+
+          {/* Save CTA */}
+          <div className="pt-4 flex flex-col items-center gap-1.5">
+            {saveError && (
+              <p className="text-[12px] text-error text-center">{saveError}</p>
+            )}
+            <button
+              type="button"
+              onClick={handleSaveAndNext}
+              disabled={isSaving}
+              className="h-10 px-8 bg-brand-accent text-on-primary font-semibold rounded-full text-[13px] active:scale-[0.97] transition-all disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : isLastRoom ? "Save & Finish" : "Save & Next Room \u2192"}
+            </button>
+          </div>
         </div>
 
         {/* -- Error message ----------------------------------------- */}
@@ -559,13 +581,15 @@ export default function MoistureReadingsPage() {
         )}
 
         {/* -- Desktop: all rooms side-by-side ----------------------- */}
-        <div className="hidden lg:grid lg:grid-cols-3 lg:gap-6">
+        <div className={`hidden lg:grid lg:gap-6 ${
+          rooms.length === 1 ? "lg:grid-cols-1 lg:max-w-xl" : rooms.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-2 xl:grid-cols-3"
+        }`}>
           {rooms.map((room) => {
             const roomDryStandard = room.dry_standard ?? 16;
             const roomForm = getRoomForm(room.id);
 
             return (
-              <div key={room.id} className="bg-surface-container-lowest rounded-2xl p-4 space-y-4">
+              <div key={room.id} className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-4">
                 {/* Room header */}
                 <div className="text-center border-b border-outline-variant/20 pb-3">
                   <h2 className="text-lg font-bold text-on-surface">
@@ -593,29 +617,29 @@ export default function MoistureReadingsPage() {
                       return (
                         <div
                           key={point.id}
-                          className="flex items-center justify-between py-1.5"
+                          className="flex items-center gap-2 py-1"
                         >
-                          <div className="flex items-center gap-2 flex-1 min-w-0">
-                            <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center flex-shrink-0">
-                              {i + 1}
-                            </span>
-                            <input
-                              type="text"
-                              value={point.location_name}
-                              onChange={(e) => updatePoint(room.id, point.id, "location_name", e.target.value)}
-                              placeholder="Location..."
-                              className="text-[12px] text-on-surface bg-transparent outline-none flex-1 min-w-0 focus:ring-1 focus:ring-brand-accent/30 rounded px-1"
-                            />
-                          </div>
+                          <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center flex-shrink-0">
+                            {i + 1}
+                          </span>
+                          <input
+                            type="text"
+                            value={point.location_name}
+                            onChange={(e) => updatePoint(room.id, point.id, "location_name", e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="Location..."
+                            className="flex-1 min-w-0 h-9 px-2.5 rounded-lg bg-surface-container-low text-[12px] text-on-surface placeholder:text-on-surface-variant/40 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+                          />
                           <input
                             type="text"
                             inputMode="decimal"
                             value={point.reading_value}
                             onChange={(e) => updatePoint(room.id, point.id, "reading_value", e.target.value)}
+                            onFocus={(e) => e.target.select()}
                             placeholder="--"
-                            className={`w-16 h-10 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
+                            className={`w-16 h-9 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
                               isWet
-                                ? "bg-error-container/30 text-brand-accent"
+                                ? "bg-error-container/30 text-error"
                                 : "bg-surface-container-low text-on-surface"
                             }`}
                           />
@@ -626,9 +650,10 @@ export default function MoistureReadingsPage() {
                   <button
                     type="button"
                     onClick={() => addPoint(room.id)}
-                    className="mt-2 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer"
+                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
                   >
-                    + Add Point
+                    <Plus size={14} />
+                    Add Point
                   </button>
                 </section>
 
@@ -648,8 +673,9 @@ export default function MoistureReadingsPage() {
                           inputMode="decimal"
                           value={dehu.rh_out_pct}
                           onChange={(e) => updateDehu(room.id, dehu.id, "rh_out_pct", e.target.value)}
+                          onFocus={(e) => e.target.select()}
                           placeholder="--"
-                          className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                          className="w-full h-9 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                         />
                       </div>
                       <div>
@@ -661,8 +687,9 @@ export default function MoistureReadingsPage() {
                           inputMode="decimal"
                           value={dehu.temp_out_f}
                           onChange={(e) => updateDehu(room.id, dehu.id, "temp_out_f", e.target.value)}
+                          onFocus={(e) => e.target.select()}
                           placeholder="--"
-                          className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                          className="w-full h-9 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                         />
                       </div>
                     </div>
@@ -670,9 +697,10 @@ export default function MoistureReadingsPage() {
                   <button
                     type="button"
                     onClick={() => addDehu(room.id)}
-                    className="mt-1 text-[12px] font-semibold text-brand-accent hover:underline cursor-pointer"
+                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
                   >
-                    + Add Dehu
+                    <Plus size={14} />
+                    Add Dehu
                   </button>
                 </section>
               </div>
@@ -681,20 +709,6 @@ export default function MoistureReadingsPage() {
         </div>
       </main>
 
-      {/* -- Bottom CTA (mobile only) -------------------------------- */}
-      <div className="fixed bottom-0 inset-x-0 p-4 bg-surface/95 backdrop-blur-sm lg:hidden">
-        {saveError && (
-          <p className="text-sm text-error text-center mb-2">{saveError}</p>
-        )}
-        <button
-          type="button"
-          onClick={handleSaveAndNext}
-          disabled={isSaving}
-          className="w-full h-14 bg-brand-accent text-on-primary font-semibold rounded-xl text-base active:opacity-90 transition-opacity disabled:opacity-50"
-        >
-          {isSaving ? "Saving..." : isLastRoom ? "Save & Finish" : "Save & Next Room \u2192"}
-        </button>
-      </div>
     </div>
   );
 }

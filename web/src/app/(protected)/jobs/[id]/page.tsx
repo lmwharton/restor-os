@@ -37,6 +37,7 @@ import {
   arrayMove,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import { ConfirmModal } from "@/components/confirm-modal";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -170,9 +171,9 @@ function ChevronRight({ size = 20, className = "" }: { size?: number; className?
   );
 }
 
-function ArrowLeftIcon({ size = 20 }: { size?: number }) {
+function ArrowLeftIcon({ size = 20, className }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
       <path d="M19 12H5m6-6-6 6 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -1138,9 +1139,11 @@ export default function JobDetailPage() {
     expires_at: string;
   } | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDeleteJobConfirm, setShowDeleteJobConfirm] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   const handleShareJob = useCallback(async () => {
+    setShareError(null);
     try {
       const result = await createShareLink.mutateAsync({
         scope: "full",
@@ -1152,7 +1155,8 @@ export default function JobDetailPage() {
       });
       setShareCopied(false);
     } catch {
-      alert("Failed to create share link. Please try again.");
+      setShareError("Failed to create share link. Please try again.");
+      setTimeout(() => setShareError(null), 4000);
     }
   }, [createShareLink]);
 
@@ -1219,9 +1223,9 @@ export default function JobDetailPage() {
             type="button"
             onClick={() => router.push("/jobs")}
             aria-label="Back to jobs"
-            className="w-9 h-9 -ml-1 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+            className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer"
           >
-            <ArrowLeftIcon size={20} />
+            <ArrowLeftIcon size={20} className="text-on-surface-variant" />
           </button>
 
           {/* Address + Job number */}
@@ -1284,7 +1288,7 @@ export default function JobDetailPage() {
       )}
 
       {/* ── Main Content Grid ───────────────────────────────────── */}
-      <main className="max-w-6xl mx-auto px-4 py-6 pb-40 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 pb-32 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
 
         {/* ── LEFT COLUMN: Accordion Sections ───────────────────── */}
         <div className="space-y-3">
@@ -1528,42 +1532,32 @@ export default function JobDetailPage() {
             }
             defaultOpen
           >
-            <div className="space-y-3">
-              <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+            <button
+              type="button"
+              onClick={() => router.push(`/jobs/${jobId}/photos`)}
+              className="w-full flex items-center gap-3 cursor-pointer group"
+            >
+              <div className="flex gap-1 shrink-0">
                 {photos && photos.length > 0 && photos.slice(0, 4).map((photo) => (
-                  <div
-                    key={photo.id}
-                    className="relative w-24 h-24 rounded-lg bg-surface-container-high shrink-0 overflow-hidden flex items-center justify-center"
-                  >
-                    <img src={photo.storage_url} alt={photo.room_name || "Job photo"} className="w-full h-full object-cover" />
-                    {/* Untagged dot */}
-                    {!photo.room_id && (
-                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-brand-accent" />
-                    )}
+                  <div key={photo.id} className="w-11 h-11 lg:w-16 lg:h-16 rounded-md bg-surface-container-high overflow-hidden">
+                    <img src={photo.storage_url} alt="" className="w-full h-full object-cover" />
                   </div>
                 ))}
-                {/* Add button */}
-                <button
-                  type="button"
-                  onClick={() => router.push(`/jobs/${jobId}/photos`)}
-                  className="w-24 h-24 rounded-lg border-2 border-dashed border-outline-variant/40 shrink-0 flex flex-col items-center justify-center gap-1 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                >
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold uppercase">Add</span>
-                </button>
+                {(!photos || photos.length === 0) && (
+                  <div className="w-11 h-11 lg:w-16 lg:h-16 rounded-md bg-surface-container-high flex items-center justify-center">
+                    <CameraIcon size={14} />
+                  </div>
+                )}
               </div>
-              {photos && photos.length > 4 && (
-                <p className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                  {photos.length} total photos &middot;{" "}
-                  <button type="button" onClick={() => router.push(`/jobs/${jobId}/photos`)} className="text-brand-accent hover:underline cursor-pointer font-semibold">
-                    View all &rarr;
-                  </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-on-surface">
+                  {photos?.length ?? 0} photo{(photos?.length ?? 0) !== 1 ? "s" : ""}
                 </p>
-              )}
-            </div>
+                <p className="text-[11px] text-brand-accent font-semibold group-hover:underline">
+                  {photos && photos.length > 0 ? "View all \u2192" : "Add photos \u2192"}
+                </p>
+              </div>
+            </button>
           </AccordionSection>
 
           {/* Section 3B: Recon Phases (reconstruction jobs only) */}
@@ -1784,6 +1778,11 @@ export default function JobDetailPage() {
             </button>
           )}
 
+          {/* Share error */}
+          {shareError && (
+            <p className="text-[12px] text-error px-1 mb-2">{shareError}</p>
+          )}
+
           {/* Footer Links */}
           <div className="flex items-center gap-4 px-1">
             <button
@@ -1798,24 +1797,12 @@ export default function JobDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (!confirmDelete) {
-                  setConfirmDelete(true);
-                  setTimeout(() => setConfirmDelete(false), 3000);
-                  return;
-                }
-                deleteJob.mutateAsync(jobId).then(() => router.push("/jobs")).catch((err) => {
-                  alert(err instanceof Error ? err.message : "Failed to delete job.");
-                  setConfirmDelete(false);
-                });
-              }}
+              onClick={() => setShowDeleteJobConfirm(true)}
               disabled={deleteJob.isPending}
-              className={`flex items-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer ml-auto disabled:opacity-50 ${
-                confirmDelete ? "text-on-primary bg-error px-3 py-1.5 rounded-lg" : "text-error hover:text-error/80"
-              }`}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-red-600 hover:bg-red-50 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ml-auto disabled:opacity-50"
             >
               <TrashIcon size={14} />
-              {deleteJob.isPending ? "Deleting..." : confirmDelete ? "Confirm Delete?" : "Delete Job"}
+              {deleteJob.isPending ? "Deleting..." : "Delete Job"}
             </button>
           </div>
         </div>
@@ -1824,26 +1811,23 @@ export default function JobDetailPage() {
       {/* ── Mobile Bottom Action Bar ────────────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)] lg:hidden">
         <div className="max-w-lg mx-auto px-4 pb-[68px] md:pb-4">
-          <div className="bg-surface-container-lowest rounded-2xl shadow-[0_-2px_20px_rgba(31,27,23,0.08),0_-1px_4px_rgba(31,27,23,0.04)] p-2 flex items-stretch gap-1">
+          <div className="bg-brand-accent rounded-full shadow-[0_2px_12px_rgba(31,27,23,0.15)] flex items-center gap-0 overflow-hidden">
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/photos`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl bg-brand-accent text-on-primary cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 h-10 text-on-primary cursor-pointer active:bg-white/10 transition-colors"
             >
-              <CameraIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
-                Photo
-              </span>
+              <CameraIcon size={16} />
+              <span className="text-[11px] font-semibold tracking-wide">Photo</span>
             </button>
+            <div className="w-px h-5 bg-on-primary/20" />
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/readings`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl bg-brand-accent text-on-primary cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 h-10 text-on-primary cursor-pointer active:bg-white/10 transition-colors"
             >
-              <ChartIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
-                Reading
-              </span>
+              <ChartIcon size={16} />
+              <span className="text-[11px] font-semibold tracking-wide">Reading</span>
             </button>
           </div>
         </div>
@@ -1891,6 +1875,21 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* ── Delete Job confirmation modal ─────────────────────── */}
+      <ConfirmModal
+        open={showDeleteJobConfirm}
+        title="Delete this job?"
+        description="This will permanently delete the job and all associated data including photos, readings, and floor plans. This action cannot be undone."
+        confirmLabel="Delete Job"
+        cancelLabel="Cancel"
+        variant="danger"
+        onCancel={() => setShowDeleteJobConfirm(false)}
+        onConfirm={() => {
+          setShowDeleteJobConfirm(false);
+          deleteJob.mutateAsync(jobId).then(() => router.push("/jobs"));
+        }}
+      />
     </div>
   );
 }

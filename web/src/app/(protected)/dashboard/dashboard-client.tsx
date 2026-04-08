@@ -373,7 +373,6 @@ function PipelineBar({
                 </span>
               );
             })}
-            <span className={`text-[9px] ${MONO} text-on-surface-variant/40 ml-auto`}>Tap to filter</span>
           </div>
         </>
       ) : (
@@ -586,14 +585,21 @@ function LatestActivity({ jobs, initialEvents }: { jobs: JobDetail[]; initialEve
               <Link
                 href={job ? `/jobs/${job.id}` : "/jobs"}
                 key={`${event.event_type}-${i}`}
-                className="flex gap-3 items-start py-2.5 px-2 -mx-2 rounded-lg hover:bg-surface-container/50 transition-colors group"
+                className="flex gap-3 items-start py-2.5 px-2 -mx-2 rounded-lg hover:bg-surface-container/50 active:bg-surface-container transition-colors cursor-pointer"
               >
                 <span className={`w-7 h-7 rounded-lg ${meta.color} ${meta.accent} flex items-center justify-center shrink-0 mt-0.5`}>
                   {meta.icon}
                 </span>
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-medium text-on-surface leading-snug">{meta.label}</p>
-                  <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-on-surface-variant leading-snug">
+
+                  {/* Mobile: compact — address + time */}
+                  <p className="md:hidden text-[11px] text-on-surface-variant mt-0.5 truncate">
+                    {addr || "Unknown"} · {timeAgo(event.created_at)}
+                  </p>
+
+                  {/* Desktop: full detail — user / job ID / address / time */}
+                  <div className="hidden md:flex items-center gap-1.5 mt-0.5 text-[11px] text-on-surface-variant leading-snug">
                     {event.is_ai ? (
                       <span className="inline-flex items-center gap-0.5 text-amber-600 font-medium">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" fill="currentColor"/></svg>
@@ -602,10 +608,8 @@ function LatestActivity({ jobs, initialEvents }: { jobs: JobDetail[]; initialEve
                     ) : (
                       <span className="font-medium text-on-surface-variant">You</span>
                     )}
-                    {(addr || jobNum) && <span className="text-on-surface-variant/40">/</span>}
-                    {jobNum && <span className={MONO + " text-[10px] tracking-wide"}>{jobNum}</span>}
-                    {addr && jobNum && <span className="text-on-surface-variant/40">/</span>}
-                    {addr && <span className="truncate">{addr}</span>}
+                    {jobNum && <><span className="text-on-surface-variant/40">/</span><span className={MONO + " text-[10px] tracking-wide"}>{jobNum}</span></>}
+                    {addr && <><span className="text-on-surface-variant/40">/</span><span className="truncate">{addr}</span></>}
                     <span className="text-on-surface-variant/40">/</span>
                     <span className="shrink-0">{timeAgo(event.created_at)}</span>
                   </div>
@@ -760,7 +764,12 @@ export default function DashboardClient({
 
       {/* -- Pipeline ------------------------------------------------------ */}
       <div>
-        <SectionLabel>Pipeline</SectionLabel>
+        <div className="flex items-center justify-between mb-2">
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.12em] text-on-surface-variant/50`}>
+            Pipeline
+          </p>
+          <span className={`text-[9px] ${MONO} text-on-surface-variant/35`}>Tap to filter</span>
+        </div>
         <div className="space-y-3">
           <PipelineBar
             label="Mitigation"
