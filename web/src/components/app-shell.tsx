@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { Dashboard, Clipboard, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
+import NotificationDropdown from "@/components/notification-dropdown";
 import { useJobs } from "@/lib/hooks/use-jobs";
 
 /* ------------------------------------------------------------------ */
@@ -412,23 +413,7 @@ function DesktopTopBar({ user }: { user: UserProfile | null }) {
         {/* Right: Status + Notification + Avatar */}
         <div className="flex items-center gap-3">
           <HealthStatusBadge />
-          {/* Notification bell */}
-          <div className="relative group">
-            <button
-              type="button"
-              className="relative p-2 rounded-lg hover:bg-surface-container transition-colors cursor-pointer"
-              aria-label="Notifications"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-on-surface-variant">
-                <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#dc2626]" />
-            </button>
-            <div className="absolute right-0 top-full mt-1 px-3 py-1.5 bg-on-surface text-surface text-[11px] font-medium rounded-md whitespace-nowrap opacity-0 pointer-events-none group-hover:opacity-100 transition-opacity duration-150 z-50">
-              Notifications
-            </div>
-          </div>
+          <NotificationDropdown />
           {user && <UserMenu user={user} />}
         </div>
       </div>
@@ -479,21 +464,18 @@ function MobileHeader({ user }: { user: UserProfile | null }) {
           })}
         </nav>
 
-        {/* Right: Notification + User */}
+        {/* Right: Status + Notifications + User */}
         {user ? (
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              className="relative p-2 rounded-lg hover:bg-surface-container transition-colors cursor-pointer"
-              aria-label="Notifications"
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" className="text-on-surface-variant">
-                <path d="M18 8A6 6 0 1 0 6 8c0 7-3 9-3 9h18s-3-2-3-9z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-[#dc2626]" />
-            </button>
-            <UserMenu user={user} />
+          <div className="flex items-center gap-3">
+            <HealthStatusBadge />
+            <NotificationDropdown />
+            <div className="hidden sm:block h-4 w-px bg-outline-variant/30" />
+            <div className="flex items-center gap-2.5">
+              <span className="hidden sm:block text-[13px] font-medium text-on-surface-variant">
+                {user.name || user.email}
+              </span>
+              <UserMenu user={user} />
+            </div>
           </div>
         ) : (
           <div className="flex items-center gap-2.5">

@@ -3,32 +3,40 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% |
-| **State** | Draft — awaiting eng + design review |
+| **Progress** | ████████████████░░░░ 80% |
+| **State** | In progress — frontend + backend implemented, staging testing next |
 | **Blocker** | None |
-| **Branch** | — |
-| **Issue** | — |
+| **Branch** | feature/01b-reconstruction |
+| **PR** | #2 |
 | **Depends on** | Spec 01 (Jobs + Site Log) — complete |
 
+## Remaining Items
+
+- [ ] **Backend pytest coverage** — no tests yet for recon_phases endpoints, job_type filtering, or linked job creation
+- [ ] **Staging verification** — migrations need to run against staging DB, CORS must include Vercel URL
+- [ ] **`POST /v1/jobs/{job_id}/create-linked-recon`** — convenience endpoint not yet implemented (linking works via `linked_job_id` on normal job create)
+- [ ] **`job_linked` event** — no event logged when a reconstruction job is linked to a mitigation job
+
 ## Done When
-- [ ] Jobs have a `job_type` field: `"mitigation"` or `"reconstruction"`
-- [ ] Mitigation jobs retain existing 7-stage pipeline (no changes to Spec 01 behavior)
-- [ ] Reconstruction jobs have their own status pipeline: `new → scoping → in_progress → complete → submitted → collected`
-- [ ] Reconstruction jobs have a flexible phase/task system (not hardcoded stages)
-- [ ] Job creation form shows a job type selector (Mitigation / Reconstruction)
-- [ ] Reconstruction jobs can optionally link to a mitigation job via `linked_job_id`
-- [ ] When linking, claim/carrier/adjuster/customer/address data auto-copies from the mitigation job
-- [ ] Reconstruction jobs can be created standalone (no linked mitigation job required)
-- [ ] Job list shows job type badge (MIT / REC) and link icon for linked pairs
-- [ ] Dashboard pipeline shows separate pipelines or combined view with type distinction
-- [ ] Reconstruction job detail has appropriate sections (no moisture readings, no equipment tracking)
-- [ ] Backend API supports job type filtering (`GET /v1/jobs?job_type=reconstruction`)
-- [ ] Reconstruction report (PDF) has appropriate sections: job info, phases completed, photos, tech notes (no moisture readings, no equipment log, no GPP)
-- [ ] All existing mitigation functionality remains unchanged (zero regression)
-- [ ] Database migration adds `job_type` + `linked_job_id` columns to jobs table
-- [ ] Reconstruction-specific table created (recon_phases)
+- [x] Jobs have a `job_type` field: `"mitigation"` or `"reconstruction"`
+- [x] Mitigation jobs retain existing 7-stage pipeline (no changes to Spec 01 behavior)
+- [x] Reconstruction jobs have their own status pipeline: `new → scoping → in_progress → complete → submitted → collected`
+- [x] Reconstruction jobs have a flexible phase/task system (not hardcoded stages)
+- [x] Job creation form shows a job type selector (Mitigation / Reconstruction)
+- [x] Reconstruction jobs can optionally link to a mitigation job via `linked_job_id`
+- [x] When linking, claim/carrier/adjuster/customer/address data auto-copies from the mitigation job
+- [x] Reconstruction jobs can be created standalone (no linked mitigation job required)
+- [x] Job list shows job type badge (MIT / REC) and link icon for linked pairs
+- [x] Dashboard pipeline shows separate pipelines or combined view with type distinction
+- [x] Reconstruction job detail has appropriate sections (no moisture readings, no equipment tracking)
+- [x] Backend API supports job type filtering (`GET /v1/jobs?job_type=reconstruction`)
+- [x] Reconstruction report (PDF) has appropriate sections: job info, phases completed, photos, tech notes (no moisture readings, no equipment log, no GPP)
+- [x] All existing mitigation functionality remains unchanged (zero regression)
+- [x] Database migration adds `job_type` + `linked_job_id` columns to jobs table
+- [x] Reconstruction-specific table created (recon_phases)
 - [ ] All backend endpoints have pytest coverage
-- [ ] Frontend tests pass
+- [x] Frontend tests pass (32/32)
+- [ ] Staging environment tested and verified
 
 ## Overview
 

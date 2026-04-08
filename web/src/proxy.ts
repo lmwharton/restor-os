@@ -2,7 +2,7 @@ import { createServerClient, type CookieOptions } from "@supabase/ssr";
 import { type NextRequest, NextResponse } from "next/server";
 
 // Public routes that don't need any auth check
-const PUBLIC_PATHS = ["/", "/login", "/signup", "/auth", "/callback", "/shared", "/competitive", "/research", "/product", "/privacy", "/terms", "/support"];
+const PUBLIC_PATHS = ["/", "/login", "/signup", "/auth", "/callback", "/onboarding", "/shared", "/competitive", "/research", "/product", "/privacy", "/terms", "/support"];
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;

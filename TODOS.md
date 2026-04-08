@@ -18,10 +18,12 @@ No open items. Everything from the eng review (21 issues) has been fixed and ver
 
 ## Architecture Notes (for Spec 02)
 
-### Celery for long-running AI jobs
-AI Photo Scope calls (Claude Vision, 15-30s) must NOT block the API. Architecture:
-- `POST /v1/jobs/{id}/photos/generate-scope` → enqueue Celery task → return task_id immediately
-- Client polls `GET /v1/jobs/{id}/scope/status/{task_id}` or uses SSE for streaming
-- Celery worker processes photos asynchronously
-- Redis as broker (Upstash Redis via Supabase/Railway, or self-hosted)
-- This pattern applies to: AI Photo Scope, Hazmat Scanner, Scope Check, Job Assistant
+### ✅ Celery + SSE for AI jobs (RESOLVED in Spec 02A eng review 2026-04-08)
+Architecture decided: Celery worker + Railway Redis (broker + pub/sub) + SSE streaming.
+- `POST /v1/scope/generate` → enqueue Celery task → return task_id
+- `GET /v1/scope/stream/{task_id}` → SSE endpoint, replays from Redis list + subscribes pub/sub
+- Worker publishes thinking + line_item + complete events to Redis
+- SSE reconnection via Last-Event-ID header + Redis event log replay
+- Redis lock per job_id for idempotency
+- Applies to: PhotoScope (02A), HazmatCheck (02B), Job Audit (02C)
+- Ask Crewmatic (02D) uses direct SSE (no Celery, responses are 2-5s)

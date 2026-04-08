@@ -69,7 +69,7 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
             .select("*, companies(*)")
             .eq("auth_user_id", str(auth_user_id))
             .is_("deleted_at", "null")
-            .limit(1)
+            .maybe_single()
             .execute()
         )
     except Exception:
@@ -78,7 +78,7 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
     if not result or not result.data:
         return None
 
-    user_data = result.data[0]
+    user_data = result.data
     if not user_data:
         return None
 
