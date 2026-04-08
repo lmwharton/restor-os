@@ -32,6 +32,7 @@ class PriorityJob(BaseModel):
 
 class DashboardResponse(BaseModel):
     pipeline: list[PipelineStage]
+    reconstruction_pipeline: list[PipelineStage]
     kpis: KPIs
     recent_events: list[dict]
     priority_jobs: list[PriorityJob]

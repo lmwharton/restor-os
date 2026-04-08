@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -8,6 +9,12 @@ class JobCreate(BaseModel):
     # Required
     address_line1: str
     loss_type: str = "water"
+
+    # Job type — mitigation (default) or reconstruction
+    job_type: Literal["mitigation", "reconstruction"] = "mitigation"
+
+    # Optional — link reconstruction job to its mitigation job
+    linked_job_id: UUID | None = None
 
     # Optional — address
     city: str = ""
@@ -28,12 +35,19 @@ class JobCreate(BaseModel):
     loss_cause: str | None = None
     loss_date: date | None = None
 
+    # Optional — property age (for lead/asbestos hazmat flagging)
+    home_year_built: int | None = None
+
     # Optional — insurance
     claim_number: str | None = None
     carrier: str | None = None
     adjuster_name: str | None = None
     adjuster_phone: str | None = None
     adjuster_email: str | None = None
+
+    # Optional — geocoding
+    latitude: float | None = None
+    longitude: float | None = None
 
     # Optional — notes
     notes: str | None = None
@@ -63,6 +77,7 @@ class JobUpdate(BaseModel):
     loss_class: str | None = None
     loss_cause: str | None = None
     loss_date: date | None = None
+    home_year_built: int | None = None
 
     # Insurance
     claim_number: str | None = None
@@ -76,10 +91,20 @@ class JobUpdate(BaseModel):
     tech_notes: str | None = None
 
 
+class LinkedJobSummary(BaseModel):
+    id: UUID
+    job_number: str
+    job_type: str
+    status: str
+
+
 class JobResponse(BaseModel):
     id: UUID
     company_id: UUID
     property_id: UUID | None = None
+    job_type: str = "mitigation"
+    linked_job_id: UUID | None = None
+    linked_job_summary: LinkedJobSummary | None = None
     job_number: str
     address_line1: str
     city: str
@@ -98,6 +123,7 @@ class JobResponse(BaseModel):
     loss_class: str | None = None
     loss_cause: str | None = None
     loss_date: date | None = None
+    home_year_built: int | None = None
     status: str
     assigned_to: UUID | None = None
     notes: str | None = None

@@ -63,16 +63,22 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
     """Look up user by auth_user_id, include company data. Returns None if not found."""
     client = await get_supabase_admin_client()
 
-    result = await (
-        client.table("users")
-        .select("*, companies(*)")
-        .eq("auth_user_id", str(auth_user_id))
-        .is_("deleted_at", "null")
-        .single()
-        .execute()
-    )
+    try:
+        result = await (
+            client.table("users")
+            .select("*, companies(*)")
+            .eq("auth_user_id", str(auth_user_id))
+            .is_("deleted_at", "null")
+            .limit(1)
+            .execute()
+        )
+    except Exception:
+        return None
 
-    user_data = result.data
+    if not result or not result.data:
+        return None
+
+    user_data = result.data[0]
     if not user_data:
         return None
 

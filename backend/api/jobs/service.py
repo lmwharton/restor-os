@@ -2,11 +2,12 @@
 
 import logging
 import random
+import re
 import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate
+from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate, LinkedJobSummary
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
@@ -24,11 +25,53 @@ VALID_STATUSES = {
     "contracted",
     "mitigation",
     "drying",
+    "scoping",
+    "in_progress",
     "job_complete",
     "submitted",
     "collected",
 }
 VALID_SORT_FIELDS = {"created_at", "updated_at", "job_number", "customer_name"}
+VALID_JOB_TYPES = {"mitigation", "reconstruction"}
+
+# Which statuses are valid for each job type
+MITIGATION_STATUSES = {
+    "new", "contracted", "mitigation", "drying",
+    "job_complete", "submitted", "collected",
+}
+RECONSTRUCTION_STATUSES = {
+    "new", "scoping", "in_progress",
+    "job_complete", "submitted", "collected",
+}
+
+
+EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_DIGITS_REGEX = re.compile(r"^\d{7,15}$")
+
+
+def _validate_contact_fields(**kwargs: str | None) -> None:
+    """Validate email and phone fields. Raises AppException on invalid values."""
+    email_fields = ["customer_email", "adjuster_email"]
+    phone_fields = ["customer_phone", "adjuster_phone"]
+
+    for field in email_fields:
+        val = kwargs.get(field)
+        if val and not EMAIL_REGEX.match(val):
+            raise AppException(
+                status_code=400,
+                detail=f"Invalid {field}: must be a valid email address",
+                error_code="INVALID_EMAIL",
+            )
+    for field in phone_fields:
+        val = kwargs.get(field)
+        if val:
+            digits = re.sub(r"[\s\-().+]", "", val)
+            if not PHONE_DIGITS_REGEX.match(digits):
+                raise AppException(
+                    status_code=400,
+                    detail=f"Invalid {field}: must contain 7-15 digits",
+                    error_code="INVALID_PHONE",
+                )
 
 
 def _validate_enums(
@@ -117,12 +160,17 @@ def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
     return _parse_job_detail(data, counts)
 
 
-def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
+def _parse_job_detail(
+    data: dict, counts: dict, linked_job_summary: LinkedJobSummary | None = None
+) -> JobDetailResponse:
     """Parse a job row dict into JobDetailResponse with computed counts."""
     return JobDetailResponse(
         id=data["id"],
         company_id=data["company_id"],
         property_id=data.get("property_id"),
+        job_type=data.get("job_type", "mitigation"),
+        linked_job_id=data.get("linked_job_id"),
+        linked_job_summary=linked_job_summary,
         job_number=data["job_number"],
         address_line1=data["address_line1"],
         city=data.get("city", ""),
@@ -141,6 +189,7 @@ def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
         loss_class=data.get("loss_class"),
         loss_cause=data.get("loss_cause"),
         loss_date=data.get("loss_date"),
+        home_year_built=data.get("home_year_built"),
         status=data["status"],
         assigned_to=data.get("assigned_to"),
         notes=data.get("notes"),
@@ -156,6 +205,26 @@ def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
         floor_plan_count=counts.get("floor_plan_count", 0),
         line_item_count=counts.get("line_item_count", 0),
     )
+
+
+async def _get_linked_job_summary(client, linked_job_id: str | None) -> LinkedJobSummary | None:
+    """Fetch a minimal summary of the linked job (if any)."""
+    if not linked_job_id:
+        return None
+    try:
+        result = await (
+            client.table("jobs")
+            .select("id, job_number, job_type, status")
+            .eq("id", linked_job_id)
+            .is_("deleted_at", "null")
+            .single()
+            .execute()
+        )
+        if result.data:
+            return LinkedJobSummary(**result.data)
+    except Exception:
+        pass
+    return None
 
 
 async def _get_job_counts(client, job_id: str) -> dict:
@@ -193,14 +262,45 @@ async def create_job(
     """
     start = time.perf_counter()
 
+    # Validate job_type
+    if body.job_type not in VALID_JOB_TYPES:
+        raise AppException(
+            status_code=400,
+            detail=f"Invalid job_type: must be one of {', '.join(sorted(VALID_JOB_TYPES))}",
+            error_code="INVALID_JOB_TYPE",
+        )
+
     _validate_enums(
         loss_type=body.loss_type,
         loss_category=body.loss_category,
         loss_class=body.loss_class,
     )
+    _validate_contact_fields(
+        customer_email=body.customer_email,
+        customer_phone=body.customer_phone,
+        adjuster_email=body.adjuster_email,
+        adjuster_phone=body.adjuster_phone,
+    )
 
     client = await get_authenticated_client(token)
     admin_client = await get_supabase_admin_client()
+
+    # Validate linked_job_id if provided
+    if body.linked_job_id:
+        linked_result = await (
+            client.table("jobs")
+            .select("id, job_type, company_id")
+            .eq("id", str(body.linked_job_id))
+            .eq("company_id", str(company_id))
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        if not linked_result.data:
+            raise AppException(
+                status_code=400,
+                detail="Linked job not found in your company",
+                error_code="LINKED_JOB_NOT_FOUND",
+            )
 
     # Build optional field values
     opt_property_id = str(body.property_id) if body.property_id else None
@@ -224,8 +324,10 @@ async def create_job(
             "p_state": body.state,
             "p_zip": body.zip,
             "p_loss_type": body.loss_type,
+            "p_job_type": body.job_type,
             "p_created_by": str(user_id),
             "p_property_id": opt_property_id,
+            "p_linked_job_id": str(body.linked_job_id) if body.linked_job_id else None,
             "p_customer_name": body.customer_name,
             "p_customer_phone": body.customer_phone,
             "p_customer_email": body.customer_email,
@@ -233,11 +335,14 @@ async def create_job(
             "p_loss_class": body.loss_class,
             "p_loss_cause": body.loss_cause,
             "p_loss_date": opt_loss_date,
+            "p_home_year_built": body.home_year_built,
             "p_claim_number": body.claim_number,
             "p_carrier": body.carrier,
             "p_adjuster_name": body.adjuster_name,
             "p_adjuster_phone": body.adjuster_phone,
             "p_adjuster_email": body.adjuster_email,
+            "p_latitude": body.latitude,
+            "p_longitude": body.longitude,
             "p_notes": body.notes,
             "p_tech_notes": body.tech_notes,
         }
@@ -316,15 +421,19 @@ async def _create_job_fallback(
         "state": body.state,
         "zip": body.zip,
         "loss_type": body.loss_type,
+        "job_type": body.job_type,
         "status": "new",
         "created_by": str(user_id),
     }
 
+    if body.linked_job_id:
+        insert_data["linked_job_id"] = str(body.linked_job_id)
+
     optional_fields = [
         "property_id", "customer_name", "customer_phone", "customer_email",
-        "loss_category", "loss_class", "loss_cause", "loss_date",
+        "loss_category", "loss_class", "loss_cause", "loss_date", "home_year_built",
         "claim_number", "carrier", "adjuster_name", "adjuster_phone",
-        "adjuster_email", "notes", "tech_notes",
+        "adjuster_email", "latitude", "longitude", "notes", "tech_notes",
     ]
     for field in optional_fields:
         value = getattr(body, field)
@@ -361,6 +470,7 @@ async def list_jobs(
     *,
     status: str | None = None,
     loss_type: str | None = None,
+    job_type: str | None = None,
     search: str | None = None,
     limit: int = 20,
     offset: int = 0,
@@ -389,6 +499,8 @@ async def list_jobs(
         query = query.eq("status", status)
     if loss_type:
         query = query.eq("loss_type", loss_type)
+    if job_type:
+        query = query.eq("job_type", job_type)
     if search:
         safe_search = sanitize_postgrest_search(search)
         if safe_search:
@@ -411,7 +523,7 @@ async def list_jobs(
 
 
 async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailResponse:
-    """Get a single job with computed counts."""
+    """Get a single job with computed counts and linked job summary."""
     client = await get_authenticated_client(token)
 
     result = await (
@@ -428,7 +540,8 @@ async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailRespon
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
     counts = await _get_job_counts(client, str(job_id))
-    return _parse_job_detail(result.data, counts)
+    linked_summary = await _get_linked_job_summary(client, result.data.get("linked_job_id"))
+    return _parse_job_detail(result.data, counts, linked_summary)
 
 
 async def update_job(
@@ -457,6 +570,12 @@ async def update_job(
         loss_category=updates.get("loss_category"),
         loss_class=updates.get("loss_class"),
         status=updates.get("status"),
+    )
+    _validate_contact_fields(
+        customer_email=updates.get("customer_email"),
+        customer_phone=updates.get("customer_phone"),
+        adjuster_email=updates.get("adjuster_email"),
+        adjuster_phone=updates.get("adjuster_phone"),
     )
 
     updates["updated_by"] = str(user_id)
