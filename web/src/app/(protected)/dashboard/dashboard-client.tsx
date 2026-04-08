@@ -30,30 +30,86 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function eventLabel(event: Event): string {
+// ─── Event formatting ────────────────────────────────────────────────
+
+interface EventMeta {
+  label: string;
+  icon: React.ReactNode;
+  color: string;       // icon bg color
+  accent: string;      // icon color
+}
+
+function getEventMeta(event: Event): EventMeta {
+  const d = event.event_data as Record<string, unknown>;
   switch (event.event_type) {
+    case "photos_uploaded":
     case "photo_uploaded": {
-      const count = (event.event_data as Record<string, unknown>).count;
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `${count} photos uploaded${room ? ` - ${room}` : ""}`;
+      const count = d.count;
+      const room = d.room_name;
+      return {
+        label: `${count ?? ""} Photos Uploaded${room ? ` — ${room}` : ""}`.trim(),
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M3 16l5-5 4 4 3-3 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "moisture_reading_added": {
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `Moisture reading${room ? ` - ${room}` : ""}`;
+    case "moisture_reading_added":
+    case "reading_added": {
+      const day = d.day_number;
+      return {
+        label: `Moisture Reading${day ? ` — Day ${day}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C12 2 5 10 5 15a7 7 0 0014 0c0-5-7-13-7-13z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "ai_photo_analysis": return "AI photo analysis complete";
-    case "ai_sketch_cleanup": return "AI sketch cleanup done";
-    case "report_generated": return "Report generated";
+    case "ai_photo_analysis": {
+      const items = d.line_items_found;
+      return {
+        label: `AI Photo Analysis${items ? ` — ${items} items found` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "ai_sketch_cleanup":
+      return {
+        label: "AI Sketch Cleanup Complete",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "report_generated":
+      return {
+        label: "Report Generated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "status_changed":
     case "job_status_changed": {
-      const to = (event.event_data as Record<string, unknown>).to;
-      return `Status changed to ${to}`;
+      const to = d.to as string;
+      return {
+        label: `Status → ${to ? to.charAt(0).toUpperCase() + to.slice(1).replace(/_/g, " ") : "Updated"}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "job_created": return "Job created";
+    case "job_created":
+      return {
+        label: "New Job Created",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     case "room_added": {
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `Room added: ${room}`;
+      const room = d.room_name;
+      return {
+        label: `Room Added${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M3 12h18M12 3v18" stroke="currentColor" strokeWidth="1.5"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    default: return event.event_type.replace(/_/g, " ");
+    default:
+      return {
+        label: event.event_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/><path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
   }
 }
 
@@ -434,6 +490,8 @@ function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineSta
       stageLabel: STAGE_META[stage].label,
       color: job.job_type === "reconstruction" ? "#e85d26" : "#3b82f6",
       customerName: job.customer_name,
+      latitude: job.latitude,
+      longitude: job.longitude,
     };
   });
 
@@ -503,34 +561,60 @@ function LatestActivity({ jobs, initialEvents }: { jobs: JobDetail[]; initialEve
   const { data: companyEvents } = useCompanyEvents(initialEvents);
   const recentEvents = [...(companyEvents ?? [])]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 4);
+    .slice(0, 6);
 
   return (
     <Card>
-      <h3 className="text-[15px] font-bold text-on-surface mb-3">Latest Activity</h3>
-      <div className="space-y-2.5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-[15px] font-bold text-on-surface">Latest Activity</h3>
+        <Link href="/jobs" className="text-[11px] font-medium text-brand-accent hover:underline">
+          View all &rarr;
+        </Link>
+      </div>
+      <div className="space-y-0.5">
         {recentEvents.length === 0 ? (
-          <p className="text-[13px] text-on-surface-variant py-4 text-center">No recent activity</p>
+          <p className="text-[13px] text-on-surface-variant py-6 text-center">No recent activity</p>
         ) : (
           recentEvents.map((event, i) => {
             const job = jobs.find((j) => j.id === event.job_id);
+            const d = event.event_data as Record<string, unknown>;
+            const jobNum = (d.job_number as string) || job?.job_number;
+            const addr = job?.address_line1 || (d.address as string);
+            const meta = getEventMeta(event);
+
             return (
-              <div key={`${event.event_type}-${i}`} className="flex gap-2.5 items-start">
-                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${event.is_ai ? "bg-brand-accent" : "bg-outline-variant"}`} />
+              <Link
+                href={job ? `/jobs/${job.id}` : "/jobs"}
+                key={`${event.event_type}-${i}`}
+                className="flex gap-3 items-start py-2.5 px-2 -mx-2 rounded-lg hover:bg-surface-container/50 transition-colors group"
+              >
+                <span className={`w-7 h-7 rounded-lg ${meta.color} ${meta.accent} flex items-center justify-center shrink-0 mt-0.5`}>
+                  {meta.icon}
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[13px] text-on-surface leading-snug">{eventLabel(event)}</p>
-                  <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug">
-                    {job ? `${job.address_line1} ` : ""}<span className="text-on-surface-variant/50">·</span> {timeAgo(event.created_at)}
-                  </p>
+                  <p className="text-[13px] font-medium text-on-surface leading-snug">{meta.label}</p>
+                  <div className="flex items-center gap-1.5 mt-0.5 text-[11px] text-on-surface-variant leading-snug">
+                    {event.is_ai ? (
+                      <span className="inline-flex items-center gap-0.5 text-amber-600 font-medium">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" fill="currentColor"/></svg>
+                        AI
+                      </span>
+                    ) : (
+                      <span className="font-medium text-on-surface-variant">You</span>
+                    )}
+                    {(addr || jobNum) && <span className="text-on-surface-variant/40">/</span>}
+                    {jobNum && <span className={MONO + " text-[10px] tracking-wide"}>{jobNum}</span>}
+                    {addr && jobNum && <span className="text-on-surface-variant/40">/</span>}
+                    {addr && <span className="truncate">{addr}</span>}
+                    <span className="text-on-surface-variant/40">/</span>
+                    <span className="shrink-0">{timeAgo(event.created_at)}</span>
+                  </div>
                 </div>
-              </div>
+              </Link>
             );
           })
         )}
       </div>
-      <Link href="/jobs" className="mt-3 block text-[11px] font-medium text-brand-accent hover:underline">
-        View full log &rarr;
-      </Link>
     </Card>
   );
 }
