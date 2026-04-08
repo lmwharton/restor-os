@@ -23,6 +23,8 @@ const PIPELINE_COLORS: Record<PipelineStage, string> = {
   job_complete: "#6b7280",
   submitted: "#0891b2",
   collected: "#16a34a",
+  scoping: "#7c3aed",
+  in_progress: "#d97706",
 };
 
 const PIPELINE_LABELS: Record<PipelineStage, string> = {
@@ -33,6 +35,8 @@ const PIPELINE_LABELS: Record<PipelineStage, string> = {
   job_complete: "Job Complete",
   submitted: "Submitted",
   collected: "Collected",
+  scoping: "Scoping",
+  in_progress: "In Progress",
 };
 
 export function usePipeline(initialJobs?: JobDetail[]) {

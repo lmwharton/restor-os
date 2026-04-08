@@ -5,8 +5,11 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
-  FloorPlan, PaginatedResponse,
+  FloorPlan, PaginatedResponse, ReconPhase,
 } from "../types";
+// Mock data fallback — remove when real backend is connected
+import { mockJobs, mockRooms, mockPhotos, mockEvents, mockReconPhases } from "../mock-data";
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
 // ─── Job Queries ──────────────────────────────────────────────────────
 
@@ -14,6 +17,7 @@ export function useJobs(filters?: { status?: string; search?: string }, initialD
   return useQuery<JobDetail[]>({
     queryKey: ["jobs", filters],
     queryFn: async () => {
+      if (USE_MOCK) return mockJobs;
       const params = new URLSearchParams();
       if (filters?.status) params.set("status", filters.status);
       if (filters?.search) params.set("search", filters.search);
@@ -23,14 +27,17 @@ export function useJobs(filters?: { status?: string; search?: string }, initialD
       if (Array.isArray(data)) return data;
       return data.items ?? [];
     },
-    initialData,
+    initialData: USE_MOCK ? undefined : initialData,
   });
 }
 
 export function useJob(jobId: string) {
   return useQuery<JobDetail>({
     queryKey: ["jobs", jobId],
-    queryFn: () => apiGet<JobDetail>(`/v1/jobs/${jobId}`),
+    queryFn: async () => {
+      if (USE_MOCK) return mockJobs.find((j) => j.id === jobId) ?? mockJobs[0];
+      return apiGet<JobDetail>(`/v1/jobs/${jobId}`);
+    },
     enabled: !!jobId,
   });
 }
@@ -74,6 +81,7 @@ export function useRooms(jobId: string) {
   return useQuery<Room[]>({
     queryKey: ["rooms", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockRooms.filter((r) => r.job_id === jobId);
       const data = await apiGet<Room[] | PaginatedResponse<Room>>(`/v1/jobs/${jobId}/rooms`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -121,6 +129,7 @@ export function usePhotos(jobId: string) {
   return useQuery<Photo[]>({
     queryKey: ["photos", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockPhotos.filter((p) => p.job_id === jobId);
       const data = await apiGet<Photo[] | PaginatedResponse<Photo>>(`/v1/jobs/${jobId}/photos?limit=200`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -265,6 +274,7 @@ export function useJobEvents(jobId: string) {
   return useQuery<Event[]>({
     queryKey: ["events", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockEvents.filter((e) => e.job_id === jobId);
       const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/jobs/${jobId}/events`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -277,11 +287,27 @@ export function useCompanyEvents(initialData?: Event[]) {
   return useQuery<Event[]>({
     queryKey: ["events", "company"],
     queryFn: async () => {
+      if (USE_MOCK) return mockEvents;
       const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/events?limit=20`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
     },
-    initialData,
+    initialData: USE_MOCK ? undefined : initialData,
+  });
+}
+
+// ─── Recon Phase Queries ─────────────────────────────────────────────
+
+export function useReconPhases(jobId: string) {
+  return useQuery<ReconPhase[]>({
+    queryKey: ["recon-phases", jobId],
+    queryFn: async () => {
+      if (USE_MOCK) return mockReconPhases.filter((p: ReconPhase) => p.job_id === jobId);
+      const data = await apiGet<ReconPhase[] | PaginatedResponse<ReconPhase>>(`/v1/jobs/${jobId}/recon-phases`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!jobId,
   });
 }
 
