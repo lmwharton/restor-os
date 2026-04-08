@@ -25,7 +25,9 @@ export async function getAuthenticatedRedirect(accessToken: string): Promise<str
       return "/onboarding";
     }
 
-    console.log(`[auth-redirect] → /dashboard (fallback, status=${res.status})`);
+    // 500 = backend error — could be expired token. Return /dashboard
+    // but the protected layout will catch actual auth failures.
+    console.log(`[auth-redirect] → /dashboard (status=${res.status})`);
     return "/dashboard";
   } catch (err) {
     console.log(`[auth-redirect] → /dashboard (catch: ${err})`);
