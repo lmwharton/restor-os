@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo, useImperativeHandle, forwardRef } from "react";
 import { Stage, Layer, Rect, Line, Text, Arc, Group, Circle } from "react-konva";
 import type Konva from "konva";
 import {
@@ -24,6 +24,11 @@ import {
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
 /* ------------------------------------------------------------------ */
+
+export interface KonvaFloorPlanHandle {
+  /** Flush any pending debounced save immediately. Call before unmount / floor switch. */
+  flush: () => void;
+}
 
 interface KonvaFloorPlanProps {
   initialData?: FloorPlanData | null;
@@ -137,7 +142,7 @@ function ToolIcon({ type }: { type: string }) {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-export default function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom }: KonvaFloorPlanProps) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom }, ref) {
   const data = initialData ?? emptyFloorPlan();
   const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
@@ -176,18 +181,41 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
 
   const gs = state.gridSize;
 
-  // Auto-save debounce
+  // Auto-save debounce — refs track pending state for flush
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevStateRef = useRef(state);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
+  const hasPendingRef = useRef(false);
+  const latestStateRef = useRef(state);
+  latestStateRef.current = state;
 
   useEffect(() => {
     if (state === prevStateRef.current) return;
     prevStateRef.current = state;
     if (!onChange) return;
+    hasPendingRef.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => onChange(state), 2000);
+    saveTimer.current = setTimeout(() => {
+      hasPendingRef.current = false;
+      onChange(state);
+    }, 2000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
   }, [state, onChange]);
+
+  // Expose flush() so the parent can force-save before switching floors
+  useImperativeHandle(ref, () => ({
+    flush() {
+      if (saveTimer.current) {
+        clearTimeout(saveTimer.current);
+        saveTimer.current = null;
+      }
+      if (hasPendingRef.current && onChangeRef.current) {
+        hasPendingRef.current = false;
+        onChangeRef.current(latestStateRef.current);
+      }
+    },
+  }), []);
 
   // Resize observer
   useEffect(() => {
@@ -1045,4 +1073,6 @@ export default function KonvaFloorPlan({ initialData, onChange, readOnly = false
       </div>
     </div>
   );
-}
+});
+
+export default KonvaFloorPlan;

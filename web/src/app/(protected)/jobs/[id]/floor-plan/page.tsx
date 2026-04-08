@@ -7,13 +7,15 @@ import dynamic from "next/dynamic";
 import {
   useFloorPlans,
   useCreateFloorPlan,
+  useUpdateFloorPlan,
   useRooms,
   useCreateRoom,
   useUpdateRoom,
 } from "@/lib/hooks/use-jobs";
-import { apiGet, apiPost, apiPatch } from "@/lib/api";
+import { apiGet, apiPost } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
 import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
+import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
 
@@ -28,6 +30,8 @@ export default function FloorPlanPage({
 
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
+  const updateFloorPlan = useUpdateFloorPlan(jobId);
+  const canvasRef = useRef<KonvaFloorPlanHandle>(null);
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
@@ -78,11 +82,13 @@ export default function FloorPlanPage({
       setSaveStatus("saving");
       try {
         if (currentFloor) {
-          await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${currentFloor.id}`, {
-            canvas_data: canvasData,
+          // Use mutation hook for consistent cache invalidation
+          await updateFloorPlan.mutateAsync({
+            floorPlanId: currentFloor.id,
+            canvas_data: canvasData as unknown as Record<string, unknown>,
           });
-          queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
         } else {
+          // No floor plan yet — create one
           const floorNum = (floorPlans?.length ?? 0) + 1;
           try {
             const created = await apiPost<FloorPlan>(`/v1/jobs/${jobId}/floor-plans`, {
@@ -95,16 +101,19 @@ export default function FloorPlanPage({
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
-              const refetched = await apiGet<FloorPlan[]>(`/v1/jobs/${jobId}/floor-plans`);
-              const plans = Array.isArray(refetched) ? refetched : [];
+              // Floor already exists (race condition) — refetch and update
+              const refetched = await apiGet<{ items: FloorPlan[]; total: number } | FloorPlan[]>(
+                `/v1/jobs/${jobId}/floor-plans`,
+              );
+              const plans = Array.isArray(refetched) ? refetched : refetched.items ?? [];
               queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], plans);
               if (plans.length > 0) {
                 const fp = plans[0];
                 setActiveFloorId(fp.id);
-                await apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${fp.id}`, {
-                  canvas_data: canvasData,
+                await updateFloorPlan.mutateAsync({
+                  floorPlanId: fp.id,
+                  canvas_data: canvasData as unknown as Record<string, unknown>,
                 });
-                queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
               }
             } else {
               throw err;
@@ -136,7 +145,7 @@ export default function FloorPlanPage({
         setSaveStatus("error");
       }
     },
-    [floorPlans, jobId, queryClient, jobRooms, updateRoom]
+    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan]
   );
 
   /* ---------------------------------------------------------------- */
@@ -186,7 +195,7 @@ export default function FloorPlanPage({
       <div className="flex items-center gap-2 px-4 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest">
         <button
           type="button"
-          onClick={() => router.push(`/jobs/${jobId}`)}
+          onClick={() => { canvasRef.current?.flush(); router.push(`/jobs/${jobId}`); }}
           className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
         >
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
@@ -206,7 +215,6 @@ export default function FloorPlanPage({
           {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
         </button>
         <div className="ml-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          {saveStatus === "error" && <span className="text-error">Save failed</span>}
           {saveStatus === "saved" && <span className="text-green-600">Saved</span>}
           {saveStatus === "error" && <span className="text-red-600">Save failed</span>}
         </div>
@@ -221,6 +229,8 @@ export default function FloorPlanPage({
                 key={fp.id}
                 type="button"
                 onClick={() => {
+                  // Flush any pending debounced save before switching floors
+                  canvasRef.current?.flush();
                   setActiveFloorIdx(idx);
                   setActiveFloorId(fp.id);
                 }}
@@ -253,6 +263,7 @@ export default function FloorPlanPage({
       {/* Canvas — takes remaining viewport height minus header + footer */}
       <div className="flex-1 min-h-[400px]">
         <KonvaFloorPlan
+          ref={canvasRef}
           key={activeFloor?.id ?? "new"}
           initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
           onChange={(data: FloorPlanData) => { lastCanvasRef.current = data; handleChange(data); }}
