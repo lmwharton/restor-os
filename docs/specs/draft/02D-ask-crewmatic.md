@@ -84,6 +84,13 @@
 - **Model selection:** Sonnet 4 for chat (complex reasoning about restoration domain).
 - **No thinking stream:** Unlike PhotoScope/HazmatCheck/Job Audit, this is conversational — just stream the reply text. No need for narrated analysis.
 
+### Design Review Decisions (2026-04-07)
+
+- **Mobile: bottom sheet (60% height).** Slides up from bottom. Job content visible above, dimmed. Input pinned to bottom of sheet.
+- **Desktop: side panel.** Right side, ~360px wide. Job content stays fully visible on the left.
+- **Built independently (Phase 3).** Not coupled to Photos tab workspace. Can ship anytime after shared AI layer exists.
+- **Empty state with suggested questions:** First open shows "Ask me anything about this job" + 3 contextual question chips based on screen_context (e.g., on Photos tab: "What damage do you see?", "What code for baseboard removal?", "Is this reading normal?").
+
 ---
 
 ## Session Log

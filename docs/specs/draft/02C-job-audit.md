@@ -130,6 +130,12 @@
 - **V1 = real-time only.** Past history (V2) and network intelligence (V3) come later.
 - **Model selection:** Sonnet 4 for both audit calls (complex reasoning about standards + vision).
 
+### Design Review Decisions (2026-04-07)
+
+- **Lives on Report tab:** Job Audit is a pre-submission review, separate from the Photos tab AI workspace. Runs AFTER scope is complete, BEFORE submitting to adjuster.
+- **Tone = money found, not criticism:** "Here's $2,400 you almost left on the table" not "You missed 5 items." Lead with dollar impact, not gaps. Frame as opportunity.
+- **Built separately from PhotoScope/HazmatCheck:** This is Phase 2 implementation. The Photos tab workspace (02A + 02B + 02E) ships first.
+
 ---
 
 ## Session Log

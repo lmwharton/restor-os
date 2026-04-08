@@ -116,6 +116,14 @@ CREATE TABLE hazmat_findings (
 - **Future revenue:** Sponsored abatement contractor listings + test kit affiliate links (V2).
 - **Model selection:** Sonnet 4 for hazmat vision analysis.
 
+### Design Review Decisions (2026-04-07)
+
+- **Shared workspace with PhotoScope:** HazmatCheck results live on the same Photos tab, under the [Line Items | Hazards] underline tab toggle. Same photo strip filter works for both.
+- **Photo-tagged findings:** Each hazmat finding tagged to source photo(s). Selecting a photo in the strip filters to hazards found in that photo.
+- **Zero findings = success state:** "No hazards found — no action needed" with a green checkmark (#2a9d5c). This is good news, not an empty state.
+- **Risk badge design:** Use DESIGN.md accent colors — HIGH = error red (#dc2626 on #fef2f2), MEDIUM = warning amber (#d97706 on #fffbeb), LOW = muted (#6b6560 on #f5f5f4). Text labels always present (not color-only).
+- **Runs in parallel with PhotoScope:** Both AI pipelines can run simultaneously on the same photos.
+
 ---
 
 ## Session Log

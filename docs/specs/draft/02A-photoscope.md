@@ -286,3 +286,19 @@ cd /Users/lakshman/Workspaces/Crewmatic
 - **Model selection:** Sonnet 4 for photo scope (complex vision + structured output).
 - **All AI responses include event_id:** Every AI endpoint returns an `event_id` (UUID) from `log_ai_event()`. Enables feedback tracking via Spec 02E.
 - **Thumbs up/down per line item:** Uses centralized AI Feedback endpoint from Spec 02E.
+
+### Design Review Decisions (2026-04-07)
+
+- **Photo-centric workspace:** PhotoScope + HazmatCheck + AI Feedback all live on the Photos tab. No separate Scope tab. Photos are the navigation — photo strip at top acts as a filter bar.
+- **"All" chip first in photo strip:** Photo strip starts with an "All" button, then thumbnails. Tap All = show everything. Tap a photo = filter to its items. Explicit, discoverable, no hidden gestures.
+- **[Line Items | Hazards] underline tabs:** Below photo strip, same pattern as job detail tabs (Photos | Readings | Report). Orange underline on active tab.
+- **Per-photo analysis view:** During analysis, each photo is processed one at a time. Current photo highlighted in strip. Thinking stream shows AI narration for THAT photo. Items appear below tagged to that photo. Contractor can accept/reject in real-time as items stream in.
+- **Thinking stream = inline narrative:** No speech bubbles. Secondary text (#6b6560) appearing line by line with an orange left border (#e85d26). Collapses to one line after analysis completes. Feels like field notes, not a chatbot.
+- **Trade category colors from DESIGN.md palette:** MITIGATION=#eef0fc/#5b6abf (indigo), DRYWALL=#fff3ed/#e85d26 (orange), PAINTING=#fffbeb/#d97706 (amber), STRUCTURAL=#f5f5f4/#6b6560 (muted), INSULATION=#fffbeb/#d97706 (amber), GENERAL=#edf7f0/#2a9d5c (green), PLUMBING=#eef0fc/#5b6abf (indigo), ELECTRICAL=#fef2f2/#dc2626 (red).
+- **Non-obvious item highlight:** Orange left border + #fff3ed background + "AI found this — you might have missed it" text. This is the activation moment — make it the loudest element.
+- **Mobile line item editing:** Tap row to expand into edit mode with full-width 48px inputs (Code, Desc, Unit, Qty, Room dropdowns). Cancel/Save buttons. No tiny inline fields.
+- **Mobile layout:** Line items stack — code + desc on line 1, unit + qty + room + actions on line 2. Citations hidden by default (tap cite icon to expand). "Push to Report" is sticky bottom bar.
+- **Guided empty state:** Before first analysis, show warm card: "Tag your photos to rooms, then tap Generate Line Items to create your scope." Mini progress: Step 1 Tag rooms (✓/pending), Step 2 Generate.
+- **Re-run AI = merge:** New photos analyzed and merged with existing scope. Duplicates auto-deduplicated (same Xactimate code + room = keep higher qty). Existing accepted/rejected items untouched.
+- **Interaction states:** Loading = thinking stream + per-photo progress. Error = "Couldn't analyze these photos. Try clearer photos." + Retry. Partial = items from completed photos shown while others still processing.
+- **Accessibility:** aria-live="polite" on thinking stream. aria-expanded on category headers. aria-label on thumbs ("Rate: helpful / not helpful"). 48px min touch targets throughout.
