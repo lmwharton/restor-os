@@ -38,7 +38,7 @@
 
 **Problem:** Contractors spend 2-4 hours per job manually entering Xactimate line items. They scope from memory, miss non-obvious billable items (HEPA filters, baseboard removal, equipment decon, PPE), and leave money on the table. No tool on the market converts damage photos to Xactimate line items.
 
-**Solution:** AI Photo Scope — select damage photos → AI generates Xactimate line items with S500/OSHA citations, grouped by trade category. Contractor reviews, edits, approves, pushes to report.
+**Solution:** PhotoScope — select damage photos → AI generates Xactimate line items with S500/OSHA citations, grouped by trade category. While analyzing, the AI narrates what it sees ("I can see water staining on the ceiling, baseboard is swollen...") so the contractor watches the AI work instead of staring at a spinner. Contractor reviews, edits, approves, pushes to report.
 
 **Scope:**
 - IN: Claude Vision integration, Xactimate code matching, S500/OSHA/EPA citation generation, per-photo analysis, agentic retry (auto + manual), line item CRUD, trade category grouping, accuracy tracking (via event_history from Spec 01), Push to Report flow, SSE streaming
@@ -64,7 +64,7 @@ ALTER TABLE line_items ADD COLUMN category TEXT;
 - [ ] Integrate Claude Vision API (anthropic Python SDK)
 - [ ] Use Claude tool-use/function-calling mode for structured JSON output (not raw prompt-based JSON)
 - [ ] Structured output schema: xactimate_code, description, unit, quantity, category, room, citations[], is_non_obvious
-- [ ] Per-photo analysis: each photo analyzed individually by AI (not batched). AI returns what it sees in THAT photo + line items.
+- [ ] Per-photo analysis: each photo analyzed individually by AI. AI returns what it sees in THAT photo + line items. Photos processed sequentially within batches of up to 10.
 - [ ] Photo preprocessing: fetch from Supabase Storage, resize to 1920px max before sending
 - [ ] Cross-photo deduplication: after all photos analyzed, deduplicate line items (same xactimate_code + description = merge, keep higher quantity)
 - [ ] Timeout handling: 30-second timeout per photo analysis, skip and flag on timeout
@@ -133,7 +133,8 @@ ALTER TABLE line_items ADD COLUMN category TEXT;
 ### Phase 4: Scope Review UI — ❌
 - [ ] "Generate Line Items" button on Photos tab (enabled when photos are tagged to rooms)
 - [ ] Pre-analysis: "Tag Rooms" must be complete (photos assigned to rooms)
-- [ ] Loading state: "AI is analyzing damage... Just a moment..." with spinner overlay
+- [ ] **Thinking stream UX:** Instead of a dead spinner, stream Claude's extended thinking to the user as narrated analysis. AI describes what it sees in each photo ("I can see water damage along the baseboards — staining reaches about 18 inches up the drywall...") before line items appear. Uses SSE `thinking` events.
+- [ ] Loading state: thinking stream fills the wait time, with photo progress indicator
 - [ ] "Generate Line Items" button changes to "Generating..." state during processing
 - [ ] SSE events include `event_id` from the start (every streamed event carries the event_id)
 - [ ] AI Photo Scope results page/section:

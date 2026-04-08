@@ -36,7 +36,7 @@
 
 **Problem:** Before sending a scope to the adjuster, contractors have no way to know if they missed something. No second set of eyes. Missed items = lost revenue. Bad data = rejected claims.
 
-**Solution:** Job Audit — a full review of the entire job before submission. A different AI model re-examines everything with fresh eyes: the photos (did PhotoScope miss visible damage?), the readings (do they match the scope?), the data quality (typos, missing info), and the standards compliance (S500/OSHA). It's like having a 10-year veteran PM review your work before it goes to the adjuster.
+**Solution:** Job Audit — a full review of the entire job before submission. The AI re-examines everything with a fresh prompt (same model, different perspective): the photos (did PhotoScope miss visible damage?), the readings (do they match the scope?), the data quality (typos, missing info), and the standards compliance (S500/OSHA). It's like having a 10-year veteran PM review your work before it goes to the adjuster.
 
 **What it audits (four layers):**
 1. **Photo re-examination** — AI looks at the damage photos again independently. Catches damage PhotoScope missed, flags discrepancies between what's visible and what's scoped.
@@ -89,6 +89,7 @@
 ### Phase 2: Frontend — ❌
 - [ ] "Job Audit" banner on Report tab: "Reviews your entire job like a 10-year veteran — photos, scope, readings, everything — before it goes to the adjuster"
 - [ ] "Run Job Audit" button
+- [ ] **Thinking stream UX:** AI narrates the audit process ("Reviewing against S500... Cat 2 water detected but no antimicrobial in scope... Re-examining kitchen photo — I see ceiling damage that isn't scoped...") via SSE `thinking` events
 - [ ] Results grouped by audit layer:
   - 📸 **Photo Findings** — "AI re-examined your photos and found 2 issues"
   - 📋 **Scope Gaps** — "3 items missing based on S500 standards"

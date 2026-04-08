@@ -33,7 +33,7 @@
 
 **Problem:** Contractors encounter hazardous materials (asbestos, lead paint) on restoration jobs but lack tools to quickly identify risk. Missing hazmat findings creates liability and safety issues.
 
-**Solution:** AI Hazmat Scanner — scans job photos for potential asbestos-containing materials (ACMs) and lead paint indicators. Flags findings with severity, next steps, and local contractor referrals.
+**Solution:** HazmatCheck — scans job photos for potential asbestos-containing materials (ACMs) and lead paint indicators. AI narrates what it's examining ("Examining ceiling texture... this granular pattern is consistent with vermiculite...") while findings stream in. Flags findings with severity, next steps, and local contractor referrals.
 
 **Scope:**
 - IN: Asbestos risk scan, lead paint risk scan, hazmat_findings table, findings CRUD, add-to-report flow
@@ -78,7 +78,8 @@ CREATE TABLE hazmat_findings (
 
 ### Phase 2: Frontend — ❌
 - [ ] "Check for Hazards" button on Photos tab toolbar
-- [ ] Loading state: "Scanning for hazardous materials..."
+- [ ] **Thinking stream UX:** AI narrates what it's examining in each photo ("Examining pipe insulation in basement... wrap pattern and texture suggest potential ACM...") via SSE `thinking` events
+- [ ] Loading state: thinking stream fills the wait, with photo progress
 - [ ] Asbestos Risk Scan section:
   - Disclaimer: "This scan uses AI visual analysis to flag materials that *may* contain asbestos... not a substitute for professional testing."
   - Summary: "4 potential ACMs identified across 4 photos"
@@ -103,7 +104,9 @@ CREATE TABLE hazmat_findings (
 **Key Files:**
 - `backend/api/ai/hazmat.py` — hazmat scanning pipeline
 - `backend/api/ai/prompts/hazmat.py` — hazmat prompt template
-- `web/src/components/hazmat-results.tsx` — hazmat findings display
+- `backend/api/hazmat/router.py`, `service.py`, `schemas.py` — hazmat endpoints
+- `web/src/components/hazmat/finding-card.tsx` — per-finding card
+- `web/src/components/hazmat/hazmat-results.tsx` — results container
 
 ## Decisions & Notes
 

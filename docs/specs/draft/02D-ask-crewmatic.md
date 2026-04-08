@@ -21,9 +21,11 @@
 | Tests Written | 0 |
 
 ## Done When
-- [ ] `POST /v1/jobs/{job_id}/assistant` — context-aware AI assistant responds to questions on any job screen
+- [ ] `POST /v1/jobs/{job_id}/ask` — context-aware AI responds to questions on any job screen
+- [ ] AI has access to the ENTIRE job (photos, scope, readings, rooms, floor plan — not just current screen)
 - [ ] Suggested actions rendered as tappable chips (add line item, navigate, explain)
-- [ ] Screen context auto-detected from current route
+- [ ] Screen context auto-detected from current route (used for prioritizing context, not limiting it)
+- [ ] Conversation history maintained per job session
 - [ ] All backend endpoints have pytest coverage
 - [ ] Code review approved
 
@@ -31,49 +33,56 @@
 
 **Problem:** Contractors have questions while working a job — "What Xactimate code do I use for this?", "Is this reading normal?", "What am I missing?" — but no in-context help exists.
 
-**Solution:** Job Assistant — a floating AI chat available on every job screen. Knows the current job context (photos, scope, readings) and provides actionable answers with suggested next steps.
+**Solution:** Ask Crewmatic — a floating AI chat available on every job screen. It's like texting an expert who knows everything about THIS specific job. Has access to all job data (photos, scope, readings, rooms, floor plan) and provides actionable answers with suggested next steps.
 
 ## Phases & Checklist
 
 ### Phase 1: Backend — ❌
-- [ ] Create `api/ai/assistant.py` — job assistant pipeline
-- [ ] `POST /v1/jobs/{job_id}/assistant` — context-aware AI assistant
-- [ ] Request schema: `AssistantRequest { message: str, screen_context: Literal['photos','floor_plan','scope','readings','general'], target_id: UUID | None }`
-- [ ] Response schema: `AssistantResponse { reply: str, suggested_actions: list[SuggestedAction], event_id: UUID, cost_cents: int, duration_ms: int }`
-- [ ] `SuggestedAction` = `AddLineItemAction | EditSketchAction | NavigateAction | ExplainAction`
-- [ ] Context-aware: fetches relevant job data based on `screen_context` (e.g., scope screen → loads line items; photos screen → loads photo metadata)
-- [ ] Validates `target_id` exists and belongs to the job when provided
+- [ ] Create `api/ai/assistant.py` — Ask Crewmatic pipeline
+- [ ] `POST /v1/jobs/{job_id}/ask` — context-aware AI chat
+- [ ] Request schema: `AskRequest { message: str, screen_context: Literal['photos','floor_plan','scope','readings','report','general'], conversation_id: UUID | None }`
+- [ ] Response schema: `AskResponse { reply: str, suggested_actions: list[SuggestedAction], event_id: UUID, conversation_id: UUID, cost_cents: int, duration_ms: int }`
+- [ ] `SuggestedAction` = `AddLineItemAction | NavigateAction | ExplainAction`
+- [ ] **Full job context:** Always loads the entire job context (all rooms, photos, line items, readings, equipment). `screen_context` tells the AI what the user is currently looking at, but it has access to everything.
+- [ ] **Conversation history:** Maintain chat history per job session via `conversation_id`. First message creates a new conversation; subsequent messages include the ID to continue.
 - [ ] Uses `log_ai_event()` — returns `event_id` in response
 - [ ] Uses shared AI service layer from Spec 02A
 - [ ] pytest: assistant returns valid response for each screen_context
-- [ ] pytest: target_id validation rejects invalid IDs
-- [ ] pytest: suggested_actions match expected types per screen_context
+- [ ] pytest: conversation history is maintained across messages
+- [ ] pytest: suggested_actions are valid types
 
 ### Phase 2: Frontend — ❌
-- [ ] Floating Action Button (FAB) on all job screens — opens Job Assistant panel
-- [ ] Chat-style UI: user message → assistant reply with suggested actions
+- [ ] Floating Action Button (FAB) labeled "Ask" on all job screens — opens chat panel
+- [ ] Chat-style UI: user message → streamed AI reply with suggested actions
 - [ ] Suggested actions rendered as tappable chips/buttons
 - [ ] Screen context auto-detected from current route
-- [ ] Thumbs up/down on assistant responses (uses Spec 02E feedback endpoint)
+- [ ] Conversation persists while navigating between job tabs (same conversation_id)
+- [ ] Thumbs up/down on responses (uses Spec 02E feedback endpoint)
 
 ## Technical Approach
 
 - Reuses shared AI service layer from Spec 02A
-- Model: Sonnet 4 for assistant (needs reasoning + job context)
+- Model: Sonnet 4 for chat (needs reasoning + full job context)
+- **No thinking stream** — conversational, just stream the text reply
 - Separate prompt template in `backend/api/ai/prompts/assistant.py`
-- Context loading is dynamic based on screen_context parameter
+- Full job context loaded on every request (not just current screen data)
+- `screen_context` included in system prompt so AI knows what the user is looking at
 
 **Key Files:**
-- `backend/api/ai/assistant.py` — job assistant pipeline
-- `backend/api/ai/prompts/assistant.py` — assistant prompt template
-- `web/src/components/job-assistant.tsx` — FAB + chat UI
+- `backend/api/ai/assistant.py` — Ask Crewmatic pipeline
+- `backend/api/ai/prompts/assistant.py` — chat prompt template
+- `backend/api/assistant/router.py`, `service.py`, `schemas.py` — chat endpoints
+- `web/src/components/assistant/assistant-fab.tsx` — floating action button
+- `web/src/components/assistant/assistant-panel.tsx` — slide-up chat panel
+- `web/src/components/assistant/action-chip.tsx` — suggested action chip
 
 ## Decisions & Notes
 
-- **Three-layer frontend pattern:** Primary action button per screen, secondary toolbar actions, and Job Assistant FAB available on all screens.
-- **Context-aware:** Loads different job data depending on which screen the user is on. Scope screen loads line items, photos screen loads photo metadata, etc.
-- **Model selection:** Sonnet 4 for assistant (complex reasoning about restoration domain).
-- **Haiku 3.5 for lightweight tasks:** Photo quality assessment, simple classification — use Haiku where Sonnet is overkill.
+- **Full job access, always.** The AI loads the entire job context every time — not just the current screen's data. `screen_context` tells it what the user is looking at, but it can reference anything in the job.
+- **Conversation history per job session.** Chat isn't stateless — messages build on each other. "What about the kitchen?" makes sense after "Which rooms have the worst damage?"
+- **Three-layer frontend pattern:** Primary action button per screen, secondary toolbar actions, and Ask Crewmatic FAB available on all screens.
+- **Model selection:** Sonnet 4 for chat (complex reasoning about restoration domain).
+- **No thinking stream:** Unlike PhotoScope/HazmatCheck/Job Audit, this is conversational — just stream the reply text. No need for narrated analysis.
 
 ---
 
