@@ -58,6 +58,8 @@ function statusLabel(status: string): string {
     job_complete: "Complete",
     submitted: "Submitted",
     collected: "Collected",
+    scoping: "Scoping",
+    in_progress: "In Progress",
   };
   return map[status] ?? status;
 }

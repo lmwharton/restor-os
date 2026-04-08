@@ -59,15 +59,20 @@ function ShieldIcon() {
 }
 
 export default async function LoginPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-  if (user) {
-    const { data: { session } } = await supabase.auth.getSession();
-    const destination = session?.access_token
-      ? await getAuthenticatedRedirect(session.access_token)
-      : "/onboarding";
-    redirect(destination);
+    if (user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      const destination = session?.access_token
+        ? await getAuthenticatedRedirect(session.access_token)
+        : "/onboarding";
+      redirect(destination);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "NEXT_REDIRECT") throw error;
+    // Supabase not configured — show login page anyway (sign-in won't work but UI is visible)
   }
 
   return (

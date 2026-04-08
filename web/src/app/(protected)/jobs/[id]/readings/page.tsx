@@ -322,7 +322,7 @@ export default function MoistureReadingsPage() {
             type="button"
             onClick={handleSaveAll}
             disabled={isSaving}
-            className="hidden lg:flex h-10 px-6 primary-gradient text-on-primary font-semibold rounded-xl text-sm items-center transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+            className="hidden lg:flex h-10 px-6 bg-brand-accent text-on-primary font-semibold rounded-xl text-sm items-center transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
           >
             {isSaving ? "Saving..." : "Save All Rooms"}
           </button>
@@ -690,7 +690,7 @@ export default function MoistureReadingsPage() {
           type="button"
           onClick={handleSaveAndNext}
           disabled={isSaving}
-          className="w-full h-14 primary-gradient text-on-primary font-semibold rounded-xl text-base active:opacity-90 transition-opacity disabled:opacity-50"
+          className="w-full h-14 bg-brand-accent text-on-primary font-semibold rounded-xl text-base active:opacity-90 transition-opacity disabled:opacity-50"
         >
           {isSaving ? "Saving..." : isLastRoom ? "Save & Finish" : "Save & Next Room \u2192"}
         </button>

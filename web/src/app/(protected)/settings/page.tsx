@@ -146,7 +146,7 @@ function SaveButton({
     <button
       onClick={onClick}
       disabled={isSaving || disabled}
-      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary bg-brand-accent cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {isSaving ? (
         <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -434,9 +434,6 @@ export default function SettingsPage() {
   return (
     <div className="px-4 sm:px-6 pb-24 md:pb-12">
       <div className="max-w-[600px] mx-auto pt-8 sm:pt-12">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.5px] text-on-surface mb-6">
-          Settings
-        </h1>
 
         {/* Tabs */}
         <div className="flex gap-1 mb-8 bg-surface-container rounded-lg p-1 overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-1 scrollbar-none">

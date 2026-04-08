@@ -292,7 +292,12 @@ function DesktopSidebar({ user }: { user: UserProfile | null }) {
       </nav>
 
       {/* Bottom section */}
-      <div className="mt-auto border-t border-outline-variant/15">
+      <div className="mt-auto border-t border-outline-variant/15 px-3 py-3">
+        <p className="text-[10px] text-outline font-[family-name:var(--font-geist-mono)]">
+          Powered by{" "}
+          <a href="https://crewmatic-website.vercel.app" target="_blank" rel="noopener noreferrer" className="text-on-surface-variant hover:text-brand-accent transition-colors">Crewmatic</a>
+        </p>
+        <p className="text-[10px] text-outline/50 font-[family-name:var(--font-geist-mono)] mt-0.5">v{APP_VERSION}</p>
       </div>
     </aside>
   );
@@ -398,10 +403,15 @@ function GlobalSearch() {
 }
 
 function DesktopTopBar({ user }: { user: UserProfile | null }) {
+  const pathname = usePathname();
+  const hideTopBar = pathname === "/jobs" || pathname?.startsWith("/jobs/") || pathname === "/settings" || pathname?.startsWith("/settings/");
+
+  if (hideTopBar) return null;
+
   return (
     <header className="hidden lg:block sticky top-0 z-30 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30 lg:ml-56">
       <div className="w-full px-6 h-12 flex items-center justify-between">
-        {/* Left: Search */}
+        {/* Left: Search — hidden on /jobs which has its own */}
         <GlobalSearch />
 
         {/* Right: Status + Notification + Avatar */}
@@ -578,9 +588,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Main content — offset for sidebar on lg: */}
       <main className="flex-1 pb-20 md:pb-0 lg:ml-56">{children}</main>
 
-      <div className="lg:ml-56">
-        <AppFooter />
-      </div>
       <MobileBottomNav />
     </div>
   );

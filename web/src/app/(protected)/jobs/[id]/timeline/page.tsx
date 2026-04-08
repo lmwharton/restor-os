@@ -347,7 +347,7 @@ export default function JobTimelinePage({
               <button
                 type="button"
                 disabled
-                className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary opacity-40"
+                className="bg-brand-accent h-10 w-full rounded-xl text-sm font-medium text-on-primary opacity-40"
               >
                 Coming Soon
               </button>
@@ -368,7 +368,7 @@ export default function JobTimelinePage({
           </p>
           <Link
             href={`/jobs/${jobId}/report`}
-            className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary flex items-center justify-center transition-opacity hover:opacity-90 active:opacity-80"
+            className="bg-brand-accent h-10 w-full rounded-xl text-sm font-medium text-on-primary flex items-center justify-center transition-opacity hover:opacity-90 active:opacity-80"
           >
             Generate Report
           </Link>
