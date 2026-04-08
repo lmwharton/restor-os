@@ -2,9 +2,10 @@
 
 Updated 2026-03-30. All eng review items complete.
 
-## All Clear
+## Open Items
 
-No open items. Everything from the eng review (21 issues) has been fixed and verified.
+### Spec 03 — Voice Everywhere (Design Review 2026-04-08)
+- **Haptic feedback for voice interactions** — Add navigator.vibrate() calls: 10ms on mic activation, 5ms on field fill confirmation. Gives tactile feedback to contractors who can't always look at screen (dirty/wet gloves, holding tools). Polish item, non-blocking. Depends on: Spec 03 Phase 1 implementation.
 
 ## Completed
 
