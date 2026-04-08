@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -17,9 +17,26 @@ import {
   useCreateRoom,
   useDeleteRoom,
   useUpdateRoom,
+  useReconPhases,
 } from "@/lib/hooks/use-jobs";
 import { apiGet } from "@/lib/api";
-// Types used via hook return inference — no direct imports needed
+import type { ReconPhase, ReconPhaseStatus } from "@/lib/types";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -74,6 +91,10 @@ function statusLabel(status: string): string {
       return "Submitted";
     case "collected":
       return "Collected";
+    case "scoping":
+      return "Scoping";
+    case "in_progress":
+      return "In Progress";
     default:
       return status;
   }
@@ -368,6 +389,393 @@ function AccordionSection({
         </div>
       )}
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recon Phases Section (interactive)                                 */
+/* ------------------------------------------------------------------ */
+
+const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string }[] = [
+  { value: "pending", label: "Pending", color: "text-outline-variant", bg: "bg-[#b5b0aa]/10 border-[#b5b0aa]/30" },
+  { value: "in_progress", label: "In Progress", color: "text-type-mitigation", bg: "bg-type-mitigation/10 border-[#3b82f6]/30" },
+  { value: "on_hold", label: "On Hold", color: "text-status-in-progress", bg: "bg-status-in-progress/10 border-[#d97706]/30" },
+  { value: "complete", label: "Complete", color: "text-status-collected", bg: "bg-status-collected/10 border-[#2a9d5c]/30" },
+];
+
+function PhaseStatusIcon({ status }: { status: ReconPhaseStatus }) {
+  switch (status) {
+    case "complete":
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="7" fill="#2a9d5c" />
+          <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "in_progress":
+      return (
+        <span className="relative shrink-0 flex h-4 w-4">
+          <span className="absolute inset-0 rounded-full bg-type-mitigation animate-ping opacity-40" />
+          <span className="relative rounded-full h-4 w-4 bg-type-mitigation" />
+        </span>
+      );
+    case "on_hold":
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="7" fill="#d97706" fillOpacity="0.15" stroke="#d97706" strokeWidth="1" />
+          <rect x="6" y="5" width="1.5" height="6" rx="0.5" fill="#d97706" />
+          <rect x="8.5" y="5" width="1.5" height="6" rx="0.5" fill="#d97706" />
+        </svg>
+      );
+    default:
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="6.5" stroke="#b5b0aa" strokeWidth="1" />
+        </svg>
+      );
+  }
+}
+
+function DragHandle({ listeners, attributes }: { listeners?: React.HTMLAttributes<HTMLButtonElement>; attributes?: React.HTMLAttributes<HTMLButtonElement> }) {
+  return (
+    <button
+      type="button"
+      className="shrink-0 w-5 h-8 flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant cursor-grab active:cursor-grabbing touch-none"
+      {...listeners}
+      {...attributes}
+      aria-roledescription="sortable"
+    >
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="none" aria-hidden="true">
+        <circle cx="3" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="3" cy="8" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="8" r="1.2" fill="currentColor" />
+        <circle cx="3" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="14" r="1.2" fill="currentColor" />
+      </svg>
+    </button>
+  );
+}
+
+function SortablePhaseRow({
+  phase,
+  isExpanded,
+  onToggle,
+  onStatusChange,
+  onDelete,
+}: {
+  phase: ReconPhase;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onStatusChange: (status: ReconPhaseStatus) => void;
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: phase.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="rounded-lg overflow-hidden">
+      {/* Phase row */}
+      <div className="flex items-center gap-1">
+        <DragHandle listeners={listeners} attributes={attributes} />
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-3 px-1 py-2.5 rounded-lg hover:bg-surface-container-low/50 transition-colors cursor-pointer text-left"
+        >
+          <PhaseStatusIcon status={phase.status} />
+          <span className="flex-1 text-[14px] font-medium text-on-surface">
+            {phase.phase_name}
+          </span>
+          <span className={`text-[12px] font-[family-name:var(--font-geist-mono)] ${
+            phase.status === "complete" ? "text-status-collected" :
+            phase.status === "in_progress" ? "text-type-mitigation" :
+            phase.status === "on_hold" ? "text-status-in-progress" :
+            "text-outline-variant"
+          }`}>
+            {phase.status === "complete" && phase.completed_at
+              ? `Completed ${new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+              : phase.status === "in_progress" ? "In Progress"
+              : phase.status === "on_hold" ? "On Hold"
+              : "Pending"}
+          </span>
+          <ChevronDown size={14} className={`text-on-surface-variant transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+
+      {/* Expanded: status toggles + notes */}
+      {isExpanded && (
+        <div className="px-2 pb-3 pt-1 ml-6 space-y-3 animate-[fadeSlideIn_150ms_ease-out]">
+          <div className="flex gap-1.5">
+            {PHASE_STATUSES.map((s) => (
+              <button
+                key={s.value}
+                type="button"
+                onClick={() => onStatusChange(s.value)}
+                aria-label={`Set phase status to ${s.label}`}
+                className={`flex-1 h-8 rounded-md text-[11px] font-semibold border transition-all cursor-pointer ${
+                  phase.status === s.value
+                    ? `${s.bg} ${s.color}`
+                    : "bg-surface-container-lowest text-on-surface-variant/60 border-outline-variant/30 hover:border-outline-variant"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+          {phase.notes && (
+            <p className="text-[12px] text-on-surface-variant px-1">{phase.notes}</p>
+          )}
+          <div className="flex items-center gap-4 text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/60 px-1">
+            {phase.started_at && (
+              <span>Started {new Date(phase.started_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            )}
+            {phase.completed_at && (
+              <span>Completed {new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            )}
+            <button
+              type="button"
+              onClick={onDelete}
+              className="ml-auto text-[11px] text-error/60 hover:text-error transition-colors cursor-pointer"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPhase[]; jobId: string }) {
+  // Local state for optimistic updates (mock mode — will use mutation when backend is connected)
+  const [phases, setPhases] = useState(initialPhases);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Sync when data refetches
+  useEffect(() => {
+    if (initialPhases.length > 0) setPhases(initialPhases);
+  }, [initialPhases]);
+
+  const sorted = useMemo(() => [...phases].sort((a, b) => a.sort_order - b.sort_order), [phases]);
+  const completeCount = phases.filter((p) => p.status === "complete").length;
+  const pct = phases.length > 0 ? Math.round((completeCount / phases.length) * 100) : 0;
+
+  function handleStatusChange(phaseId: string, newStatus: ReconPhaseStatus) {
+    setPhases((prev) =>
+      prev.map((p) => {
+        if (p.id !== phaseId) return p;
+        return {
+          ...p,
+          status: newStatus,
+          started_at: newStatus === "in_progress" && !p.started_at ? new Date().toISOString() : p.started_at,
+          completed_at: newStatus === "complete" ? new Date().toISOString() : null,
+          updated_at: new Date().toISOString(),
+        };
+      })
+    );
+    // TODO: call API mutation when backend is connected
+    // apiPatch(`/v1/jobs/${jobId}/recon-phases/${phaseId}`, { status: newStatus });
+  }
+
+  const [newPhaseName, setNewPhaseName] = useState("");
+  const [showAddInput, setShowAddInput] = useState(false);
+
+  function handleAddPhase() {
+    const name = newPhaseName.trim();
+    if (!name) return;
+    const maxOrder = phases.length > 0 ? Math.max(...phases.map((p) => p.sort_order)) : -1;
+    const now = new Date().toISOString();
+    const newPhase: ReconPhase = {
+      id: crypto.randomUUID(),
+      job_id: jobId,
+      company_id: "",
+      phase_name: name,
+      status: "pending",
+      sort_order: maxOrder + 1,
+      started_at: null,
+      completed_at: null,
+      notes: null,
+      created_at: now,
+      updated_at: now,
+    };
+    setPhases((prev) => [...prev, newPhase]);
+    setNewPhaseName("");
+    setShowAddInput(false);
+    // TODO: apiPost(`/v1/jobs/${jobId}/recon-phases`, { phase_name: name, sort_order: maxOrder + 1 });
+  }
+
+  function handleDeletePhase(phaseId: string) {
+    setPhases((prev) => prev.filter((p) => p.id !== phaseId));
+    setExpandedId(null);
+    // TODO: apiDelete(`/v1/jobs/${jobId}/recon-phases/${phaseId}`);
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setPhases((prev) => {
+      const sortedPrev = [...prev].sort((a, b) => a.sort_order - b.sort_order);
+      const oldIndex = sortedPrev.findIndex((p) => p.id === active.id);
+      const newIndex = sortedPrev.findIndex((p) => p.id === over.id);
+      const reordered = arrayMove(sortedPrev, oldIndex, newIndex);
+      return reordered.map((p, i) => ({ ...p, sort_order: i }));
+    });
+    // TODO: apiPost(`/v1/jobs/${jobId}/recon-phases/reorder`, { phase_ids: [...] });
+  }
+
+  return (
+    <AccordionSection
+      icon={
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant">
+          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2Z" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      }
+      title="Reconstruction Phases"
+      defaultOpen
+      preview={phases.length > 0 ? `${completeCount} of ${phases.length} complete` : "No phases yet"}
+    >
+      {phases.length > 0 ? (
+        <div className="space-y-1">
+          {/* Progress bar */}
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex-1 h-1 rounded-full bg-[#eae6e1] overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${pct}%`,
+                  background: "linear-gradient(90deg, #3b82f6, #2a9d5c)",
+                }}
+              />
+            </div>
+            <span className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums">
+              {pct}%
+            </span>
+          </div>
+
+          {/* Phase rows — drag to reorder */}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={sorted.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+              {sorted.map((phase) => (
+                <SortablePhaseRow
+                  key={phase.id}
+                  phase={phase}
+                  isExpanded={expandedId === phase.id}
+                  onToggle={() => setExpandedId(expandedId === phase.id ? null : phase.id)}
+                  onStatusChange={(status) => handleStatusChange(phase.id, status)}
+                  onDelete={() => handleDeletePhase(phase.id)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+
+          {/* Add Phase */}
+          {showAddInput ? (
+            <div className="flex items-center gap-2 mt-2 px-2">
+              <input
+                type="text"
+                value={newPhaseName}
+                onChange={(e) => setNewPhaseName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhase(); if (e.key === "Escape") { setShowAddInput(false); setNewPhaseName(""); } }}
+                placeholder="Phase name (e.g. Cabinetry)"
+                autoFocus
+                className="flex-1 h-9 px-3 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 border border-outline-variant"
+              />
+              <button
+                type="button"
+                onClick={handleAddPhase}
+                disabled={!newPhaseName.trim()}
+                className="h-9 px-4 rounded-lg text-[12px] font-semibold text-on-primary bg-brand-accent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAddInput(false); setNewPhaseName(""); }}
+                className="h-9 px-3 rounded-lg text-[12px] text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddInput(true)}
+              className="flex items-center gap-1.5 mt-2 px-2 py-2 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 5v14m-7-7h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Add Phase
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {!showAddInput && (
+            <div className="text-center py-6 border border-dashed border-outline-variant/40 rounded-lg">
+              <p className="text-[14px] text-on-surface-variant">Add phases to track your reconstruction progress</p>
+              <p className="text-[12px] text-outline-variant mt-1">Common phases: Demo, Drywall, Paint, Flooring, Trim, Final Walkthrough</p>
+              <button
+                type="button"
+                onClick={() => setShowAddInput(true)}
+                className="mt-3 h-9 px-5 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent cursor-pointer"
+              >
+                Add Phase
+              </button>
+            </div>
+          )}
+          {showAddInput && (
+            <div className="flex items-center gap-2 px-2">
+              <input
+                type="text"
+                value={newPhaseName}
+                onChange={(e) => setNewPhaseName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhase(); if (e.key === "Escape") { setShowAddInput(false); setNewPhaseName(""); } }}
+                placeholder="Phase name (e.g. Demo)"
+                autoFocus
+                className="flex-1 h-9 px-3 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 border border-outline-variant"
+              />
+              <button
+                type="button"
+                onClick={handleAddPhase}
+                disabled={!newPhaseName.trim()}
+                className="h-9 px-4 rounded-lg text-[12px] font-semibold text-on-primary bg-brand-accent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAddInput(false); setNewPhaseName(""); }}
+                className="h-9 px-3 rounded-lg text-[12px] text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </AccordionSection>
   );
 }
 
@@ -699,6 +1107,7 @@ export default function JobDetailPage() {
   const { data: floorPlans } = useFloorPlans(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
+  const { data: reconPhases } = useReconPhases(jobId);
   const { data: me } = useQuery<{ id: string; name: string; first_name: string | null; last_name: string | null }>({
     queryKey: ["me"],
     queryFn: () => apiGet("/v1/me"),
@@ -824,6 +1233,11 @@ export default function JobDetailPage() {
               <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight">
                 {job.job_number}
               </p>
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                job.job_type === "mitigation" ? "bg-[#eff6ff] text-type-mitigation" : "bg-[#fff3ed] text-type-reconstruction"
+              }`}>
+                {job.job_type === "mitigation" ? "MIT" : "REC"}
+              </span>
               <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant text-[10px] font-semibold font-[family-name:var(--font-geist-mono)]">
                 {statusLabel(job.status)}
               </span>
@@ -846,6 +1260,29 @@ export default function JobDetailPage() {
         </div>
       </header>
 
+      {/* ── Linked Job Banner ─────────────────────────────────── */}
+      {job.linked_job_summary && (
+        <div className="max-w-6xl mx-auto px-4 pt-4">
+          <button
+            type="button"
+            onClick={() => router.push(`/jobs/${job.linked_job_summary!.id}`)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[#faf9f7] border border-[#eae6e1] hover:bg-surface-container-low transition-colors cursor-pointer"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-outline-variant">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="flex-1 text-[13px] text-[#6b6560] text-left">
+              Linked {job.linked_job_summary.job_type === "mitigation" ? "mitigation" : "reconstruction"} job:{" "}
+              <span className="font-semibold text-on-surface">{job.linked_job_summary.job_number}</span>
+            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-outline-variant">
+              <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* ── Main Content Grid ───────────────────────────────────── */}
       <main className="max-w-6xl mx-auto px-4 py-6 pb-40 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
 
@@ -859,8 +1296,8 @@ export default function JobDetailPage() {
             preview={
               [
                 job.customer_name,
-                job.loss_category ? `Cat ${job.loss_category}` : null,
-                job.loss_class ? `Class ${job.loss_class}` : null,
+                job.job_type === "mitigation" && job.loss_category ? `Cat ${job.loss_category}` : null,
+                job.job_type === "mitigation" && job.loss_class ? `Class ${job.loss_class}` : null,
               ]
                 .filter(Boolean)
                 .join(" \u00B7 ")
@@ -887,14 +1324,18 @@ export default function JobDetailPage() {
                 <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
                   <EditableField label="Date" value={job.loss_date} field="loss_date" onSave={handleFieldSave} mono type="date" />
                   <EditableField label="Cause" value={job.loss_cause} field="loss_cause" onSave={handleFieldSave} />
-                  <span className="text-on-surface-variant text-[13px]">Category</span>
-                  <span className={job.loss_category ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
-                    {job.loss_category ? `Cat ${job.loss_category}` : "Not set"}
-                  </span>
-                  <span className="text-on-surface-variant text-[13px]">Class</span>
-                  <span className={job.loss_class ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
-                    {job.loss_class ? `Class ${job.loss_class}` : "Not set"}
-                  </span>
+                  {job.job_type === "mitigation" && (
+                    <>
+                      <span className="text-on-surface-variant text-[13px]">Category</span>
+                      <span className={job.loss_category ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                        {job.loss_category ? `Cat ${job.loss_category}` : "Not set"}
+                      </span>
+                      <span className="text-on-surface-variant text-[13px]">Class</span>
+                      <span className={job.loss_class ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                        {job.loss_class ? `Class ${job.loss_class}` : "Not set"}
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1125,7 +1566,13 @@ export default function JobDetailPage() {
             </div>
           </AccordionSection>
 
-          {/* Section 4: Readings */}
+          {/* Section 3B: Recon Phases (reconstruction jobs only) */}
+          {job.job_type === "reconstruction" && (
+            <ReconPhasesSection phases={reconPhases ?? []} jobId={jobId} />
+          )}
+
+          {/* Section 4: Readings (mitigation only) */}
+          {job.job_type === "mitigation" && (
           <AccordionSection
             icon={<IconReadings />}
             title="Moisture Readings"
@@ -1171,6 +1618,7 @@ export default function JobDetailPage() {
               )}
             </div>
           </AccordionSection>
+          )}
 
           {/* Section 5: Tech Notes */}
           <AccordionSection
@@ -1225,13 +1673,19 @@ export default function JobDetailPage() {
           <AccordionSection
             icon={<IconReport />}
             title="Final Report"
-            badge={
-              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant/70 text-[9px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
-                Locked
-              </span>
-            }
-            compact
-          />
+            defaultOpen={false}
+            preview="View or print report"
+          >
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => router.push(`/jobs/${jobId}/report`)}
+                className="flex-1 h-10 rounded-lg text-sm font-semibold text-on-primary bg-brand-accent flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer"
+              >
+                View {job.job_type === "reconstruction" ? "Reconstruction" : "Scope"} Report →
+              </button>
+            </div>
+          </AccordionSection>
         </div>
 
         {/* ── RIGHT COLUMN: Sticky Sidebar ──────────────────────── */}
@@ -1316,6 +1770,20 @@ export default function JobDetailPage() {
             </button>
           </section>
 
+          {/* Create Reconstruction Job — shown on mitigation jobs that are complete or later */}
+          {job.job_type === "mitigation" && ["job_complete", "submitted", "collected"].includes(job.status) && (
+            <button
+              type="button"
+              onClick={() => router.push(`/jobs/new?type=reconstruction&linked=${jobId}`)}
+              className="w-full h-10 rounded-lg text-[13px] font-semibold text-on-surface border border-outline-variant flex items-center justify-center gap-2 hover:bg-surface-container-low transition-colors cursor-pointer"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-type-reconstruction">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Create Reconstruction Job
+            </button>
+          )}
+
           {/* Footer Links */}
           <div className="flex items-center gap-4 px-1">
             <button
@@ -1360,7 +1828,7 @@ export default function JobDetailPage() {
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/photos`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
+              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl bg-brand-accent text-on-primary cursor-pointer"
             >
               <CameraIcon size={22} />
               <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
@@ -1370,7 +1838,7 @@ export default function JobDetailPage() {
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/readings`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
+              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl bg-brand-accent text-on-primary cursor-pointer"
             >
               <ChartIcon size={22} />
               <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">

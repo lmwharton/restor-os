@@ -7,6 +7,7 @@ import {
   useRooms,
   usePhotos,
   useAllReadings,
+  useReconPhases,
 } from "@/lib/hooks/use-jobs";
 import { apiGet } from "@/lib/api";
 
@@ -61,6 +62,8 @@ function statusLabel(s: string): string {
     job_complete: "Complete",
     submitted: "Submitted",
     collected: "Collected",
+    scoping: "Scoping",
+    in_progress: "In Progress",
   };
   return map[s] ?? s;
 }
@@ -79,6 +82,7 @@ export default function ReportPage() {
   const { data: rooms } = useRooms(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: readings } = useAllReadings(jobId);
+  const { data: reconPhases } = useReconPhases(jobId);
   const { data: profile } = useQuery<ReportUserProfile>({
     queryKey: ["me"],
     queryFn: () => apiGet<ReportUserProfile>("/v1/me"),
@@ -162,9 +166,18 @@ export default function ReportPage() {
               <h1 className="text-[28px] font-extrabold tracking-tight text-neutral-900 leading-tight">
                 {job.customer_name || job.address_line1}
               </h1>
-              <p className="text-[13px] text-neutral-500 mt-1 font-medium tracking-wide uppercase">
-                Scope Report
-              </p>
+              <div className="flex items-center gap-2 mt-1">
+                <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wide ${
+                  job.job_type === "reconstruction"
+                    ? "bg-[#fff3ed] text-[#e85d26]"
+                    : "bg-[#eff6ff] text-[#3b82f6]"
+                }`}>
+                  {job.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
+                </span>
+                <p className="text-[13px] text-neutral-500 font-medium tracking-wide uppercase">
+                  {job.job_type === "reconstruction" ? "Report" : "Scope Report"}
+                </p>
+              </div>
             </div>
             <div className="text-right">
               <p className="text-[15px] font-bold text-neutral-900">{company?.name ?? "Your Company"}</p>
@@ -190,8 +203,12 @@ export default function ReportPage() {
             <InfoRow label="Status" value={statusLabel(job.status)} />
             <InfoRow label="Loss Type" value={lossTypeLabel(job.loss_type)} />
             <InfoRow label="Loss Date" value={fmtDate(job.loss_date)} />
-            <InfoRow label="Category" value={categoryLabel(job.loss_category)} />
-            <InfoRow label="Class" value={classLabel(job.loss_class)} />
+            {job.job_type === "mitigation" && (
+              <>
+                <InfoRow label="Category" value={categoryLabel(job.loss_category)} />
+                <InfoRow label="Class" value={classLabel(job.loss_class)} />
+              </>
+            )}
             {job.loss_cause && <InfoRow label="Cause" value={job.loss_cause} />}
           </div>
 
@@ -220,7 +237,57 @@ export default function ReportPage() {
               </div>
             </div>
           )}
+          {/* Linked mitigation job reference */}
+          {job.job_type === "reconstruction" && job.linked_job_summary && (
+            <div className="mt-4 pt-3 border-t border-neutral-200">
+              <p className="text-[11px] font-semibold text-neutral-400 uppercase tracking-wider mb-1">Linked Mitigation Job</p>
+              <p className="text-[13px] text-neutral-800 font-medium">{job.linked_job_summary.job_number}</p>
+            </div>
+          )}
         </section>
+
+        {/* ── RECONSTRUCTION PHASES ── */}
+        {job.job_type === "reconstruction" && reconPhases && reconPhases.length > 0 && (
+          <section className="print-section mb-8">
+            <h2 className="report-section-title">Reconstruction Phases</h2>
+            <table className="report-table w-full">
+              <thead>
+                <tr>
+                  <th className="text-left">Phase</th>
+                  <th className="text-center">Status</th>
+                  <th className="text-left">Started</th>
+                  <th className="text-left">Completed</th>
+                  <th className="text-left">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...reconPhases].sort((a, b) => a.sort_order - b.sort_order).map((phase) => (
+                  <tr key={phase.id}>
+                    <td className="font-medium">{phase.phase_name}</td>
+                    <td className="text-center">
+                      <span className={`inline-block px-2 py-0.5 rounded text-[11px] font-semibold ${
+                        phase.status === "complete" ? "bg-emerald-50 text-emerald-700" :
+                        phase.status === "in_progress" ? "bg-blue-50 text-blue-700" :
+                        phase.status === "on_hold" ? "bg-amber-50 text-amber-700" :
+                        "bg-neutral-100 text-neutral-500"
+                      }`}>
+                        {phase.status === "complete" ? "Complete" :
+                         phase.status === "in_progress" ? "In Progress" :
+                         phase.status === "on_hold" ? "On Hold" : "Pending"}
+                      </span>
+                    </td>
+                    <td>{phase.started_at ? fmtDate(phase.started_at) : "--"}</td>
+                    <td>{phase.completed_at ? fmtDate(phase.completed_at) : "--"}</td>
+                    <td className="text-[11px] text-neutral-600">{phase.notes ?? "--"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="text-[11px] text-neutral-400 mt-2">
+              {reconPhases.filter((p) => p.status === "complete").length} of {reconPhases.length} phases complete
+            </p>
+          </section>
+        )}
 
         {/* ── PROPERTY LAYOUT / ROOMS ── */}
         {roomList.length > 0 && (
@@ -232,10 +299,17 @@ export default function ReportPage() {
                   <th className="text-left">Room</th>
                   <th className="text-left">Dimensions</th>
                   <th className="text-right">SF</th>
-                  <th className="text-center">Category</th>
-                  <th className="text-center">Class</th>
-                  <th className="text-right">Air Movers</th>
-                  <th className="text-right">Dehus</th>
+                  {job.job_type === "mitigation" && (
+                    <>
+                      <th className="text-center">Category</th>
+                      <th className="text-center">Class</th>
+                      <th className="text-right">Air Movers</th>
+                      <th className="text-right">Dehus</th>
+                    </>
+                  )}
+                  {job.job_type === "reconstruction" && (
+                    <th className="text-left">Notes</th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -248,10 +322,17 @@ export default function ReportPage() {
                         : "--"}
                     </td>
                     <td className="text-right">{room.square_footage ?? "--"}</td>
-                    <td className="text-center">{room.water_category ?? "--"}</td>
-                    <td className="text-center">{room.water_class ?? "--"}</td>
-                    <td className="text-right">{room.equipment_air_movers}</td>
-                    <td className="text-right">{room.equipment_dehus}</td>
+                    {job.job_type === "mitigation" && (
+                      <>
+                        <td className="text-center">{room.water_category ?? "--"}</td>
+                        <td className="text-center">{room.water_class ?? "--"}</td>
+                        <td className="text-right">{room.equipment_air_movers}</td>
+                        <td className="text-right">{room.equipment_dehus}</td>
+                      </>
+                    )}
+                    {job.job_type === "reconstruction" && (
+                      <td className="text-[11px] text-neutral-600">{room.notes ?? "--"}</td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -293,8 +374,8 @@ export default function ReportPage() {
           </section>
         )}
 
-        {/* ── MOISTURE READING LOG ── */}
-        {sortedReadings.length > 0 && (
+        {/* ── MOISTURE READING LOG (mitigation only) ── */}
+        {job.job_type === "mitigation" && sortedReadings.length > 0 && (
           <section className="print-section mb-8">
             <h2 className="report-section-title">Moisture Reading Log</h2>
             <table className="report-table w-full">
