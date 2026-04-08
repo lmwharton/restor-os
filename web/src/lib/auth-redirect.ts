@@ -12,20 +12,23 @@ export async function getAuthenticatedRedirect(accessToken: string): Promise<str
       cache: "no-store",
     });
 
+    console.log(`[auth-redirect] GET ${API_URL}/v1/company → ${res.status}`);
+
     if (res.ok) {
       return "/dashboard";
     }
 
-    // Only redirect to onboarding for explicit "no company" (404)
-    if (res.status === 404) {
+    // 404 = user exists but no company, 401 = user not in DB yet
+    // Both mean the user needs to go through onboarding
+    if (res.status === 404 || res.status === 401) {
+      console.log("[auth-redirect] → /onboarding (no company)");
       return "/onboarding";
     }
 
-    // For auth errors (401/403) or server errors (5xx), fall through to /dashboard
-    // to avoid sending onboarded users to onboarding during outages
+    console.log(`[auth-redirect] → /dashboard (fallback, status=${res.status})`);
     return "/dashboard";
-  } catch {
-    // Backend unreachable — don't block existing users, let protected layout handle it
+  } catch (err) {
+    console.log(`[auth-redirect] → /dashboard (catch: ${err})`);
     return "/dashboard";
   }
 }
