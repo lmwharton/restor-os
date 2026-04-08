@@ -317,6 +317,7 @@ export default function NewJobPage() {
   const [lossCause, setLossCause] = useState("");
   const [category, setCategory] = useState<WaterCategory | null>(null);
   const [waterClass, setWaterClass] = useState<WaterClass | null>(null);
+  const [homeYearBuilt, setHomeYearBuilt] = useState("");
 
   // Insurance
   const [carrier, setCarrier] = useState("");
@@ -400,11 +401,14 @@ export default function NewJobPage() {
         loss_class: waterClass || undefined,
         loss_cause: lossCause.trim() || undefined,
         loss_date: lossDate || undefined,
+        home_year_built: homeYearBuilt ? parseInt(homeYearBuilt, 10) : undefined,
         claim_number: claimNumber.trim() || undefined,
         carrier: carrier.trim() || undefined,
         adjuster_name: adjusterName.trim() || undefined,
         adjuster_phone: adjusterPhone.trim() || undefined,
         adjuster_email: adjusterEmail.trim() || undefined,
+        latitude: addressParts?.latitude || undefined,
+        longitude: addressParts?.longitude || undefined,
       });
       router.push(`/jobs/${result.id}`);
     } catch (err) {
@@ -632,6 +636,13 @@ export default function NewJobPage() {
                     />
                   </>
                 )}
+                <FormInputSmall
+                  label="Year Home Built"
+                  type="number"
+                  placeholder="e.g. 1975"
+                  value={homeYearBuilt}
+                  onChange={setHomeYearBuilt}
+                />
               </section>
 
               {/* Insurance Section — spans full width on desktop */}

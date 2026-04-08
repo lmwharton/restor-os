@@ -95,6 +95,7 @@ export interface Job {
   loss_class: WaterClass | null;
   loss_cause: string | null;
   loss_date: string | null;
+  home_year_built: number | null;
   status: JobStatus;
   assigned_to: string | null;
   notes: string | null;
@@ -130,11 +131,14 @@ export interface JobCreate {
   loss_class?: WaterClass;
   loss_cause?: string;
   loss_date?: string;
+  home_year_built?: number;
   claim_number?: string;
   carrier?: string;
   adjuster_name?: string;
   adjuster_phone?: string;
   adjuster_email?: string;
+  latitude?: number;
+  longitude?: number;
   notes?: string;
   tech_notes?: string;
 }

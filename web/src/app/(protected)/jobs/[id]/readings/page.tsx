@@ -5,9 +5,9 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowBack, Plus } from "@/components/icons";
-import { useRooms, useReadings } from "@/lib/hooks/use-jobs";
-import { apiPost } from "@/lib/api";
-import type { MoisturePoint } from "@/lib/types";
+import { useJob, useRooms, useReadings, useAllReadings } from "@/lib/hooks/use-jobs";
+import { apiPost, apiPatch } from "@/lib/api";
+import type { MoisturePoint, MoistureReading } from "@/lib/types";
 
 /* ------------------------------------------------------------------ */
 /*  GPP Calculation (psychrometric formula)                            */
@@ -39,6 +39,8 @@ interface DehuEntry {
 }
 
 interface RoomFormState {
+  tempF: string;
+  rhPct: string;
   points: PointEntry[];
   dehus: DehuEntry[];
 }
@@ -63,6 +65,246 @@ function defaultDehus(): DehuEntry[] {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Helper: format date as "Apr 8"                                     */
+/* ------------------------------------------------------------------ */
+
+function shortDate(dateStr: string): string {
+  const d = new Date(dateStr + "T00:00:00");
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+/* ------------------------------------------------------------------ */
+/*  History: group readings by day_number                              */
+/* ------------------------------------------------------------------ */
+
+interface DayGroup {
+  dayNumber: number;
+  date: string; // reading_date from first reading in group
+  atmospheric: { temp: number | null; rh: number | null; gpp: number | null };
+  rooms: {
+    roomId: string;
+    roomName: string;
+    atmospheric: { temp: number | null; rh: number | null; gpp: number | null };
+    points: MoisturePoint[];
+    dehus: MoistureReading["dehus"];
+  }[];
+}
+
+function groupReadingsByDay(
+  readings: MoistureReading[],
+  roomMap: Record<string, string>
+): DayGroup[] {
+  const map = new Map<number, DayGroup>();
+
+  for (const r of readings) {
+    const day = r.day_number ?? 1;
+    if (!map.has(day)) {
+      map.set(day, {
+        dayNumber: day,
+        date: r.reading_date,
+        atmospheric: {
+          temp: r.atmospheric_temp_f,
+          rh: r.atmospheric_rh_pct,
+          gpp: r.atmospheric_gpp,
+        },
+        rooms: [],
+      });
+    }
+    const group = map.get(day)!;
+    group.rooms.push({
+      roomId: r.room_id,
+      roomName: roomMap[r.room_id] ?? "Unknown Room",
+      atmospheric: {
+        temp: r.atmospheric_temp_f,
+        rh: r.atmospheric_rh_pct,
+        gpp: r.atmospheric_gpp,
+      },
+      points: r.points ?? [],
+      dehus: r.dehus ?? [],
+    });
+  }
+
+  return Array.from(map.values()).sort((a, b) => a.dayNumber - b.dayNumber);
+}
+
+/* ------------------------------------------------------------------ */
+/*  ReadingHistory — collapsible past-day cards                        */
+/* ------------------------------------------------------------------ */
+
+function ReadingHistory({
+  dayGroups,
+  dryStandardMap,
+}: {
+  dayGroups: DayGroup[];
+  dryStandardMap: Record<string, number>;
+}) {
+  const [expanded, setExpanded] = useState<Record<number, boolean>>({});
+
+  if (dayGroups.length === 0) return null;
+
+  return (
+    <section className="mb-6 space-y-3">
+      <h2 className="text-[10px] lg:text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+        Past Readings
+      </h2>
+      {dayGroups.map((group) => {
+        const isOpen = expanded[group.dayNumber] ?? false;
+        return (
+          <div
+            key={group.dayNumber}
+            className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden"
+          >
+            {/* Collapse header */}
+            <button
+              type="button"
+              onClick={() =>
+                setExpanded((prev) => ({
+                  ...prev,
+                  [group.dayNumber]: !prev[group.dayNumber],
+                }))
+              }
+              className="w-full flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-surface-container-low/40 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <span className="text-sm font-semibold text-on-surface">
+                  Day {group.dayNumber}
+                </span>
+                <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                  {shortDate(group.date)}
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                {/* Atmospheric summary */}
+                <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                  {group.atmospheric.temp != null ? `${group.atmospheric.temp}°F` : ""}
+                  {group.atmospheric.rh != null ? ` / ${group.atmospheric.rh}%` : ""}
+                  {group.atmospheric.gpp != null ? ` / ${group.atmospheric.gpp} GPP` : ""}
+                </span>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 16 16"
+                  fill="none"
+                  className={`text-on-surface-variant transition-transform duration-200 ${isOpen ? "rotate-180" : ""}`}
+                >
+                  <path
+                    d="M4 6L8 10L12 6"
+                    stroke="currentColor"
+                    strokeWidth="1.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </div>
+            </button>
+
+            {/* Expanded content */}
+            {isOpen && (
+              <div className="px-4 pb-4 pt-1 space-y-3 border-t border-outline-variant/10">
+                {/* Per-room data — table layout */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[12px]">
+                    <thead>
+                      <tr className="border-b border-outline-variant/15">
+                        <th className="text-left text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 pr-3">Room</th>
+                        <th className="text-right text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 px-2">Temp</th>
+                        <th className="text-right text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 px-2">RH%</th>
+                        <th className="text-right text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 px-2">GPP</th>
+                        {group.rooms.some((rm) => rm.points.length > 0) && (
+                          <th className="text-left text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 pl-4">Points</th>
+                        )}
+                        {group.rooms.some((rm) => rm.dehus.length > 0) && (
+                          <th className="text-left text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 pb-1.5 pl-4">Dehu</th>
+                        )}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {group.rooms.map((room, ri) => {
+                        const dryStd = dryStandardMap[room.roomId] ?? 16;
+                        return (
+                          <tr key={ri} className="border-b border-outline-variant/10 last:border-0">
+                            <td className="py-2 pr-3 font-semibold text-on-surface align-top">{room.roomName}</td>
+                            <td className="py-2 px-2 text-right font-[family-name:var(--font-geist-mono)] text-on-surface-variant align-top">
+                              {room.atmospheric?.temp != null ? `${room.atmospheric.temp}°F` : "--"}
+                            </td>
+                            <td className="py-2 px-2 text-right font-[family-name:var(--font-geist-mono)] text-on-surface-variant align-top">
+                              {room.atmospheric?.rh != null ? `${room.atmospheric.rh}%` : "--"}
+                            </td>
+                            <td className="py-2 px-2 text-right font-[family-name:var(--font-geist-mono)] text-on-surface-variant align-top">
+                              {room.atmospheric?.gpp != null ? room.atmospheric.gpp : "--"}
+                            </td>
+                            {group.rooms.some((rm) => rm.points.length > 0) && (
+                              <td className="py-2 pl-4 align-top">
+                                {room.points.length > 0 ? (
+                                  <div className="space-y-0.5">
+                                    {room.points.map((pt) => {
+                                      const isWet = pt.reading_value > dryStd;
+                                      return (
+                                        <div key={pt.id} className="flex items-center gap-2">
+                                          <span className="text-on-surface-variant truncate max-w-[120px]">{pt.location_name}</span>
+                                          <span className={`font-semibold font-[family-name:var(--font-geist-mono)] ${isWet ? "text-orange-500" : "text-on-surface"}`}>
+                                            {pt.reading_value}
+                                          </span>
+                                        </div>
+                                      );
+                                    })}
+                                  </div>
+                                ) : (
+                                  <span className="text-on-surface-variant/40">--</span>
+                                )}
+                              </td>
+                            )}
+                            {group.rooms.some((rm) => rm.dehus.length > 0) && (
+                              <td className="py-2 pl-4 align-top">
+                                {room.dehus.length > 0 ? (
+                                  <div className="space-y-0.5">
+                                    {room.dehus.map((d, di) => (
+                                      <div key={di} className="text-on-surface-variant">
+                                        {d.dehu_model && <span className="font-medium text-on-surface">{d.dehu_model}</span>}
+                                        {(d.rh_out_pct != null || d.temp_out_f != null) && (
+                                          <span className="font-[family-name:var(--font-geist-mono)] ml-1">
+                                            {d.rh_out_pct != null ? `${d.rh_out_pct}%` : "--"}
+                                            {" / "}
+                                            {d.temp_out_f != null ? `${d.temp_out_f}°F` : "--"}
+                                          </span>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <span className="text-on-surface-variant/40">--</span>
+                                )}
+                              </td>
+                            )}
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Wet indicator legend                                               */
+/* ------------------------------------------------------------------ */
+
+function WetLegend() {
+  return (
+    <div className="flex items-center gap-1.5 mt-1 mb-2">
+      <span className="w-2 h-2 rounded-full bg-orange-500 inline-block flex-shrink-0" />
+      <span className="text-[10px] text-on-surface-variant">Above dry standard</span>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Component                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -72,51 +314,180 @@ export default function MoistureReadingsPage() {
   const queryClient = useQueryClient();
   const jobId = params.id as string;
 
-  // Room navigation
+  // Job + room data
+  const { data: job } = useJob(jobId);
   const { data: rooms = [] } = useRooms(jobId);
   const [roomIndex, setRoomIndex] = useState(0);
   const currentRoom = rooms[roomIndex];
 
-  // Fetch real readings for current room
+  // Fetch real readings for current room (for pre-populating point locations)
   const { data: roomReadings = [] } = useReadings(jobId, currentRoom?.id ?? "");
 
-  // Day number — use latest reading's day_number + 1, or fallback to 1
+  // Fetch ALL readings for history display
+  const { data: allReadings = [] } = useAllReadings(jobId);
+
+  // Build room ID → name map
+  const roomMap = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const r of rooms) m[r.id] = r.room_name;
+    return m;
+  }, [rooms]);
+
+  // Build room ID → dry_standard map
+  const dryStandardMap = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const r of rooms) m[r.id] = r.dry_standard ?? 16;
+    return m;
+  }, [rooms]);
+
+  // Day number — calculated from loss_date, or from existing reading count
   const dayNumber = useMemo(() => {
-    if (roomReadings.length === 0) return 1;
-    const maxDay = Math.max(
-      ...roomReadings.map((r) => r.day_number ?? 0)
+    if (job?.loss_date) {
+      const lossDate = new Date(job.loss_date + "T00:00:00");
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const diffMs = today.getTime() - lossDate.getTime();
+      const diffDays = Math.floor(diffMs / 86_400_000);
+      return Math.max(1, diffDays + 1);
+    }
+    // No loss_date — infer from existing readings
+    if (allReadings.length > 0) {
+      const maxDay = Math.max(...allReadings.map((r) => r.day_number ?? 1));
+      return maxDay + 1;
+    }
+    return 1;
+  }, [job?.loss_date, allReadings]);
+
+  // Today's date string (local timezone, not UTC)
+  const todayStr = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  })();
+
+  // Group past readings by day — exclude current day_number (shown in the entry form)
+  const dayGroups = useMemo(() => {
+    const pastReadings = allReadings.filter((r) => (r.day_number ?? 1) < dayNumber);
+    return groupReadingsByDay(pastReadings, roomMap);
+  }, [allReadings, roomMap, dayNumber]);
+
+  // Rooms that have a reading for the current day_number
+  const roomsWithCurrentDayReading = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of allReadings) {
+      if ((r.day_number ?? 1) === dayNumber) set.add(r.room_id);
+    }
+    return set;
+  }, [allReadings, dayNumber]);
+
+  const roomsNeedingEntry = useMemo(
+    () => rooms.filter((r) => !roomsWithCurrentDayReading.has(r.id)),
+    [rooms, roomsWithCurrentDayReading]
+  );
+
+  const allRoomsLoggedToday = rooms.length > 0 && roomsNeedingEntry.length === 0;
+
+  // Build per-room form data from current day's readings (full pre-population),
+  // falling back to most-recent reading for atmospheric only
+  const perRoomInitialForms = useMemo(() => {
+    const m: Record<string, RoomFormState> = {};
+
+    // First pass: build from current day's readings (full data)
+    for (const r of allReadings) {
+      if ((r.day_number ?? 1) === dayNumber) {
+        m[r.room_id] = {
+          tempF: r.atmospheric_temp_f != null ? String(r.atmospheric_temp_f) : "",
+          rhPct: r.atmospheric_rh_pct != null ? String(r.atmospheric_rh_pct) : "",
+          points: r.points && r.points.length > 0
+            ? r.points.map((p) => ({
+                id: crypto.randomUUID(),
+                location_name: p.location_name,
+                reading_value: p.reading_value != null ? String(p.reading_value) : "",
+              }))
+            : defaultPoints(),
+          dehus: r.dehus && r.dehus.length > 0
+            ? r.dehus.map((d) => ({
+                id: crypto.randomUUID(),
+                dehu_model: d.dehu_model ?? "",
+                rh_out_pct: d.rh_out_pct != null ? String(d.rh_out_pct) : "",
+                temp_out_f: d.temp_out_f != null ? String(d.temp_out_f) : "",
+              }))
+            : defaultDehus(),
+        };
+      }
+    }
+
+    // Second pass: for rooms without current day's reading, only copy point location names
+    const sorted = [...allReadings].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
     );
-    return maxDay > 0 ? maxDay + 1 : 1;
-  }, [roomReadings]);
+    for (const r of sorted) {
+      if (m[r.room_id]) continue;
+      m[r.room_id] = {
+        tempF: "",
+        rhPct: "",
+        points: r.points && r.points.length > 0
+          ? r.points.map((p) => ({
+              id: crypto.randomUUID(),
+              location_name: p.location_name,
+              reading_value: "",
+            }))
+          : defaultPoints(),
+        dehus: defaultDehus(),
+      };
+    }
+    return m;
+  }, [allReadings]);
+
+  // Day started state — explicit action to begin logging a new day
+  const hasReadingsToday = roomsWithCurrentDayReading.size > 0;
+  const [dayStarted, setDayStarted] = useState(false);
+  const showEntryForm = hasReadingsToday || dayStarted;
 
   // Saving state
   const [isSaving, setIsSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Atmospheric state (shared across all rooms)
-  const [tempF, setTempF] = useState("72");
-  const [rhPct, setRhPct] = useState("45");
-
-  const gpp = useMemo(() => {
-    const t = parseFloat(tempF);
-    const r = parseFloat(rhPct);
-    if (isNaN(t) || isNaN(r) || r <= 0 || r > 100) return "--";
-    return calculateGPP(t, r).toFixed(1);
-  }, [tempF, rhPct]);
-
   // ── Per-room form state ──────────────────────────────────────────
   // Track form data for ALL rooms, keyed by room ID.
   const [roomForms, setRoomForms] = useState<Record<string, RoomFormState>>({});
 
+  // Initialize per-room form state from existing readings once data loads
+  const [formsInitialized, setFormsInitialized] = useState(false);
+  useMemo(() => {
+    if (formsInitialized) return;
+    const entries = Object.entries(perRoomInitialForms);
+    if (entries.length === 0) return;
+    setRoomForms((prev) => {
+      const next = { ...prev };
+      for (const [roomId, formData] of entries) {
+        if (!next[roomId]) {
+          next[roomId] = formData;
+        }
+      }
+      return next;
+    });
+    setFormsInitialized(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [perRoomInitialForms]);
+
   // Get form state for a specific room, initializing with defaults if needed
   const getRoomForm = useCallback((roomId: string): RoomFormState => {
-    return roomForms[roomId] ?? { points: defaultPoints(), dehus: defaultDehus() };
+    return roomForms[roomId] ?? { tempF: "", rhPct: "", points: defaultPoints(), dehus: defaultDehus() };
   }, [roomForms]);
+
+  // Per-room GPP calculator
+  const getRoomGPP = useCallback((roomId: string): string => {
+    const form = getRoomForm(roomId);
+    const t = parseFloat(form.tempF);
+    const r = parseFloat(form.rhPct);
+    if (isNaN(t) || isNaN(r) || r <= 0 || r > 100) return "--";
+    return calculateGPP(t, r).toFixed(1);
+  }, [getRoomForm]);
 
   // Update form state for a specific room
   const setRoomForm = useCallback((roomId: string, updater: (prev: RoomFormState) => RoomFormState) => {
     setRoomForms((prev) => {
-      const current = prev[roomId] ?? { points: defaultPoints(), dehus: defaultDehus() };
+      const current = prev[roomId] ?? { tempF: "", rhPct: "", points: defaultPoints(), dehus: defaultDehus() };
       return { ...prev, [roomId]: updater(current) };
     });
   }, []);
@@ -127,12 +498,15 @@ export default function MoistureReadingsPage() {
   const points = currentForm.points;
   const dehus = currentForm.dehus;
 
-  // Update points when room readings load (pre-populate location names from latest reading)
+  // Pre-populate point location names from latest reading when switching rooms
+  // (only for rooms that DON'T already have today's reading pre-filled)
   const latestReadingId = roomReadings.length > 0 ? roomReadings[roomReadings.length - 1].id : null;
   const prevLatestRef = useRef<string | null>(null);
   useMemo(() => {
     if (latestReadingId && latestReadingId !== prevLatestRef.current && currentRoomId) {
       prevLatestRef.current = latestReadingId;
+      // Skip if this room already has form data initialized (from today's reading)
+      if (roomForms[currentRoomId]) return;
       const latest = roomReadings[roomReadings.length - 1];
       if (latest.points.length > 0) {
         const newPoints = latest.points.map((p: MoisturePoint) => ({
@@ -143,7 +517,8 @@ export default function MoistureReadingsPage() {
         setRoomForms((prev) => ({
           ...prev,
           [currentRoomId]: {
-            ...prev[currentRoomId],
+            tempF: prev[currentRoomId]?.tempF ?? "",
+            rhPct: prev[currentRoomId]?.rhPct ?? "",
             points: newPoints,
             dehus: prev[currentRoomId]?.dehus ?? defaultDehus(),
           },
@@ -198,24 +573,40 @@ export default function MoistureReadingsPage() {
   }, [setRoomForm]);
 
   // Helper to save a single room's reading via API
-  const saveRoom = useCallback(async (roomId: string, roomPoints: PointEntry[], roomDehus: DehuEntry[]) => {
-    // 1. Create the reading
-    const readingPayload = {
-      reading_date: new Date().toISOString().slice(0, 10),
-      atmospheric_temp_f: parseFloat(tempF) || undefined,
-      atmospheric_rh_pct: parseFloat(rhPct) || undefined,
-    };
-    type ReadingResult = { id: string };
-    const reading = await apiPost<ReadingResult>(
-      `/v1/jobs/${jobId}/rooms/${roomId}/readings`,
-      readingPayload
+  const saveRoom = useCallback(async (roomId: string, roomForm: RoomFormState) => {
+    // Check if a reading already exists for this room on the current day
+    const existingReading = allReadings.find(
+      (r) => r.room_id === roomId && (r.day_number ?? 1) === dayNumber
     );
 
-    // 2. Create points
-    for (let i = 0; i < roomPoints.length; i++) {
-      const pt = roomPoints[i];
+    type ReadingResult = { id: string };
+    let readingId: string;
+
+    if (existingReading) {
+      // Update existing reading
+      await apiPatch(`/v1/jobs/${jobId}/readings/${existingReading.id}`, {
+        atmospheric_temp_f: parseFloat(roomForm.tempF) || undefined,
+        atmospheric_rh_pct: parseFloat(roomForm.rhPct) || undefined,
+      });
+      readingId = existingReading.id;
+    } else {
+      // Create new reading
+      const reading = await apiPost<ReadingResult>(
+        `/v1/jobs/${jobId}/rooms/${roomId}/readings`,
+        {
+          reading_date: todayStr,
+          atmospheric_temp_f: parseFloat(roomForm.tempF) || undefined,
+          atmospheric_rh_pct: parseFloat(roomForm.rhPct) || undefined,
+        }
+      );
+      readingId = reading.id;
+    }
+
+    // 2. Create points (only for new entries — skip if values are empty)
+    for (let i = 0; i < roomForm.points.length; i++) {
+      const pt = roomForm.points[i];
       if (!pt.location_name.trim() && !pt.reading_value.trim()) continue;
-      await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/points`, {
+      await apiPost(`/v1/jobs/${jobId}/readings/${readingId}/points`, {
         location_name: pt.location_name.trim() || `Point ${i + 1}`,
         reading_value: parseFloat(pt.reading_value) || 0,
         sort_order: i,
@@ -223,15 +614,15 @@ export default function MoistureReadingsPage() {
     }
 
     // 3. Create dehus
-    for (const dehu of roomDehus) {
+    for (const dehu of roomForm.dehus) {
       if (!dehu.dehu_model.trim() && !dehu.rh_out_pct.trim() && !dehu.temp_out_f.trim()) continue;
-      await apiPost(`/v1/jobs/${jobId}/readings/${reading.id}/dehus`, {
+      await apiPost(`/v1/jobs/${jobId}/readings/${readingId}/dehus`, {
         dehu_model: dehu.dehu_model.trim() || undefined,
         rh_out_pct: parseFloat(dehu.rh_out_pct) || undefined,
         temp_out_f: parseFloat(dehu.temp_out_f) || undefined,
       });
     }
-  }, [jobId, tempF, rhPct]);
+  }, [jobId, allReadings, dayNumber, todayStr]);
 
   // Save current room (mobile flow)
   const saveCurrentRoom = useCallback(async () => {
@@ -239,7 +630,7 @@ export default function MoistureReadingsPage() {
     setSaveError(null);
     setIsSaving(true);
     try {
-      await saveRoom(currentRoom.id, points, dehus);
+      await saveRoom(currentRoom.id, getRoomForm(currentRoom.id));
       // Invalidate React Query cache for readings
       await queryClient.invalidateQueries({ queryKey: ["readings"] });
     } catch (err) {
@@ -248,7 +639,7 @@ export default function MoistureReadingsPage() {
     } finally {
       setIsSaving(false);
     }
-  }, [currentRoom, points, dehus, saveRoom, queryClient]);
+  }, [currentRoom, getRoomForm, saveRoom, queryClient]);
 
   // Save & next room (mobile)
   const handleSaveAndNext = useCallback(async () => {
@@ -260,9 +651,6 @@ export default function MoistureReadingsPage() {
 
     if (roomIndex < rooms.length - 1) {
       setRoomIndex((prev) => prev + 1);
-      // Reset atmospheric for next room
-      setTempF("72");
-      setRhPct("45");
       setSaveError(null);
       // Scroll to top
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -281,8 +669,7 @@ export default function MoistureReadingsPage() {
     setIsSaving(true);
     try {
       for (const room of rooms) {
-        const form = getRoomForm(room.id);
-        await saveRoom(room.id, form.points, form.dehus);
+        await saveRoom(room.id, getRoomForm(room.id));
       }
       // Invalidate React Query cache for readings
       await queryClient.invalidateQueries({ queryKey: ["readings"] });
@@ -308,7 +695,7 @@ export default function MoistureReadingsPage() {
               <ArrowBack size={20} className="text-on-surface-variant" />
             </Link>
             <h1 className="text-lg font-semibold text-on-surface">
-              Day {dayNumber} Readings
+              Moisture Readings
             </h1>
           </div>
           {/* Mobile: current room name */}
@@ -317,90 +704,43 @@ export default function MoistureReadingsPage() {
               {currentRoom?.room_name}
             </span>
           </div>
-          {/* Desktop: Save All button */}
-          <button
-            type="button"
-            onClick={handleSaveAll}
-            disabled={isSaving}
-            className="hidden lg:flex h-10 px-6 bg-brand-accent text-on-primary font-semibold rounded-lg text-[13px] items-center gap-2 transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
-          >
-            {isSaving ? "Saving..." : "Save"}
-          </button>
+          {/* Desktop: Save All button — only when form is active */}
+          {showEntryForm && (
+            <button
+              type="button"
+              onClick={handleSaveAll}
+              disabled={isSaving}
+              className="hidden lg:flex h-10 px-6 bg-brand-accent text-on-primary font-semibold rounded-lg text-[13px] items-center gap-2 transition-all hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer disabled:opacity-50"
+            >
+              {isSaving ? "Saving..." : "Save"}
+            </button>
+          )}
         </div>
 
-        {/* Room dots (mobile only) */}
-        <div className="flex items-center justify-center gap-2 mt-3 lg:hidden">
-          {rooms.map((room, i) => (
-            <button
-              key={room.id}
-              onClick={() => setRoomIndex(i)}
-              className={`w-2.5 h-2.5 rounded-full transition-all duration-200 ${
-                i === roomIndex
-                  ? "bg-brand-accent w-6"
-                  : "bg-surface-dim"
-              }`}
-              aria-label={`Go to ${room.room_name}`}
-            />
-          ))}
-        </div>
+        {/* Room dots (mobile only) — only when form is active */}
+        {showEntryForm && (
+          <div className="flex items-center justify-center gap-2 mt-3 lg:hidden">
+            {rooms.map((room, i) => (
+              <button
+                key={room.id}
+                onClick={() => setRoomIndex(i)}
+                className={`w-2.5 h-2.5 rounded-full transition-all duration-200 ${
+                  i === roomIndex
+                    ? "bg-brand-accent w-6"
+                    : "bg-surface-dim"
+                }`}
+                aria-label={`Go to ${room.room_name}`}
+              />
+            ))}
+          </div>
+        )}
       </header>
 
       {/* -- Main content -------------------------------------------- */}
       <main className="px-4 pb-20 lg:pb-8 mt-2 lg:max-w-6xl lg:mx-auto">
-        {/* -- Atmospheric (shared across all rooms) -- */}
-        <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-3 lg:p-5 mb-4 lg:mb-6">
-          <label className="block text-[10px] lg:text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 lg:mb-3 font-[family-name:var(--font-geist-mono)]">
-            Atmospheric
-          </label>
-          <div className="grid grid-cols-3 gap-2 lg:gap-3 lg:max-w-lg">
-            {/* Temp */}
-            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3">
-              <span className="block text-[10px] lg:text-[11px] text-on-surface-variant mb-1 lg:mb-1.5 font-[family-name:var(--font-geist-mono)]">
-                Temp &deg;F
-              </span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={tempF}
-                onChange={(e) => setTempF(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                className="w-full h-10 lg:h-14 bg-surface-container-low rounded-lg px-2 text-base lg:text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-              />
-            </div>
 
-            {/* RH */}
-            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3">
-              <span className="block text-[10px] lg:text-[11px] text-on-surface-variant mb-1 lg:mb-1.5 font-[family-name:var(--font-geist-mono)]">
-                RH %
-              </span>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={rhPct}
-                onChange={(e) => setRhPct(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                className="w-full h-10 lg:h-14 bg-surface-container-low rounded-lg px-2 text-base lg:text-xl font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-              />
-            </div>
-
-            {/* GPP (auto) */}
-            <div className="bg-surface-container-lowest rounded-lg lg:rounded-xl p-2 lg:p-3 relative">
-              <div className="flex items-center gap-1 mb-1 lg:mb-1.5">
-                <span className="text-[10px] lg:text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                  GPP
-                </span>
-                <span className="text-[8px] lg:text-[9px] font-bold tracking-wider bg-tertiary-container/20 text-tertiary px-1 py-px rounded font-[family-name:var(--font-geist-mono)]">
-                  AUTO
-                </span>
-              </div>
-              <div className="w-full h-10 lg:h-14 bg-tertiary-container/10 rounded-lg px-2 flex items-center justify-center">
-                <span className="text-base lg:text-xl font-semibold text-tertiary font-[family-name:var(--font-geist-mono)]">
-                  {gpp}
-                </span>
-              </div>
-            </div>
-          </div>
-        </section>
+        {/* -- Reading History ---------------------------------------- */}
+        <ReadingHistory dayGroups={dayGroups} dryStandardMap={dryStandardMap} />
 
         {/* -- Empty state when no rooms ------------------------------ */}
         {rooms.length === 0 && (
@@ -411,24 +751,124 @@ export default function MoistureReadingsPage() {
           </div>
         )}
 
+        {/* -- Start Day N prompt (when no readings for today yet) ---- */}
+        {rooms.length > 0 && !showEntryForm && (
+          <div className="rounded-xl bg-surface-container-lowest shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-[15px] font-semibold text-on-surface">
+                  Day {dayNumber}
+                </h2>
+                <p className="text-[12px] text-on-surface-variant mt-0.5 font-[family-name:var(--font-geist-mono)]">
+                  {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })} · {rooms.length} room{rooms.length !== 1 ? "s" : ""} to log
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDayStarted(true)}
+                className="h-9 px-5 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent hover:shadow-lg active:scale-[0.98] transition-all cursor-pointer"
+              >
+                Start Day {dayNumber}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* -- Day heading (when form is active) ---------------------- */}
+        {rooms.length > 0 && showEntryForm && (
+          <div className="hidden lg:flex items-center justify-between mb-3">
+            <div className="flex items-center gap-3">
+              <h2 className="text-[13px] font-semibold text-on-surface">
+                Day {dayNumber}
+              </h2>
+              {allRoomsLoggedToday && (
+                <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                  All rooms logged
+                </span>
+              )}
+            </div>
+            <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+              {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })} · auto-saves
+            </span>
+          </div>
+        )}
+
         {/* -- Mobile: single room view ------------------------------ */}
-        <div className="lg:hidden space-y-4">
+        {currentRoom && showEntryForm && (
+        <div className="lg:hidden space-y-3">
           {/* Room title */}
           <div className="text-center">
-            <h2 className="text-lg font-bold text-on-surface">
-              {currentRoom?.room_name}
+            <h2 className="text-[15px] font-bold text-on-surface">
+              {currentRoom.room_name}
             </h2>
-            <p className="text-[10px] text-on-surface-variant mt-0.5 font-[family-name:var(--font-geist-mono)]">
+            <p className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
               Room {roomIndex + 1} of {rooms.length}
+              {currentRoom.length_ft && currentRoom.width_ft
+                ? ` \u00B7 ${currentRoom.length_ft} x ${currentRoom.width_ft} ft`
+                : ""}
             </p>
           </div>
 
+          {/* Atmospheric (per room) */}
+          <section>
+            <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+              Atmospheric
+            </label>
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
+                  Temp &deg;F
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={currentForm.tempF}
+                  onChange={(e) => setRoomForm(currentRoomId, (f) => ({ ...f, tempF: e.target.value }))}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="--"
+                  className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow placeholder:text-on-surface-variant/30"
+                />
+              </div>
+              <div>
+                <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
+                  RH %
+                </span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={currentForm.rhPct}
+                  onChange={(e) => setRoomForm(currentRoomId, (f) => ({ ...f, rhPct: e.target.value }))}
+                  onFocus={(e) => e.target.select()}
+                  placeholder="--"
+                  className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow placeholder:text-on-surface-variant/30"
+                />
+              </div>
+              <div>
+                <div className="flex items-center gap-1 mb-0.5">
+                  <span className="text-[9px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                    GPP
+                  </span>
+                  <span className="text-[7px] font-bold tracking-wider bg-tertiary-container/20 text-tertiary px-1 py-px rounded font-[family-name:var(--font-geist-mono)]">
+                    AUTO
+                  </span>
+                </div>
+                <div className="w-full h-8 bg-tertiary-container/10 rounded-lg px-2 flex items-center justify-center">
+                  <span className="text-sm font-semibold text-tertiary font-[family-name:var(--font-geist-mono)]">
+                    {getRoomGPP(currentRoomId)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          </section>
+
           {/* Moisture Points */}
           <section>
-            <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
+            <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-0 font-[family-name:var(--font-geist-mono)]">
               Moisture Points
             </label>
-            <div className="space-y-2">
+            <WetLegend />
+            <div className="space-y-1">
               {points.map((point, i) => {
                 const val = parseFloat(point.reading_value);
                 const isWet = !isNaN(val) && val > dryStandard;
@@ -436,13 +876,11 @@ export default function MoistureReadingsPage() {
                 return (
                   <div
                     key={point.id}
-                    className="bg-surface-container-lowest rounded-lg p-2 flex items-center gap-2"
+                    className="flex items-center gap-1.5"
                   >
-                    <div className="flex-shrink-0 w-7 h-7 rounded-full bg-surface-container-high flex items-center justify-center">
-                      <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                        {i + 1}
-                      </span>
-                    </div>
+                    <span className="flex-shrink-0 w-5 text-[10px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] text-center">
+                      {i + 1}
+                    </span>
                     <input
                       type="text"
                       value={point.location_name}
@@ -451,30 +889,19 @@ export default function MoistureReadingsPage() {
                       }
                       onFocus={(e) => e.target.select()}
                       placeholder="Location..."
-                      className="flex-1 h-9 bg-surface-container-low rounded-lg px-2.5 text-[13px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                      className="flex-1 h-8 bg-surface-container-low rounded-lg px-2 text-[12px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                     />
-                    <div className="flex-shrink-0 relative">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        value={point.reading_value}
-                        onChange={(e) =>
-                          updatePoint(currentRoomId, point.id, "reading_value", e.target.value)
-                        }
-                        onFocus={(e) => e.target.select()}
-                        placeholder="--"
-                        className={`w-16 h-10 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
-                          isWet
-                            ? "bg-error-container/30 text-error"
-                            : "bg-surface-container-low text-on-surface"
-                        }`}
-                      />
-                      {isWet && (
-                        <span className="absolute -top-1 -right-1 text-[10px]" aria-label="Above dry standard">
-                          &#x26A0;&#xFE0F;
-                        </span>
-                      )}
-                    </div>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={point.reading_value}
+                      onChange={(e) =>
+                        updatePoint(currentRoomId, point.id, "reading_value", e.target.value)
+                      }
+                      onFocus={(e) => e.target.select()}
+                      placeholder="--"
+                      className={`flex-shrink-0 w-14 h-8 rounded-lg px-1.5 text-sm font-bold text-center font-[family-name:var(--font-geist-mono)] bg-surface-container-low focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${isWet ? "text-orange-500" : "text-on-surface"}`}
+                    />
                   </div>
                 );
               })}
@@ -482,23 +909,23 @@ export default function MoistureReadingsPage() {
             <button
               type="button"
               onClick={() => addPoint(currentRoomId)}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
+              className="mt-1.5 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
             >
-              <Plus size={14} />
+              <Plus size={12} />
               Add Point
             </button>
           </section>
 
           {/* Dehu Output */}
           <section>
-            <label className="block text-[11px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
+            <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
               Dehu Output
             </label>
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {dehus.map((dehu) => (
                 <div
                   key={dehu.id}
-                  className="bg-surface-container-lowest rounded-lg p-2 space-y-2"
+                  className="space-y-1.5"
                 >
                   <input
                     type="text"
@@ -508,11 +935,11 @@ export default function MoistureReadingsPage() {
                     }
                     onFocus={(e) => e.target.select()}
                     placeholder="Dehu model..."
-                    className="w-full h-9 bg-surface-container-low rounded-lg px-2.5 text-[13px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                    className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-[12px] text-on-surface placeholder:text-on-surface-variant/40 focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                   />
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-1.5">
                     <div>
-                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
+                      <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
                         RH Out %
                       </span>
                       <input
@@ -524,11 +951,11 @@ export default function MoistureReadingsPage() {
                         }
                         onFocus={(e) => e.target.select()}
                         placeholder="--"
-                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                       />
                     </div>
                     <div>
-                      <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
+                      <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
                         Temp Out &deg;F
                       </span>
                       <input
@@ -540,7 +967,7 @@ export default function MoistureReadingsPage() {
                         }
                         onFocus={(e) => e.target.select()}
                         placeholder="--"
-                        className="w-full h-10 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                        className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
                       />
                     </div>
                   </div>
@@ -550,15 +977,15 @@ export default function MoistureReadingsPage() {
             <button
               type="button"
               onClick={() => addDehu(currentRoomId)}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
+              className="mt-1.5 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors"
             >
-              <Plus size={14} />
+              <Plus size={12} />
               Add Dehu
             </button>
           </section>
 
           {/* Save CTA */}
-          <div className="pt-4 flex flex-col items-center gap-1.5">
+          <div className="pt-3 flex flex-col items-center gap-1.5">
             {saveError && (
               <p className="text-[12px] text-error text-center">{saveError}</p>
             )}
@@ -572,6 +999,7 @@ export default function MoistureReadingsPage() {
             </button>
           </div>
         </div>
+        )}
 
         {/* -- Error message ----------------------------------------- */}
         {saveError && (
@@ -580,7 +1008,8 @@ export default function MoistureReadingsPage() {
           </div>
         )}
 
-        {/* -- Desktop: all rooms side-by-side ----------------------- */}
+        {/* -- Desktop: per-room cards --------------------------------- */}
+        {rooms.length > 0 && showEntryForm && (
         <div className={`hidden lg:grid lg:gap-6 ${
           rooms.length === 1 ? "lg:grid-cols-1 lg:max-w-xl" : rooms.length === 2 ? "lg:grid-cols-2" : "lg:grid-cols-2 xl:grid-cols-3"
         }`}>
@@ -589,13 +1018,13 @@ export default function MoistureReadingsPage() {
             const roomForm = getRoomForm(room.id);
 
             return (
-              <div key={room.id} className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 space-y-4">
+              <div key={room.id} className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4 space-y-3">
                 {/* Room header */}
-                <div className="text-center border-b border-outline-variant/20 pb-3">
-                  <h2 className="text-lg font-bold text-on-surface">
+                <div className="text-center border-b border-outline-variant/20 pb-2">
+                  <h2 className="text-[15px] font-bold text-on-surface">
                     {room.room_name}
                   </h2>
-                  <p className="text-[11px] text-on-surface-variant mt-0.5 font-[family-name:var(--font-geist-mono)]">
+                  <p className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
                     {room.length_ft && room.width_ft
                       ? `${room.length_ft} x ${room.width_ft} ft`
                       : ""}
@@ -605,21 +1034,74 @@ export default function MoistureReadingsPage() {
                   </p>
                 </div>
 
+                {/* Atmospheric (per room) */}
+                <section>
+                  <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
+                    Atmospheric
+                  </label>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    <div>
+                      <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
+                        Temp &deg;F
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={roomForm.tempF}
+                        onChange={(e) => setRoomForm(room.id, (f) => ({ ...f, tempF: e.target.value }))}
+                        onFocus={(e) => e.target.select()}
+                        placeholder="--"
+                        className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow placeholder:text-on-surface-variant/30"
+                      />
+                    </div>
+                    <div>
+                      <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">
+                        RH %
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={roomForm.rhPct}
+                        onChange={(e) => setRoomForm(room.id, (f) => ({ ...f, rhPct: e.target.value }))}
+                        onFocus={(e) => e.target.select()}
+                        placeholder="--"
+                        className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow placeholder:text-on-surface-variant/30"
+                      />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-1 mb-0.5">
+                        <span className="text-[9px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                          GPP
+                        </span>
+                        <span className="text-[7px] font-bold tracking-wider bg-tertiary-container/20 text-tertiary px-1 py-px rounded font-[family-name:var(--font-geist-mono)]">
+                          AUTO
+                        </span>
+                      </div>
+                      <div className="w-full h-8 bg-tertiary-container/10 rounded-lg px-2 flex items-center justify-center">
+                        <span className="text-sm font-semibold text-tertiary font-[family-name:var(--font-geist-mono)]">
+                          {getRoomGPP(room.id)}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
                 {/* Moisture Points */}
                 <section>
-                  <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
+                  <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-0 font-[family-name:var(--font-geist-mono)]">
                     Moisture Points
                   </label>
-                  <div className="space-y-2">
+                  <WetLegend />
+                  <div className="space-y-1">
                     {roomForm.points.map((point, i) => {
                       const val = parseFloat(point.reading_value);
                       const isWet = !isNaN(val) && val > roomDryStandard;
                       return (
                         <div
                           key={point.id}
-                          className="flex items-center gap-2 py-1"
+                          className="flex items-center gap-1.5"
                         >
-                          <span className="text-[11px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center flex-shrink-0">
+                          <span className="text-[10px] font-bold text-on-surface-variant font-[family-name:var(--font-geist-mono)] w-5 text-center flex-shrink-0">
                             {i + 1}
                           </span>
                           <input
@@ -628,7 +1110,7 @@ export default function MoistureReadingsPage() {
                             onChange={(e) => updatePoint(room.id, point.id, "location_name", e.target.value)}
                             onFocus={(e) => e.target.select()}
                             placeholder="Location..."
-                            className="flex-1 min-w-0 h-9 px-2.5 rounded-lg bg-surface-container-low text-[12px] text-on-surface placeholder:text-on-surface-variant/40 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+                            className="flex-1 min-w-0 h-8 px-2 rounded-lg bg-surface-container-low text-[12px] text-on-surface placeholder:text-on-surface-variant/40 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
                           />
                           <input
                             type="text"
@@ -637,11 +1119,7 @@ export default function MoistureReadingsPage() {
                             onChange={(e) => updatePoint(room.id, point.id, "reading_value", e.target.value)}
                             onFocus={(e) => e.target.select()}
                             placeholder="--"
-                            className={`w-16 h-9 rounded-lg px-2 text-base font-bold text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${
-                              isWet
-                                ? "bg-error-container/30 text-error"
-                                : "bg-surface-container-low text-on-surface"
-                            }`}
+                            className={`flex-shrink-0 w-14 h-8 rounded-lg px-1.5 text-sm font-bold text-center font-[family-name:var(--font-geist-mono)] bg-surface-container-low focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow ${isWet ? "text-orange-500" : "text-on-surface"}`}
                           />
                         </div>
                       );
@@ -650,56 +1128,65 @@ export default function MoistureReadingsPage() {
                   <button
                     type="button"
                     onClick={() => addPoint(room.id)}
-                    className="mt-3 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
+                    className="mt-1.5 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
                   >
-                    <Plus size={14} />
+                    <Plus size={12} />
                     Add Point
                   </button>
                 </section>
 
                 {/* Dehu Output */}
                 <section>
-                  <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
+                  <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
                     Dehu Output
                   </label>
-                  {roomForm.dehus.map((dehu) => (
-                    <div key={dehu.id} className="grid grid-cols-2 gap-2 mb-2">
-                      <div>
-                        <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
-                          RH Out %
-                        </span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={dehu.rh_out_pct}
-                          onChange={(e) => updateDehu(room.id, dehu.id, "rh_out_pct", e.target.value)}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="--"
-                          className="w-full h-9 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-                        />
+                  <div className="space-y-1">
+                    {roomForm.dehus.map((dehu) => (
+                      <div key={dehu.id} className="flex items-end gap-1.5">
+                        <div className="flex-1 min-w-0">
+                          <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">Model</span>
+                          <input
+                            type="text"
+                            value={dehu.dehu_model}
+                            onChange={(e) => updateDehu(room.id, dehu.id, "dehu_model", e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="Dehu model..."
+                            className="w-full h-8 bg-surface-container-low rounded-lg px-2 text-[12px] text-on-surface placeholder:text-on-surface-variant/40 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+                          />
+                        </div>
+                        <div className="w-20 flex-shrink-0">
+                          <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">RH Out %</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={dehu.rh_out_pct}
+                            onChange={(e) => updateDehu(room.id, dehu.id, "rh_out_pct", e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="--"
+                            className="w-full h-8 bg-surface-container-low rounded-lg px-1.5 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                          />
+                        </div>
+                        <div className="w-20 flex-shrink-0">
+                          <span className="block text-[9px] text-on-surface-variant mb-0.5 font-[family-name:var(--font-geist-mono)]">Temp &deg;F</span>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            value={dehu.temp_out_f}
+                            onChange={(e) => updateDehu(room.id, dehu.id, "temp_out_f", e.target.value)}
+                            onFocus={(e) => e.target.select()}
+                            placeholder="--"
+                            className="w-full h-8 bg-surface-container-low rounded-lg px-1.5 text-sm font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
+                          />
+                        </div>
                       </div>
-                      <div>
-                        <span className="block text-[10px] text-on-surface-variant mb-1 font-[family-name:var(--font-geist-mono)]">
-                          Temp Out &deg;F
-                        </span>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          value={dehu.temp_out_f}
-                          onChange={(e) => updateDehu(room.id, dehu.id, "temp_out_f", e.target.value)}
-                          onFocus={(e) => e.target.select()}
-                          placeholder="--"
-                          className="w-full h-9 bg-surface-container-low rounded-lg px-2 text-base font-semibold text-on-surface text-center font-[family-name:var(--font-geist-mono)] focus:outline-none focus:ring-2 focus:ring-brand-accent/40 transition-shadow"
-                        />
-                      </div>
-                    </div>
-                  ))}
+                    ))}
+                  </div>
                   <button
                     type="button"
                     onClick={() => addDehu(room.id)}
-                    className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
+                    className="mt-1.5 flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer"
                   >
-                    <Plus size={14} />
+                    <Plus size={12} />
                     Add Dehu
                   </button>
                 </section>
@@ -707,6 +1194,7 @@ export default function MoistureReadingsPage() {
             );
           })}
         </div>
+        )}
       </main>
 
     </div>

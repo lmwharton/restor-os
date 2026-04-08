@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* Hide placeholder text when input is focused — keeps placeholder visible
+   at rest for visual hint (e.g. "--") but clears it on interaction */
+input:focus::placeholder,
+textarea:focus::placeholder {
+  color: transparent !important;
+}
+
 :root {
   --background: #fff8f4;
   --foreground: #1f1b17;
