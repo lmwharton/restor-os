@@ -14,6 +14,7 @@ from api.jobs.router import router as jobs_router
 from api.moisture.router import router as moisture_router
 from api.photos.router import router as photos_router
 from api.properties.router import router as properties_router
+from api.recon_phases.router import router as recon_phases_router
 from api.reports.router import router as reports_router
 from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
@@ -106,6 +107,7 @@ app.include_router(photos_router, prefix="/v1")
 app.include_router(properties_router, prefix="/v1")
 app.include_router(reports_router, prefix="/v1")
 app.include_router(rooms_router, prefix="/v1")
+app.include_router(recon_phases_router, prefix="/v1")
 app.include_router(sharing_router, prefix="/v1")
 
 
