@@ -12,10 +12,9 @@ export type WaterCategory = "1" | "2" | "3";
 export type WaterClass = "1" | "2" | "3" | "4";
 export type JobType = "mitigation" | "reconstruction";
 export type JobStatus =
-  | "new" | "contracted" | "mitigation" | "drying" | "job_complete" | "submitted" | "collected"  // mitigation
+  | "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected"  // mitigation
   | "scoping" | "in_progress";  // reconstruction-only
-// Note: "new", "job_complete", "submitted", "collected" are shared across both pipelines
-// Discuss with Lakshman: rename "job_complete" → "complete" for consistency across both pipelines?
+// Note: "new", "complete", "submitted", "collected" are shared across both pipelines
 export type ReconPhaseStatus = "pending" | "in_progress" | "on_hold" | "complete";
 export type PhotoType = "damage" | "equipment" | "protection" | "containment" | "moisture_reading" | "before" | "after";
 export type ReportType = "full_report" | "mitigation_invoice" | "reconstruction_report";
@@ -23,8 +22,8 @@ export type ReportStatus = "draft" | "generating" | "ready" | "failed";
 export type ShareScope = "full" | "restoration_only" | "photos_only";
 
 // ─── Pipeline stages (for dashboard) ─────────────────────────────────
-export type MitigationPipelineStage = "new" | "contracted" | "mitigation" | "drying" | "job_complete" | "submitted" | "collected";
-export type ReconPipelineStage = "new" | "scoping" | "in_progress" | "job_complete" | "submitted" | "collected";
+export type MitigationPipelineStage = "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected";
+export type ReconPipelineStage = "new" | "scoping" | "in_progress" | "complete" | "submitted" | "collected";
 export type PipelineStage = MitigationPipelineStage | ReconPipelineStage;
 
 // ─── Properties ───────────────────────────────────────────────────────

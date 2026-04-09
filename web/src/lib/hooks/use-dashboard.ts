@@ -13,7 +13,7 @@ import { STATUS_COLORS } from "../status-colors";
 // ─── Pipeline — derived from real jobs ────────────────────────────────
 
 const PIPELINE_ORDER: PipelineStage[] = [
-  "new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected",
+  "new", "contracted", "mitigation", "drying", "complete", "submitted", "collected",
 ];
 
 const PIPELINE_COLORS: Record<PipelineStage, string> = {
@@ -21,7 +21,7 @@ const PIPELINE_COLORS: Record<PipelineStage, string> = {
   contracted: STATUS_COLORS.contracted,
   mitigation: STATUS_COLORS.mitigation,
   drying: STATUS_COLORS.drying,
-  job_complete: STATUS_COLORS.complete,
+  complete: STATUS_COLORS.complete,
   submitted: STATUS_COLORS.submitted,
   collected: STATUS_COLORS.collected,
   scoping: STATUS_COLORS.scoping,
@@ -33,7 +33,7 @@ const PIPELINE_LABELS: Record<PipelineStage, string> = {
   contracted: "Contracted",
   mitigation: "Mitigation",
   drying: "Drying",
-  job_complete: "Job Complete",
+  complete: "Complete",
   submitted: "Submitted",
   collected: "Collected",
   scoping: "Scoping",

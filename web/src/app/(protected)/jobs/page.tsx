@@ -46,7 +46,7 @@ const statusConfig: Record<
   contracted:   { label: "Contracted",  color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.15) },
   mitigation:   { label: "Mitigation",  color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.15) },
   drying:       { label: "Drying",      color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.15) },
-  job_complete: { label: "Complete",    color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.15) },
+  complete:     { label: "Complete",    color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.15) },
   submitted:    { label: "Submitted",   color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.15) },
   collected:    { label: "Collected",   color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.15) },
   scoping:      { label: "Scoping",     color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.15) },
@@ -54,7 +54,11 @@ const statusConfig: Record<
 };
 
 function StatusBadge({ status }: { status: JobStatus }) {
-  const config = statusConfig[status];
+  const config = statusConfig[status] ?? {
+    label: status.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+    color: "#6b7280",
+    bg: "rgba(107,114,128,0.15)",
+  };
   return (
     <span
       className="inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold"

@@ -2,9 +2,9 @@ import { describe, it, expect } from "vitest";
 import type { PipelineStage, JobStatus, MitigationPipelineStage, ReconPipelineStage, JobType, ReconPhaseStatus } from "../types";
 
 describe("PipelineStage type", () => {
-  it("includes job_complete as a valid stage", () => {
-    const stage: PipelineStage = "job_complete";
-    expect(stage).toBe("job_complete");
+  it("includes complete as a valid stage", () => {
+    const stage: PipelineStage = "complete";
+    expect(stage).toBe("complete");
   });
 
   it("includes all expected mitigation pipeline stages", () => {
@@ -13,12 +13,12 @@ describe("PipelineStage type", () => {
       "contracted",
       "mitigation",
       "drying",
-      "job_complete",
+      "complete",
       "submitted",
       "collected",
     ];
     expect(allStages).toHaveLength(7);
-    expect(allStages).toContain("job_complete");
+    expect(allStages).toContain("complete");
   });
 
   it("includes all expected reconstruction pipeline stages", () => {
@@ -26,7 +26,7 @@ describe("PipelineStage type", () => {
       "new",
       "scoping",
       "in_progress",
-      "job_complete",
+      "complete",
       "submitted",
       "collected",
     ];
@@ -43,7 +43,7 @@ describe("JobStatus type", () => {
       "contracted",
       "mitigation",
       "drying",
-      "job_complete",
+      "complete",
       "submitted",
       "collected",
       "scoping",

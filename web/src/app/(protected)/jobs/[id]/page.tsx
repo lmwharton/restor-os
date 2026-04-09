@@ -91,7 +91,7 @@ function statusLabel(status: string): string {
       return "Mitigation";
     case "drying":
       return "Drying";
-    case "job_complete":
+    case "complete":
       return "Complete";
     case "submitted":
       return "Submitted";
@@ -2166,7 +2166,7 @@ export default function JobDetailPage() {
           </section>
 
           {/* Create Reconstruction Job — shown on mitigation jobs that are complete or later */}
-          {job.job_type === "mitigation" && ["job_complete", "submitted", "collected"].includes(job.status) && (
+          {job.job_type === "mitigation" && ["complete", "submitted", "collected"].includes(job.status) && (
             <button
               type="button"
               onClick={() => router.push(`/jobs/new?type=reconstruction&linked=${jobId}`)}

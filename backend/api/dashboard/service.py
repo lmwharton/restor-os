@@ -17,7 +17,7 @@ PIPELINE_STAGES = [
     "contracted",
     "mitigation",
     "drying",
-    "job_complete",
+    "complete",
     "submitted",
     "collected",
 ]
@@ -27,7 +27,7 @@ RECON_PIPELINE_STAGES = [
     "new",
     "scoping",
     "in_progress",
-    "job_complete",
+    "complete",
     "submitted",
     "collected",
 ]

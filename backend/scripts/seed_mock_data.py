@@ -9,7 +9,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import psycopg2
-from psycopg2.extras import execute_values
 
 # Load DATABASE_URL from .env
 from dotenv import load_dotenv
@@ -297,7 +296,7 @@ JOBS = [
         "loss_type": "water",
         "loss_cause": "Ice dam roof leak — ceiling and wall rebuild",
         "loss_date": date_str(6),
-        "status": "job_complete",
+        "status": "complete",
         "notes": "Reconstruction complete, generating final report.",
         "tech_notes": "All drywall, paint, and insulation replaced.",
         "latitude": 42.7195, "longitude": -84.5475,
@@ -372,7 +371,7 @@ PHASES = [
     {"job_id": JOBS[8]["id"], "company_id": COMPANY_ID, "phase_name": "Flooring", "status": "pending", "sort_order": 4},
     {"job_id": JOBS[8]["id"], "company_id": COMPANY_ID, "phase_name": "Trim & Finish", "status": "pending", "sort_order": 5},
     {"job_id": JOBS[8]["id"], "company_id": COMPANY_ID, "phase_name": "Final Inspection", "status": "pending", "sort_order": 6},
-    # Job 11: job_complete — all phases complete
+    # Job 11: complete — all phases complete
     {"job_id": JOBS[10]["id"], "company_id": COMPANY_ID, "phase_name": "Drywall", "status": "complete", "sort_order": 0, "started_at": days_ago(9), "completed_at": days_ago(5)},
     {"job_id": JOBS[10]["id"], "company_id": COMPANY_ID, "phase_name": "Paint", "status": "complete", "sort_order": 1, "started_at": days_ago(5), "completed_at": days_ago(3)},
     {"job_id": JOBS[10]["id"], "company_id": COMPANY_ID, "phase_name": "Insulation", "status": "complete", "sort_order": 2, "started_at": days_ago(3), "completed_at": days_ago(1)},

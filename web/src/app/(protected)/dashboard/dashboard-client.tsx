@@ -97,6 +97,30 @@ function getEventMeta(event: Event): EventMeta {
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
+    case "job_linked":
+      return {
+        label: "Job Linked",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_created":
+      return {
+        label: `Phase Added${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 11l3 3L22 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_updated":
+      return {
+        label: `Phase Updated${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_completed":
+      return {
+        label: `Phase Complete${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 4L12 14.01l-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     case "room_added": {
       const room = d.room_name;
       return {
@@ -121,15 +145,15 @@ const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: stri
   contracted:   { label: "Contracted",   color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.1) },
   mitigation:   { label: "Mitigation",   color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.1) },
   drying:       { label: "Drying",       color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.1) },
-  job_complete: { label: "Complete",     color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.1) },
+  complete: { label: "Complete",     color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.1) },
   submitted:    { label: "Submitted",    color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.1) },
   collected:    { label: "Collected",    color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.1) },
   scoping:      { label: "Scoping",      color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.1) },
   in_progress:  { label: "In Progress",  color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.1) },
 };
 
-const MIT_STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected"];
-const REC_STAGE_ORDER: PipelineStage[] = ["new", "scoping", "in_progress", "job_complete", "submitted", "collected"];
+const MIT_STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "complete", "submitted", "collected"];
+const REC_STAGE_ORDER: PipelineStage[] = ["new", "scoping", "in_progress", "complete", "submitted", "collected"];
 const STAGE_ORDER: PipelineStage[] = MIT_STAGE_ORDER;
 
 // ---------------------------------------------------------------------------
@@ -142,7 +166,7 @@ function getJobStage(job: { status: string }): PipelineStage {
     case "contracted": return "contracted";
     case "mitigation": return "mitigation";
     case "drying": return "drying";
-    case "job_complete": return "job_complete";
+    case "complete": return "complete";
     case "submitted": return "submitted";
     case "collected": return "collected";
     case "scoping": return "scoping";
@@ -162,7 +186,7 @@ const PIN_COLOR: Record<PipelineStage, string> = {
   contracted: STATUS_COLORS.contracted,
   mitigation: STATUS_COLORS.mitigation,
   drying: STATUS_COLORS.drying,
-  job_complete: STATUS_COLORS.complete,
+  complete: STATUS_COLORS.complete,
   submitted: STATUS_COLORS.submitted,
   collected: STATUS_COLORS.collected,
   scoping: STATUS_COLORS.scoping,

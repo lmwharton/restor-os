@@ -465,7 +465,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Ice dam roof leak — ceiling and wall rebuild",
     loss_date: dateStr(6),
     home_year_built: null,
-    status: "job_complete",
+    status: "complete",
     assigned_to: null,
     notes: "Reconstruction complete, generating final report.",
     tech_notes: "All drywall, paint, and insulation replaced. Customer signed off.",
@@ -1237,7 +1237,7 @@ export const mockEvents: Event[] = [
 
   // Job 3 events
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "report_generated", user_id: "user1", is_ai: false, event_data: { report_type: "mitigation_invoice" }, created_at: hoursAgo(6) },
-  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "job_complete", to: "submitted" }, created_at: daysAgo(1) },
+  { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_status_changed", user_id: "user1", is_ai: false, event_data: { from: "complete", to: "submitted" }, created_at: daysAgo(1) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "photo_uploaded", user_id: "user1", is_ai: false, event_data: { count: 14, room_name: "Basement" }, created_at: daysAgo(3) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "room_added", user_id: "user1", is_ai: false, event_data: { room_name: "Utility Room" }, created_at: daysAgo(4) },
   { id: uuid(), company_id: COMPANY_ID, job_id: mockJobs[2].id, event_type: "job_created", user_id: "user1", is_ai: false, event_data: {}, created_at: daysAgo(5) },
@@ -1280,7 +1280,7 @@ export const mockPipeline: PipelineStageData[] = [
   { stage: "contracted", label: "Contracted", count: 0, amount: 0, color: "#f59e0b" },
   { stage: "mitigation", label: "Mitigation", count: 1, amount: 4200, color: "#e85d26" },
   { stage: "drying", label: "Drying", count: 3, amount: 28500, color: "#2563eb" },
-  { stage: "job_complete", label: "Job Complete", count: 0, amount: 0, color: "#6b7280" },
+  { stage: "complete", label: "Job Complete", count: 0, amount: 0, color: "#6b7280" },
   { stage: "submitted", label: "Submitted", count: 1, amount: 12600, color: "#0891b2" },
   { stage: "collected", label: "Collected", count: 4, amount: 41200, color: "#16a34a" },
 ];

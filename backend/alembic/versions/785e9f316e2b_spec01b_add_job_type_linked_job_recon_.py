@@ -26,17 +26,17 @@ def upgrade() -> None:
     """Add job_type, linked_job_id to jobs; create recon_phases table."""
 
     # =============================================================
-    # 1. Expand status CHECK constraint to include reconstruction statuses
-    #    Old: new, contracted, mitigation, drying, job_complete, submitted, collected
-    #    New: + scoping, in_progress
+    # 1. Normalize job_complete → complete + add reconstruction statuses
+    #    Data migration first, then constraint update
     # =============================================================
+    op.execute("UPDATE jobs SET status = 'complete' WHERE status = 'job_complete';")
     op.execute("""
     ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_status_check;
     ALTER TABLE jobs ADD CONSTRAINT jobs_status_check CHECK (
         status IN (
             'new', 'contracted', 'mitigation', 'drying',
             'scoping', 'in_progress',
-            'job_complete', 'submitted', 'collected'
+            'complete', 'submitted', 'collected'
         )
     );
     """)
@@ -112,7 +112,9 @@ def downgrade() -> None:
     op.execute("DROP TABLE IF EXISTS recon_phases CASCADE;")
     op.execute("ALTER TABLE jobs DROP COLUMN IF EXISTS linked_job_id;")
     op.execute("ALTER TABLE jobs DROP COLUMN IF EXISTS job_type;")
-    # Restore original status constraint
+    # Revert reconstruction-only statuses and complete → job_complete
+    op.execute("UPDATE jobs SET status = 'new' WHERE status IN ('scoping', 'in_progress');")
+    op.execute("UPDATE jobs SET status = 'job_complete' WHERE status = 'complete';")
     op.execute("""
     ALTER TABLE jobs DROP CONSTRAINT IF EXISTS jobs_status_check;
     ALTER TABLE jobs ADD CONSTRAINT jobs_status_check CHECK (
