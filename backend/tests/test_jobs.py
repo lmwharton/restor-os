@@ -7,7 +7,7 @@ Edge cases: not-found, duplicate job numbers, company_id mismatch, empty updates
 """
 
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import jwt as pyjwt
@@ -1616,12 +1616,9 @@ class TestDefaultPhasePrePopulation:
             original_insert = mock_table.insert
 
             def track_insert(data):
-                if isinstance(data, list):
-                    phase_inserts.extend(data)
-                else:
-                    phase_inserts.append(data)
+                phase_inserts.append(data)
                 result = MagicMock()
-                result.execute = AsyncMock(return_value=MagicMock(data=data if isinstance(data, list) else [data]))
+                result.execute.return_value = MagicMock(data=[data])
                 return result
 
             mock_table.insert.side_effect = track_insert

@@ -279,6 +279,8 @@ Founded 2020, Lindon, Utah. Bootstrapped, 2-10 employees. Built by restoration c
 
 | Tool | What | Price | Why not a direct threat |
 |------|------|-------|------------------------|
+| ServiceTitan | Full FSM: CRM, dispatch, invoicing, marketing, AI voice agents | $250-500+/tech/mo + $2-10K onboarding | No restoration features, no Xactimate, no moisture/drying — wrong vertical entirely |
+| BuildOps | Commercial contractor ops: dispatch, quoting, projects, OpsAI | Custom/enterprise (annual) | Commercial HVAC/electrical only, no restoration, no Xactimate, no insurance workflows |
 | Clean Claims | IoT remote moisture monitoring | Unknown | Requires hardware sensors |
 | Xcelerate | Workflow automation | $55-85/user/mo | No field tools |
 | JobNimbus | CRM (roofing-first) | Custom | Not built for restoration |
@@ -316,42 +318,100 @@ CompanyCam's AI is a transcription overlay on a photo tool. Crewmatic's AI under
 
 ---
 
+#### ServiceTitan — Public-Company FSM Giant
+
+[servicetitan.com](https://www.servicetitan.com) — The 800-lb gorilla of home/commercial service software. IPO'd on NASDAQ (TTAN). Built for HVAC, plumbing, electrical, and other trades. Not restoration-specific, but the largest FSM platform by revenue and market cap.
+
+| | Detail |
+|---|---|
+| **What** | End-to-end field service management: CRM, dispatching, estimating, invoicing, marketing, reporting, payroll integration |
+| **Pricing** | $250-500+/technician/month. Mandatory onboarding fee $2,000-$10,000+. Enterprise-only pricing — no self-serve. |
+| **Mobile** | Native iOS + Android |
+| **AI** | **Titan Intelligence (ti)** — AI suite launched 2023, significantly expanded 2025. **Atlas** (AI copilot, announced Pantheon 2025): natural language queries, auto-dispatching, auto-throttles marketing spend based on capacity, runs reports on demand. **Dispatch Pro** — AI-optimized dispatch board (job value predictions + tech performance). **AI Voice Agents** — handles inbound calls 24/7, books/reschedules jobs. **Marketing Pro Ads Optimizer** — feeds ServiceTitan revenue data into Google Ads for ROI optimization. |
+| **Industries** | HVAC, plumbing, electrical, roofing, garage door, chimney, irrigation, water treatment, septic, locksmith, construction. **No dedicated restoration vertical.** |
+| **Xactimate** | No native integration — not built for insurance-based workflows |
+| **Strengths** | Massive scale (public company), deep marketing/analytics, AI voice agents for call handling, dispatch optimization, QuickBooks integration, huge ecosystem of add-ons, brand recognition, 10,000+ customers |
+| **Weaknesses** | **Extremely expensive** ($250-500/tech/mo + onboarding), **no restoration-specific features** (no moisture logging, no drying protocols, no S500 compliance, no Xactimate integration), overkill for small shops, long implementation cycles (weeks-months), heavy contract lock-in, **insurance-based restoration companies report paying for features they don't need** |
+
+**What this means for Crewmatic:**
+- ServiceTitan is the gravitational center of trade software — every contractor knows them. Some restoration companies that also do HVAC/plumbing use ServiceTitan for the non-restoration side of their business.
+- Their AI (Atlas, Dispatch Pro, Voice Agents) is focused on **operational efficiency** — dispatching, call handling, marketing ROI. None of it touches **field scoping, damage documentation, or insurance workflows.**
+- **Zero restoration DNA:** No moisture readings, no equipment tracking, no drying logs, no S500/OSHA compliance, no Xactimate line items. A restoration contractor using ServiceTitan still needs Encircle + Xactimate + a drying log tool on top.
+- Pricing ($250-500/tech/mo) is 5-10x Crewmatic. A 5-tech shop pays $1,250-2,500/mo for ServiceTitan vs $149/mo for Crewmatic Team.
+- **Not a direct competitor** — but their AI marketing creates noise. Contractors may ask "why not just use ServiceTitan's AI?" Answer: their AI dispatches trucks; ours scopes damage.
+- **Threat level: LOW for restoration** (wrong vertical, wrong price point, zero restoration features). HIGH mindshare — they set contractor expectations for what "trade software" looks like.
+
+---
+
+#### BuildOps — Commercial-First AI Platform
+
+[buildops.com](https://buildops.com) — AI-native operations platform for commercial trade contractors. VC-backed (Founders Fund, Meritech Capital). 1,000+ customers across North America. Purpose-built for commercial workflows (vs ServiceTitan's residential focus).
+
+| | Detail |
+|---|---|
+| **What** | End-to-end commercial contractor ops: dispatching, quoting, invoicing, project management, service agreements, CRM, fleet management, payments, time tracking |
+| **Pricing** | Custom per-user pricing, annual contract. Not public — "book a demo." Reports suggest comparable to ServiceTitan tier. |
+| **Mobile** | Native iOS + Android (commercial technician-focused) |
+| **AI** | **OpsAI** — AI layer trained on commercial contracting workflows. Auto-dispatching (right tech in seconds), field note refinement, text translation, invoice scanning, asset scanning, real-time troubleshooting assistance, scheduling automation, revenue opportunity flagging, margin tracking. **"Trained on commercial contracting workflows — dispatching logic, service billing, project margins."** |
+| **Industries** | Commercial HVAC/Mechanical, Electrical, Plumbing, Refrigeration, Fire & Life Safety. **No restoration vertical.** |
+| **Xactimate** | No integration — not built for insurance workflows |
+| **Strengths** | Best-in-class commercial dispatch (rated 10/10 by GetApp), full project management with RFIs/change orders/submittals, commercial-grade asset tracking (property/equipment/warranty), multi-day job handling, T&M quoting, strong VC backing, modern UI, AI embedded across platform |
+| **Weaknesses** | **Commercial-only** (10+ tech shops), **no restoration features** (no moisture, no drying, no S500, no Xactimate), expensive enterprise pricing, annual lock-in, **AI is operational (dispatching/billing) not field intelligence (scoping/documentation)** |
+
+**Claimed results:** 250% profit increase, 40% productivity boost, 90% faster payments (per BuildOps marketing).
+
+**What this means for Crewmatic:**
+- BuildOps validates the **"AI-native trade platform"** category. They've raised significant VC and grown to 1,000+ customers on the thesis that trade software should be AI-first. Crewmatic is making the same bet, just for restoration.
+- Their OpsAI is the closest conceptual analog to what we're building — AI trained on industry-specific workflows, not generic. But their domain is commercial mechanical/electrical, not restoration.
+- **Zero overlap with restoration:** No moisture readings, no equipment tracking (dehumidifiers/air movers), no drying logs, no S500/OSHA/IICRC compliance, no Xactimate, no insurance documentation. A restoration company cannot use BuildOps for their core workflow.
+- BuildOps targets commercial contractors with 10+ techs. Crewmatic targets the 75%+ of restoration companies with <25 employees.
+- **Lesson to steal:** Their positioning as "the AI-native platform for [specific trade]" is exactly right. Crewmatic = "the AI-native platform for restoration."
+- **Threat level: NONE for restoration** (completely different vertical). Useful as a positioning/messaging reference.
+
+---
+
 ## Feature Matrix
 
-| Feature | Crewmatic | Encircle | DASH | Albi | JobSight | DocuSketch | magicplan | PSA |
-|---------|:--------:|:--------:|:----:|:----:|:--------:|:----------:|:---------:|:---:|
-| **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- | -- |
-| **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- | -- |
-| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | -- | Partial | Announced | -- |
-| **Voice Walkthrough → Site Report** | **YES** | -- | -- | -- | -- | -- | -- | -- |
-| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | YES | -- | YES | -- |
-| **Moisture Point Tracking** | **YES** | YES | YES | YES | YES | -- | YES | -- |
-| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | YES | -- | Partial | -- |
-| **Equipment Tracking** | **YES** | YES | YES | YES | YES | -- | -- | -- |
-| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES | YES | YES | -- |
-| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES | YES |
-| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | YES | Partial |
-| **Job Management** | **YES** | -- | YES | YES | YES | -- | -- | YES |
-| **Team Management** | **YES** | Unlimited | YES | YES | Unlimited | -- | YES | Per-user |
-| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | -- | Sharing | Collab | -- |
-| **Insurance Repair / Reconstruction** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Supplement Management** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **ACV/RCV Financial Tracking** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Multi-Vertical (Plumbing/Elec/HVAC)** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Cross-Trade Referral Network** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Accounting / Job Costing** | V2+ | -- | YES | YES | **YES** | -- | -- | **YES** |
-| **Invoicing & Payments** | -- | -- | Partial | Partial | **YES** | -- | -- | YES |
-| **Time Clock / Labor Tracking** | -- | -- | Partial | -- | **YES** | -- | -- | -- |
-| **Receipt Capture** | -- | -- | -- | -- | **YES** | -- | -- | -- |
-| **Referral / Lead Tracking** | -- | -- | YES | YES | **YES** | -- | -- | -- |
-| **E-Sign Documents** | -- | -- | -- | -- | **YES** | -- | -- | -- |
-| **Integrated Email/Text** | -- | -- | Partial | -- | **YES** | -- | -- | -- |
-| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- | -- |
-| **Offline Capable** | **YES** | YES | Partial | Partial | -- | -- | Partial | -- |
-| **Works on Any Phone** | **YES** | YES | YES | YES | YES | YES | LiDAR only | YES |
-| **No Hardware Required** | **YES** | YES | YES | YES | YES | $795 kit | LiDAR phone | YES |
-| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- | -- |
-| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- | -- |
+| Feature | Crewmatic | Encircle | DASH | Albi | JobSight | DocuSketch | magicplan | PSA | ServiceTitan | BuildOps |
+|---------|:--------:|:--------:|:----:|:----:|:--------:|:----------:|:---------:|:---:|:------------:|:--------:|
+| **AI Photo to Xactimate Line Items** | **YES** | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **AI Hazmat Scanner (Asbestos + Lead)** | **YES** | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **Voice-Guided Scoping** | **YES** | Partial | -- | -- | -- | Partial | Announced | -- | -- | -- |
+| **Voice Walkthrough → Site Report** | **YES** | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **Moisture Logging (Atmospheric)** | **YES** | YES | YES | YES | YES | -- | YES | -- | -- | -- |
+| **Moisture Point Tracking** | **YES** | YES | YES | YES | YES | -- | YES | -- | -- | -- |
+| **Dehumidifier Output Logging** | **YES** | YES | YES | YES | YES | -- | Partial | -- | -- | -- |
+| **Equipment Tracking** | **YES** | YES | YES | YES | YES | -- | -- | -- | -- | Commercial |
+| **Floor Plan / Room Sketching** | **YES** | YES | YES | Partial | YES | YES | YES | -- | -- | -- |
+| **Xactimate-Ready Output** | **YES** | YES | YES | YES | YES | YES | YES | YES | -- | -- |
+| **Photo Documentation** | **YES** | YES | YES | YES | YES | YES | YES | Partial | Partial | Partial |
+| **Job Management** | **YES** | -- | YES | YES | YES | -- | -- | YES | **YES** | **YES** |
+| **Team Management** | **YES** | Unlimited | YES | YES | Unlimited | -- | YES | Per-user | **YES** | **YES** |
+| **Adjuster/Customer Portal** | V2 | Reports | YES | Partial | -- | Sharing | Collab | -- | Customer | Customer |
+| **Insurance Repair / Reconstruction** | Planned | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **Supplement Management** | Planned | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **ACV/RCV Financial Tracking** | Planned | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **Multi-Vertical (Plumbing/Elec/HVAC)** | Planned | -- | -- | -- | -- | -- | -- | -- | **YES** | **YES** |
+| **Cross-Trade Referral Network** | Planned | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **Accounting / Job Costing** | V2+ | -- | YES | YES | **YES** | -- | -- | **YES** | **YES** | **YES** |
+| **Invoicing & Payments** | -- | -- | Partial | Partial | **YES** | -- | -- | YES | **YES** | **YES** |
+| **Time Clock / Labor Tracking** | -- | -- | Partial | -- | **YES** | -- | -- | -- | **YES** | **YES** |
+| **Receipt Capture** | -- | -- | -- | -- | **YES** | -- | -- | -- | -- | -- |
+| **Referral / Lead Tracking** | -- | -- | YES | YES | **YES** | -- | -- | -- | **YES** | Partial |
+| **E-Sign Documents** | -- | -- | -- | -- | **YES** | -- | -- | -- | **YES** | -- |
+| **Integrated Email/Text** | -- | -- | Partial | -- | **YES** | -- | -- | -- | **YES** | Partial |
+| **S500/IICRC Compliance** | **YES** | YES | YES | Partial | -- | -- | -- | -- | -- | -- |
+| **Offline Capable** | **YES** | YES | Partial | Partial | -- | -- | Partial | -- | Partial | Partial |
+| **Works on Any Phone** | **YES** | YES | YES | YES | YES | YES | LiDAR only | YES | YES | YES |
+| **No Hardware Required** | **YES** | YES | YES | YES | YES | $795 kit | LiDAR phone | YES | YES | YES |
+| **AI Claims Assistance** | Planned | -- | -- | -- | -- | -- | -- | -- | -- | -- |
+| **AI Dispatch Optimization** | -- | -- | -- | -- | -- | -- | -- | -- | **YES** | **YES** |
+| **AI Voice Agents (Call Handling)** | -- | -- | -- | -- | -- | -- | -- | -- | **YES** | -- |
+| **AI Marketing Optimization** | -- | -- | -- | -- | -- | -- | -- | -- | **YES** | -- |
+| **CRM** | -- | -- | YES | YES | Partial | -- | -- | -- | **YES** | **YES** |
+| **Fleet Management** | -- | -- | -- | -- | -- | -- | -- | -- | -- | **YES** |
+| **Service Agreements** | -- | -- | YES | -- | -- | -- | -- | -- | **YES** | **YES** |
+| **Remote Monitoring (IoT)** | V3+ | -- | -- | -- | -- | -- | -- | -- | -- | -- |
 
 ### What Only Crewmatic Does
 
