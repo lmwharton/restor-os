@@ -58,3 +58,11 @@ alembic history
 - Use `get_supabase_admin_client()` ONLY for onboarding and platform admin operations (e.g., creating initial company/user records, public share link access). Never for normal user queries.
 - Linting: `ruff check api/` and `ruff format api/`
 - Full API spec: `docs/product-specs/restoros-architecture.md` Part 5
+
+## Pre-PR Checklist
+
+1. **Schema bounds** — every field needs type + constraints. Strings: `max_length`, ints: `ge`/`le`, enums: `Literal[...]` not `str`
+2. **Validate after transformation** — if data is copied/defaulted/transformed before insert, validate AFTER, not before
+3. **Sibling functions** — if you add logic to `create()`, also add to `update()`, `delete()`, and any function touching the same data
+4. **Error handling** — never `except Exception: pass`. Always `logger.warning(...)` at minimum
+5. **Spec cross-reference** — read each spec checkbox and grep for the implementing code
