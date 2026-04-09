@@ -8,6 +8,7 @@ import { Dashboard, Clipboard, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
 import NotificationDropdown from "@/components/notification-dropdown";
 import { useJobs } from "@/lib/hooks/use-jobs";
+import { useMe } from "@/lib/hooks/use-me";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -536,30 +537,7 @@ function MobileBottomNav() {
 /* ------------------------------------------------------------------ */
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const headers = await getAuthHeaders();
-        const res = await fetch(`${API_URL}/v1/me`, {
-          headers,
-          cache: "no-store",
-        });
-        if (res.ok && !cancelled) {
-          const data: UserProfile = await res.json();
-          setUser(data);
-        }
-      } catch {
-        // Backend unreachable — header will show skeleton states
-      }
-    }
-
-    load();
-    return () => { cancelled = true; };
-  }, []);
+  const { data: user = null } = useMe() as { data: UserProfile | null | undefined };
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">

@@ -1,7 +1,6 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import {
   useJob,
   useRooms,
@@ -9,7 +8,7 @@ import {
   useAllReadings,
   useReconPhases,
 } from "@/lib/hooks/use-jobs";
-import { apiGet } from "@/lib/api";
+import { useMe } from "@/lib/hooks/use-me";
 
 interface ReportCompany {
   name: string;
@@ -83,11 +82,7 @@ export default function ReportPage() {
   const { data: photos } = usePhotos(jobId);
   const { data: readings } = useAllReadings(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
-  const { data: profile } = useQuery<ReportUserProfile>({
-    queryKey: ["me"],
-    queryFn: () => apiGet<ReportUserProfile>("/v1/me"),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: profile } = useMe();
   const company = profile?.company;
 
   if (jobLoading) {
