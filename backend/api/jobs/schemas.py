@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class JobCreate(BaseModel):
@@ -36,7 +36,7 @@ class JobCreate(BaseModel):
     loss_date: date | None = None
 
     # Optional — property age (for lead/asbestos hazmat flagging)
-    home_year_built: int | None = None
+    home_year_built: int | None = Field(None, ge=1600, le=2100)
 
     # Optional — insurance
     claim_number: str | None = None
@@ -77,7 +77,7 @@ class JobUpdate(BaseModel):
     loss_class: str | None = None
     loss_cause: str | None = None
     loss_date: date | None = None
-    home_year_built: int | None = None
+    home_year_built: int | None = Field(None, ge=1600, le=2100)
 
     # Insurance
     claim_number: str | None = None
@@ -123,7 +123,7 @@ class JobResponse(BaseModel):
     loss_class: str | None = None
     loss_cause: str | None = None
     loss_date: date | None = None
-    home_year_built: int | None = None
+    home_year_built: int | None = Field(None, ge=1600, le=2100)
     status: str
     assigned_to: UUID | None = None
     notes: str | None = None

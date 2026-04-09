@@ -4,22 +4,22 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class PhaseCreate(BaseModel):
     """Request body for creating a new phase."""
-    phase_name: str
+    phase_name: str = Field(max_length=255)
     status: Literal["pending", "in_progress", "on_hold", "complete"] = "pending"
     sort_order: int = 0
-    notes: str | None = None
+    notes: str | None = Field(None, max_length=5000)
 
 
 class PhaseUpdate(BaseModel):
     """Request body for updating a phase. Only send fields to change."""
-    phase_name: str | None = None
+    phase_name: str | None = Field(None, max_length=255)
     status: Literal["pending", "in_progress", "on_hold", "complete"] | None = None
-    notes: str | None = None
+    notes: str | None = Field(None, max_length=5000)
 
 
 class PhaseReorderItem(BaseModel):
@@ -30,7 +30,7 @@ class PhaseReorderItem(BaseModel):
 
 class PhaseReorderRequest(BaseModel):
     """Request body for bulk reordering phases."""
-    phases: list[PhaseReorderItem]
+    phases: list[PhaseReorderItem] = Field(max_length=100)
 
 
 class PhaseResponse(BaseModel):

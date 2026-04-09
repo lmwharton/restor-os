@@ -5,6 +5,7 @@ Think of this as the "business logic" layer — it validates rules
 and performs the actual database operations.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from uuid import UUID
@@ -125,6 +126,7 @@ async def update_phase(
 ) -> PhaseResponse:
     """Update a phase. Auto-sets started_at/completed_at on status transitions."""
     client = await get_authenticated_client(token)
+    await _validate_recon_job(client, job_id, company_id)
 
     updates: dict = {}
     for key, value in body.model_dump(exclude_unset=True).items():
@@ -138,9 +140,28 @@ async def update_phase(
         new_status = updates["status"]
         now = datetime.now(UTC).isoformat()
         if new_status == "in_progress":
-            updates["started_at"] = now
+            # Only set started_at if not already set in DB
+            current = await (
+                client.table("recon_phases")
+                .select("started_at")
+                .eq("id", str(phase_id))
+                .single()
+                .execute()
+            )
+            if not current.data or not current.data.get("started_at"):
+                updates["started_at"] = now
         elif new_status == "complete":
             updates["completed_at"] = now
+            # Only set started_at if not already set in DB (direct pending→complete)
+            current = await (
+                client.table("recon_phases")
+                .select("started_at")
+                .eq("id", str(phase_id))
+                .single()
+                .execute()
+            )
+            if not current.data or not current.data.get("started_at"):
+                updates["started_at"] = now
         elif new_status == "pending":
             # Reset timestamps if going back to pending
             updates["started_at"] = None
@@ -160,12 +181,13 @@ async def update_phase(
             status_code=404, detail="Phase not found", error_code="PHASE_NOT_FOUND"
         )
 
+    event_type = "recon_phase_completed" if updates.get("status") == "complete" else "recon_phase_updated"
     await log_event(
         company_id,
-        "recon_phase_updated",
+        event_type,
         job_id=job_id,
         user_id=user_id,
-        event_data={"phase_id": str(phase_id), "updated_fields": list(updates.keys())},
+        event_data={"phase_id": str(phase_id), "phase_name": result.data[0].get("phase_name"), "updated_fields": list(updates.keys())},
     )
     return _parse_phase(result.data[0])
 
@@ -173,8 +195,9 @@ async def update_phase(
 async def delete_phase(
     token: str, job_id: UUID, company_id: UUID, user_id: UUID, phase_id: UUID
 ) -> None:
-    """Delete a phase."""
+    """Delete a phase. Owner or admin only."""
     client = await get_authenticated_client(token)
+    await _validate_recon_job(client, job_id, company_id)
 
     result = await (
         client.table("recon_phases")
@@ -205,16 +228,17 @@ async def reorder_phases(
 ) -> list[PhaseResponse]:
     """Bulk reorder phases by updating sort_order for each."""
     client = await get_authenticated_client(token)
+    await _validate_recon_job(client, job_id, company_id)
 
-    for item in items:
-        await (
-            client.table("recon_phases")
-            .update({"sort_order": item.sort_order})
-            .eq("id", str(item.id))
-            .eq("job_id", str(job_id))
-            .eq("company_id", str(company_id))
-            .execute()
-        )
+    await asyncio.gather(*(
+        client.table("recon_phases")
+        .update({"sort_order": item.sort_order})
+        .eq("id", str(item.id))
+        .eq("job_id", str(job_id))
+        .eq("company_id", str(company_id))
+        .execute()
+        for item in items
+    ))
 
     await log_event(
         company_id,
