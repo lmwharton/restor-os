@@ -8,6 +8,7 @@ import {
   useFloorPlans,
   useCreateFloorPlan,
   useUpdateFloorPlan,
+  useDeleteFloorPlan,
   useRooms,
   useCreateRoom,
   useUpdateRoom,
@@ -31,6 +32,7 @@ export default function FloorPlanPage({
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
   const updateFloorPlan = useUpdateFloorPlan(jobId);
+  const deleteFloorPlan = useDeleteFloorPlan(jobId);
   const canvasRef = useRef<KonvaFloorPlanHandle>(null);
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
@@ -55,6 +57,7 @@ export default function FloorPlanPage({
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
   const lastCanvasRef = useRef<FloorPlanData | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Sync activeFloorId when floor plans load
@@ -68,9 +71,13 @@ export default function FloorPlanPage({
     ?? floorPlans?.[activeFloorIdx]
     ?? null;
 
-  // Keep a ref to activeFloor so the save callback always uses the latest
+  // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
   activeFloorRef.current = activeFloor;
+  const activeFloorIdRef = useRef(activeFloorId);
+  activeFloorIdRef.current = activeFloorId;
+
+  const wasPendingRef = useRef(false);
 
   /* ---------------------------------------------------------------- */
   /*  Save — create or update                                          */
@@ -78,7 +85,14 @@ export default function FloorPlanPage({
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
-      const currentFloor = activeFloorRef.current;
+      // Skip auto-save while a floor creation is in-flight to avoid duplicates
+      if (createFloorPlan.isPending) {
+        lastCanvasRef.current = canvasData;
+        return;
+      }
+      // Try ref first, then fall back to looking up by ID in query cache
+      const currentFloor = activeFloorRef.current
+        ?? (activeFloorIdRef.current ? queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId])?.find((fp) => fp.id === activeFloorIdRef.current) : null);
       setSaveStatus("saving");
       try {
         if (currentFloor) {
@@ -139,21 +153,31 @@ export default function FloorPlanPage({
 
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
-        saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
+        saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
       } catch (err) {
         console.error("Failed to save floor plan:", err);
         setSaveStatus("error");
       }
     },
-    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan]
+    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan, createFloorPlan.isPending]
   );
+
+  // Flush deferred save when floor creation finishes
+  useEffect(() => {
+    if (wasPendingRef.current && !createFloorPlan.isPending && lastCanvasRef.current) {
+      handleChange(lastCanvasRef.current);
+    }
+    wasPendingRef.current = createFloorPlan.isPending;
+  }, [createFloorPlan.isPending, handleChange]);
 
   /* ---------------------------------------------------------------- */
   /*  Add Floor                                                        */
   /* ---------------------------------------------------------------- */
 
   const handleAddFloor = useCallback(() => {
-    const nextNumber = (floorPlans?.length ?? 0) + 1;
+    // Use max existing floor_number + 1 to avoid conflicts after deletions
+    const maxNum = floorPlans?.reduce((max, fp) => Math.max(max, fp.floor_number ?? 0), 0) ?? 0;
+    const nextNumber = maxNum + 1;
     createFloorPlan.mutate(
       {
         floor_number: nextNumber,
@@ -161,12 +185,40 @@ export default function FloorPlanPage({
       },
       {
         onSuccess: (data) => {
+          queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => [
+            ...(old ?? []),
+            data,
+          ]);
           setActiveFloorId(data.id);
-          setActiveFloorIdx(nextNumber - 1);
+          setActiveFloorIdx((floorPlans?.length ?? 0));
         },
       }
     );
-  }, [floorPlans, createFloorPlan]);
+  }, [floorPlans, createFloorPlan, queryClient, jobId]);
+
+  // Floor rename state
+  const [editingFloorId, setEditingFloorId] = useState<string | null>(null);
+  const [editingFloorName, setEditingFloorName] = useState("");
+  const handleRenameFloor = useCallback((floorPlanId: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) { setEditingFloorId(null); return; }
+    updateFloorPlan.mutate({ floorPlanId, floor_name: trimmed } as { floorPlanId: string; floor_name: string });
+    setEditingFloorId(null);
+  }, [updateFloorPlan]);
+
+  const [deleteFloorModalId, setDeleteFloorModalId] = useState<string | null>(null);
+  const executeDeleteFloor = useCallback((floorPlanId: string) => {
+    setDeleteFloorModalId(null);
+    deleteFloorPlan.mutate(floorPlanId, {
+      onSuccess: () => {
+        const remaining = floorPlans?.filter((fp) => fp.id !== floorPlanId) ?? [];
+        if (remaining.length > 0) {
+          setActiveFloorId(remaining[0].id);
+          setActiveFloorIdx(0);
+        }
+      },
+    });
+  }, [floorPlans, deleteFloorPlan]);
 
   /* ---------------------------------------------------------------- */
   /*  Loading                                                          */
@@ -204,49 +256,78 @@ export default function FloorPlanPage({
           Back to Job
         </button>
 
-        {/* Save button + status */}
+        {/* Save button — always orange */}
         <button
           type="button"
           onClick={() => {
+            manualSaveRef.current = true;
+            canvasRef.current?.flush();
             if (lastCanvasRef.current) handleChange(lastCanvasRef.current);
           }}
-          className="ml-2 px-3 py-1.5 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer hover:opacity-90 transition-opacity"
+          disabled={saveStatus === "saving"}
+          className="ml-2 px-3 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer bg-brand-accent text-on-primary hover:opacity-90 transition-opacity disabled:opacity-70"
         >
-          {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
+          {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? (manualSaveRef.current ? "Saved" : "Auto-saved") : saveStatus === "error" ? "Retry Save" : "Save"}
         </button>
-        <div className="ml-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          {saveStatus === "saved" && <span className="text-green-600">Saved</span>}
-          {saveStatus === "error" && <span className="text-red-600">Save failed</span>}
-        </div>
 
         {/* Floor tabs */}
         <div className="flex items-center gap-1.5 ml-auto">
           {floorPlans?.map((fp, idx) => {
             const isActive = fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId);
             const roomCount = (fp.canvas_data as FloorPlanData | null)?.rooms?.length ?? 0;
+            const canDelete = (floorPlans?.length ?? 0) > 1;
             return (
-              <button
-                key={fp.id}
-                type="button"
-                onClick={() => {
-                  // Flush any pending debounced save before switching floors
-                  canvasRef.current?.flush();
-                  setActiveFloorIdx(idx);
-                  setActiveFloorId(fp.id);
-                }}
-                className={`px-4 py-2 rounded-lg text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
-                  isActive
-                    ? "bg-[#1a1a1a] text-white shadow-sm"
-                    : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
-                }`}
-              >
-                <span>{fp.floor_name}</span>
-                {roomCount > 0 && (
-                  <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
-                    {roomCount} {roomCount === 1 ? "rm" : "rms"}
-                  </span>
+              <div key={fp.id} className="relative group">
+                {editingFloorId === fp.id ? (
+                  <input
+                    type="text"
+                    value={editingFloorName}
+                    onChange={(e) => setEditingFloorName(e.target.value)}
+                    onBlur={() => handleRenameFloor(fp.id, editingFloorName)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRenameFloor(fp.id, editingFloorName);
+                      if (e.key === "Escape") setEditingFloorId(null);
+                    }}
+                    autoFocus
+                    className="px-3 py-1.5 rounded-lg text-[13px] font-semibold font-[family-name:var(--font-geist-mono)] bg-white border-2 border-brand-accent text-[#1a1a1a] outline-none w-[100px]"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      canvasRef.current?.flush();
+                      setActiveFloorIdx(idx);
+                      setActiveFloorId(fp.id);
+                    }}
+                    onDoubleClick={() => {
+                      setEditingFloorId(fp.id);
+                      setEditingFloorName(fp.floor_name);
+                    }}
+                    className={`px-4 py-2 rounded-lg text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
+                      isActive
+                        ? "bg-[#1a1a1a] text-white shadow-sm"
+                        : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
+                    }`}
+                  >
+                    <span>{fp.floor_name}</span>
+                    {roomCount > 0 && (
+                    <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
+                      {roomCount} {roomCount === 1 ? "rm" : "rms"}
+                    </span>
+                  )}
+                  </button>
                 )}
-              </button>
+                {canDelete && isActive && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setDeleteFloorModalId(fp.id); }}
+                    className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-red-600 shadow-sm"
+                    aria-label={`Delete ${fp.floor_name}`}
+                  >
+                    x
+                  </button>
+                )}
+              </div>
             );
           })}
           <button
@@ -278,6 +359,37 @@ export default function FloorPlanPage({
           Precision scoping powered by Crewmatic AI
         </p>
       </div>
+
+      {/* Delete floor confirmation modal */}
+      {deleteFloorModalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-inverse-surface/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-[340px] mx-4">
+            <h3 className="text-[15px] font-semibold text-[#1a1a1a] mb-2">
+              Delete {floorPlans?.find((fp) => fp.id === deleteFloorModalId)?.floor_name ?? "this floor"}?
+            </h3>
+            <p className="text-[13px] text-[#6b6560] mb-5">
+              This will permanently remove the floor and all its rooms, walls, doors, and windows.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteFloorModalId(null)}
+                className="px-4 h-9 rounded-lg text-[13px] font-medium text-[#6b6560] bg-[#eae6e1] hover:bg-[#ddd8d2] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => executeDeleteFloor(deleteFloorModalId)}
+                disabled={deleteFloorPlan.isPending}
+                className="px-4 h-9 rounded-lg text-[13px] font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {deleteFloorPlan.isPending ? "Deleting..." : "Delete Floor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
