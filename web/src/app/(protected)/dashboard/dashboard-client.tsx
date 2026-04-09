@@ -507,7 +507,7 @@ function JobsList({
                 role="listitem"
               >
                 <span
-                  className={`w-2 h-2 rounded-full shrink-0 hidden sm:block ${job?.job_type === "reconstruction" ? "bg-type-reconstruction" : "bg-type-mitigation"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 ${job?.job_type === "reconstruction" ? "bg-type-reconstruction" : "bg-type-mitigation"}`}
                   aria-label={job?.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
                 />
                 <div className="min-w-0 flex-1">

@@ -293,7 +293,11 @@ export default function NewJobPage() {
 
   // Fetch existing mitigation jobs for linking dropdown
   const { data: allJobs } = useJobs();
-  const mitigationJobs = allJobs?.filter((j) => j.job_type === "mitigation") ?? [];
+  // Filter out mitigation jobs that already have a reconstruction job linked to them
+  const linkedMitIds = new Set(
+    allJobs?.filter((j) => j.job_type === "reconstruction" && j.linked_job_id).map((j) => j.linked_job_id) ?? []
+  );
+  const mitigationJobs = allJobs?.filter((j) => j.job_type === "mitigation" && !linkedMitIds.has(j.id)) ?? [];
 
   // Core fields
   const [lossType, setLossType] = useState<LossType>("water");
@@ -415,8 +419,9 @@ export default function NewJobPage() {
         longitude: addressParts?.longitude || undefined,
       });
       router.push(`/jobs/${result.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create job");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg === "Failed to fetch" ? "Unable to reach the server. Check your connection and try again." : msg);
     }
   };
 

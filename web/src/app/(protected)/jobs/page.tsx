@@ -4,7 +4,7 @@ import { useState, useMemo, useCallback, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Plus } from "@/components/icons";
-import { useJobs, usePhotos } from "@/lib/hooks/use-jobs";
+import { useJobs, usePhotos, useUpdateJob } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus, JobType } from "@/lib/types";
 import { STATUS_COLORS, withAlpha } from "@/lib/status-colors";
 
@@ -231,8 +231,27 @@ function JobTableRow({
 /*  Desktop Preview Panel                                              */
 /* ------------------------------------------------------------------ */
 
+const MITIGATION_PHASES: { value: JobStatus; label: string }[] = [
+  { value: "new", label: "New" },
+  { value: "contracted", label: "Contracted" },
+  { value: "mitigation", label: "Mitigation" },
+  { value: "drying", label: "Drying" },
+  { value: "complete", label: "Complete" },
+  { value: "submitted", label: "Submitted" },
+  { value: "collected", label: "Collected" },
+];
+const RECONSTRUCTION_PHASES: { value: JobStatus; label: string }[] = [
+  { value: "new", label: "New" },
+  { value: "scoping", label: "Scoping" },
+  { value: "in_progress", label: "In Progress" },
+  { value: "complete", label: "Complete" },
+  { value: "submitted", label: "Submitted" },
+  { value: "collected", label: "Collected" },
+];
+
 function PreviewPanel({ job }: { job: JobDetail | null }) {
   const { data: photos } = usePhotos(job?.id ?? "");
+  const updateJob = useUpdateJob(job?.id ?? "");
   const [photoIndex, setPhotoIndex] = useState(0);
 
   // Reset when job changes
@@ -336,6 +355,21 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
               {job.claim_number ? `#${job.claim_number}` : "Pending"}
             </span>
           </div>
+        </div>
+
+        {/* Phase selector */}
+        <div className="flex items-center justify-between">
+          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant">Phase</span>
+          <select
+            value={job.status}
+            onChange={(e) => updateJob.mutate({ status: e.target.value } as Record<string, string | null>)}
+            className="appearance-none h-7 px-2 pr-6 rounded-md bg-surface-container-low text-xs font-medium text-on-surface outline-none cursor-pointer border border-outline-variant/30 focus:border-brand-accent/50"
+            style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='10' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M6 9l6 6 6-6' stroke='%23594139' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`, backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
+          >
+            {(job.job_type === "reconstruction" ? RECONSTRUCTION_PHASES : MITIGATION_PHASES).map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+          </select>
         </div>
 
         {/* Open Job button */}
@@ -638,7 +672,7 @@ export default function JobsPage() {
           {/* Table header */}
           <div className="grid grid-cols-[minmax(120px,0.8fr)_90px_60px_60px_60px_70px] gap-2 px-4 py-2 mb-1">
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold">Address</span>
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold text-center">Status</span>
+            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold text-center">Phase</span>
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold text-center">Days</span>
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold text-center">Rooms</span>
             <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] text-on-surface-variant/60 font-semibold text-center">Photos</span>
