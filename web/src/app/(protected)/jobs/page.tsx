@@ -696,28 +696,38 @@ export default function JobsPage() {
             onClick={() => setShowNewJobSheet(false)}
           />
           {/* Sheet */}
-          <div className="sm:hidden fixed bottom-[68px] left-0 right-0 z-50 bg-surface-container-lowest rounded-t-2xl shadow-lg px-5 pt-5 pb-6 animate-[slideUp_200ms_ease-out]">
-            <h2 className="text-[17px] font-semibold text-on-surface mb-4">New Job</h2>
-            <div className="grid grid-cols-2 gap-3">
+          <div className="sm:hidden fixed bottom-[68px] left-4 right-4 z-50 bg-surface-container-lowest rounded-2xl shadow-[0_-4px_32px_rgba(0,0,0,0.12)] px-4 pt-4 pb-5 animate-[slideUp_200ms_ease-out]">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-[15px] font-semibold text-on-surface">New Job</h2>
+              <button
+                type="button"
+                onClick={() => setShowNewJobSheet(false)}
+                className="w-7 h-7 rounded-full bg-surface-container flex items-center justify-center text-on-surface-variant active:scale-95"
+                aria-label="Close"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </button>
+            </div>
+            <div className="flex gap-2.5">
               <Link
                 href="/jobs/new?type=mitigation"
                 onClick={() => setShowNewJobSheet(false)}
-                className="rounded-xl px-4 py-4 min-h-[90px] flex flex-col items-center justify-center gap-1.5 border-2 border-[#3b82f6] bg-[#eff6ff] transition-all active:scale-[0.97]"
+                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[#eff6ff] transition-all active:scale-[0.97]"
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#3b82f6]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#3b82f6]">
                   <path d="M12 2.69l.66.72C13.52 4.35 16.5 7.7 16.5 11.5a4.5 4.5 0 0 1-9 0c0-3.8 2.98-7.15 3.84-8.09L12 2.69Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.15" />
                 </svg>
-                <span className="text-[14px] font-semibold text-on-surface">Mitigation</span>
+                <span className="text-[13px] font-semibold text-[#3b82f6]">Mitigation</span>
               </Link>
               <Link
                 href="/jobs/new?type=reconstruction"
                 onClick={() => setShowNewJobSheet(false)}
-                className="rounded-xl px-4 py-4 min-h-[90px] flex flex-col items-center justify-center gap-1.5 border-2 border-[#e85d26] bg-[#fff3ed] transition-all active:scale-[0.97]"
+                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[#fff3ed] transition-all active:scale-[0.97]"
               >
-                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#e85d26]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#e85d26]">
                   <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.15" />
                 </svg>
-                <span className="text-[14px] font-semibold text-on-surface">Reconstruction</span>
+                <span className="text-[13px] font-semibold text-[#e85d26]">Reconstruction</span>
               </Link>
             </div>
           </div>

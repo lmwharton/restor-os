@@ -448,14 +448,14 @@ export default function NewJobPage() {
           <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
             Job Type
           </label>
-          <div className="flex gap-2">
+          <div className="inline-flex gap-1.5 rounded-full p-1 bg-surface-container-high/60">
             <button
               type="button"
               onClick={() => setJobType("mitigation")}
-              className={`flex items-center gap-2 px-4 h-9 rounded-full text-[13px] font-medium transition-all duration-150 cursor-pointer ${
+              className={`flex items-center gap-2 px-4 h-8 rounded-full text-[13px] font-semibold transition-all duration-150 cursor-pointer ${
                 jobType === "mitigation"
-                  ? "bg-type-mitigation text-white"
-                  : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low"
+                  ? "bg-brand-accent text-on-primary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-container-lowest/60"
               }`}
             >
               <span className={`w-2 h-2 rounded-full ${jobType === "mitigation" ? "bg-white" : "bg-type-mitigation"}`} />
@@ -464,10 +464,10 @@ export default function NewJobPage() {
             <button
               type="button"
               onClick={() => { setJobType("reconstruction"); setLinkedJobId(""); }}
-              className={`flex items-center gap-2 px-4 h-9 rounded-full text-[13px] font-medium transition-all duration-150 cursor-pointer ${
+              className={`flex items-center gap-2 px-4 h-8 rounded-full text-[13px] font-semibold transition-all duration-150 cursor-pointer ${
                 jobType === "reconstruction"
-                  ? "bg-type-reconstruction text-white"
-                  : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low"
+                  ? "bg-brand-accent text-on-primary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-container-lowest/60"
               }`}
             >
               <span className={`w-2 h-2 rounded-full ${jobType === "reconstruction" ? "bg-white" : "bg-type-reconstruction"}`} />
@@ -713,10 +713,10 @@ export default function NewJobPage() {
         )}
 
         {/* ── Action Buttons ──────────────────────────────────── */}
-        <div className="flex items-center gap-3 justify-end">
+        <div className="flex items-center gap-3 justify-center lg:justify-end">
           <Link
             href="/jobs"
-            className="hidden lg:flex h-10 px-5 rounded-lg text-[13px] font-medium text-on-surface-variant bg-surface-container-lowest border border-outline-variant/30 items-center hover:bg-surface-container-low transition-colors"
+            className="hidden lg:flex h-9 px-5 rounded-lg text-[13px] font-medium text-on-surface-variant bg-surface-container-lowest border border-outline-variant/30 items-center hover:bg-surface-container-low transition-colors"
           >
             Cancel
           </Link>
@@ -724,7 +724,7 @@ export default function NewJobPage() {
             type="button"
             onClick={handleCreate}
             disabled={!address.trim() || createJob.isPending}
-            className="flex-1 lg:flex-none lg:px-8 h-10 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent cursor-pointer transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-10 px-8 rounded-full lg:rounded-lg lg:px-8 lg:h-9 text-[13px] font-semibold text-on-primary bg-brand-accent cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
           >
             {createJob.isPending ? "Creating..." : "Create Job →"}
           </button>
