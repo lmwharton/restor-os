@@ -1,11 +1,13 @@
 from uuid import UUID
 
+from typing import Literal
+
 from fastapi import APIRouter, Depends, Query, Request
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
 from api.jobs.schemas import JobCreate, JobDetailResponse, JobListResponse, JobUpdate
-from api.jobs.service import create_job, delete_job, get_job, list_jobs, update_job
+from api.jobs.service import create_job, create_linked_recon, delete_job, get_job, list_jobs, update_job
 from api.shared.dependencies import _get_token
 from api.shared.exceptions import AppException
 
@@ -29,7 +31,7 @@ async def list_jobs_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
     status: str | None = Query(None, description="Filter by status"),
     loss_type: str | None = Query(None, description="Filter by loss type"),
-    job_type: str | None = Query(None, description="Filter by job type"),
+    job_type: Literal["mitigation", "reconstruction"] | None = Query(None, description="Filter by job type"),
     search: str | None = Query(None, description="Search address or customer name"),
     limit: int = Query(20, ge=1, le=100, description="Max items per page"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
@@ -74,6 +76,17 @@ async def update_job_endpoint(
     """Update job fields. Only send fields to change."""
     token = _get_token(request)
     return await update_job(token, ctx.company_id, ctx.user_id, job_id, body)
+
+
+@router.post("/{job_id}/create-linked-recon", status_code=201, response_model=JobDetailResponse)
+async def create_linked_recon_endpoint(
+    job_id: UUID,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Create a reconstruction job linked to this mitigation job. Auto-copies header data and pre-populates phases."""
+    token = _get_token(request)
+    return await create_linked_recon(token, ctx.company_id, ctx.user_id, job_id)
 
 
 @router.delete("/{job_id}")
