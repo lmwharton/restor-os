@@ -255,7 +255,7 @@ export default async function LoginPage() {
             <a
               href="/terms"
               className="underline underline-offset-2 transition-colors hover:opacity-80"
-              style={{ color: "#a63500" }}
+              style={{ color: "#e85d26" }}
             >
               Terms of Service
             </a>{" "}
@@ -263,7 +263,7 @@ export default async function LoginPage() {
             <a
               href="/privacy"
               className="underline underline-offset-2 transition-colors hover:opacity-80"
-              style={{ color: "#a63500" }}
+              style={{ color: "#e85d26" }}
             >
               Privacy Policy
             </a>
@@ -278,7 +278,7 @@ export default async function LoginPage() {
           <a
             href="/support"
             className="transition-colors hover:opacity-80"
-            style={{ color: "#a63500" }}
+            style={{ color: "#e85d26" }}
           >
             Field Support
           </a>
