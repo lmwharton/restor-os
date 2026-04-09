@@ -13,7 +13,7 @@ const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
 // ─── Job Queries ──────────────────────────────────────────────────────
 
-export function useJobs(filters?: { status?: string; search?: string }, initialData?: JobDetail[]) {
+export function useJobs(filters?: { status?: string; search?: string; job_type?: string }, initialData?: JobDetail[]) {
   return useQuery<JobDetail[]>({
     queryKey: ["jobs", filters],
     queryFn: async () => {
@@ -21,6 +21,7 @@ export function useJobs(filters?: { status?: string; search?: string }, initialD
       const params = new URLSearchParams();
       if (filters?.status) params.set("status", filters.status);
       if (filters?.search) params.set("search", filters.search);
+      if (filters?.job_type) params.set("job_type", filters.job_type);
       params.set("limit", "100");
       const qs = params.toString();
       const data = await apiGet<JobDetail[] | PaginatedResponse<JobDetail>>(`/v1/jobs${qs ? `?${qs}` : ""}`);
