@@ -113,26 +113,29 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const lastPinchDist = useRef<number | null>(null);
   const lastPinchCenter = useRef<{ x: number; y: number } | null>(null);
 
+  // Refs for zoom to avoid stale closures in rapid scroll events
+  const stageScaleRef = useRef(stageScale);
+  stageScaleRef.current = stageScale;
+  const stagePosRef = useRef(stagePos);
+  stagePosRef.current = stagePos;
+
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
     const evt = e.evt;
-    // Only zoom when Cmd/Ctrl is held or it's a trackpad pinch (ctrlKey is set by trackpad pinch)
-    if (!evt.ctrlKey && !evt.metaKey) {
-      // Plain scroll — ignore, let the page handle it
-      return;
-    }
+    if (!evt.ctrlKey && !evt.metaKey) return;
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
-    const oldScale = stageScale;
+    const oldScale = stageScaleRef.current;
+    const oldPos = stagePosRef.current;
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
     const scaleBy = 1.08;
     const newScale = evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
     const clampedScale = Math.max(0.3, Math.min(3, newScale));
-    const mousePointTo = { x: (pointer.x - stagePos.x) / oldScale, y: (pointer.y - stagePos.y) / oldScale };
+    const mousePointTo = { x: (pointer.x - oldPos.x) / oldScale, y: (pointer.y - oldPos.y) / oldScale };
     setStageScale(clampedScale);
     setStagePos({ x: pointer.x - mousePointTo.x * clampedScale, y: pointer.y - mousePointTo.y * clampedScale });
-  }, [stageScale, stagePos]);
+  }, []);
 
   const gs = state.gridSize;
 
@@ -153,7 +156,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       hasPendingRef.current = false;
-      onChangeRef.current?.(state);
+      onChangeRef.current?.(latestStateRef.current);
     }, 2000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
     // onChange is intentionally read via ref — listed here only for array size stability

@@ -175,7 +175,10 @@ export default function FloorPlanPage({
   /* ---------------------------------------------------------------- */
 
   const handleAddFloor = useCallback(() => {
-    // Use max existing floor_number + 1 to avoid conflicts after deletions
+    // Flush current floor's data first, then clear so it doesn't leak to the new floor
+    canvasRef.current?.flush();
+    lastCanvasRef.current = null;
+
     const maxNum = floorPlans?.reduce((max, fp) => Math.max(max, fp.floor_number ?? 0), 0) ?? 0;
     const nextNumber = maxNum + 1;
     createFloorPlan.mutate(
@@ -209,16 +212,20 @@ export default function FloorPlanPage({
   const [deleteFloorModalId, setDeleteFloorModalId] = useState<string | null>(null);
   const executeDeleteFloor = useCallback((floorPlanId: string) => {
     setDeleteFloorModalId(null);
+    // Cancel any pending save for this floor before deleting
+    lastCanvasRef.current = null;
     deleteFloorPlan.mutate(floorPlanId, {
       onSuccess: () => {
-        const remaining = floorPlans?.filter((fp) => fp.id !== floorPlanId) ?? [];
+        // Read fresh from cache, not the closure's stale floorPlans
+        const cached = queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId]) ?? [];
+        const remaining = cached.filter((fp) => fp.id !== floorPlanId);
         if (remaining.length > 0) {
           setActiveFloorId(remaining[0].id);
           setActiveFloorIdx(0);
         }
       },
     });
-  }, [floorPlans, deleteFloorPlan]);
+  }, [deleteFloorPlan, queryClient, jobId]);
 
   /* ---------------------------------------------------------------- */
   /*  Loading                                                          */
@@ -261,8 +268,8 @@ export default function FloorPlanPage({
           type="button"
           onClick={() => {
             manualSaveRef.current = true;
+            // flush() already calls handleChange via onChangeRef — no need to call twice
             canvasRef.current?.flush();
-            if (lastCanvasRef.current) handleChange(lastCanvasRef.current);
           }}
           disabled={saveStatus === "saving"}
           className="ml-2 px-3 py-1.5 rounded-lg text-[12px] font-semibold cursor-pointer bg-brand-accent text-on-primary hover:opacity-90 transition-opacity disabled:opacity-70"
