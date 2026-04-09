@@ -72,7 +72,7 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
             .maybe_single()
             .execute()
         )
-    except Exception as e:
+    except (OSError, ValueError, RuntimeError) as e:
         logger.warning("Failed to fetch user %s: %s", auth_user_id, e)
         return None
 

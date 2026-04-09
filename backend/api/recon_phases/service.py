@@ -230,6 +230,14 @@ async def reorder_phases(
     client = await get_authenticated_client(token)
     await _validate_recon_job(client, job_id, company_id)
 
+    # Validate: IDs must be unique and sort_orders must be unique
+    submitted_ids = [str(item.id) for item in items]
+    submitted_orders = [item.sort_order for item in items]
+    if len(set(submitted_ids)) != len(submitted_ids):
+        raise AppException(status_code=400, detail="Duplicate phase IDs in reorder request", error_code="DUPLICATE_IDS")
+    if len(set(submitted_orders)) != len(submitted_orders):
+        raise AppException(status_code=400, detail="Duplicate sort_order values in reorder request", error_code="DUPLICATE_SORT_ORDER")
+
     await asyncio.gather(*(
         client.table("recon_phases")
         .update({"sort_order": item.sort_order})

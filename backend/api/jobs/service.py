@@ -317,7 +317,15 @@ async def create_job(
             if field not in explicitly_set:
                 linked_val = linked_job_data.get(field)
                 if linked_val is not None:
-                    object.__setattr__(body, field, linked_val)
+                    # Parse date strings from PostgREST into Python date objects
+                    if field == "loss_date" and isinstance(linked_val, str):
+                        from datetime import date as date_type
+                        try:
+                            linked_val = date_type.fromisoformat(linked_val)
+                        except ValueError:
+                            linked_val = None
+                    if linked_val is not None:
+                        object.__setattr__(body, field, linked_val)
 
     # Validate AFTER auto-copy so copied fields are also validated
     _validate_enums(
@@ -440,23 +448,21 @@ async def create_job(
         await log_event(company_id, "job_linked", job_id=UUID(str(new_job_id)), user_id=user_id, event_data=event_data)
         await log_event(company_id, "job_linked", job_id=body.linked_job_id, user_id=user_id, event_data=event_data)
 
-    # Pre-populate default phases for reconstruction jobs
+    # Pre-populate default phases for reconstruction jobs (batch insert)
     if body.job_type == "reconstruction" and new_job_id:
         DEFAULT_RECON_PHASES = [
             "Demo Verification", "Drywall", "Paint", "Flooring",
             "Trim / Moldings", "Final Walkthrough",
         ]
-        for i, name in enumerate(DEFAULT_RECON_PHASES):
-            try:
-                await client.table("recon_phases").insert({
-                    "job_id": str(new_job_id),
-                    "company_id": str(company_id),
-                    "phase_name": name,
-                    "sort_order": i,
-                    "status": "pending",
-                }).execute()
-            except Exception:
-                logger.warning("Failed to insert default phase '%s' for job %s", name, new_job_id)
+        phase_rows = [
+            {"job_id": str(new_job_id), "company_id": str(company_id),
+             "phase_name": name, "sort_order": i, "status": "pending"}
+            for i, name in enumerate(DEFAULT_RECON_PHASES)
+        ]
+        try:
+            await client.table("recon_phases").insert(phase_rows).execute()
+        except Exception as e:
+            logger.error("Failed to insert default phases for job %s: %s", new_job_id, e)
 
     # New job has zero counts
     counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
