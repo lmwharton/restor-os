@@ -394,6 +394,17 @@ export function useUpdateFloorPlan(jobId: string) {
   });
 }
 
+export function useDeleteFloorPlan(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (floorPlanId: string) =>
+      apiDelete(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+    },
+  });
+}
+
 export function useCleanupSketch(jobId: string, floorPlanId: string) {
   return useMutation({
     mutationFn: (canvasData: Record<string, unknown>) =>
