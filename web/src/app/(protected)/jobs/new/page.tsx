@@ -220,6 +220,7 @@ function FormInputSmall({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        onFocus={(e) => e.target.select()}
         className="w-full h-10 px-3 rounded-lg bg-surface-container-lowest text-on-surface text-[13px] placeholder:text-on-surface-variant/50 outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-2 focus:ring-brand-accent/20 transition-all"
       />
     </div>
@@ -288,6 +289,7 @@ export default function NewJobPage() {
     searchParams.get("type") === "reconstruction" ? "reconstruction" : "mitigation"
   );
   const [linkedJobId, setLinkedJobId] = useState<string>(searchParams.get("linked") ?? "");
+  const [linkedJobNumber, setLinkedJobNumber] = useState<string | null>(null);
 
   // Fetch existing mitigation jobs for linking dropdown
   const { data: allJobs } = useJobs();
@@ -331,6 +333,7 @@ export default function NewJobPage() {
     setLinkedJobId(jobId);
     if (!jobId) {
       // Clear all auto-filled fields when unlinking
+      setLinkedJobNumber(null);
       setAddress("");
       setAddressParts(null);
       setCustomerName("");
@@ -348,6 +351,7 @@ export default function NewJobPage() {
     }
     const linked = mitigationJobs.find((j) => j.id === jobId);
     if (!linked) return;
+    setLinkedJobNumber(linked.job_number);
     // Auto-fill address
     setAddress(linked.address_line1);
     setAddressParts({ address_line1: linked.address_line1, city: linked.city, state: linked.state, zip: linked.zip, latitude: linked.latitude, longitude: linked.longitude });
@@ -493,9 +497,9 @@ export default function NewJobPage() {
                 </option>
               ))}
             </select>
-            {linkedJobId && (
+            {linkedJobId && linkedJobNumber && (
               <p className="mt-1.5 text-[11px] text-[#2a9d5c] font-[family-name:var(--font-geist-mono)]">
-                Address, customer, carrier, and adjuster will be copied from the linked job.
+                Address, customer, carrier, and adjuster copied from {linkedJobNumber}.
               </p>
             )}
           </div>
@@ -584,6 +588,7 @@ export default function NewJobPage() {
                   placeholder="John Smith"
                   value={customerName}
                   onChange={setCustomerName}
+
                 />
                 <FormInputSmall
                   label="Phone"
@@ -591,6 +596,7 @@ export default function NewJobPage() {
                   placeholder="(555) 123-4567"
                   value={customerPhone}
                   onChange={setCustomerPhone}
+
                 />
                 <FormInputSmall
                   label="Email"
@@ -598,6 +604,7 @@ export default function NewJobPage() {
                   placeholder="john@example.com"
                   value={customerEmail}
                   onChange={setCustomerEmail}
+
                 />
               </section>
 
@@ -611,12 +618,14 @@ export default function NewJobPage() {
                   type="date"
                   value={lossDate}
                   onChange={setLossDate}
+
                 />
                 <FormInputSmall
                   label="Cause"
                   placeholder="Burst pipe, appliance leak, etc."
                   value={lossCause}
                   onChange={setLossCause}
+
                 />
                 {lossType === "water" && jobType === "mitigation" && (
                   <>
@@ -656,18 +665,21 @@ export default function NewJobPage() {
                     placeholder="State Farm, Allstate, etc."
                     value={carrier}
                     onChange={setCarrier}
+
                   />
                   <FormInputSmall
                     label="Claim Number"
                     placeholder="CLM-2026-00123"
                     value={claimNumber}
                     onChange={setClaimNumber}
+
                   />
                   <FormInputSmall
                     label="Adjuster Name"
                     placeholder="Jane Doe"
                     value={adjusterName}
                     onChange={setAdjusterName}
+
                   />
                   <FormInputSmall
                     label="Adjuster Email"
@@ -675,6 +687,7 @@ export default function NewJobPage() {
                     placeholder="adjuster@carrier.com"
                     value={adjusterEmail}
                     onChange={setAdjusterEmail}
+
                   />
                   <FormInputSmall
                     label="Adjuster Phone"
@@ -682,6 +695,7 @@ export default function NewJobPage() {
                     placeholder="(555) 987-6543"
                     value={adjusterPhone}
                     onChange={setAdjusterPhone}
+
                   />
                 </div>
               </section>
