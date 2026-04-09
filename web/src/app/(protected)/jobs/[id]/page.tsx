@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import {
   useJob,
   useRooms,
@@ -19,8 +18,8 @@ import {
   useUpdateRoom,
   useReconPhases,
 } from "@/lib/hooks/use-jobs";
-import { apiGet } from "@/lib/api";
-import type { ReconPhase, ReconPhaseStatus } from "@/lib/types";
+import { useMe } from "@/lib/hooks/use-me";
+import type { ReconPhase, ReconPhaseStatus, Room } from "@/lib/types";
 import {
   DndContext,
   closestCenter,
@@ -1343,6 +1342,24 @@ function RoomRow({
 /*  Tech Notes Section (auto-save with indicator)                      */
 /* ------------------------------------------------------------------ */
 
+function useTimeSince(savedAt: number | null) {
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    if (!savedAt) { setLabel(""); return; }
+    const tick = () => {
+      const diff = Math.floor((Date.now() - savedAt) / 1000);
+      if (diff < 5) setLabel("just now");
+      else if (diff < 60) setLabel(`${diff}s ago`);
+      else if (diff < 3600) setLabel(`${Math.floor(diff / 60)}m ago`);
+      else setLabel("");
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [savedAt]);
+  return label;
+}
+
 function TechNotesSection({
   techNotes,
   hasTechNotes,
@@ -1352,18 +1369,54 @@ function TechNotesSection({
   hasTechNotes: boolean;
   onSave: (val: string | null) => void;
 }) {
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [saveStatus, setSaveStatus] = useState<"idle" | "typing" | "saving" | "saved">("idle");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const timeAgo = useTimeSince(savedAt);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef(techNotes || "");
+
+  const doSave = useCallback((val: string) => {
+    const trimmed = val.trim();
+    if (trimmed === lastSavedRef.current) { setSaveStatus(savedAt ? "saved" : "idle"); return; }
+    setSaveStatus("saving");
+    lastSavedRef.current = trimmed;
+    onSave(trimmed || null);
+    setTimeout(() => {
+      setSaveStatus("saved");
+      setSavedAt(Date.now());
+    }, 300);
+  }, [onSave, savedAt]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setSaveStatus("typing");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const val = e.target.value;
+    debounceRef.current = setTimeout(() => doSave(val), 2000);
+  };
 
   const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
-    const val = e.target.value.trim();
-    if (val !== (techNotes || "")) {
-      setSaveStatus("saving");
-      onSave(val || null);
-      // Brief "Saved" flash — the mutation is fire-and-forget
-      setTimeout(() => setSaveStatus("saved"), 300);
-      setTimeout(() => setSaveStatus("idle"), 2000);
-    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    doSave(e.target.value);
   };
+
+  // Cleanup on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  const statusText = saveStatus === "typing"
+    ? "Typing..."
+    : saveStatus === "saving"
+      ? "Saving..."
+      : saveStatus === "saved" && timeAgo
+        ? `Saved ${timeAgo}`
+        : "Auto-saves as you type";
+
+  const statusColor = saveStatus === "typing"
+    ? "text-brand-accent"
+    : saveStatus === "saving"
+      ? "text-on-surface-variant"
+      : saveStatus === "saved" && timeAgo
+        ? "text-emerald-600"
+        : "text-on-surface-variant/50";
 
   return (
     <AccordionSection
@@ -1382,22 +1435,17 @@ function TechNotesSection({
         <textarea
           defaultValue={techNotes || ""}
           placeholder="Add field notes, observations, site conditions..."
+          onChange={handleChange}
           onBlur={handleBlur}
           className="w-full min-h-[80px] px-3 py-2 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-1 focus:ring-brand-accent/40 resize-y font-[family-name:var(--font-geist-mono)]"
         />
-        <div className="flex items-center gap-2 mt-1.5">
-          <p className="text-[11px] text-on-surface-variant/50">
-            Auto-saves when you click away
+        <div className="flex items-center gap-1.5 mt-1.5">
+          {saveStatus === "saved" && timeAgo && (
+            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" className="text-emerald-600 shrink-0"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          )}
+          <p className={`text-[11px] font-[family-name:var(--font-geist-mono)] ${statusColor} transition-colors`}>
+            {statusText}
           </p>
-          {saveStatus === "saving" && (
-            <span className="text-[11px] text-on-surface-variant font-medium animate-pulse">Saving...</span>
-          )}
-          {saveStatus === "saved" && (
-            <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
-              <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-              Saved
-            </span>
-          )}
         </div>
       </div>
     </AccordionSection>
@@ -1489,11 +1537,7 @@ export default function JobDetailPage() {
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
-  const { data: me } = useQuery<{ id: string; name: string; first_name: string | null; last_name: string | null }>({
-    queryKey: ["me"],
-    queryFn: () => apiGet("/v1/me"),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: me } = useMe();
   const deleteJob = useDeleteJob();
   const createShareLink = useCreateShareLink(jobId);
   const updateJob = useUpdateJob(jobId);
@@ -1501,12 +1545,24 @@ export default function JobDetailPage() {
   const deleteRoom = useDeleteRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
   const [newRoomName, setNewRoomName] = useState("");
+  const [newRoomWidth, setNewRoomWidth] = useState("");
+  const [newRoomLength, setNewRoomLength] = useState("");
   const [showAddRoom, setShowAddRoom] = useState(false);
+  const [roomSavedFlash, setRoomSavedFlash] = useState(false);
+
+  const resetAddRoom = () => { setNewRoomName(""); setNewRoomWidth(""); setNewRoomLength(""); setShowAddRoom(false); };
 
   const handleAddRoom = () => {
-    if (!newRoomName.trim()) return;
-    createRoom.mutate({ room_name: newRoomName.trim() } as Record<string, string>, {
-      onSuccess: () => { setNewRoomName(""); setShowAddRoom(false); },
+    if (!newRoomName.trim()) { return; }
+    const w = parseFloat(newRoomWidth) || null;
+    const l = parseFloat(newRoomLength) || null;
+    const sf = w && l ? Math.round(w * l) : null;
+    createRoom.mutate({ room_name: newRoomName.trim(), width_ft: w, length_ft: l, square_footage: sf } as Partial<Room>, {
+      onSuccess: () => {
+        setNewRoomName(""); setNewRoomWidth(""); setNewRoomLength("");
+        setRoomSavedFlash(true);
+        setTimeout(() => setRoomSavedFlash(false), 1500);
+      },
     });
   };
 
@@ -1815,37 +1871,91 @@ export default function JobDetailPage() {
               })()}
 
               {/* Add room */}
-              <div className="flex flex-wrap items-center gap-2">
+              <div>
                 {showAddRoom ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={newRoomName}
-                      onChange={(e) => setNewRoomName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") { setShowAddRoom(false); setNewRoomName(""); } }}
-                      placeholder="Kitchen, Bedroom 1..."
-                      autoFocus
-                      className="h-8 px-3 rounded-full bg-surface-container text-[13px] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40 w-40"
-                    />
-                    <button type="button" onClick={handleAddRoom} disabled={!newRoomName.trim() || createRoom.isPending}
-                      className="text-emerald-600 hover:text-emerald-700 cursor-pointer disabled:opacity-40" aria-label="Save room">
-                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </button>
-                    <button type="button" onClick={() => { setShowAddRoom(false); setNewRoomName(""); }}
-                      className="text-on-surface-variant hover:text-error cursor-pointer" aria-label="Cancel">
-                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-                    </button>
+                  <div className="rounded-lg bg-surface-container/50 p-3 space-y-2 animate-[fadeSlideIn_200ms_ease-out]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/50">
+                        {roomSavedFlash ? (
+                          <span className="text-emerald-600 animate-[fadeSlideIn_150ms_ease-out]">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="inline -mt-0.5 mr-1"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            Saved — add another
+                          </span>
+                        ) : createRoom.isPending ? (
+                          <span className="text-brand-accent">Saving...</span>
+                        ) : (
+                          "Name → Width → Length · auto-saves"
+                        )}
+                      </span>
+                      <button type="button" onClick={resetAddRoom} className="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer" aria-label="Close">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-[1fr_60px_60px] gap-2 items-end sm:grid-cols-[1fr_80px_80px_60px]">
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">Room name</label>
+                        <input
+                          type="text"
+                          value={newRoomName}
+                          onChange={(e) => setNewRoomName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          placeholder="Kitchen, Bedroom 1..."
+                          autoFocus
+                          className="w-full h-8 px-2.5 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">W ft</label>
+                        <input
+                          type="number"
+                          value={newRoomWidth}
+                          onChange={(e) => setNewRoomWidth(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          placeholder="—"
+                          onFocus={(e) => e.target.select()}
+                          className="w-full h-8 px-2 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface text-center outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20 font-[family-name:var(--font-geist-mono)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">L ft</label>
+                        <input
+                          type="number"
+                          value={newRoomLength}
+                          onChange={(e) => setNewRoomLength(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          onBlur={() => { if (newRoomName.trim()) handleAddRoom(); }}
+                          placeholder="—"
+                          onFocus={(e) => e.target.select()}
+                          className="w-full h-8 px-2 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface text-center outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20 font-[family-name:var(--font-geist-mono)]"
+                        />
+                      </div>
+                      {/* SF auto-calc — desktop only inline */}
+                      <div className="hidden sm:block">
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">SF</label>
+                        <span className="flex h-8 items-center justify-center text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                          {newRoomWidth && newRoomLength ? Math.round(parseFloat(newRoomWidth) * parseFloat(newRoomLength)) || "—" : "—"}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Mobile SF preview */}
+                    {newRoomWidth && newRoomLength && (
+                      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/60 sm:hidden">
+                        {Math.round(parseFloat(newRoomWidth) * parseFloat(newRoomLength)) || 0} sq ft
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowAddRoom(true)}
-                    className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                  >
-                    + Add room
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddRoom(true)}
+                      className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                    >
+                      + Add room
+                    </button>
+                    <span className="text-[11px] text-on-surface-variant/40">Double-tap name to rename · auto-saves</span>
+                  </div>
                 )}
-                <span className="text-[11px] text-on-surface-variant/40">Click name to rename · auto-saves</span>
               </div>
             </div>
           </AccordionSection>
