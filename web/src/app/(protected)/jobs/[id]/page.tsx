@@ -17,6 +17,10 @@ import {
   useDeleteRoom,
   useUpdateRoom,
   useReconPhases,
+  useUpdateReconPhase,
+  useCreateReconPhase,
+  useDeleteReconPhase,
+  useReorderReconPhases,
 } from "@/lib/hooks/use-jobs";
 import { useMe } from "@/lib/hooks/use-me";
 import type { ReconPhase, ReconPhaseStatus, Room } from "@/lib/types";
@@ -368,7 +372,7 @@ function AccordionSection({
     <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden">
       <div
         role="button"
-        tabIndex={compact ? undefined : 0}
+        tabIndex={compact ? -1 : 0}
         onClick={() => !compact && setOpen(!open)}
         onKeyDown={(e) => { if (!compact && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setOpen(!open); } }}
         className={`w-full flex items-center gap-3 px-5 py-4 text-left transition-colors ${
@@ -575,13 +579,16 @@ function SortablePhaseRow({
 }
 
 function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPhase[]; jobId: string }) {
-  // Local state for optimistic updates (mock mode — will use mutation when backend is connected)
   const [phases, setPhases] = useState(initialPhases);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const updatePhase = useUpdateReconPhase(jobId);
+  const createPhase = useCreateReconPhase(jobId);
+  const deletePhase = useDeleteReconPhase(jobId);
+  const reorderPhases = useReorderReconPhases(jobId);
 
-  // Sync when data refetches
+  // Sync when server data refetches
   useEffect(() => {
-    if (initialPhases.length > 0) setPhases(initialPhases);
+    setPhases(initialPhases);
   }, [initialPhases]);
 
   const sorted = useMemo(() => [...phases].sort((a, b) => a.sort_order - b.sort_order), [phases]);
@@ -589,6 +596,7 @@ function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPha
   const pct = phases.length > 0 ? Math.round((completeCount / phases.length) * 100) : 0;
 
   function handleStatusChange(phaseId: string, newStatus: ReconPhaseStatus) {
+    // Optimistic update
     setPhases((prev) =>
       prev.map((p) => {
         if (p.id !== phaseId) return p;
@@ -601,8 +609,7 @@ function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPha
         };
       })
     );
-    // TODO: call API mutation when backend is connected
-    // apiPatch(`/v1/jobs/${jobId}/recon-phases/${phaseId}`, { status: newStatus });
+    updatePhase.mutate({ phaseId, status: newStatus });
   }
 
   const [newPhaseName, setNewPhaseName] = useState("");
@@ -629,13 +636,13 @@ function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPha
     setPhases((prev) => [...prev, newPhase]);
     setNewPhaseName("");
     setShowAddInput(false);
-    // TODO: apiPost(`/v1/jobs/${jobId}/recon-phases`, { phase_name: name, sort_order: maxOrder + 1 });
+    createPhase.mutate({ phase_name: name, sort_order: maxOrder + 1 });
   }
 
   function handleDeletePhase(phaseId: string) {
     setPhases((prev) => prev.filter((p) => p.id !== phaseId));
     setExpandedId(null);
-    // TODO: apiDelete(`/v1/jobs/${jobId}/recon-phases/${phaseId}`);
+    deletePhase.mutate(phaseId);
   }
 
   const sensors = useSensors(
@@ -651,9 +658,10 @@ function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPha
       const oldIndex = sortedPrev.findIndex((p) => p.id === active.id);
       const newIndex = sortedPrev.findIndex((p) => p.id === over.id);
       const reordered = arrayMove(sortedPrev, oldIndex, newIndex);
-      return reordered.map((p, i) => ({ ...p, sort_order: i }));
+      const updated = reordered.map((p, i) => ({ ...p, sort_order: i }));
+      reorderPhases.mutate(updated.map((p) => ({ id: p.id, sort_order: p.sort_order })));
+      return updated;
     });
-    // TODO: apiPost(`/v1/jobs/${jobId}/recon-phases/reorder`, { phase_ids: [...] });
   }
 
   return (
@@ -1686,9 +1694,6 @@ export default function JobDetailPage() {
               }`}>
                 {job.job_type === "mitigation" ? "MIT" : "REC"}
               </span>
-              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant text-[10px] font-semibold font-[family-name:var(--font-geist-mono)]">
-                {statusLabel(job.status)}
-              </span>
               {job.assigned_to && (
                 <span className="text-[11px] text-on-surface-variant">
                   · Assigned to <span className="font-medium text-on-surface">{job.assigned_to}</span>
@@ -1707,6 +1712,66 @@ export default function JobDetailPage() {
           </div>
         </div>
       </header>
+
+      {/* ── Phase Stepper ────────────────────────────────────── */}
+      {(() => {
+        const phases = job.job_type === "reconstruction"
+          ? [["new","New"],["scoping","Scoping"],["in_progress","In Progress"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]]
+          : [["new","New"],["contracted","Contracted"],["mitigation","Mitigation"],["drying","Drying"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]];
+        const currentIdx = phases.findIndex(([val]) => val === job.status);
+        return (
+          <div className="max-w-6xl mx-auto px-4 pt-3">
+            <div className="flex items-center">
+              {phases.map(([val, label], i) => {
+                const color = STATUS_COLORS[val as keyof typeof STATUS_COLORS] || "#94a3b8";
+                const isCurrent = val === job.status;
+                const isPast = i < currentIdx;
+                const isLast = i === phases.length - 1;
+                return (
+                  <div key={val} className="flex items-center flex-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => updateJob.mutate({ status: val } as Record<string, string | null>)}
+                      className="flex flex-col items-center gap-1 cursor-pointer group w-full active:scale-95 transition-transform"
+                    >
+                      {/* Dot */}
+                      <span
+                        className={`rounded-full transition-all ${
+                          isCurrent ? "w-5 h-5 ring-4" : isPast ? "w-3.5 h-3.5" : "w-3 h-3 group-hover:w-3.5 group-hover:h-3.5"
+                        }`}
+                        style={{
+                          backgroundColor: isCurrent || isPast ? color : "#e1ddd9",
+                          ringColor: isCurrent ? withAlpha(color, 0.2) : undefined,
+                        } as React.CSSProperties}
+                      >
+                        {isPast && (
+                          <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
+                            <path d="M4.5 8l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </span>
+                      {/* Label */}
+                      <span className={`text-[9px] sm:text-[10px] font-medium leading-tight text-center transition-colors truncate w-full ${
+                        isCurrent ? "font-bold" : isPast ? "opacity-70" : "text-on-surface-variant/40 group-hover:text-on-surface-variant/70"
+                      }`}
+                        style={isCurrent || isPast ? { color } : undefined}
+                      >
+                        {label}
+                      </span>
+                    </button>
+                    {/* Connector arrow */}
+                    {!isLast && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0 mx-0.5" aria-hidden="true">
+                        <path d="M9 6l6 6-6 6" stroke={isPast ? withAlpha(color, 0.5) : "#d4d0cc"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ── Linked Job Banner ─────────────────────────────────── */}
       {job.linked_job_summary && (

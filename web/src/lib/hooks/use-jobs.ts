@@ -312,6 +312,50 @@ export function useReconPhases(jobId: string) {
   });
 }
 
+export function useCreateReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { phase_name: string; sort_order: number }) =>
+      apiPost<ReconPhase>(`/v1/jobs/${jobId}/recon-phases`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useUpdateReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ phaseId, ...data }: { phaseId: string; status?: string; phase_name?: string; notes?: string }) =>
+      apiPatch<ReconPhase>(`/v1/jobs/${jobId}/recon-phases/${phaseId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useDeleteReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (phaseId: string) =>
+      apiDelete(`/v1/jobs/${jobId}/recon-phases/${phaseId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useReorderReconPhases(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { id: string; sort_order: number }[]) =>
+      apiPost(`/v1/jobs/${jobId}/recon-phases/reorder`, { phases: items }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
 // ─── Floor Plan Queries + Mutations ──────────────────────────────────
 
 export function useFloorPlans(jobId: string) {

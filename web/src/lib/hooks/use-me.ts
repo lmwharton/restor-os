@@ -65,7 +65,7 @@ export function useUpdateCompany() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: Partial<MeCompany>) =>
-      apiPatch<MeCompany>("/v1/me/company", data),
+      apiPatch<MeCompany>("/v1/company", data),
     onSuccess: (updated) => {
       qc.setQueryData(["me"], (old: MeProfile | undefined) =>
         old ? { ...old, company: { ...old.company, ...updated } } : old
