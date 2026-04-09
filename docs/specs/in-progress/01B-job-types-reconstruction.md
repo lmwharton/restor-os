@@ -3,8 +3,8 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ████████████████░░░░ 80% |
-| **State** | In progress — frontend + backend implemented, staging testing next |
+| **Progress** | ██████████████████░░ 95% |
+| **State** | In progress — all code complete, PR #2 under review, staging verification pending post-merge |
 | **Blocker** | None |
 | **Branch** | feature/01b-reconstruction |
 | **PR** | #2 |
@@ -12,10 +12,15 @@
 
 ## Remaining Items
 
-- [ ] **Backend pytest coverage** — no tests yet for recon_phases endpoints, job_type filtering, or linked job creation
+- [x] ~~Backend pytest coverage~~ — 70 tests passing (24 new for recon features: phases CRUD, linked job auto-copy, bidirectional resolution, status validation per type, default phase pre-population, job_type filter, immutable job_type)
+- [x] ~~`POST /v1/jobs/{job_id}/create-linked-recon`~~ — convenience endpoint implemented with source validation
+- [x] ~~`job_linked` event~~ — logged on both the new job and the linked job at creation time
+- [x] ~~`recon_phase_completed` event~~ — distinct event when a phase transitions to complete
+- [x] ~~N+1 reorder fix~~ — `asyncio.gather` for concurrent phase reorder (was sequential loop)
+- [x] ~~Conftest auth mock fix~~ — updated `maybe_single()` chain + cache clearing for all test suites
 - [ ] **Staging verification** — migrations need to run against staging DB, CORS must include Vercel URL
-- [ ] **`POST /v1/jobs/{job_id}/create-linked-recon`** — convenience endpoint not yet implemented (linking works via `linked_job_id` on normal job create)
-- [ ] **`job_linked` event** — no event logged when a reconstruction job is linked to a mitigation job
+- [ ] **Cross-browser QA** — phase drag reorder on real devices (desktop + mobile)
+- [ ] **API reference docs** — update after merge
 
 ## Done When
 - [x] Jobs have a `job_type` field: `"mitigation"` or `"reconstruction"`
@@ -34,7 +39,7 @@
 - [x] All existing mitigation functionality remains unchanged (zero regression)
 - [x] Database migration adds `job_type` + `linked_job_id` columns to jobs table
 - [x] Reconstruction-specific table created (recon_phases)
-- [ ] All backend endpoints have pytest coverage
+- [x] All backend endpoints have pytest coverage (70 tests — 24 new for reconstruction)
 - [x] Frontend tests pass (32/32)
 - [ ] Staging environment tested and verified
 
