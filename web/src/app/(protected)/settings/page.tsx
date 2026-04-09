@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { AddressAutocomplete } from "@/components/address-autocomplete";
+import { useMe } from "@/lib/hooks/use-me";
+import { useQueryClient } from "@tanstack/react-query";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -146,7 +148,7 @@ function SaveButton({
     <button
       onClick={onClick}
       disabled={isSaving || disabled}
-      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+      className="h-12 px-6 rounded-xl text-[14px] font-semibold text-on-primary bg-brand-accent cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-30 disabled:cursor-not-allowed flex items-center justify-center gap-2"
     >
       {isSaving ? (
         <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
@@ -221,12 +223,45 @@ export default function SettingsPage() {
   const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
 
-  // Loading
-  const [isLoading, setIsLoading] = useState(true);
+  // ─── Fetch profile via TanStack Query (cached across tab switches) ──
+  const { data: meData, isLoading } = useMe();
+  const queryClient = useQueryClient();
 
   // Track original values for dirty detection
   const orgOriginal = useRef({ name: "", phone: "", email: "", address: "", city: "", state: "", zip: "" });
   const profileOriginal = useRef({ name: "", firstName: "", lastName: "", phone: "", title: "" });
+  const hasSynced = useRef(false);
+
+  // Sync TanStack Query data → local form state (once on load, or when data arrives)
+  useEffect(() => {
+    if (!meData || hasSynced.current) return;
+    hasSynced.current = true;
+    // Company
+    const cn = meData.company?.name || "";
+    const cp = meData.company?.phone || "";
+    const ce = meData.company?.email || "";
+    const ca = meData.company?.address || "";
+    const cc = meData.company?.city || "";
+    const cs = meData.company?.state || "";
+    const cz = meData.company?.zip || "";
+    setCompanyName(cn); setCompanyPhone(cp); setCompanyEmail(ce);
+    setCompanyAddress(ca); setCompanyCity(cc); setCompanyState(cs); setCompanyZip(cz);
+    setLogoUrl(meData.company?.logo_url || "");
+    setSubscriptionTier(meData.company?.subscription_tier || "free");
+    orgOriginal.current = { name: cn, phone: cp, email: ce, address: ca, city: cc, state: cs, zip: cz };
+    // Profile
+    const un = meData.name || "";
+    const fn = meData.first_name || "";
+    const ln = meData.last_name || "";
+    const up = meData.phone || "";
+    const ut = meData.title || "";
+    setUserName(un); setFirstName(fn); setLastName(ln);
+    setUserPhone(up); setUserTitle(ut);
+    setUserEmail(meData.email || "");
+    setUserRole(meData.role || "owner");
+    setAvatarUrl(meData.avatar_url || "");
+    profileOriginal.current = { name: un, firstName: fn, lastName: ln, phone: up, title: ut };
+  }, [meData]);
 
   const orgDirty =
     companyName !== orgOriginal.current.name ||
@@ -243,51 +278,6 @@ export default function SettingsPage() {
     lastName !== profileOriginal.current.lastName ||
     userPhone !== profileOriginal.current.phone ||
     userTitle !== profileOriginal.current.title;
-
-  useEffect(() => {
-    async function loadProfile() {
-      try {
-        const headers = await getAuthHeaders();
-        const res = await fetch(`${API_URL}/v1/me`, {
-          headers,
-          cache: "no-store",
-        });
-        if (res.ok) {
-          const data = await res.json();
-          // Company
-          const cn = data.company?.name || "";
-          const cp = data.company?.phone || "";
-          const ce = data.company?.email || "";
-          const ca = data.company?.address || "";
-          const cc = data.company?.city || "";
-          const cs = data.company?.state || "";
-          const cz = data.company?.zip || "";
-          setCompanyName(cn); setCompanyPhone(cp); setCompanyEmail(ce);
-          setCompanyAddress(ca); setCompanyCity(cc); setCompanyState(cs); setCompanyZip(cz);
-          setLogoUrl(data.company?.logo_url || "");
-          setSubscriptionTier(data.company?.subscription_tier || "free");
-          orgOriginal.current = { name: cn, phone: cp, email: ce, address: ca, city: cc, state: cs, zip: cz };
-          // Profile
-          const un = data.name || "";
-          const fn = data.first_name || "";
-          const ln = data.last_name || "";
-          const up = data.phone || "";
-          const ut = data.title || "";
-          setUserName(un); setFirstName(fn); setLastName(ln);
-          setUserPhone(up); setUserTitle(ut);
-          setUserEmail(data.email || "");
-          setUserRole(data.role || "owner");
-          setAvatarUrl(data.avatar_url || "");
-          profileOriginal.current = { name: un, firstName: fn, lastName: ln, phone: up, title: ut };
-        }
-      } catch {
-        // Backend unreachable
-      } finally {
-        setIsLoading(false);
-      }
-    }
-    loadProfile();
-  }, []);
 
   /* ------ Organization handlers ------ */
 
@@ -335,18 +325,20 @@ export default function SettingsPage() {
     setIsUploading(true);
     setOrgMessage("");
     try {
-      const headers = await getAuthHeaders();
+      const authHeaders = await getAuthHeaders();
       const formData = new FormData();
       formData.append("file", file);
+      // Don't set Content-Type — browser sets multipart boundary automatically
       const res = await fetch(`${API_URL}/v1/company/logo`, {
         method: "POST",
-        headers,
+        headers: { Authorization: authHeaders.Authorization },
         body: formData,
       });
       if (res.ok) {
         const data = await res.json();
         setLogoUrl(data.logo_url);
         setOrgMessage("Logo uploaded");
+        queryClient.invalidateQueries({ queryKey: ["me"] });
         setTimeout(() => setOrgMessage(""), 2000);
       } else {
         const data = await res.json().catch(() => ({}));
@@ -403,18 +395,20 @@ export default function SettingsPage() {
     setIsUploadingAvatar(true);
     setProfileMessage("");
     try {
-      const headers = await getAuthHeaders();
+      const authHeaders = await getAuthHeaders();
       const formData = new FormData();
       formData.append("file", file);
+      // Don't set Content-Type — browser sets multipart boundary automatically
       const res = await fetch(`${API_URL}/v1/me/avatar`, {
         method: "POST",
-        headers,
+        headers: { Authorization: authHeaders.Authorization },
         body: formData,
       });
       if (res.ok) {
         const data = await res.json();
         setAvatarUrl(data.avatar_url);
         setProfileMessage("Avatar updated");
+        queryClient.invalidateQueries({ queryKey: ["me"] });
         setTimeout(() => setProfileMessage(""), 2000);
       } else {
         const data = await res.json().catch(() => ({}));
@@ -434,9 +428,6 @@ export default function SettingsPage() {
   return (
     <div className="px-4 sm:px-6 pb-24 md:pb-12">
       <div className="max-w-[600px] mx-auto pt-8 sm:pt-12">
-        <h1 className="text-2xl sm:text-3xl font-bold tracking-[-0.5px] text-on-surface mb-6">
-          Settings
-        </h1>
 
         {/* Tabs */}
         <div className="flex gap-1 mb-8 bg-surface-container rounded-lg p-1 overflow-x-auto -mx-4 sm:mx-0 px-4 sm:px-1 scrollbar-none">
@@ -547,27 +538,33 @@ export default function SettingsPage() {
               {/* Logo */}
               <div>
                 <FieldLabel>Company Logo</FieldLabel>
-                <label className="block h-28 rounded-lg bg-surface-container flex flex-col items-center justify-center gap-2 cursor-pointer hover:bg-surface-container-high transition-colors overflow-hidden relative">
-                  {logoUrl ? (
-                    <img
-                      src={logoUrl}
-                      alt="Company logo"
-                      className="h-full w-full object-contain p-2"
-                    />
-                  ) : (
-                    <>
+                <label className="inline-flex items-center gap-4 cursor-pointer group">
+                  <div className="w-16 h-16 rounded-full overflow-hidden bg-surface-container flex items-center justify-center ring-2 ring-transparent group-hover:ring-brand-accent/30 transition-all relative">
+                    {logoUrl ? (
+                      <img
+                        src={logoUrl}
+                        alt="Company logo"
+                        className="w-16 h-16 rounded-full object-cover"
+                        onError={() => setLogoUrl("")}
+                      />
+                    ) : (
                       <CameraIcon />
-                      <span className="text-[13px] text-outline">
-                        {isUploading ? "Uploading..." : "Click to upload logo"}
-                      </span>
-                    </>
-                  )}
+                    )}
+                    {isUploading && (
+                      <div className="absolute inset-0 bg-surface/60 flex items-center justify-center rounded-full">
+                        <span className="w-5 h-5 border-2 border-brand-accent/30 border-t-brand-accent rounded-full animate-spin" />
+                      </div>
+                    )}
+                  </div>
+                  <span className="text-[13px] text-on-surface-variant group-hover:text-on-surface transition-colors">
+                    {isUploading ? "Uploading..." : "Tap to update"}
+                  </span>
                   <input
                     type="file"
                     accept="image/jpeg,image/png,image/webp,image/svg+xml"
                     onChange={handleLogoUpload}
                     disabled={isUploading}
-                    className="absolute inset-0 opacity-0 cursor-pointer"
+                    className="hidden"
                   />
                 </label>
               </div>
@@ -601,6 +598,7 @@ export default function SettingsPage() {
                         src={avatarUrl}
                         alt="Your avatar"
                         className="w-16 h-16 rounded-full object-cover"
+                        onError={() => setAvatarUrl("")}
                       />
                     ) : (
                       <CameraIcon />
@@ -612,7 +610,7 @@ export default function SettingsPage() {
                     )}
                   </div>
                   <span className="text-[13px] text-on-surface-variant group-hover:text-on-surface transition-colors">
-                    {isUploadingAvatar ? "Uploading..." : "Click to change avatar"}
+                    {isUploadingAvatar ? "Uploading..." : "Tap to update"}
                   </span>
                   <input
                     type="file"

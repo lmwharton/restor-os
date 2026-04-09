@@ -344,13 +344,12 @@ export default function JobTimelinePage({
                 {photosForAi} photo{photosForAi !== 1 ? "s" : ""} ready for
                 analysis
               </p>
-              <button
-                type="button"
-                disabled
-                className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary opacity-40"
+              <div
+                className="inline-flex h-9 px-5 rounded-lg text-[13px] font-medium items-center justify-center gap-2 bg-surface-container text-on-surface-variant/60 border border-dashed border-outline-variant/50"
               >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="opacity-50"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
                 Coming Soon
-              </button>
+              </div>
             </>
           )}
         </div>
@@ -368,8 +367,9 @@ export default function JobTimelinePage({
           </p>
           <Link
             href={`/jobs/${jobId}/report`}
-            className="primary-gradient h-10 w-full rounded-xl text-sm font-medium text-on-primary flex items-center justify-center transition-opacity hover:opacity-90 active:opacity-80"
+            className="inline-flex h-9 px-5 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent items-center justify-center gap-2 transition-all hover:shadow-lg active:scale-[0.98]"
           >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z"/><path d="M14 2v6h6"/></svg>
             Generate Report
           </Link>
         </div>

@@ -8,6 +8,7 @@ import { Dashboard, Clipboard, Gear } from "@/components/icons";
 import { HealthStatusBadge } from "@/components/health-status-badge";
 import NotificationDropdown from "@/components/notification-dropdown";
 import { useJobs } from "@/lib/hooks/use-jobs";
+import { useMe } from "@/lib/hooks/use-me";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -91,10 +92,14 @@ function getCompanyInitial(company: Company): string {
 
 function UserAvatarButton({ user }: { user: UserProfile }) {
   const initials = getUserInitials(user);
-  return user.avatar_url ? (
+  const [imgError, setImgError] = useState(false);
+
+  return user.avatar_url && !imgError ? (
     <img
       src={user.avatar_url}
       alt=""
+      referrerPolicy="no-referrer"
+      onError={() => setImgError(true)}
       className="w-8 h-8 rounded-full object-cover"
     />
   ) : (
@@ -110,25 +115,17 @@ function UserAvatarButton({ user }: { user: UserProfile }) {
 
 function UserMenu({ user }: { user: UserProfile }) {
   const [open, setOpen] = useState(false);
+  const [imgError, setImgError] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    function handleClick(e: MouseEvent) {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
-    }
-    function handleEscape(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", handleClick);
-    document.addEventListener("keydown", handleEscape);
-    return () => {
-      document.removeEventListener("mousedown", handleClick);
-      document.removeEventListener("keydown", handleEscape);
-    };
-  }, [open]);
+  function handleEnter() {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    setOpen(true);
+  }
+  function handleLeave() {
+    timeoutRef.current = setTimeout(() => setOpen(false), 150);
+  }
 
   async function handleSignOut() {
     const supabase = createClient();
@@ -139,18 +136,19 @@ function UserMenu({ user }: { user: UserProfile }) {
   const initials = getUserInitials(user);
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="relative" onMouseEnter={handleEnter} onMouseLeave={handleLeave}>
       <button
-        onClick={() => setOpen((v) => !v)}
         className="w-8 h-8 rounded-full overflow-hidden cursor-pointer flex items-center justify-center ring-2 ring-transparent hover:ring-brand-accent/30 transition-all duration-200 focus:outline-none focus:ring-brand-accent/40"
         aria-label="User menu"
         aria-expanded={open}
         aria-haspopup="true"
       >
-        {user.avatar_url ? (
+        {user.avatar_url && !imgError ? (
           <img
             src={user.avatar_url}
             alt=""
+            referrerPolicy="no-referrer"
+            onError={() => setImgError(true)}
             className="w-8 h-8 rounded-full object-cover"
           />
         ) : (
@@ -161,25 +159,24 @@ function UserMenu({ user }: { user: UserProfile }) {
       </button>
 
       {open && (
-        <div className="absolute right-0 top-full mt-2 w-64 bg-surface-container-lowest rounded-xl shadow-[0_4px_24px_rgba(31,27,23,0.12),0_1px_4px_rgba(31,27,23,0.06)] border border-outline-variant/20 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
-          <div className="px-4 pt-4 pb-3">
-            <p className="text-[14px] font-semibold text-on-surface truncate">
+        <div className="absolute right-0 top-full mt-1.5 w-56 bg-surface-container-lowest rounded-lg shadow-[0_4px_24px_rgba(31,27,23,0.12),0_1px_4px_rgba(31,27,23,0.06)] border border-outline-variant/20 overflow-hidden z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+          <div className="px-3 pt-3 pb-2">
+            <p className="text-[13px] font-semibold text-on-surface truncate">
               {user.name || "User"}
             </p>
-            <p className="text-[12px] text-on-surface-variant truncate mt-0.5">
+            <p className="text-[11px] text-on-surface-variant truncate mt-0.5">
               {user.email}
             </p>
           </div>
 
-          <div className="h-px bg-outline-variant/20 mx-3" />
+          <div className="h-px bg-outline-variant/20 mx-2.5" />
 
-          <div className="py-1.5">
+          <div className="py-1">
             <Link
               href="/settings?tab=profile"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+              className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.5" />
                 <path d="M4 20c0-3.31 3.58-6 8-6s8 2.69 8 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
               </svg>
@@ -187,22 +184,21 @@ function UserMenu({ user }: { user: UserProfile }) {
             </Link>
             <Link
               href="/settings"
-              onClick={() => setOpen(false)}
-              className="flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
+              className="flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors"
             >
-              <Gear size={16} />
+              <Gear size={14} />
               Settings
             </Link>
           </div>
 
-          <div className="h-px bg-outline-variant/20 mx-3" />
+          <div className="h-px bg-outline-variant/20 mx-2.5" />
 
-          <div className="py-1.5 pb-2">
+          <div className="py-1 pb-1.5">
             <button
               onClick={handleSignOut}
-              className="w-full flex items-center gap-3 px-4 py-2.5 text-[13px] font-medium text-on-surface-variant hover:text-error hover:bg-error-container/30 transition-colors cursor-pointer text-left"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[12px] font-medium text-red-600 hover:bg-red-50 transition-colors cursor-pointer text-left"
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 <polyline points="16,17 21,12 16,7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 <line x1="21" y1="12" x2="9" y2="12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -293,7 +289,12 @@ function DesktopSidebar({ user }: { user: UserProfile | null }) {
       </nav>
 
       {/* Bottom section */}
-      <div className="mt-auto border-t border-outline-variant/15">
+      <div className="mt-auto border-t border-outline-variant/15 px-3 py-3">
+        <p className="text-[10px] text-outline font-[family-name:var(--font-geist-mono)]">
+          Powered by{" "}
+          <a href="https://crewmatic-website.vercel.app" target="_blank" rel="noopener noreferrer" className="text-on-surface-variant hover:text-brand-accent transition-colors">Crewmatic</a>
+        </p>
+        <p className="text-[10px] text-outline/50 font-[family-name:var(--font-geist-mono)] mt-0.5">v{APP_VERSION}</p>
       </div>
     </aside>
   );
@@ -399,10 +400,15 @@ function GlobalSearch() {
 }
 
 function DesktopTopBar({ user }: { user: UserProfile | null }) {
+  const pathname = usePathname();
+  const hideTopBar = pathname === "/jobs" || pathname?.startsWith("/jobs/") || pathname === "/settings" || pathname?.startsWith("/settings/");
+
+  if (hideTopBar) return null;
+
   return (
     <header className="hidden lg:block sticky top-0 z-30 backdrop-blur-xl bg-surface/70 border-b border-outline-variant/30 lg:ml-56">
       <div className="w-full px-6 h-12 flex items-center justify-between">
-        {/* Left: Search */}
+        {/* Left: Search — hidden on /jobs which has its own */}
         <GlobalSearch />
 
         {/* Right: Status + Notification + Avatar */}
@@ -474,7 +480,6 @@ function MobileHeader({ user }: { user: UserProfile | null }) {
           </div>
         ) : (
           <div className="flex items-center gap-2.5">
-            <span className="hidden sm:block w-16 h-4 rounded bg-surface-container animate-pulse" />
             <span className="w-8 h-8 rounded-full bg-surface-container animate-pulse" />
           </div>
         )}
@@ -532,30 +537,7 @@ function MobileBottomNav() {
 /* ------------------------------------------------------------------ */
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<UserProfile | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function load() {
-      try {
-        const headers = await getAuthHeaders();
-        const res = await fetch(`${API_URL}/v1/me`, {
-          headers,
-          cache: "no-store",
-        });
-        if (res.ok && !cancelled) {
-          const data: UserProfile = await res.json();
-          setUser(data);
-        }
-      } catch {
-        // Backend unreachable — header will show skeleton states
-      }
-    }
-
-    load();
-    return () => { cancelled = true; };
-  }, []);
+  const { data: user = null } = useMe() as { data: UserProfile | null | undefined };
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -569,9 +551,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {/* Main content — offset for sidebar on lg: */}
       <main className="flex-1 pb-20 md:pb-0 lg:ml-56">{children}</main>
 
-      <div className="lg:ml-56">
-        <AppFooter />
-      </div>
       <MobileBottomNav />
     </div>
   );

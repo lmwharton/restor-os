@@ -1,8 +1,7 @@
 "use client";
 
-import { useState, useMemo, useCallback } from "react";
+import { useState, useMemo, useCallback, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { useQuery } from "@tanstack/react-query";
 import {
   useJob,
   useRooms,
@@ -13,13 +12,36 @@ import {
   useCreateShareLink,
   useFloorPlans,
   useUpdateJob,
-  useCreateReading,
+
   useCreateRoom,
   useDeleteRoom,
   useUpdateRoom,
+  useReconPhases,
+  useUpdateReconPhase,
+  useCreateReconPhase,
+  useDeleteReconPhase,
+  useReorderReconPhases,
 } from "@/lib/hooks/use-jobs";
-import { apiGet } from "@/lib/api";
-// Types used via hook return inference — no direct imports needed
+import { useMe } from "@/lib/hooks/use-me";
+import type { ReconPhase, ReconPhaseStatus, Room } from "@/lib/types";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  verticalListSortingStrategy,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
+import { ConfirmModal } from "@/components/confirm-modal";
+import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -54,8 +76,12 @@ interface CanvasData {
 
 function daysSinceLoss(lossDate: string | null): number {
   if (!lossDate) return 0;
-  const diff = Date.now() - new Date(lossDate).getTime();
-  return Math.max(1, Math.ceil(diff / 86_400_000));
+  // Use date-only arithmetic to match backend: (reading_date - loss_date) + 1
+  const loss = new Date(lossDate + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const diffDays = Math.floor((today.getTime() - loss.getTime()) / 86_400_000);
+  return Math.max(1, diffDays + 1);
 }
 
 function statusLabel(status: string): string {
@@ -68,12 +94,16 @@ function statusLabel(status: string): string {
       return "Mitigation";
     case "drying":
       return "Drying";
-    case "job_complete":
+    case "complete":
       return "Complete";
     case "submitted":
       return "Submitted";
     case "collected":
       return "Collected";
+    case "scoping":
+      return "Scoping";
+    case "in_progress":
+      return "In Progress";
     default:
       return status;
   }
@@ -149,9 +179,9 @@ function ChevronRight({ size = 20, className = "" }: { size?: number; className?
   );
 }
 
-function ArrowLeftIcon({ size = 20 }: { size?: number }) {
+function ArrowLeftIcon({ size = 20, className }: { size?: number; className?: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
       <path d="M19 12H5m6-6-6 6 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
@@ -322,6 +352,7 @@ function AccordionSection({
   title,
   badge,
   preview,
+  action,
   defaultOpen = false,
   compact = false,
   children,
@@ -330,6 +361,7 @@ function AccordionSection({
   title: string;
   badge?: React.ReactNode;
   preview?: React.ReactNode;
+  action?: React.ReactNode;
   defaultOpen?: boolean;
   compact?: boolean;
   children?: React.ReactNode;
@@ -338,9 +370,11 @@ function AccordionSection({
 
   return (
     <section className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] overflow-hidden">
-      <button
-        type="button"
+      <div
+        role="button"
+        tabIndex={compact ? -1 : 0}
         onClick={() => !compact && setOpen(!open)}
+        onKeyDown={(e) => { if (!compact && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); setOpen(!open); } }}
         className={`w-full flex items-center gap-3 px-5 py-4 text-left transition-colors ${
           compact ? "cursor-default" : "cursor-pointer hover:bg-surface-container-low/50"
         }`}
@@ -358,16 +392,412 @@ function AccordionSection({
             </span>
           )}
         </span>
+        {open && action && (
+          <span className="shrink-0" onClick={(e) => e.stopPropagation()}>
+            {action}
+          </span>
+        )}
         <span className="shrink-0 text-on-surface-variant">
           {!compact && open ? <ChevronDown size={18} /> : <ChevronRight size={18} />}
         </span>
-      </button>
+      </div>
       {!compact && open && children && (
         <div className="px-5 pb-5 pt-0">
           {children}
         </div>
       )}
     </section>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Recon Phases Section (interactive)                                 */
+/* ------------------------------------------------------------------ */
+
+const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string; border: string }[] = [
+  { value: "pending",     label: "Pending",     color: "#b5b0aa",                  bg: withAlpha("#b5b0aa", 0.1),             border: withAlpha("#b5b0aa", 0.3) },
+  { value: "in_progress", label: "In Progress", color: JOB_TYPE_COLORS.mitigation, bg: withAlpha(JOB_TYPE_COLORS.mitigation, 0.1), border: withAlpha(JOB_TYPE_COLORS.mitigation, 0.3) },
+  { value: "on_hold",     label: "On Hold",     color: STATUS_COLORS.in_progress,  bg: withAlpha(STATUS_COLORS.in_progress, 0.1),  border: withAlpha(STATUS_COLORS.in_progress, 0.3) },
+  { value: "complete",    label: "Complete",     color: STATUS_COLORS.collected,    bg: withAlpha(STATUS_COLORS.collected, 0.1),    border: withAlpha("#2a9d5c", 0.3) },
+];
+
+function PhaseStatusIcon({ status }: { status: ReconPhaseStatus }) {
+  switch (status) {
+    case "complete":
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="7" fill="#2a9d5c" />
+          <path d="M5 8l2 2 4-4" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      );
+    case "in_progress":
+      return (
+        <span className="relative shrink-0 flex h-4 w-4">
+          <span className="absolute inset-0 rounded-full bg-type-mitigation animate-ping opacity-40" />
+          <span className="relative rounded-full h-4 w-4 bg-type-mitigation" />
+        </span>
+      );
+    case "on_hold":
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="7" fill="#d97706" fillOpacity="0.15" stroke="#d97706" strokeWidth="1" />
+          <rect x="6" y="5" width="1.5" height="6" rx="0.5" fill="#d97706" />
+          <rect x="8.5" y="5" width="1.5" height="6" rx="0.5" fill="#d97706" />
+        </svg>
+      );
+    default:
+      return (
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+          <circle cx="8" cy="8" r="6.5" stroke="#b5b0aa" strokeWidth="1" />
+        </svg>
+      );
+  }
+}
+
+function DragHandle({ listeners, attributes }: { listeners?: React.HTMLAttributes<HTMLButtonElement>; attributes?: React.HTMLAttributes<HTMLButtonElement> }) {
+  return (
+    <button
+      type="button"
+      className="shrink-0 w-5 h-8 flex items-center justify-center text-on-surface-variant/40 hover:text-on-surface-variant cursor-grab active:cursor-grabbing touch-none"
+      {...listeners}
+      {...attributes}
+      aria-roledescription="sortable"
+    >
+      <svg width="10" height="16" viewBox="0 0 10 16" fill="none" aria-hidden="true">
+        <circle cx="3" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="2" r="1.2" fill="currentColor" />
+        <circle cx="3" cy="8" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="8" r="1.2" fill="currentColor" />
+        <circle cx="3" cy="14" r="1.2" fill="currentColor" />
+        <circle cx="7" cy="14" r="1.2" fill="currentColor" />
+      </svg>
+    </button>
+  );
+}
+
+function SortablePhaseRow({
+  phase,
+  isExpanded,
+  onToggle,
+  onStatusChange,
+  onDelete,
+}: {
+  phase: ReconPhase;
+  isExpanded: boolean;
+  onToggle: () => void;
+  onStatusChange: (status: ReconPhaseStatus) => void;
+  onDelete: () => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: phase.id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    zIndex: isDragging ? 10 : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
+  return (
+    <div ref={setNodeRef} style={style} className="rounded-lg overflow-hidden">
+      {/* Phase row */}
+      <div className="flex items-center gap-1">
+        <DragHandle listeners={listeners} attributes={attributes} />
+        <button
+          type="button"
+          onClick={onToggle}
+          className="flex-1 flex items-center gap-3 px-1 py-2.5 rounded-lg hover:bg-surface-container-low/50 transition-colors cursor-pointer text-left"
+        >
+          <PhaseStatusIcon status={phase.status} />
+          <span className="flex-1 text-[14px] font-medium text-on-surface">
+            {phase.phase_name}
+          </span>
+          <span
+            className="text-[12px] font-[family-name:var(--font-geist-mono)]"
+            style={{ color: phase.status === "complete" ? "#10b981" : phase.status === "in_progress" ? "#3b82f6" : phase.status === "on_hold" ? "#d97706" : "#b5b0aa" }}
+          >
+            {phase.status === "complete" && phase.completed_at
+              ? `Completed ${new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+              : phase.status === "in_progress" ? "In Progress"
+              : phase.status === "on_hold" ? "On Hold"
+              : "Pending"}
+          </span>
+          <ChevronDown size={14} className={`text-on-surface-variant transition-transform duration-200 ${isExpanded ? "rotate-180" : ""}`} />
+        </button>
+      </div>
+
+      {/* Expanded: status toggles + notes */}
+      {isExpanded && (
+        <div className="px-2 pb-3 pt-1 ml-6 space-y-3 animate-[fadeSlideIn_150ms_ease-out]">
+          <div className="flex gap-1.5">
+            {PHASE_STATUSES.map((s) => {
+              const isActive = phase.status === s.value;
+              return (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => onStatusChange(s.value)}
+                  aria-label={`Set phase status to ${s.label}`}
+                  className={`flex-1 h-8 rounded-md text-[11px] font-semibold border transition-all cursor-pointer ${
+                    !isActive ? "bg-surface-container-lowest text-on-surface-variant/60 border-outline-variant/30 hover:border-outline-variant" : ""
+                  }`}
+                  style={isActive ? { backgroundColor: s.bg, color: s.color, borderColor: s.border } : undefined}
+                >
+                  {s.label}
+                </button>
+              );
+            })}
+          </div>
+          {phase.notes && (
+            <p className="text-[12px] text-on-surface-variant px-1">{phase.notes}</p>
+          )}
+          <div className="flex items-center gap-4 text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/60 px-1">
+            {phase.started_at && (
+              <span>Started {new Date(phase.started_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            )}
+            {phase.completed_at && (
+              <span>Completed {new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+            )}
+            <button
+              type="button"
+              onClick={onDelete}
+              className="ml-auto text-[11px] text-error/60 hover:text-error transition-colors cursor-pointer"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPhase[]; jobId: string }) {
+  const [phases, setPhases] = useState(initialPhases);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const updatePhase = useUpdateReconPhase(jobId);
+  const createPhase = useCreateReconPhase(jobId);
+  const deletePhase = useDeleteReconPhase(jobId);
+  const reorderPhases = useReorderReconPhases(jobId);
+
+  // Sync when server data refetches
+  useEffect(() => {
+    setPhases(initialPhases);
+  }, [initialPhases]);
+
+  const sorted = useMemo(() => [...phases].sort((a, b) => a.sort_order - b.sort_order), [phases]);
+  const completeCount = phases.filter((p) => p.status === "complete").length;
+  const pct = phases.length > 0 ? Math.round((completeCount / phases.length) * 100) : 0;
+
+  function handleStatusChange(phaseId: string, newStatus: ReconPhaseStatus) {
+    // Optimistic update
+    setPhases((prev) =>
+      prev.map((p) => {
+        if (p.id !== phaseId) return p;
+        return {
+          ...p,
+          status: newStatus,
+          started_at: newStatus === "in_progress" && !p.started_at ? new Date().toISOString() : p.started_at,
+          completed_at: newStatus === "complete" ? new Date().toISOString() : null,
+          updated_at: new Date().toISOString(),
+        };
+      })
+    );
+    updatePhase.mutate({ phaseId, status: newStatus });
+  }
+
+  const [newPhaseName, setNewPhaseName] = useState("");
+  const [showAddInput, setShowAddInput] = useState(false);
+
+  function handleAddPhase() {
+    const name = newPhaseName.trim();
+    if (!name) return;
+    const maxOrder = phases.length > 0 ? Math.max(...phases.map((p) => p.sort_order)) : -1;
+    const now = new Date().toISOString();
+    const newPhase: ReconPhase = {
+      id: crypto.randomUUID(),
+      job_id: jobId,
+      company_id: "",
+      phase_name: name,
+      status: "pending",
+      sort_order: maxOrder + 1,
+      started_at: null,
+      completed_at: null,
+      notes: null,
+      created_at: now,
+      updated_at: now,
+    };
+    setPhases((prev) => [...prev, newPhase]);
+    setNewPhaseName("");
+    setShowAddInput(false);
+    createPhase.mutate({ phase_name: name, sort_order: maxOrder + 1 });
+  }
+
+  function handleDeletePhase(phaseId: string) {
+    setPhases((prev) => prev.filter((p) => p.id !== phaseId));
+    setExpandedId(null);
+    deletePhase.mutate(phaseId);
+  }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 250, tolerance: 5 } }),
+  );
+
+  function handleDragEnd(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setPhases((prev) => {
+      const sortedPrev = [...prev].sort((a, b) => a.sort_order - b.sort_order);
+      const oldIndex = sortedPrev.findIndex((p) => p.id === active.id);
+      const newIndex = sortedPrev.findIndex((p) => p.id === over.id);
+      const reordered = arrayMove(sortedPrev, oldIndex, newIndex);
+      const updated = reordered.map((p, i) => ({ ...p, sort_order: i }));
+      reorderPhases.mutate(updated.map((p) => ({ id: p.id, sort_order: p.sort_order })));
+      return updated;
+    });
+  }
+
+  return (
+    <AccordionSection
+      icon={
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant">
+          <path d="M9 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          <path d="M9 5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v0a2 2 0 0 1-2 2h-2a2 2 0 0 1-2-2Z" stroke="currentColor" strokeWidth="1.5" />
+          <path d="M9 12l2 2 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      }
+      title="Reconstruction Phases"
+      defaultOpen
+      preview={phases.length > 0 ? `${completeCount} of ${phases.length} complete` : "No phases yet"}
+    >
+      {phases.length > 0 ? (
+        <div className="space-y-1">
+          {/* Progress bar */}
+          <div className="flex items-center gap-3 mb-3">
+            <div className="flex-1 h-1 rounded-full bg-[#eae6e1] overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all duration-500"
+                style={{
+                  width: `${pct}%`,
+                  background: "linear-gradient(90deg, #3b82f6, #2a9d5c)",
+                }}
+              />
+            </div>
+            <span className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums">
+              {pct}%
+            </span>
+          </div>
+
+          {/* Phase rows — drag to reorder */}
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={sorted.map((p) => p.id)} strategy={verticalListSortingStrategy}>
+              {sorted.map((phase) => (
+                <SortablePhaseRow
+                  key={phase.id}
+                  phase={phase}
+                  isExpanded={expandedId === phase.id}
+                  onToggle={() => setExpandedId(expandedId === phase.id ? null : phase.id)}
+                  onStatusChange={(status) => handleStatusChange(phase.id, status)}
+                  onDelete={() => handleDeletePhase(phase.id)}
+                />
+              ))}
+            </SortableContext>
+          </DndContext>
+
+          {/* Add Phase */}
+          {showAddInput ? (
+            <div className="flex items-center gap-2 mt-2 px-2">
+              <input
+                type="text"
+                value={newPhaseName}
+                onChange={(e) => setNewPhaseName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhase(); if (e.key === "Escape") { setShowAddInput(false); setNewPhaseName(""); } }}
+                placeholder="Phase name (e.g. Cabinetry)"
+                autoFocus
+                className="flex-1 h-9 px-3 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 border border-outline-variant"
+              />
+              <button
+                type="button"
+                onClick={handleAddPhase}
+                disabled={!newPhaseName.trim()}
+                className="h-9 px-4 rounded-lg text-[12px] font-semibold text-on-primary bg-brand-accent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAddInput(false); setNewPhaseName(""); }}
+                className="h-9 px-3 rounded-lg text-[12px] text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setShowAddInput(true)}
+              className="flex items-center gap-1.5 mt-2 px-2 py-2 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M12 5v14m-7-7h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              Add Phase
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {!showAddInput && (
+            <div className="text-center py-6 border border-dashed border-outline-variant/40 rounded-lg">
+              <p className="text-[14px] text-on-surface-variant">Add phases to track your reconstruction progress</p>
+              <p className="text-[12px] text-outline-variant mt-1">Common phases: Demo, Drywall, Paint, Flooring, Trim, Final Walkthrough</p>
+              <button
+                type="button"
+                onClick={() => setShowAddInput(true)}
+                className="mt-3 h-9 px-5 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent cursor-pointer"
+              >
+                Add Phase
+              </button>
+            </div>
+          )}
+          {showAddInput && (
+            <div className="flex items-center gap-2 px-2">
+              <input
+                type="text"
+                value={newPhaseName}
+                onChange={(e) => setNewPhaseName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") handleAddPhase(); if (e.key === "Escape") { setShowAddInput(false); setNewPhaseName(""); } }}
+                placeholder="Phase name (e.g. Demo)"
+                autoFocus
+                className="flex-1 h-9 px-3 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 border border-outline-variant"
+              />
+              <button
+                type="button"
+                onClick={handleAddPhase}
+                disabled={!newPhaseName.trim()}
+                className="h-9 px-4 rounded-lg text-[12px] font-semibold text-on-primary bg-brand-accent cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Add
+              </button>
+              <button
+                type="button"
+                onClick={() => { setShowAddInput(false); setNewPhaseName(""); }}
+                className="h-9 px-3 rounded-lg text-[12px] text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </AccordionSection>
   );
 }
 
@@ -468,150 +898,565 @@ function IconReport() {
 /* ------------------------------------------------------------------ */
 /*  Inline Moisture Quick-Entry                                        */
 /* ------------------------------------------------------------------ */
+/*  Job Info Section (single edit mode)                                */
+/* ------------------------------------------------------------------ */
 
-function calculateGPP(tempF: number, rh: number): number {
-  const tc = (tempF - 32) * (5 / 9);
-  const es = 6.112 * Math.exp((17.67 * tc) / (tc + 243.5));
-  const ea = es * (rh / 100);
-  const w = (621.97 * ea) / (1013.25 - ea);
-  return Math.round(w * 7 * 10) / 10;
+function validateField(type: string, value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  if (type === "email") {
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(trimmed)) return "Enter a valid email (e.g. name@example.com)";
+  }
+  if (type === "tel") {
+    const digitsOnly = trimmed.replace(/[\s\-().+]/g, "");
+    if (!/^\d{7,15}$/.test(digitsOnly)) return "Enter a valid phone number (7-15 digits)";
+  }
+  return null;
 }
 
-function InlineReadingForm({ jobId, roomId, roomName, dayNumber, onSaved }: {
-  jobId: string;
-  roomId: string;
-  roomName: string;
-  dayNumber: number;
-  onSaved: () => void;
+interface FieldDef {
+  label: string;
+  field: string;
+  type?: string;
+  mono?: boolean;
+}
+
+function InfoField({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: string | null;
+  mono?: boolean;
 }) {
-  const createReading = useCreateReading(jobId, roomId);
-  const [temp, setTemp] = useState("72");
-  const [rh, setRh] = useState("45");
-  const [dirty, setDirty] = useState(false);
+  return (
+    <>
+      <span className="text-on-surface-variant text-[13px]">{label}</span>
+      <span className={`${mono ? "font-[family-name:var(--font-geist-mono)]" : ""} ${value ? "text-on-surface" : "text-on-surface-variant/50"} text-[13px]`}>
+        {value || "Not set"}
+      </span>
+    </>
+  );
+}
 
-  const gpp = (() => {
-    const t = parseFloat(temp);
-    const r = parseFloat(rh);
-    if (isNaN(t) || isNaN(r) || r <= 0 || r > 100) return "--";
-    return calculateGPP(t, r).toFixed(1);
-  })();
+function EditField({
+  label,
+  value,
+  type = "text",
+  mono,
+  error,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  type?: string;
+  mono?: boolean;
+  error?: string | null;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <>
+      <label className="text-on-surface-variant text-[13px] pt-1.5">{label}</label>
+      <div>
+        <input
+          type={type}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onFocus={(e) => e.target.select()}
+          placeholder={`Enter ${label.toLowerCase()}...`}
+          className={`w-full h-8 px-2.5 rounded-lg bg-surface-container text-[13px] text-on-surface outline-none border transition-colors ${
+            error
+              ? "border-red-400 focus:border-red-500 focus:ring-1 focus:ring-red-200"
+              : "border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20"
+          } ${mono ? "font-[family-name:var(--font-geist-mono)]" : ""}`}
+        />
+        {error && <p className="mt-0.5 text-[11px] text-red-500">{error}</p>}
+      </div>
+    </>
+  );
+}
 
-  const handleSave = () => {
-    const today = new Date();
-    const dateStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-    createReading.mutate(
-      { reading_date: dateStr, atmospheric_temp_f: parseFloat(temp) || undefined, atmospheric_rh_pct: parseFloat(rh) || undefined },
-      { onSuccess: onSaved }
-    );
+function JobInfoContent({
+  job,
+  editing,
+  onSave,
+  onCancel,
+  isSaving,
+}: {
+  job: {
+    customer_name: string | null;
+    customer_phone: string | null;
+    customer_email: string | null;
+    loss_date: string | null;
+    loss_cause: string | null;
+    loss_category: string | null;
+    loss_class: string | null;
+    home_year_built: number | null;
+    carrier: string | null;
+    claim_number: string | null;
+    adjuster_name: string | null;
+    adjuster_email: string | null;
+    adjuster_phone: string | null;
+    job_type: string;
+  };
+  editing: boolean;
+  onSave: (updates: Record<string, string | number | null>) => void;
+  onCancel: () => void;
+  isSaving: boolean;
+}) {
+  const [draft, setDraft] = useState<Record<string, string>>({});
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
+  // Reset draft whenever editing is toggled on
+  useEffect(() => {
+    if (editing) {
+      setDraft({
+        customer_name: job.customer_name || "",
+        customer_phone: job.customer_phone || "",
+        customer_email: job.customer_email || "",
+        loss_date: job.loss_date || "",
+        loss_cause: job.loss_cause || "",
+        loss_category: job.loss_category || "",
+        loss_class: job.loss_class || "",
+        home_year_built: job.home_year_built != null ? String(job.home_year_built) : "",
+        carrier: job.carrier || "",
+        claim_number: job.claim_number || "",
+        adjuster_name: job.adjuster_name || "",
+        adjuster_email: job.adjuster_email || "",
+        adjuster_phone: job.adjuster_phone || "",
+      });
+      setErrors({});
+    }
+  }, [editing]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const updateDraft = (field: string, value: string) => {
+    setDraft((prev) => ({ ...prev, [field]: value }));
+    setErrors((prev) => { const next = { ...prev }; delete next[field]; return next; });
   };
 
+  const handleSave = () => {
+    // Validate
+    const newErrors: Record<string, string> = {};
+    const emailFields = ["customer_email", "adjuster_email"];
+    const phoneFields = ["customer_phone", "adjuster_phone"];
+
+    for (const f of emailFields) {
+      const err = validateField("email", draft[f] || "");
+      if (err) newErrors[f] = err;
+    }
+    for (const f of phoneFields) {
+      const err = validateField("tel", draft[f] || "");
+      if (err) newErrors[f] = err;
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    // Build only changed fields
+    const fieldMap: Record<string, string | null> = {
+      customer_name: job.customer_name,
+      customer_phone: job.customer_phone,
+      customer_email: job.customer_email,
+      loss_date: job.loss_date,
+      loss_cause: job.loss_cause,
+      loss_category: job.loss_category,
+      loss_class: job.loss_class,
+      carrier: job.carrier,
+      claim_number: job.claim_number,
+      adjuster_name: job.adjuster_name,
+      adjuster_email: job.adjuster_email,
+      adjuster_phone: job.adjuster_phone,
+    };
+
+    const updates: Record<string, string | number | null> = {};
+    for (const [key, original] of Object.entries(fieldMap)) {
+      const newVal = (draft[key] || "").trim();
+      const origVal = original || "";
+      if (newVal !== origVal) {
+        updates[key] = newVal || null;
+      }
+    }
+
+    // Handle home_year_built separately (number field)
+    const newYear = (draft.home_year_built || "").trim();
+    const origYear = job.home_year_built != null ? String(job.home_year_built) : "";
+    if (newYear !== origYear) {
+      updates.home_year_built = newYear ? parseInt(newYear, 10) : null;
+    }
+
+    onSave(updates);
+  };
+
+  const customerFields: FieldDef[] = [
+    { label: "Name", field: "customer_name" },
+    { label: "Phone", field: "customer_phone", type: "tel", mono: true },
+    { label: "Email", field: "customer_email", type: "email" },
+  ];
+  const lossFields: FieldDef[] = [
+    { label: "Date", field: "loss_date", type: "date", mono: true },
+    { label: "Cause", field: "loss_cause" },
+    { label: "Year Built", field: "home_year_built", type: "number", mono: true },
+  ];
+  const insuranceFields: FieldDef[] = [
+    { label: "Carrier", field: "carrier" },
+    { label: "Claim #", field: "claim_number", mono: true },
+    { label: "Adjuster", field: "adjuster_name" },
+    { label: "Email", field: "adjuster_email", type: "email" },
+    { label: "Phone", field: "adjuster_phone", type: "tel", mono: true },
+  ];
+
+  const renderFields = (fields: FieldDef[]) =>
+    fields.map((f) =>
+      editing ? (
+        <EditField
+          key={f.field}
+          label={f.label}
+          value={draft[f.field] || ""}
+          type={f.type}
+          mono={f.mono}
+          error={errors[f.field]}
+          onChange={(v) => updateDraft(f.field, v)}
+        />
+      ) : (
+        <InfoField
+          key={f.field}
+          label={f.label}
+          value={(job as Record<string, string | null>)[f.field]}
+          mono={f.mono}
+        />
+      )
+    );
+
   return (
-    <div className="rounded-lg bg-surface-container/50 p-3 space-y-2">
-      <p className="text-[12px] font-semibold text-on-surface font-[family-name:var(--font-geist-mono)]">{roomName}</p>
-      <div className="flex items-center gap-3">
-        <div className="flex-1">
-          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">Temp °F</label>
-          <input type="number" value={temp} onChange={(e) => { setTemp(e.target.value); setDirty(true); }}
-            className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
+    <div className="divide-y divide-outline-variant/15">
+      {/* Customer */}
+      <div className="pb-4">
+        <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+          Customer
+        </h4>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-start">
+          {renderFields(customerFields)}
         </div>
-        <div className="flex-1">
-          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">RH %</label>
-          <input type="number" value={rh} onChange={(e) => { setRh(e.target.value); setDirty(true); }}
-            className="w-full h-8 px-2 rounded bg-surface-container-lowest text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40" />
-        </div>
-        <div className="flex-1">
-          <label className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] uppercase">GPP</label>
-          <p className="h-8 flex items-center text-[13px] font-[family-name:var(--font-geist-mono)] font-semibold text-on-surface">{gpp}</p>
-        </div>
-        <button type="button" onClick={handleSave} disabled={!dirty || createReading.isPending}
-          className={`self-end h-8 px-3 rounded-lg text-[12px] font-semibold transition-all ${
-            dirty
-              ? "bg-brand-accent text-on-primary cursor-pointer hover:opacity-90"
-              : "bg-surface-container text-on-surface-variant/50 cursor-default"
-          } disabled:opacity-50`}>
-          {createReading.isPending ? "..." : "Save"}
-        </button>
       </div>
+
+      {/* Loss Info */}
+      <div className="py-4">
+        <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+          Loss Info
+        </h4>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-start">
+          {renderFields(lossFields)}
+          {job.job_type === "mitigation" && (
+            editing ? (
+              <>
+                <label className="text-on-surface-variant text-[13px] pt-1.5">Category</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { value: "1", label: "Cat 1", subtitle: "Clean water" },
+                    { value: "2", label: "Cat 2", subtitle: "Gray water" },
+                    { value: "3", label: "Cat 3", subtitle: "Black water" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      title={opt.subtitle}
+                      onClick={() => updateDraft("loss_category", opt.value)}
+                      className={`flex-1 h-8 rounded-lg text-[12px] font-semibold transition-all duration-150 cursor-pointer ${
+                        draft.loss_category === opt.value
+                          ? "bg-brand-accent text-on-primary shadow-sm"
+                          : "bg-surface-container text-on-surface-variant border border-outline-variant/30 hover:bg-surface-container-low"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <label className="text-on-surface-variant text-[13px] pt-1.5">Class</label>
+                <div className="flex gap-1.5">
+                  {[
+                    { value: "1", label: "Class 1" },
+                    { value: "2", label: "Class 2" },
+                    { value: "3", label: "Class 3" },
+                    { value: "4", label: "Class 4" },
+                  ].map((opt) => (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      onClick={() => updateDraft("loss_class", opt.value)}
+                      className={`flex-1 h-8 rounded-lg text-[12px] font-semibold transition-all duration-150 cursor-pointer ${
+                        draft.loss_class === opt.value
+                          ? "bg-brand-accent text-on-primary shadow-sm"
+                          : "bg-surface-container text-on-surface-variant border border-outline-variant/30 hover:bg-surface-container-low"
+                      }`}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <>
+                <span className="text-on-surface-variant text-[13px]">Category</span>
+                <span className={job.loss_category ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                  {job.loss_category ? `Cat ${job.loss_category}` : "Not set"}
+                </span>
+                <span className="text-on-surface-variant text-[13px]">Class</span>
+                <span className={job.loss_class ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
+                  {job.loss_class ? `Class ${job.loss_class}` : "Not set"}
+                </span>
+              </>
+            )
+          )}
+        </div>
+      </div>
+
+      {/* Insurance */}
+      <div className="pt-4">
+        <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
+          Insurance
+        </h4>
+        <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-start">
+          {renderFields(insuranceFields)}
+        </div>
+      </div>
+
+      {/* Save / Cancel buttons */}
+      {editing && (
+        <div className="flex items-center gap-3 pt-4">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="h-9 px-5 rounded-lg text-[13px] font-medium text-on-surface-variant bg-surface-container-lowest border border-outline-variant/30 hover:bg-surface-container-low transition-colors cursor-pointer"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={isSaving}
+            className="h-9 px-5 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent hover:shadow-lg active:scale-[0.98] disabled:opacity-40 transition-all cursor-pointer"
+          >
+            {isSaving ? "Saving..." : "Save"}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
 
 /* ------------------------------------------------------------------ */
-/*  Inline Editable Field                                              */
+/*  Room Row (inline rename, dimensions, delete)                       */
 /* ------------------------------------------------------------------ */
 
-function EditableField({
-  label,
-  value,
-  field,
-  onSave,
-  mono = false,
-  type = "text",
+function RoomRow({
+  room,
+  onUpdateRoom,
+  onDeleteRoom,
 }: {
-  label: string;
-  value: string | null;
-  field: string;
-  onSave: (field: string, value: string) => void;
-  mono?: boolean;
-  type?: string;
+  room: { id: string; room_name: string; width_ft: number | null; length_ft: number | null };
+  onUpdateRoom: (data: Record<string, unknown>) => void;
+  onDeleteRoom: () => void;
 }) {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(value || "");
+  const [renaming, setRenaming] = useState(false);
+  const [draftName, setDraftName] = useState(room.room_name);
 
-  const handleSave = () => {
-    onSave(field, draft.trim());
-    setEditing(false);
+  const commitRename = () => {
+    const trimmed = draftName.trim();
+    if (trimmed && trimmed !== room.room_name) {
+      onUpdateRoom({ room_name: trimmed });
+    }
+    setRenaming(false);
   };
-
-  const handleCancel = () => {
-    setDraft(value || "");
-    setEditing(false);
-  };
-
-  if (editing) {
-    return (
-      <>
-        <span className="text-on-surface-variant text-[13px]">{label}</span>
-        <div className="flex items-center gap-1.5">
-          <input
-            type={type}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") handleSave();
-              if (e.key === "Escape") handleCancel();
-            }}
-            autoFocus
-            className={`flex-1 h-7 px-2 rounded bg-surface-container text-[13px] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40 ${mono ? "font-[family-name:var(--font-geist-mono)]" : ""}`}
-          />
-          <button type="button" onClick={handleSave} className="text-emerald-600 hover:text-emerald-700 cursor-pointer" aria-label="Save">
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </button>
-          <button type="button" onClick={handleCancel} className="text-on-surface-variant hover:text-error cursor-pointer" aria-label="Cancel">
-            <svg width={14} height={14} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-          </button>
-        </div>
-      </>
-    );
-  }
 
   return (
-    <>
-      <span className="text-on-surface-variant text-[13px]">{label}</span>
-      <div className="flex items-center gap-2 group">
-        <span className={`${mono ? "font-[family-name:var(--font-geist-mono)]" : ""} ${value ? "text-on-surface" : "text-on-surface-variant/50"} text-[13px]`}>
-          {value || "Not set"}
-        </span>
+    <div className="grid grid-cols-[1fr_60px_60px_50px_28px] gap-1.5 items-center px-1 py-1 rounded-lg hover:bg-surface-container/50 transition-colors">
+      {/* Room name — click to rename */}
+      {renaming ? (
+        <input
+          type="text"
+          value={draftName}
+          onChange={(e) => setDraftName(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") { setDraftName(room.room_name); setRenaming(false); }
+          }}
+          onFocus={(e) => e.target.select()}
+          autoFocus
+          className="h-7 px-2 rounded bg-surface-container text-[13px] font-medium text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40"
+        />
+      ) : (
         <button
           type="button"
-          onClick={() => { setDraft(value || ""); setEditing(true); }}
-          className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-brand-accent transition-all cursor-pointer"
-          aria-label={`Edit ${label}`}
+          onClick={() => { setDraftName(room.room_name); setRenaming(true); }}
+          className="text-[13px] font-medium text-on-surface truncate text-left cursor-pointer hover:text-brand-accent transition-colors"
+          title="Click to rename"
         >
-          <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          {room.room_name}
         </button>
+      )}
+
+      {/* Width */}
+      <input
+        type="number"
+        defaultValue={room.width_ft ?? ""}
+        placeholder="—"
+        onFocus={(e) => { e.target.placeholder = ""; e.target.select(); }}
+        onBlur={(e) => {
+          e.target.placeholder = "—";
+          const v = parseFloat(e.target.value) || null;
+          if (v !== room.width_ft) onUpdateRoom({ width_ft: v });
+        }}
+        className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 placeholder:text-on-surface-variant/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      />
+
+      {/* Length */}
+      <input
+        type="number"
+        defaultValue={room.length_ft ?? ""}
+        placeholder="—"
+        onFocus={(e) => { e.target.placeholder = ""; e.target.select(); }}
+        onBlur={(e) => {
+          e.target.placeholder = "—";
+          const v = parseFloat(e.target.value) || null;
+          if (v !== room.length_ft) onUpdateRoom({ length_ft: v });
+        }}
+        className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 placeholder:text-on-surface-variant/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+      />
+
+      {/* Square footage */}
+      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
+        {room.width_ft && room.length_ft ? Math.round(room.width_ft * room.length_ft) : "—"}
+      </span>
+
+      {/* Delete */}
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); onDeleteRoom(); }}
+        className="text-on-surface-variant/30 hover:text-red-600 transition-colors cursor-pointer shrink-0"
+        aria-label={`Delete ${room.room_name}`}
+      >
+        <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
+      </button>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Tech Notes Section (auto-save with indicator)                      */
+/* ------------------------------------------------------------------ */
+
+function useTimeSince(savedAt: number | null) {
+  const [label, setLabel] = useState("");
+  useEffect(() => {
+    if (!savedAt) { setLabel(""); return; }
+    const tick = () => {
+      const diff = Math.floor((Date.now() - savedAt) / 1000);
+      if (diff < 5) setLabel("just now");
+      else if (diff < 60) setLabel(`${diff}s ago`);
+      else if (diff < 3600) setLabel(`${Math.floor(diff / 60)}m ago`);
+      else setLabel("");
+    };
+    tick();
+    const id = setInterval(tick, 5000);
+    return () => clearInterval(id);
+  }, [savedAt]);
+  return label;
+}
+
+function TechNotesSection({
+  techNotes,
+  hasTechNotes,
+  onSave,
+}: {
+  techNotes: string | null;
+  hasTechNotes: boolean;
+  onSave: (val: string | null) => void;
+}) {
+  const [saveStatus, setSaveStatus] = useState<"idle" | "typing" | "saving" | "saved">("idle");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const timeAgo = useTimeSince(savedAt);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastSavedRef = useRef(techNotes || "");
+
+  const doSave = useCallback((val: string) => {
+    const trimmed = val.trim();
+    if (trimmed === lastSavedRef.current) { setSaveStatus(savedAt ? "saved" : "idle"); return; }
+    setSaveStatus("saving");
+    lastSavedRef.current = trimmed;
+    onSave(trimmed || null);
+    setTimeout(() => {
+      setSaveStatus("saved");
+      setSavedAt(Date.now());
+    }, 300);
+  }, [onSave, savedAt]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setSaveStatus("typing");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    const val = e.target.value;
+    debounceRef.current = setTimeout(() => doSave(val), 2000);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLTextAreaElement>) => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    doSave(e.target.value);
+  };
+
+  // Cleanup on unmount
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+
+  const statusText = saveStatus === "typing"
+    ? "Typing..."
+    : saveStatus === "saving"
+      ? "Saving..."
+      : saveStatus === "saved" && timeAgo
+        ? `Saved ${timeAgo}`
+        : "Auto-saves as you type";
+
+  const statusColor = saveStatus === "typing"
+    ? "text-brand-accent"
+    : saveStatus === "saving"
+      ? "text-on-surface-variant"
+      : saveStatus === "saved" && timeAgo
+        ? "text-emerald-600"
+        : "text-on-surface-variant/50";
+
+  return (
+    <AccordionSection
+      icon={<IconNotes />}
+      title="Tech Notes"
+      badge={
+        hasTechNotes ? (
+          <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+            2 entries today
+          </span>
+        ) : undefined
+      }
+      preview={hasTechNotes ? undefined : "No notes yet"}
+    >
+      <div>
+        <textarea
+          defaultValue={techNotes || ""}
+          placeholder="Add field notes, observations, site conditions..."
+          onChange={handleChange}
+          onBlur={handleBlur}
+          className="w-full min-h-[80px] px-3 py-2 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-1 focus:ring-brand-accent/40 resize-y font-[family-name:var(--font-geist-mono)]"
+        />
+        <div className="flex items-center gap-1.5 mt-1.5">
+          {saveStatus === "saved" && timeAgo && (
+            <svg width={12} height={12} viewBox="0 0 24 24" fill="none" className="text-emerald-600 shrink-0"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+          )}
+          <p className={`text-[11px] font-[family-name:var(--font-geist-mono)] ${statusColor} transition-colors`}>
+            {statusText}
+          </p>
+        </div>
       </div>
-    </>
+    </AccordionSection>
   );
 }
 
@@ -699,11 +1544,8 @@ export default function JobDetailPage() {
   const { data: floorPlans } = useFloorPlans(jobId);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
-  const { data: me } = useQuery<{ id: string; name: string; first_name: string | null; last_name: string | null }>({
-    queryKey: ["me"],
-    queryFn: () => apiGet("/v1/me"),
-    staleTime: 5 * 60 * 1000,
-  });
+  const { data: reconPhases } = useReconPhases(jobId);
+  const { data: me } = useMe();
   const deleteJob = useDeleteJob();
   const createShareLink = useCreateShareLink(jobId);
   const updateJob = useUpdateJob(jobId);
@@ -711,17 +1553,37 @@ export default function JobDetailPage() {
   const deleteRoom = useDeleteRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
   const [newRoomName, setNewRoomName] = useState("");
+  const [newRoomWidth, setNewRoomWidth] = useState("");
+  const [newRoomLength, setNewRoomLength] = useState("");
   const [showAddRoom, setShowAddRoom] = useState(false);
+  const [roomSavedFlash, setRoomSavedFlash] = useState(false);
+
+  const resetAddRoom = () => { setNewRoomName(""); setNewRoomWidth(""); setNewRoomLength(""); setShowAddRoom(false); };
 
   const handleAddRoom = () => {
-    if (!newRoomName.trim()) return;
-    createRoom.mutate({ room_name: newRoomName.trim() } as Record<string, string>, {
-      onSuccess: () => { setNewRoomName(""); setShowAddRoom(false); },
+    if (!newRoomName.trim()) { return; }
+    const w = parseFloat(newRoomWidth) || null;
+    const l = parseFloat(newRoomLength) || null;
+    const sf = w && l ? Math.round(w * l) : null;
+    createRoom.mutate({ room_name: newRoomName.trim(), width_ft: w, length_ft: l, square_footage: sf } as Partial<Room>, {
+      onSuccess: () => {
+        setNewRoomName(""); setNewRoomWidth(""); setNewRoomLength("");
+        setRoomSavedFlash(true);
+        setTimeout(() => setRoomSavedFlash(false), 1500);
+      },
     });
   };
 
-  const handleFieldSave = useCallback((field: string, value: string) => {
-    updateJob.mutate({ [field]: value || null } as Record<string, string | null>);
+  const [editingJobInfo, setEditingJobInfo] = useState(false);
+
+  const handleJobInfoSave = useCallback((updates: Record<string, string | number | null>) => {
+    if (Object.keys(updates).length === 0) {
+      setEditingJobInfo(false);
+      return;
+    }
+    updateJob.mutate(updates as Record<string, string | null>, {
+      onSuccess: () => setEditingJobInfo(false),
+    });
   }, [updateJob]);
 
   const [shareModal, setShareModal] = useState<{
@@ -729,9 +1591,11 @@ export default function JobDetailPage() {
     expires_at: string;
   } | null>(null);
   const [shareCopied, setShareCopied] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [showDeleteJobConfirm, setShowDeleteJobConfirm] = useState(false);
+  const [shareError, setShareError] = useState<string | null>(null);
 
   const handleShareJob = useCallback(async () => {
+    setShareError(null);
     try {
       const result = await createShareLink.mutateAsync({
         scope: "full",
@@ -743,7 +1607,8 @@ export default function JobDetailPage() {
       });
       setShareCopied(false);
     } catch {
-      alert("Failed to create share link. Please try again.");
+      setShareError("Failed to create share link. Please try again.");
+      setTimeout(() => setShareError(null), 4000);
     }
   }, [createShareLink]);
 
@@ -810,9 +1675,9 @@ export default function JobDetailPage() {
             type="button"
             onClick={() => router.push("/jobs")}
             aria-label="Back to jobs"
-            className="w-9 h-9 -ml-1 flex items-center justify-center rounded-lg text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+            className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer"
           >
-            <ArrowLeftIcon size={20} />
+            <ArrowLeftIcon size={20} className="text-on-surface-variant" />
           </button>
 
           {/* Address + Job number */}
@@ -824,8 +1689,10 @@ export default function JobDetailPage() {
               <p className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant leading-tight">
                 {job.job_number}
               </p>
-              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant text-[10px] font-semibold font-[family-name:var(--font-geist-mono)]">
-                {statusLabel(job.status)}
+              <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
+                job.job_type === "mitigation" ? "bg-[#eff6ff] text-type-mitigation" : "bg-[#fff3ed] text-type-reconstruction"
+              }`}>
+                {job.job_type === "mitigation" ? "MIT" : "REC"}
               </span>
               {job.assigned_to && (
                 <span className="text-[11px] text-on-surface-variant">
@@ -846,8 +1713,91 @@ export default function JobDetailPage() {
         </div>
       </header>
 
+      {/* ── Phase Stepper ────────────────────────────────────── */}
+      {(() => {
+        const phases = job.job_type === "reconstruction"
+          ? [["new","New"],["scoping","Scoping"],["in_progress","In Progress"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]]
+          : [["new","New"],["contracted","Contracted"],["mitigation","Mitigation"],["drying","Drying"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]];
+        const currentIdx = phases.findIndex(([val]) => val === job.status);
+        return (
+          <div className="max-w-6xl mx-auto px-4 pt-3">
+            <div className="flex items-center">
+              {phases.map(([val, label], i) => {
+                const color = STATUS_COLORS[val as keyof typeof STATUS_COLORS] || "#94a3b8";
+                const isCurrent = val === job.status;
+                const isPast = i < currentIdx;
+                const isLast = i === phases.length - 1;
+                return (
+                  <div key={val} className="flex items-center flex-1 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => updateJob.mutate({ status: val } as Record<string, string | null>)}
+                      className="flex flex-col items-center gap-1 cursor-pointer group w-full active:scale-95 transition-transform"
+                    >
+                      {/* Dot */}
+                      <span
+                        className={`rounded-full transition-all ${
+                          isCurrent ? "w-5 h-5 ring-4" : isPast ? "w-3.5 h-3.5" : "w-3 h-3 group-hover:w-3.5 group-hover:h-3.5"
+                        }`}
+                        style={{
+                          backgroundColor: isCurrent || isPast ? color : "#e1ddd9",
+                          ringColor: isCurrent ? withAlpha(color, 0.2) : undefined,
+                        } as React.CSSProperties}
+                      >
+                        {isPast && (
+                          <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
+                            <path d="M4.5 8l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        )}
+                      </span>
+                      {/* Label */}
+                      <span className={`text-[9px] sm:text-[10px] font-medium leading-tight text-center transition-colors truncate w-full ${
+                        isCurrent ? "font-bold" : isPast ? "opacity-70" : "text-on-surface-variant/40 group-hover:text-on-surface-variant/70"
+                      }`}
+                        style={isCurrent || isPast ? { color } : undefined}
+                      >
+                        {label}
+                      </span>
+                    </button>
+                    {/* Connector arrow */}
+                    {!isLast && (
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0 mx-0.5" aria-hidden="true">
+                        <path d="M9 6l6 6-6 6" stroke={isPast ? withAlpha(color, 0.5) : "#d4d0cc"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Linked Job Banner ─────────────────────────────────── */}
+      {job.linked_job_summary && (
+        <div className="max-w-6xl mx-auto px-4 pt-4">
+          <button
+            type="button"
+            onClick={() => router.push(`/jobs/${job.linked_job_summary!.id}`)}
+            className="w-full flex items-center gap-3 px-4 py-2.5 rounded-lg bg-[#faf9f7] border border-[#eae6e1] hover:bg-surface-container-low transition-colors cursor-pointer"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-outline-variant">
+              <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="flex-1 text-[13px] text-[#6b6560] text-left">
+              Linked {job.linked_job_summary.job_type === "mitigation" ? "mitigation" : "reconstruction"} job:{" "}
+              <span className="font-semibold text-on-surface">{job.linked_job_summary.job_number}</span>
+            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0 text-outline-variant">
+              <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* ── Main Content Grid ───────────────────────────────────── */}
-      <main className="max-w-6xl mx-auto px-4 py-6 pb-40 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+      <main className="max-w-6xl mx-auto px-4 py-6 pb-32 lg:pb-6 lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
 
         {/* ── LEFT COLUMN: Accordion Sections ───────────────────── */}
         <div className="space-y-3">
@@ -859,60 +1809,34 @@ export default function JobDetailPage() {
             preview={
               [
                 job.customer_name,
-                job.loss_category ? `Cat ${job.loss_category}` : null,
-                job.loss_class ? `Class ${job.loss_class}` : null,
+                job.job_type === "mitigation" && job.loss_category ? `Cat ${job.loss_category}` : null,
+                job.job_type === "mitigation" && job.loss_class ? `Class ${job.loss_class}` : null,
               ]
                 .filter(Boolean)
                 .join(" \u00B7 ")
             }
+            action={
+              !editingJobInfo ? (
+                <button
+                  type="button"
+                  onClick={() => setEditingJobInfo(true)}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M17 3a2.83 2.83 0 114 4L7.5 20.5 2 22l1.5-5.5L17 3z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Edit
+                </button>
+              ) : null
+            }
           >
-            <div className="space-y-4">
-              {/* Customer */}
-              <div>
-                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
-                  Customer
-                </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-                  <EditableField label="Name" value={job.customer_name} field="customer_name" onSave={handleFieldSave} />
-                  <EditableField label="Phone" value={job.customer_phone} field="customer_phone" onSave={handleFieldSave} mono type="tel" />
-                  <EditableField label="Email" value={job.customer_email} field="customer_email" onSave={handleFieldSave} type="email" />
-                </div>
-              </div>
-
-              {/* Loss Info */}
-              <div>
-                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
-                  Loss Info
-                </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-                  <EditableField label="Date" value={job.loss_date} field="loss_date" onSave={handleFieldSave} mono type="date" />
-                  <EditableField label="Cause" value={job.loss_cause} field="loss_cause" onSave={handleFieldSave} />
-                  <span className="text-on-surface-variant text-[13px]">Category</span>
-                  <span className={job.loss_category ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
-                    {job.loss_category ? `Cat ${job.loss_category}` : "Not set"}
-                  </span>
-                  <span className="text-on-surface-variant text-[13px]">Class</span>
-                  <span className={job.loss_class ? "text-on-surface text-[13px]" : "text-on-surface-variant/50 text-[13px]"}>
-                    {job.loss_class ? `Class ${job.loss_class}` : "Not set"}
-                  </span>
-                </div>
-              </div>
-
-              {/* Insurance */}
-              <div>
-                <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-2">
-                  Insurance
-                </h4>
-                <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
-                  <EditableField label="Carrier" value={job.carrier} field="carrier" onSave={handleFieldSave} />
-                  <EditableField label="Claim #" value={job.claim_number} field="claim_number" onSave={handleFieldSave} mono />
-                  <EditableField label="Adjuster" value={job.adjuster_name} field="adjuster_name" onSave={handleFieldSave} />
-                  <EditableField label="Email" value={job.adjuster_email} field="adjuster_email" onSave={handleFieldSave} type="email" />
-                  <EditableField label="Phone" value={job.adjuster_phone} field="adjuster_phone" onSave={handleFieldSave} mono type="tel" />
-                </div>
-              </div>
-
-            </div>
+            <JobInfoContent
+              job={job}
+              editing={editingJobInfo}
+              onSave={handleJobInfoSave}
+              onCancel={() => setEditingJobInfo(false)}
+              isSaving={updateJob.isPending}
+            />
           </AccordionSection>
 
           {/* Section 2: Property Layout */}
@@ -990,7 +1914,7 @@ export default function JobDetailPage() {
                           {floorName}
                         </p>
                         {/* Header row */}
-                        <div className="grid grid-cols-[1fr_60px_60px_50px_auto] gap-1.5 px-1 mb-1">
+                        <div className="grid grid-cols-[1fr_60px_60px_50px_28px] gap-1.5 px-1 mb-1">
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">Room</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">W ft</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">L ft</span>
@@ -998,40 +1922,12 @@ export default function JobDetailPage() {
                           <span />
                         </div>
                         {floorRooms.map((room) => (
-                          <div key={room.id} className="group grid grid-cols-[1fr_60px_60px_50px_auto] gap-1.5 items-center px-1 py-1 rounded-lg hover:bg-surface-container/50 transition-colors">
-                            <span className="text-[13px] font-medium text-on-surface truncate">{room.room_name}</span>
-                            <input
-                              type="number"
-                              defaultValue={room.width_ft ?? ""}
-                              placeholder="—"
-                              onBlur={(e) => {
-                                const v = parseFloat(e.target.value) || null;
-                                if (v !== room.width_ft) updateRoom.mutate({ roomId: room.id, width_ft: v } as Record<string, unknown> & { roomId: string });
-                              }}
-                              className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
-                            <input
-                              type="number"
-                              defaultValue={room.length_ft ?? ""}
-                              placeholder="—"
-                              onBlur={(e) => {
-                                const v = parseFloat(e.target.value) || null;
-                                if (v !== room.length_ft) updateRoom.mutate({ roomId: room.id, length_ft: v } as Record<string, unknown> & { roomId: string });
-                              }}
-                              className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
-                            />
-                            <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
-                              {room.width_ft && room.length_ft ? Math.round(room.width_ft * room.length_ft) : "—"}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); deleteRoom.mutate(room.id); }}
-                              className="opacity-0 group-hover:opacity-100 text-on-surface-variant/40 hover:text-error transition-all cursor-pointer shrink-0"
-                              aria-label={`Remove ${room.room_name}`}
-                            >
-                              <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-                            </button>
-                          </div>
+                          <RoomRow
+                            key={room.id}
+                            room={room}
+                            onUpdateRoom={(data) => updateRoom.mutate({ roomId: room.id, ...data } as Record<string, unknown> & { roomId: string })}
+                            onDeleteRoom={() => deleteRoom.mutate(room.id)}
+                          />
                         ))}
                       </div>
                     ))}
@@ -1040,35 +1936,90 @@ export default function JobDetailPage() {
               })()}
 
               {/* Add room */}
-              <div className="flex flex-wrap gap-2">
+              <div>
                 {showAddRoom ? (
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={newRoomName}
-                      onChange={(e) => setNewRoomName(e.target.value)}
-                      onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") { setShowAddRoom(false); setNewRoomName(""); } }}
-                      placeholder="Kitchen, Bedroom 1..."
-                      autoFocus
-                      className="h-8 px-3 rounded-full bg-surface-container text-[13px] text-on-surface outline-none focus:ring-1 focus:ring-brand-accent/40 w-40"
-                    />
-                    <button type="button" onClick={handleAddRoom} disabled={!newRoomName.trim() || createRoom.isPending}
-                      className="text-emerald-600 hover:text-emerald-700 cursor-pointer disabled:opacity-40" aria-label="Save room">
-                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                    </button>
-                    <button type="button" onClick={() => { setShowAddRoom(false); setNewRoomName(""); }}
-                      className="text-on-surface-variant hover:text-error cursor-pointer" aria-label="Cancel">
-                      <svg width={16} height={16} viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-                    </button>
+                  <div className="rounded-lg bg-surface-container/50 p-3 space-y-2 animate-[fadeSlideIn_200ms_ease-out]">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/50">
+                        {roomSavedFlash ? (
+                          <span className="text-emerald-600 animate-[fadeSlideIn_150ms_ease-out]">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="inline -mt-0.5 mr-1"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            Saved — add another
+                          </span>
+                        ) : createRoom.isPending ? (
+                          <span className="text-brand-accent">Saving...</span>
+                        ) : (
+                          "Name → Width → Length · auto-saves"
+                        )}
+                      </span>
+                      <button type="button" onClick={resetAddRoom} className="w-6 h-6 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer" aria-label="Close">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                      </button>
+                    </div>
+                    <div className="grid grid-cols-[1fr_60px_60px] gap-2 items-end sm:grid-cols-[1fr_80px_80px_60px]">
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">Room name</label>
+                        <input
+                          type="text"
+                          value={newRoomName}
+                          onChange={(e) => setNewRoomName(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          placeholder="Kitchen, Bedroom 1..."
+                          autoFocus
+                          className="w-full h-8 px-2.5 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">W ft</label>
+                        <input
+                          type="number"
+                          value={newRoomWidth}
+                          onChange={(e) => setNewRoomWidth(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          placeholder="—"
+                          onFocus={(e) => e.target.select()}
+                          className="w-full h-8 px-2 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface text-center outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20 font-[family-name:var(--font-geist-mono)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">L ft</label>
+                        <input
+                          type="number"
+                          value={newRoomLength}
+                          onChange={(e) => setNewRoomLength(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === "Enter") handleAddRoom(); if (e.key === "Escape") resetAddRoom(); }}
+                          onBlur={() => { if (newRoomName.trim()) handleAddRoom(); }}
+                          placeholder="—"
+                          onFocus={(e) => e.target.select()}
+                          className="w-full h-8 px-2 rounded-lg bg-surface-container-lowest text-[13px] text-on-surface text-center outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-1 focus:ring-brand-accent/20 font-[family-name:var(--font-geist-mono)]"
+                        />
+                      </div>
+                      {/* SF auto-calc — desktop only inline */}
+                      <div className="hidden sm:block">
+                        <label className="block text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/60 mb-1">SF</label>
+                        <span className="flex h-8 items-center justify-center text-[13px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                          {newRoomWidth && newRoomLength ? Math.round(parseFloat(newRoomWidth) * parseFloat(newRoomLength)) || "—" : "—"}
+                        </span>
+                      </div>
+                    </div>
+                    {/* Mobile SF preview */}
+                    {newRoomWidth && newRoomLength && (
+                      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant/60 sm:hidden">
+                        {Math.round(parseFloat(newRoomWidth) * parseFloat(newRoomLength)) || 0} sq ft
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  <button
-                    type="button"
-                    onClick={() => setShowAddRoom(true)}
-                    className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                  >
-                    + Add room
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setShowAddRoom(true)}
+                      className="px-3 py-1.5 rounded-full border border-dashed border-outline-variant/40 text-[13px] text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
+                    >
+                      + Add room
+                    </button>
+                    <span className="text-[11px] text-on-surface-variant/40">Double-tap name to rename · auto-saves</span>
+                  </div>
                 )}
               </div>
             </div>
@@ -1087,45 +2038,41 @@ export default function JobDetailPage() {
             }
             defaultOpen
           >
-            <div className="space-y-3">
-              <div className="flex gap-2 overflow-x-auto scrollbar-none pb-1">
+            <button
+              type="button"
+              onClick={() => router.push(`/jobs/${jobId}/photos`)}
+              className="w-full flex items-center gap-3 cursor-pointer group"
+            >
+              <div className="flex gap-1 shrink-0">
                 {photos && photos.length > 0 && photos.slice(0, 4).map((photo) => (
-                  <div
-                    key={photo.id}
-                    className="relative w-24 h-24 rounded-lg bg-surface-container-high shrink-0 overflow-hidden flex items-center justify-center"
-                  >
-                    <img src={photo.storage_url} alt={photo.room_name || "Job photo"} className="w-full h-full object-cover" />
-                    {/* Untagged dot */}
-                    {!photo.room_id && (
-                      <span className="absolute top-1.5 right-1.5 w-2.5 h-2.5 rounded-full bg-brand-accent" />
-                    )}
+                  <div key={photo.id} className="w-11 h-11 lg:w-16 lg:h-16 rounded-md bg-surface-container-high overflow-hidden">
+                    <img src={photo.storage_url} alt="" className="w-full h-full object-cover" />
                   </div>
                 ))}
-                {/* Add button */}
-                <button
-                  type="button"
-                  onClick={() => router.push(`/jobs/${jobId}/photos`)}
-                  className="w-24 h-24 rounded-lg border-2 border-dashed border-outline-variant/40 shrink-0 flex flex-col items-center justify-center gap-1 text-on-surface-variant hover:border-brand-accent hover:text-brand-accent transition-colors cursor-pointer"
-                >
-                  <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <line x1="12" y1="5" x2="12" y2="19" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                    <line x1="5" y1="12" x2="19" y2="12" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                  </svg>
-                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold uppercase">Add</span>
-                </button>
+                {(!photos || photos.length === 0) && (
+                  <div className="w-11 h-11 lg:w-16 lg:h-16 rounded-md bg-surface-container-high flex items-center justify-center">
+                    <CameraIcon size={14} />
+                  </div>
+                )}
               </div>
-              {photos && photos.length > 4 && (
-                <p className="text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                  {photos.length} total photos &middot;{" "}
-                  <button type="button" onClick={() => router.push(`/jobs/${jobId}/photos`)} className="text-brand-accent hover:underline cursor-pointer font-semibold">
-                    View all &rarr;
-                  </button>
+              <div className="flex-1 min-w-0">
+                <p className="text-[13px] font-medium text-on-surface">
+                  {photos?.length ?? 0} photo{(photos?.length ?? 0) !== 1 ? "s" : ""}
                 </p>
-              )}
-            </div>
+                <p className="text-[11px] text-brand-accent font-semibold group-hover:underline">
+                  {photos && photos.length > 0 ? "View all \u2192" : "Add photos \u2192"}
+                </p>
+              </div>
+            </button>
           </AccordionSection>
 
-          {/* Section 4: Readings */}
+          {/* Section 3B: Recon Phases (reconstruction jobs only) */}
+          {job.job_type === "reconstruction" && (
+            <ReconPhasesSection phases={reconPhases ?? []} jobId={jobId} />
+          )}
+
+          {/* Section 4: Readings (mitigation only) */}
+          {job.job_type === "mitigation" && (
           <AccordionSection
             icon={<IconReadings />}
             title="Moisture Readings"
@@ -1134,6 +2081,22 @@ export default function JobDetailPage() {
               readings && readings.length > 0
                 ? `${readings.length} reading${readings.length !== 1 ? "s" : ""} logged`
                 : "No readings yet"
+            }
+            action={
+              rooms && rooms.length > 0 ? (
+                <span
+                  role="link"
+                  tabIndex={0}
+                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                  onKeyDown={(e) => { if (e.key === "Enter") router.push(`/jobs/${jobId}/readings`); }}
+                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+                >
+                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                  Log Reading
+                </span>
+              ) : null
             }
           >
             <div className="space-y-3">
@@ -1145,63 +2108,118 @@ export default function JobDetailPage() {
                 <p className="text-[13px] text-on-surface-variant">
                   Add rooms first to log moisture readings.
                 </p>
-              ) : (
-                <>
-                  <p className="text-[12px] text-on-surface-variant/70 font-[family-name:var(--font-geist-mono)]">
-                    Day {(gppData.length || 0) + 1} — Log temperature and humidity per room
-                  </p>
-                  {rooms.map((room) => (
-                    <InlineReadingForm
-                      key={room.id}
-                      jobId={jobId}
-                      roomId={room.id}
-                      roomName={room.room_name}
-                      dayNumber={(gppData.length || 0) + 1}
-                      onSaved={() => {}}
-                    />
-                  ))}
-                  <button
-                    type="button"
-                    onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                    className="text-[12px] font-medium text-brand-accent hover:underline cursor-pointer"
-                  >
-                    Open full readings view →
-                  </button>
-                </>
-              )}
+              ) : (() => {
+                const currentDay = dayNumber ?? 1;
+                const hasReadingsForCurrentDay = readings?.some((r) => (r.day_number ?? 1) === currentDay);
+
+                // Get latest day's readings grouped by room
+                const latestDay = readings && readings.length > 0
+                  ? Math.max(...readings.map((r) => r.day_number ?? 1))
+                  : null;
+                const latestReadings = latestDay != null
+                  ? readings!.filter((r) => (r.day_number ?? 1) === latestDay)
+                  : [];
+                const latestDate = latestReadings.length > 0 ? latestReadings[0].reading_date : null;
+
+                return (
+                  <>
+                    {/* Latest day header */}
+                    {latestDay != null && (
+                      <div className="flex items-center justify-between">
+                        <p className="text-[12px] text-on-surface-variant/70 font-[family-name:var(--font-geist-mono)]">
+                          Day {latestDay}
+                          {latestDate && ` — ${new Date(latestDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
+                        </p>
+                        {hasReadingsForCurrentDay && (
+                          <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
+                            <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                            Logged today
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Per-room read-only summaries */}
+                    {latestReadings.length > 0 ? (
+                      latestReadings.map((reading) => {
+                        const roomName = rooms.find((r) => r.id === reading.room_id)?.room_name ?? "Unknown Room";
+                        const dryStd = rooms.find((r) => r.id === reading.room_id)?.dry_standard ?? 16;
+                        const pointCount = reading.points?.length ?? 0;
+                        const dryCount = reading.points?.filter((p) => p.reading_value <= dryStd).length ?? 0;
+                        const wetCount = pointCount - dryCount;
+                        const dehu = reading.dehus?.[0];
+
+                        return (
+                          <div key={reading.id} className="rounded-lg bg-surface-container/50 p-3 space-y-1.5">
+                            <p className="text-[12px] font-semibold text-on-surface font-[family-name:var(--font-geist-mono)]">{roomName}</p>
+                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
+                              <span className="text-on-surface-variant">
+                                {reading.atmospheric_temp_f != null ? `${reading.atmospheric_temp_f}°F` : "--"}
+                                {" / "}
+                                {reading.atmospheric_rh_pct != null ? `${reading.atmospheric_rh_pct}%` : "--"}
+                                {" / "}
+                                {reading.atmospheric_gpp != null ? `${reading.atmospheric_gpp} GPP` : "-- GPP"}
+                              </span>
+                              {pointCount > 0 && (
+                                <span className="text-on-surface-variant">
+                                  {pointCount} pt{pointCount !== 1 ? "s" : ""}
+                                  {wetCount > 0 && (
+                                    <span className="text-orange-500 ml-1">({wetCount} wet)</span>
+                                  )}
+                                  {wetCount === 0 && (
+                                    <span className="text-emerald-600 ml-1">(all dry)</span>
+                                  )}
+                                </span>
+                              )}
+                              {dehu && (
+                                <span className="text-on-surface-variant">
+                                  {dehu.dehu_model || "Dehu"}
+                                  {dehu.rh_out_pct != null ? ` ${dehu.rh_out_pct}%` : ""}
+                                  {dehu.temp_out_f != null ? ` / ${dehu.temp_out_f}°F` : ""}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <p className="text-[12px] text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)]">
+                        No readings logged yet
+                      </p>
+                    )}
+
+                    {/* CTA + View all link */}
+                    <div className="flex items-center justify-between pt-1">
+                      {!hasReadingsForCurrentDay && (
+                        <button
+                          type="button"
+                          onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                          className="h-8 px-4 bg-brand-accent text-on-primary font-semibold rounded-lg text-[12px] active:scale-[0.98] transition-all hover:shadow-lg hover:shadow-primary/20 cursor-pointer"
+                        >
+                          + Log Today&apos;s Reading
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => router.push(`/jobs/${jobId}/readings`)}
+                        className="text-[12px] font-medium text-brand-accent hover:underline cursor-pointer ml-auto"
+                      >
+                        View all readings →
+                      </button>
+                    </div>
+                  </>
+                );
+              })()}
             </div>
           </AccordionSection>
+          )}
 
           {/* Section 5: Tech Notes */}
-          <AccordionSection
-            icon={<IconNotes />}
-            title="Tech Notes"
-            badge={
-              hasTechNotes ? (
-                <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                  2 entries today
-                </span>
-              ) : undefined
-            }
-            preview={hasTechNotes ? undefined : "No notes yet"}
-          >
-            <div>
-              <textarea
-                defaultValue={job.tech_notes || ""}
-                placeholder="Add field notes, observations, site conditions..."
-                onBlur={(e) => {
-                  const val = e.target.value.trim();
-                  if (val !== (job.tech_notes || "")) {
-                    updateJob.mutate({ tech_notes: val || null });
-                  }
-                }}
-                className="w-full min-h-[80px] px-3 py-2 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-1 focus:ring-brand-accent/40 resize-y font-[family-name:var(--font-geist-mono)]"
-              />
-              <p className="text-[11px] text-on-surface-variant/50 mt-1.5">
-                Auto-saves on blur. Voice input coming soon.
-              </p>
-            </div>
-          </AccordionSection>
+          <TechNotesSection
+            techNotes={job.tech_notes}
+            hasTechNotes={hasTechNotes}
+            onSave={(val) => updateJob.mutate({ tech_notes: val || null })}
+          />
 
           {/* Section 6: AI Scope */}
           <AccordionSection
@@ -1225,13 +2243,19 @@ export default function JobDetailPage() {
           <AccordionSection
             icon={<IconReport />}
             title="Final Report"
-            badge={
-              <span className="px-2 py-0.5 rounded-full bg-surface-container text-on-surface-variant/70 text-[9px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
-                Locked
-              </span>
-            }
-            compact
-          />
+            defaultOpen={false}
+            preview="View or print report"
+          >
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => router.push(`/jobs/${jobId}/report`)}
+                className="flex-1 h-10 rounded-lg text-sm font-semibold text-on-primary bg-brand-accent flex items-center justify-center gap-2 transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] cursor-pointer"
+              >
+                View {job.job_type === "reconstruction" ? "Reconstruction" : "Scope"} Report →
+              </button>
+            </div>
+          </AccordionSection>
         </div>
 
         {/* ── RIGHT COLUMN: Sticky Sidebar ──────────────────────── */}
@@ -1316,6 +2340,25 @@ export default function JobDetailPage() {
             </button>
           </section>
 
+          {/* Create Reconstruction Job — shown on mitigation jobs that are complete or later */}
+          {job.job_type === "mitigation" && ["complete", "submitted", "collected"].includes(job.status) && (
+            <button
+              type="button"
+              onClick={() => router.push(`/jobs/new?type=reconstruction&linked=${jobId}`)}
+              className="w-full h-10 rounded-lg text-[13px] font-semibold text-on-surface border border-outline-variant flex items-center justify-center gap-2 hover:bg-surface-container-low transition-colors cursor-pointer"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-type-reconstruction">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Create Reconstruction Job
+            </button>
+          )}
+
+          {/* Share error */}
+          {shareError && (
+            <p className="text-[12px] text-error px-1 mb-2">{shareError}</p>
+          )}
+
           {/* Footer Links */}
           <div className="flex items-center gap-4 px-1">
             <button
@@ -1330,24 +2373,12 @@ export default function JobDetailPage() {
             </button>
             <button
               type="button"
-              onClick={() => {
-                if (!confirmDelete) {
-                  setConfirmDelete(true);
-                  setTimeout(() => setConfirmDelete(false), 3000);
-                  return;
-                }
-                deleteJob.mutateAsync(jobId).then(() => router.push("/jobs")).catch((err) => {
-                  alert(err instanceof Error ? err.message : "Failed to delete job.");
-                  setConfirmDelete(false);
-                });
-              }}
+              onClick={() => setShowDeleteJobConfirm(true)}
               disabled={deleteJob.isPending}
-              className={`flex items-center gap-1.5 text-[12px] font-medium transition-colors cursor-pointer ml-auto disabled:opacity-50 ${
-                confirmDelete ? "text-on-primary bg-error px-3 py-1.5 rounded-lg" : "text-error hover:text-error/80"
-              }`}
+              className="flex items-center gap-1.5 text-[12px] font-medium text-red-600 hover:bg-red-50 rounded-lg px-2 py-1.5 transition-colors cursor-pointer ml-auto disabled:opacity-50"
             >
               <TrashIcon size={14} />
-              {deleteJob.isPending ? "Deleting..." : confirmDelete ? "Confirm Delete?" : "Delete Job"}
+              {deleteJob.isPending ? "Deleting..." : "Delete Job"}
             </button>
           </div>
         </div>
@@ -1356,26 +2387,23 @@ export default function JobDetailPage() {
       {/* ── Mobile Bottom Action Bar ────────────────────────────── */}
       <div className="fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)] lg:hidden">
         <div className="max-w-lg mx-auto px-4 pb-[68px] md:pb-4">
-          <div className="bg-surface-container-lowest rounded-2xl shadow-[0_-2px_20px_rgba(31,27,23,0.08),0_-1px_4px_rgba(31,27,23,0.04)] p-2 flex items-stretch gap-1">
+          <div className="bg-brand-accent rounded-full shadow-[0_2px_12px_rgba(31,27,23,0.15)] flex items-center gap-0 overflow-hidden">
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/photos`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 h-10 text-on-primary cursor-pointer active:bg-white/10 transition-colors"
             >
-              <CameraIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
-                Photo
-              </span>
+              <CameraIcon size={16} />
+              <span className="text-[11px] font-semibold tracking-wide">Photo</span>
             </button>
+            <div className="w-px h-5 bg-on-primary/20" />
             <button
               type="button"
               onClick={() => router.push(`/jobs/${jobId}/readings`)}
-              className="flex-1 flex flex-col items-center justify-center min-h-[56px] rounded-xl primary-gradient text-on-primary cursor-pointer"
+              className="flex-1 flex items-center justify-center gap-1.5 h-10 text-on-primary cursor-pointer active:bg-white/10 transition-colors"
             >
-              <ChartIcon size={22} />
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">
-                Reading
-              </span>
+              <ChartIcon size={16} />
+              <span className="text-[11px] font-semibold tracking-wide">Reading</span>
             </button>
           </div>
         </div>
@@ -1423,6 +2451,21 @@ export default function JobDetailPage() {
           </div>
         </div>
       )}
+
+      {/* ── Delete Job confirmation modal ─────────────────────── */}
+      <ConfirmModal
+        open={showDeleteJobConfirm}
+        title="Delete this job?"
+        description="This will permanently delete the job and all associated data including photos, readings, and floor plans. This action cannot be undone."
+        confirmLabel="Delete Job"
+        cancelLabel="Cancel"
+        variant="danger"
+        onCancel={() => setShowDeleteJobConfirm(false)}
+        onConfirm={() => {
+          setShowDeleteJobConfirm(false);
+          deleteJob.mutateAsync(jobId).then(() => router.push("/jobs"));
+        }}
+      />
     </div>
   );
 }

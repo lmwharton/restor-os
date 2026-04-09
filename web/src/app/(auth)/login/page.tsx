@@ -59,15 +59,20 @@ function ShieldIcon() {
 }
 
 export default async function LoginPage() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  try {
+    const supabase = await createClient();
+    const { data: { user } } = await supabase.auth.getUser();
 
-  if (user) {
-    const { data: { session } } = await supabase.auth.getSession();
-    const destination = session?.access_token
-      ? await getAuthenticatedRedirect(session.access_token)
-      : "/onboarding";
-    redirect(destination);
+    if (user) {
+      const { data: { session } } = await supabase.auth.getSession();
+      const destination = session?.access_token
+        ? await getAuthenticatedRedirect(session.access_token)
+        : "/onboarding";
+      redirect(destination);
+    }
+  } catch (error) {
+    if (error instanceof Error && error.message === "NEXT_REDIRECT") throw error;
+    // Supabase not configured — show login page anyway (sign-in won't work but UI is visible)
   }
 
   return (
@@ -250,7 +255,7 @@ export default async function LoginPage() {
             <a
               href="/terms"
               className="underline underline-offset-2 transition-colors hover:opacity-80"
-              style={{ color: "#a63500" }}
+              style={{ color: "#e85d26" }}
             >
               Terms of Service
             </a>{" "}
@@ -258,7 +263,7 @@ export default async function LoginPage() {
             <a
               href="/privacy"
               className="underline underline-offset-2 transition-colors hover:opacity-80"
-              style={{ color: "#a63500" }}
+              style={{ color: "#e85d26" }}
             >
               Privacy Policy
             </a>
@@ -273,7 +278,7 @@ export default async function LoginPage() {
           <a
             href="/support"
             className="transition-colors hover:opacity-80"
-            style={{ color: "#a63500" }}
+            style={{ color: "#e85d26" }}
           >
             Field Support
           </a>

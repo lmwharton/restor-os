@@ -8,21 +8,24 @@ import type {
   PipelineStage,
   TeamMember,
 } from "../types";
+import { STATUS_COLORS } from "../status-colors";
 
 // ─── Pipeline — derived from real jobs ────────────────────────────────
 
 const PIPELINE_ORDER: PipelineStage[] = [
-  "new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected",
+  "new", "contracted", "mitigation", "drying", "complete", "submitted", "collected",
 ];
 
 const PIPELINE_COLORS: Record<PipelineStage, string> = {
-  new: "#dc2626",
-  contracted: "#f59e0b",
-  mitigation: "#e85d26",
-  drying: "#2563eb",
-  job_complete: "#6b7280",
-  submitted: "#0891b2",
-  collected: "#16a34a",
+  new: STATUS_COLORS.new,
+  contracted: STATUS_COLORS.contracted,
+  mitigation: STATUS_COLORS.mitigation,
+  drying: STATUS_COLORS.drying,
+  complete: STATUS_COLORS.complete,
+  submitted: STATUS_COLORS.submitted,
+  collected: STATUS_COLORS.collected,
+  scoping: STATUS_COLORS.scoping,
+  in_progress: STATUS_COLORS.in_progress,
 };
 
 const PIPELINE_LABELS: Record<PipelineStage, string> = {
@@ -30,9 +33,11 @@ const PIPELINE_LABELS: Record<PipelineStage, string> = {
   contracted: "Contracted",
   mitigation: "Mitigation",
   drying: "Drying",
-  job_complete: "Job Complete",
+  complete: "Complete",
   submitted: "Submitted",
   collected: "Collected",
+  scoping: "Scoping",
+  in_progress: "In Progress",
 };
 
 export function usePipeline(initialJobs?: JobDetail[]) {

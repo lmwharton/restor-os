@@ -63,14 +63,21 @@ async def get_user_with_company(auth_user_id: UUID) -> UserResponse | None:
     """Look up user by auth_user_id, include company data. Returns None if not found."""
     client = await get_supabase_admin_client()
 
-    result = await (
-        client.table("users")
-        .select("*, companies(*)")
-        .eq("auth_user_id", str(auth_user_id))
-        .is_("deleted_at", "null")
-        .maybe_single()
-        .execute()
-    )
+    try:
+        result = await (
+            client.table("users")
+            .select("*, companies(*)")
+            .eq("auth_user_id", str(auth_user_id))
+            .is_("deleted_at", "null")
+            .maybe_single()
+            .execute()
+        )
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.warning("Failed to fetch user %s: %s", auth_user_id, e)
+        return None
+
+    if not result or not result.data:
+        return None
 
     user_data = result.data
     if not user_data:

@@ -12,6 +12,7 @@ import {
 import { useJobs } from "@/lib/hooks/use-jobs";
 import DashboardMap from "@/components/dashboard-map";
 import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
+import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -30,47 +31,173 @@ function timeAgo(dateStr: string): string {
   return `${days}d ago`;
 }
 
-function eventLabel(event: Event): string {
+// ─── Event formatting ────────────────────────────────────────────────
+
+interface EventMeta {
+  label: string;
+  icon: React.ReactNode;
+  color: string;       // icon bg color
+  accent: string;      // icon color
+}
+
+function getEventMeta(event: Event): EventMeta {
+  const d = event.event_data as Record<string, unknown>;
   switch (event.event_type) {
+    case "photos_uploaded":
     case "photo_uploaded": {
-      const count = (event.event_data as Record<string, unknown>).count;
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `${count} photos uploaded${room ? ` - ${room}` : ""}`;
+      const count = d.count;
+      const room = d.room_name;
+      return {
+        label: `${count ?? ""} Photos Uploaded${room ? ` — ${room}` : ""}`.trim(),
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="3" stroke="currentColor" strokeWidth="1.5"/><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor"/><path d="M3 16l5-5 4 4 3-3 6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "moisture_reading_added": {
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `Moisture reading${room ? ` - ${room}` : ""}`;
+    case "moisture_reading_added":
+    case "reading_added": {
+      const day = d.day_number;
+      return {
+        label: `Moisture Reading${day ? ` — Day ${day}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2C12 2 5 10 5 15a7 7 0 0014 0c0-5-7-13-7-13z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "ai_photo_analysis": return "AI photo analysis complete";
-    case "ai_sketch_cleanup": return "AI sketch cleanup done";
-    case "report_generated": return "Report generated";
+    case "ai_photo_analysis": {
+      const items = d.line_items_found;
+      return {
+        label: `AI Photo Analysis${items ? ` — ${items} items found` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "ai_sketch_cleanup":
+      return {
+        label: "AI Sketch Cleanup Complete",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "report_generated":
+      return {
+        label: "Report Generated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "status_changed":
     case "job_status_changed": {
-      const to = (event.event_data as Record<string, unknown>).to;
-      return `Status changed to ${to}`;
+      const to = d.to as string;
+      return {
+        label: `Status → ${to ? to.charAt(0).toUpperCase() + to.slice(1).replace(/_/g, " ") : "Updated"}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    case "job_created": return "Job created";
-    case "room_added": {
-      const room = (event.event_data as Record<string, unknown>).room_name;
-      return `Room added: ${room}`;
+    case "job_created":
+      return {
+        label: "New Job Created",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "job_linked":
+      return {
+        label: "Job Linked",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_created":
+      return {
+        label: `Phase Added${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M9 11l3 3L22 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_updated":
+      return {
+        label: `Phase Updated${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "recon_phase_completed":
+      return {
+        label: `Phase Complete${d.phase_name ? ` — ${d.phase_name}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 4L12 14.01l-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "room_added":
+    case "room_created": {
+      const room = d.room_name;
+      return {
+        label: `Room Created${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M9 12h6M12 9v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     }
-    default: return event.event_type.replace(/_/g, " ");
+    case "room_updated": {
+      const room = d.room_name;
+      return {
+        label: `Room Updated${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7 13l3 3 5-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "room_deleted": {
+      const room = d.room_name;
+      return {
+        label: `Room Deleted${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M9 12h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "job_updated":
+      return {
+        label: "Job Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "job_deleted":
+      return {
+        label: "Job Deleted",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "floor_plan_created":
+    case "floor_plan_updated":
+      return {
+        label: event.event_type === "floor_plan_created" ? "Floor Plan Created" : "Floor Plan Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "note_added":
+    case "tech_notes_updated":
+      return {
+        label: "Notes Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    default:
+      return {
+        label: event.event_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/><path d="M8 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
   }
 }
 
 const MONO = "font-[family-name:var(--font-geist-mono)]";
-const LABEL_STYLE = `text-[11px] ${MONO} uppercase tracking-[0.1em] text-outline`;
 
-const STAGE_META: Record<PipelineStage, { label: string; dot: string; color: string; bg: string; text: string }> = {
-  new:        { label: "New",          dot: "bg-red-500",      color: "#dc2626", bg: "bg-red-500/10",              text: "text-red-600" },
-  contracted: { label: "Contracted",   dot: "bg-amber-500",    color: "#f59e0b", bg: "bg-amber-500/10",            text: "text-amber-700" },
-  mitigation: { label: "Mitigation",   dot: "bg-brand-accent", color: "#e85d26", bg: "bg-brand-accent/10",         text: "text-brand-accent" },
-  drying:     { label: "Drying",       dot: "bg-blue-500",     color: "#2563eb", bg: "bg-blue-500/10",             text: "text-blue-600" },
-  job_complete: { label: "Complete",   dot: "bg-slate-400",    color: "#6b7280", bg: "bg-surface-container-high",  text: "text-on-surface" },
-  submitted:  { label: "Submitted",    dot: "bg-cyan-600",     color: "#0891b2", bg: "bg-cyan-600/10",             text: "text-cyan-700" },
-  collected:  { label: "Collected",    dot: "bg-emerald-500",  color: "#16a34a", bg: "bg-surface-container-high",  text: "text-emerald-600" },
+const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string }> = {
+  new:          { label: "New",          color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.1) },
+  contracted:   { label: "Contracted",   color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.1) },
+  mitigation:   { label: "Mitigation",   color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.1) },
+  drying:       { label: "Drying",       color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.1) },
+  complete: { label: "Complete",     color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.1) },
+  submitted:    { label: "Submitted",    color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.1) },
+  collected:    { label: "Collected",    color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.1) },
+  scoping:      { label: "Scoping",      color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.1) },
+  in_progress:  { label: "In Progress",  color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.1) },
 };
 
-const STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "job_complete", "submitted", "collected"];
+const MIT_STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "complete", "submitted", "collected"];
+const REC_STAGE_ORDER: PipelineStage[] = ["new", "scoping", "in_progress", "complete", "submitted", "collected"];
+const STAGE_ORDER: PipelineStage[] = MIT_STAGE_ORDER;
 
 // ---------------------------------------------------------------------------
 //  Stage-to-jobs mapping
@@ -82,9 +209,11 @@ function getJobStage(job: { status: string }): PipelineStage {
     case "contracted": return "contracted";
     case "mitigation": return "mitigation";
     case "drying": return "drying";
-    case "job_complete": return "job_complete";
+    case "complete": return "complete";
     case "submitted": return "submitted";
     case "collected": return "collected";
+    case "scoping": return "scoping";
+    case "in_progress": return "in_progress";
     default: return "new";
   }
 }
@@ -96,188 +225,308 @@ function getTaskStage(task: PriorityTask, jobs: JobDetail[]): PipelineStage {
 }
 
 const PIN_COLOR: Record<PipelineStage, string> = {
-  new: "#dc2626",
-  contracted: "#f59e0b",
-  mitigation: "#e85d26",
-  drying: "#2563eb",
-  job_complete: "#6b7280",
-  submitted: "#0891b2",
-  collected: "#9ca3af",
+  new: STATUS_COLORS.new,
+  contracted: STATUS_COLORS.contracted,
+  mitigation: STATUS_COLORS.mitigation,
+  drying: STATUS_COLORS.drying,
+  complete: STATUS_COLORS.complete,
+  submitted: STATUS_COLORS.submitted,
+  collected: STATUS_COLORS.collected,
+  scoping: STATUS_COLORS.scoping,
+  in_progress: STATUS_COLORS.in_progress,
 };
-
 
 // ---------------------------------------------------------------------------
 //  Skeleton
 // ---------------------------------------------------------------------------
 
 function Skeleton({ className = "" }: { className?: string }) {
-  return (
-    <span
-      className={`block animate-pulse rounded-lg bg-surface-container ${className}`}
-    />
-  );
+  return <span className={`block animate-pulse rounded-lg bg-surface-container ${className}`} />;
 }
 
 // ---------------------------------------------------------------------------
 //  Card
 // ---------------------------------------------------------------------------
 
-function Card({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
+function Card({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div
-      className={`bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 ${className}`}
-    >
+    <div className={`bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-5 ${className}`}>
       {children}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Row 1: Pipeline Boxes
+//  KPI Gauges — big numbers, no boxes
 // ---------------------------------------------------------------------------
 
-function PipelineBoxes({
-  stages,
-  selectedStage,
-  onStageClick,
-}: {
-  stages: PipelineStageData[];
-  selectedStage: PipelineStage | null;
-  onStageClick: (stage: PipelineStage) => void;
-}) {
-  const stageMap = new Map(stages.map((s) => [s.stage, s]));
+function ChangeIndicator({ value, suffix = "" }: { value: number; suffix?: string }) {
+  if (value === 0) return null;
+  const isUp = value > 0;
+  return (
+    <span className={`inline-flex items-center gap-0.5 text-[10px] ${MONO} font-semibold ${isUp ? "text-emerald-600" : "text-red-500"}`}>
+      <svg width="8" height="8" viewBox="0 0 10 10" fill="none" className={isUp ? "" : "rotate-180"}>
+        <path d="M5 1L9 6H1L5 1Z" fill="currentColor" />
+      </svg>
+      {Math.abs(value)}{suffix}
+    </span>
+  );
+}
+
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function KPIGauges({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | undefined }) {
+  const k = kpis;
 
   return (
-    <div className="grid grid-cols-4 lg:grid-cols-7 gap-2">
-      {STAGE_ORDER.map((stage) => {
-        const data = stageMap.get(stage);
-        const count = data?.count ?? 0;
-        const meta = STAGE_META[stage];
-        const isSelected = selectedStage === stage;
-        const isCollected = stage === "collected";
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+      {[
+        { icon: <><rect x="3" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" /><rect x="14" y="3" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" /><rect x="3" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" /><rect x="14" y="14" width="7" height="7" rx="1.5" stroke="currentColor" strokeWidth="1.5" /></>, value: String(k?.active_jobs ?? "--"), label: "Active Jobs", accent: false, iconColor: "text-on-surface-variant/40" },
+        { icon: <><path d="M2 17l4-4 4 4 4-8 4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></>, value: k && k.revenue_mtd > 0 ? fmtCurrency(k.revenue_mtd) : "—", label: "Revenue", accent: false, iconColor: "text-on-surface-variant/40" },
+        { icon: <><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5" /><path d="M12 6v6l4 2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></>, value: k && k.outstanding_ar > 0 ? fmtCurrency(k.outstanding_ar) : "—", label: "Owed to You", accent: true, iconColor: "text-brand-accent/40" },
+        { icon: <path d="M22 12h-4l-3 9L9 3l-3 9H2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />, value: k ? `${k.avg_cycle_days}d` : "--", label: "Avg Cycle", accent: false, iconColor: "text-on-surface-variant/40" },
+      ].map((item) => (
+        <div key={item.label} className="flex items-center justify-center gap-2.5 bg-surface-container-lowest rounded-lg py-3 shadow-[0_1px_2px_rgba(31,27,23,0.04)]">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" className={`shrink-0 ${item.iconColor}`}>{item.icon}</svg>
+          <div>
+            <p className={`text-[20px] sm:text-[24px] font-extrabold ${MONO} leading-none ${item.accent ? "text-brand-accent" : "text-on-surface"}`}>{item.value}</p>
+            <p className={`text-[9px] sm:text-[10px] ${MONO} uppercase tracking-[0.04em] text-on-surface-variant/60 mt-0.5`}>{item.label}</p>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
-        return (
-          <button
-            key={stage}
-            type="button"
-            onClick={() => !isCollected && onStageClick(stage)}
-            disabled={isCollected}
-            className={`relative rounded-xl p-3 text-left transition-all duration-200 border-2 ${
-              isSelected
-                ? `border-current ${meta.bg} ${meta.text}`
-                : isCollected
-                  ? "border-outline-variant/20 bg-surface-container-lowest cursor-default"
-                  : "border-outline-variant/20 bg-surface-container-lowest hover:border-outline-variant/40 cursor-pointer"
-            }`}
-          >
-            <p className={`text-[10px] ${MONO} uppercase tracking-[0.1em] ${
-              isSelected ? meta.text : "text-outline"
-            } leading-tight mb-1`}>
-              {meta.label}
-            </p>
-            <p className={`text-[24px] font-bold ${MONO} leading-none ${
-              isSelected ? meta.text : "text-on-surface"
-            }`}>
-              {count}
-            </p>
-            {/* Color accent bar at bottom */}
-            <span
-              className="absolute bottom-0 left-3 right-3 h-0.5 rounded-full"
-              style={{ backgroundColor: meta.color, opacity: isSelected ? 1 : 0.3 }}
-            />
-          </button>
-        );
-      })}
+function SectionLabel({ children }: { children: string }) {
+  return (
+    <p className={`text-[10px] ${MONO} uppercase tracking-[0.12em] text-on-surface-variant/50 mb-2`}>
+      {children}
+    </p>
+  );
+}
+
+function AttentionBar({ jobs }: { jobs: JobDetail[] }) {
+  // Find jobs that need attention
+  const alerts: { text: string; jobId: string; type: "warning" | "info" }[] = [];
+
+  for (const job of jobs) {
+    if (job.status === "drying" && job.room_count > 0) {
+      alerts.push({ text: `Moisture readings due — ${job.address_line1}`, jobId: job.id, type: "warning" });
+    }
+    if (job.status === "new" && job.photo_count === 0) {
+      alerts.push({ text: `No photos yet — ${job.address_line1}`, jobId: job.id, type: "info" });
+    }
+  }
+
+  if (alerts.length === 0) {
+    return (
+      <div className="bg-emerald-50/50 border border-emerald-200/30 rounded-xl px-4 py-3 flex items-center gap-2">
+        <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+        <p className="text-[13px] text-emerald-700">All clear — no items need immediate attention</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="bg-amber-50/50 border border-amber-200/30 rounded-xl px-4 py-2.5 space-y-1.5">
+      {alerts.slice(0, 3).map((alert, i) => (
+        <Link
+          key={i}
+          href={`/jobs/${alert.jobId}`}
+          className="flex items-center gap-2.5 py-1 hover:opacity-80 transition-opacity"
+        >
+          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${alert.type === "warning" ? "bg-amber-500" : "bg-blue-400"}`} />
+          <p className="text-[13px] text-on-surface flex-1">{alert.text}</p>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" className="text-on-surface-variant/40 shrink-0">
+            <path d="M9 18l6-6-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </Link>
+      ))}
     </div>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Row 2 Left: Jobs List
+//  Pipeline Bar — proportional segmented horizontal bar
+// ---------------------------------------------------------------------------
+
+function PipelineBar({
+  label,
+  dotColor,
+  stageOrder,
+  stageCounts,
+  selectedStage,
+  onStageClick,
+  onClearFilter,
+}: {
+  label: string;
+  dotColor: string;
+  stageOrder: PipelineStage[];
+  stageCounts: Map<PipelineStage, number>;
+  selectedStage: PipelineStage | null;
+  onStageClick: (stage: PipelineStage) => void;
+  onClearFilter: () => void;
+}) {
+  const total = stageOrder.reduce((sum, s) => sum + (stageCounts.get(s) ?? 0), 0);
+  // Is the selected stage part of THIS pipeline?
+  const isFilteredHere = selectedStage && stageOrder.includes(selectedStage);
+
+  return (
+    <div>
+      {/* Label row */}
+      <div className="flex items-center gap-2 mb-1.5">
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
+        <span className="text-[11px] sm:text-[12px] font-bold text-on-surface">{label}</span>
+        <span className={`text-[10px] sm:text-[11px] ${MONO} text-on-surface-variant`}>{total}</span>
+        {isFilteredHere && (
+          <button
+            type="button"
+            onClick={onClearFilter}
+            className={`flex items-center gap-1 text-[10px] ${MONO} ml-1 px-1.5 py-0.5 rounded bg-surface-container hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer`}
+          >
+            {STAGE_META[selectedStage!].label}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" /></svg>
+          </button>
+        )}
+      </div>
+
+      {/* Segmented bar */}
+      {total > 0 ? (
+        <>
+          <div className="flex h-10 rounded-lg overflow-hidden gap-[1px] bg-outline-variant/15">
+            {stageOrder.map((stage) => {
+              const count = stageCounts.get(stage) ?? 0;
+              if (count === 0) return null;
+              const meta = STAGE_META[stage];
+              const isSelected = selectedStage === stage;
+              const widthPct = Math.max((count / total) * 100, 10);
+
+              return (
+                <button
+                  key={stage}
+                  type="button"
+                  onClick={() => onStageClick(stage)}
+                  className={`relative flex items-center justify-center gap-1.5 cursor-pointer transition-all duration-150 ${
+                    isSelected
+                      ? "ring-2 ring-on-surface/20 z-10 brightness-110"
+                      : "hover:brightness-110 active:brightness-95"
+                  }`}
+                  style={{
+                    width: `${widthPct}%`,
+                    backgroundColor: meta.color,
+                  }}
+                  title={`${count} jobs in ${meta.label} — click to filter`}
+                >
+                  <span className="text-[13px] font-bold text-white leading-none drop-shadow-sm">{count}</span>
+                  <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide drop-shadow-sm hidden sm:inline">{meta.label}</span>
+                </button>
+              );
+            })}
+          </div>
+          {/* Legend — mobile only */}
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mt-1.5 sm:hidden">
+            {stageOrder.map((stage) => {
+              const count = stageCounts.get(stage) ?? 0;
+              if (count === 0) return null;
+              return (
+                <span key={stage} className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: STAGE_META[stage].color }} />
+                  <span className={`text-[9px] ${MONO} text-on-surface-variant`}>{STAGE_META[stage].label}</span>
+                </span>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="h-10 rounded-lg bg-surface-container/30 flex items-center justify-center">
+          <span className={`text-[11px] ${MONO} text-on-surface-variant/40`}>No jobs yet</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+//  Jobs List
 // ---------------------------------------------------------------------------
 
 function JobsList({
   tasks,
-  selectedStage,
+  filter,
   now,
   jobs,
 }: {
   tasks: PriorityTask[];
-  selectedStage: PipelineStage | null;
+  filter: { stage: PipelineStage; jobType: "mitigation" | "reconstruction" } | null;
   now: number;
   jobs: JobDetail[];
 }) {
   const activeTasks = tasks.filter((t) => getTaskStage(t, jobs) !== "collected");
-
-  const filteredTasks = selectedStage
-    ? activeTasks.filter((t) => getTaskStage(t, jobs) === selectedStage)
+  const filteredTasks = filter
+    ? activeTasks.filter((t) => {
+        const job = jobs.find((j) => j.id === t.job_id);
+        return job && getJobStage(job) === filter.stage && job.job_type === filter.jobType;
+      })
     : activeTasks;
+  const selectedStage = filter?.stage ?? null;
 
   return (
     <Card className="flex flex-col min-h-0">
       <div className="flex items-center justify-between mb-3">
-        <h2 className="text-[16px] font-bold text-on-surface">
-          {selectedStage
-            ? `${STAGE_META[selectedStage].label} Jobs`
-            : "Active Jobs"}
+        <h2 className="text-[15px] font-bold text-on-surface">
+          {selectedStage ? `${STAGE_META[selectedStage].label} Jobs` : "Active Jobs"}
         </h2>
-        <div className="flex items-center gap-3">
-          <span className={`${LABEL_STYLE}`}>
-            {filteredTasks.length} {filteredTasks.length === 1 ? "job" : "jobs"}
-          </span>
-          <Link
-            href="/jobs/new"
-            className="flex items-center gap-1.5 px-3 h-7 rounded-lg bg-brand-accent text-white text-[11px] font-semibold uppercase tracking-[0.05em] hover:brightness-110 transition-all cursor-pointer"
-          >
-            <span className="text-[14px] leading-none">+</span> New Job
-          </Link>
-        </div>
+        <span className={`text-[11px] ${MONO} uppercase tracking-[0.1em] text-on-surface-variant`}>
+          {filteredTasks.length} {filteredTasks.length === 1 ? "job" : "jobs"}
+        </span>
       </div>
 
-      <div className="flex-1 space-y-1" role="list">
+      <div className="flex-1 space-y-0.5 max-h-[440px] overflow-y-auto scrollbar-hide" role="list" style={{ scrollbarWidth: "none" }}>
         {filteredTasks.length === 0 ? (
-          <p className="text-[13px] text-outline py-8 text-center">
-            No jobs in this stage
+          <p className="text-[13px] text-on-surface-variant py-8 text-center">
+            {selectedStage ? "No jobs in this stage" : "No active jobs"}
           </p>
         ) : (
-          filteredTasks.map((t) => {
+          filteredTasks.map((t, idx) => {
             const stage = getTaskStage(t, jobs);
             const meta = STAGE_META[stage];
             const job = jobs.find((j) => j.id === t.job_id);
-            const subtitle = job
-              ? `Day ${Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000))}, ${job.photo_count ?? 0} photos, ${job.room_count ?? 0} rooms`
-              : t.description;
+            const days = job ? Math.max(1, Math.ceil((now - new Date(job.created_at).getTime()) / 86400000)) : 0;
 
             return (
               <Link
                 key={t.id}
                 href={`/jobs/${t.job_id}`}
-                className="flex gap-3 items-start py-2.5 rounded-lg px-2 hover:bg-surface-container/60 transition-colors group"
+                className="flex gap-3 items-center py-2 rounded-lg sm:px-2 hover:bg-surface-container/60 transition-colors group"
                 role="listitem"
               >
                 <span
-                  className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${meta.dot}`}
-                  aria-label={`${meta.label} stage`}
+                  className="w-2 h-2 rounded-full shrink-0"
+                  style={{ backgroundColor: JOB_TYPE_COLORS[job?.job_type as keyof typeof JOB_TYPE_COLORS] || JOB_TYPE_COLORS.mitigation }}
+                  aria-label={job?.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
                 />
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <p className="text-[14px] font-semibold text-on-surface group-hover:text-brand-accent transition-colors truncate">
-                      {t.address}
-                    </p>
-                    <span className={`text-[10px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded ${meta.bg} ${meta.text} shrink-0`}>
-                      {meta.label}
-                    </span>
-                  </div>
-                  <p className="text-[12px] text-outline mt-0.5 leading-snug truncate">
-                    {subtitle}
+                  <p className="text-[13px] font-semibold text-on-surface group-hover:text-brand-accent transition-colors truncate">
+                    {t.address}
+                  </p>
+                  <p className="text-[11px] text-on-surface-variant mt-0.5 leading-snug truncate">
+                    {job?.customer_name ?? "No customer"}{" "}
+                    <span className="text-on-surface-variant/50">·</span>{" "}
+                    Day {days}
                   </p>
                 </div>
+                <span
+                  className={`text-[9px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0`}
+                  style={{ backgroundColor: meta.bg, color: meta.color }}
+                >
+                  {meta.label}
+                </span>
               </Link>
             );
           })
@@ -286,7 +535,7 @@ function JobsList({
 
       <Link
         href="/jobs"
-        className={`mt-4 w-full bg-surface-container rounded-xl h-10 flex items-center justify-center ${MONO} text-[11px] uppercase tracking-[0.1em] text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer`}
+        className={`mt-3 w-full bg-surface-container rounded-lg h-9 flex items-center justify-center ${MONO} text-[11px] uppercase tracking-[0.1em] text-on-surface-variant hover:bg-surface-container-high transition-colors cursor-pointer`}
       >
         View All Jobs
       </Link>
@@ -295,7 +544,7 @@ function JobsList({
 }
 
 // ---------------------------------------------------------------------------
-//  Row 2 Right: Live Operations Map
+//  Live Operations Map
 // ---------------------------------------------------------------------------
 
 function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineStage | null; jobs: JobDetail[] }) {
@@ -310,26 +559,28 @@ function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineSta
       zip: job.zip,
       stage,
       stageLabel: STAGE_META[stage].label,
-      color: PIN_COLOR[stage],
+      color: job.job_type === "reconstruction" ? "#e85d26" : "#3b82f6",
+      customerName: job.customer_name,
+      latitude: job.latitude,
+      longitude: job.longitude,
     };
   });
 
   return (
-    <Card className="flex flex-col">
-      <div className="flex items-baseline justify-between mb-3">
-        <h2 className="text-[16px] font-bold text-on-surface">
-          Live Operations
-        </h2>
-        <span className={`${LABEL_STYLE}`}>{mapJobs.length} Pins</span>
+    <Card className="flex flex-col min-h-[540px]">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-[15px] font-bold text-on-surface">Live Operations</h2>
+        <span className={`text-[11px] ${MONO} uppercase tracking-[0.1em] text-on-surface-variant`}>{mapJobs.length} pins</span>
       </div>
-
-      <DashboardMap jobs={mapJobs} selectedStage={selectedStage} />
+      <div className="flex-1 min-h-0">
+        <DashboardMap jobs={mapJobs} selectedStage={selectedStage} />
+      </div>
     </Card>
   );
 }
 
 // ---------------------------------------------------------------------------
-//  Row 3 Left: Operations Team
+//  Operations Team
 // ---------------------------------------------------------------------------
 
 function OperationsTeam() {
@@ -350,7 +601,7 @@ function OperationsTeam() {
 
   return (
     <Card>
-      <h3 className={`${LABEL_STYLE} mb-3`}>Operations Team</h3>
+      <h3 className="text-[15px] font-bold text-on-surface mb-3">Operations Team</h3>
       <div className="space-y-2.5">
         {members.map((m) => (
           <div key={m.id} className="flex items-center gap-2.5">
@@ -362,10 +613,8 @@ function OperationsTeam() {
             </div>
             <div className="min-w-0 flex-1">
               <p className="text-[13px] font-medium text-on-surface truncate">{m.name}</p>
-              <p className="text-[11px] text-outline truncate">
-                {m.current_job_address
-                  ? m.current_job_address
-                  : statusLabels[m.status] ?? m.status}
+              <p className="text-[11px] text-on-surface-variant truncate">
+                {m.current_job_address ? m.current_job_address : statusLabels[m.status] ?? m.status}
               </p>
             </div>
           </div>
@@ -376,82 +625,71 @@ function OperationsTeam() {
 }
 
 // ---------------------------------------------------------------------------
-//  Row 3 Center: Latest Activity
+//  Latest Activity
 // ---------------------------------------------------------------------------
 
 function LatestActivity({ jobs, initialEvents }: { jobs: JobDetail[]; initialEvents?: Event[] }) {
   const { data: companyEvents } = useCompanyEvents(initialEvents);
-
-  // Get 4 most recent events
   const recentEvents = [...(companyEvents ?? [])]
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 4);
+    .slice(0, 6);
 
   return (
     <Card>
-      <h3 className={`${LABEL_STYLE} mb-3`}>Latest Activity</h3>
-      <div className="space-y-2.5">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-[15px] font-bold text-on-surface">Latest Activity</h3>
+        <Link href="/jobs" className="text-[11px] font-medium text-brand-accent hover:underline">
+          View all &rarr;
+        </Link>
+      </div>
+      <div className="space-y-0.5">
         {recentEvents.length === 0 ? (
-          <p className="text-[13px] text-outline py-4 text-center">No recent activity</p>
+          <p className="text-[13px] text-on-surface-variant py-6 text-center">No recent activity</p>
         ) : (
           recentEvents.map((event, i) => {
             const job = jobs.find((j) => j.id === event.job_id);
+            const d = event.event_data as Record<string, unknown>;
+            const jobNum = (d.job_number as string) || job?.job_number;
+            const addr = job?.address_line1 || (d.address as string);
+            const meta = getEventMeta(event);
+
             return (
-              <div key={`${event.event_type}-${i}`} className="flex gap-2.5 items-start">
-                <span className={`w-1.5 h-1.5 rounded-full mt-1.5 shrink-0 ${event.is_ai ? "bg-brand-accent" : "bg-outline-variant"}`} />
+              <Link
+                href={job ? `/jobs/${job.id}` : "/jobs"}
+                key={`${event.event_type}-${i}`}
+                className="flex gap-3 items-start py-2.5 px-2 -mx-2 rounded-lg hover:bg-surface-container/50 active:bg-surface-container transition-colors cursor-pointer"
+              >
+                <span className={`w-7 h-7 rounded-lg ${meta.color} ${meta.accent} flex items-center justify-center shrink-0 mt-0.5`}>
+                  {meta.icon}
+                </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-[12px] text-on-surface leading-snug">
-                    {eventLabel(event)}
+                  <p className="text-[13px] font-medium text-on-surface leading-snug">{meta.label}</p>
+
+                  {/* Mobile: compact — address + time */}
+                  <p className="md:hidden text-[11px] text-on-surface-variant mt-0.5 truncate">
+                    {addr || "Unknown"} · {timeAgo(event.created_at)}
                   </p>
-                  <p className={`text-[10px] ${MONO} text-outline mt-0.5`}>
-                    {job ? `${job.address_line1} ` : ""}{timeAgo(event.created_at)}
-                  </p>
+
+                  {/* Desktop: full detail — user / job ID / address / time */}
+                  <div className="hidden md:flex items-center gap-1.5 mt-0.5 text-[11px] text-on-surface-variant leading-snug">
+                    {event.is_ai ? (
+                      <span className="inline-flex items-center gap-0.5 text-amber-600 font-medium">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" fill="currentColor"/></svg>
+                        AI
+                      </span>
+                    ) : (
+                      <span className="font-medium text-on-surface-variant">You</span>
+                    )}
+                    {jobNum && <><span className="text-on-surface-variant/40">/</span><span className={MONO + " text-[10px] tracking-wide"}>{jobNum}</span></>}
+                    {addr && <><span className="text-on-surface-variant/40">/</span><span className="truncate">{addr}</span></>}
+                    <span className="text-on-surface-variant/40">/</span>
+                    <span className="shrink-0">{timeAgo(event.created_at)}</span>
+                  </div>
                 </div>
-              </div>
+              </Link>
             );
           })
         )}
-      </div>
-      <Link
-        href="/jobs"
-        className="mt-3 block text-[11px] font-medium text-brand-accent hover:underline"
-      >
-        View full log &rarr;
-      </Link>
-    </Card>
-  );
-}
-
-// ---------------------------------------------------------------------------
-//  Row 3 Right: KPI Cards (2x2 mini grid)
-// ---------------------------------------------------------------------------
-
-function KPIMiniGrid({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | undefined }) {
-  const k = kpis;
-
-  return (
-    <Card>
-      <h3 className={`${LABEL_STYLE} mb-3`}>Key Metrics</h3>
-      <div className="grid grid-cols-2 gap-3">
-        <div>
-          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Active Jobs</p>
-          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>{k?.active_jobs ?? "--"}</p>
-        </div>
-        <div>
-          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Revenue MTD</p>
-          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>{k ? fmtCurrency(k.revenue_mtd) : "--"}</p>
-        </div>
-        <div>
-          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Outstanding AR</p>
-          <p className={`text-[20px] font-bold ${MONO} text-brand-accent leading-tight`}>{k ? fmtCurrency(k.outstanding_ar) : "--"}</p>
-        </div>
-        <div>
-          <p className={`text-[10px] ${MONO} uppercase tracking-[0.08em] text-outline`}>Avg Cycle</p>
-          <p className={`text-[20px] font-bold ${MONO} text-on-surface leading-tight`}>
-            {k ? k.avg_cycle_days : "--"}
-            <span className="text-[12px] font-normal text-on-surface-variant ml-0.5">d</span>
-          </p>
-        </div>
       </div>
     </Card>
   );
@@ -463,18 +701,23 @@ function KPIMiniGrid({ kpis }: { kpis: import("@/lib/types").DashboardKPIs | und
 
 function DashboardSkeleton() {
   return (
-    <div className="w-full px-4 sm:px-6 py-5 space-y-5">
-      {/* Pipeline boxes skeleton */}
-      <div className="grid grid-cols-4 lg:grid-cols-7 gap-2">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <div key={i} className="rounded-xl border-2 border-outline-variant/20 p-3">
-            <Skeleton className="w-12 h-2.5 mb-2" />
-            <Skeleton className="w-8 h-6" />
+    <div className="w-full px-4 sm:px-6 py-4 space-y-4">
+      {/* KPI gauges */}
+      <div className="flex gap-8">
+        {[1, 2, 3, 4].map((i) => (
+          <div key={i}>
+            <Skeleton className="w-16 h-7 mb-1.5" />
+            <Skeleton className="w-12 h-2.5" />
           </div>
         ))}
       </div>
-      {/* Two-column skeleton */}
-      <div className="grid lg:grid-cols-[55fr_45fr] gap-5">
+      {/* Pipeline bars */}
+      <div className="space-y-3">
+        <Skeleton className="w-full h-9 rounded-lg" />
+        <Skeleton className="w-full h-9 rounded-lg" />
+      </div>
+      {/* Content */}
+      <div className="grid lg:grid-cols-2 gap-4">
         <Card>
           <Skeleton className="w-32 h-5 mb-4" />
           {[1, 2, 3, 4].map((i) => (
@@ -485,15 +728,6 @@ function DashboardSkeleton() {
           <Skeleton className="w-32 h-5 mb-4" />
           <Skeleton className="w-full h-[300px] rounded-xl" />
         </Card>
-      </div>
-      {/* Three-column skeleton */}
-      <div className="grid md:grid-cols-3 gap-5">
-        {[1, 2, 3].map((i) => (
-          <Card key={i}>
-            <Skeleton className="w-24 h-3 mb-3" />
-            <Skeleton className="w-full h-20" />
-          </Card>
-        ))}
       </div>
     </div>
   );
@@ -515,8 +749,11 @@ export default function DashboardClient({
   const tasks = usePriorityTasks(initialJobs);
   const team = useTeamMembers();
   const { data: jobs = [] } = useJobs(undefined, initialJobs);
-  const [selectedStage, setSelectedStage] = useState<PipelineStage | null>(null);
+  const [filter, setFilter] = useState<{ stage: PipelineStage; jobType: "mitigation" | "reconstruction" } | null>(null);
   const [now] = useState(() => Date.now());
+
+  // For backward compat — components that only need the stage
+  const selectedStage = filter?.stage ?? null;
 
   const isLoading =
     kpis.isLoading || pipeline.isLoading || tasks.isLoading || team.isLoading;
@@ -528,31 +765,126 @@ export default function DashboardClient({
   const pipelineData = pipeline.data ?? [];
   const taskData = tasks.data ?? [];
 
-  function handleStageClick(stage: PipelineStage) {
+  function handleMitStageClick(stage: PipelineStage) {
     if (stage === "collected") return;
-    setSelectedStage((prev) => (prev === stage ? null : stage));
+    setFilter((prev) => (prev?.stage === stage && prev?.jobType === "mitigation") ? null : { stage, jobType: "mitigation" });
   }
+
+  function handleRecStageClick(stage: PipelineStage) {
+    if (stage === "collected") return;
+    setFilter((prev) => (prev?.stage === stage && prev?.jobType === "reconstruction") ? null : { stage, jobType: "reconstruction" });
+  }
+
+  // Compute per-type stage counts
+  const mitCounts = new Map<PipelineStage, number>();
+  const recCounts = new Map<PipelineStage, number>();
+  for (const s of MIT_STAGE_ORDER) mitCounts.set(s, 0);
+  for (const s of REC_STAGE_ORDER) recCounts.set(s, 0);
+  for (const job of jobs) {
+    const stage = getJobStage(job);
+    if (job.job_type === "mitigation" && mitCounts.has(stage)) {
+      mitCounts.set(stage, (mitCounts.get(stage) ?? 0) + 1);
+    }
+    if (job.job_type === "reconstruction" && recCounts.has(stage)) {
+      recCounts.set(stage, (recCounts.get(stage) ?? 0) + 1);
+    }
+  }
+
+  const today = new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" });
 
   return (
     <div className="w-full px-4 sm:px-6 py-5 space-y-5">
-      {/* -- Row 1: Pipeline Boxes ------------------------------------------ */}
-      <PipelineBoxes
-        stages={pipelineData}
-        selectedStage={selectedStage}
-        onStageClick={handleStageClick}
-      />
+      {/* -- Header -------------------------------------------------------- */}
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-[18px] sm:text-[22px] font-bold text-on-surface">{getGreeting()}</h1>
+          <p className={`text-[10px] sm:text-[11px] ${MONO} text-on-surface-variant mt-0.5`}>{today}</p>
+        </div>
+        <Link
+          href="/jobs/new"
+          className="flex items-center gap-1.5 px-4 h-9 rounded-lg text-[12px] font-semibold text-white bg-brand-accent hover:brightness-110 transition-all active:scale-[0.98] cursor-pointer"
+        >
+          <span className="text-[15px] leading-none">+</span> New Job
+        </Link>
+      </div>
 
-      {/* -- Row 2: Jobs List (55%) + Map (45%) ----------------------------- */}
-      <div className="grid lg:grid-cols-[55fr_45fr] gap-5">
-        <JobsList tasks={taskData} selectedStage={selectedStage} now={now} jobs={jobs} />
+      {/* Search — mobile only (desktop has it in the app shell header) */}
+      <div className="sm:hidden relative">
+        <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" className="text-on-surface-variant/50">
+            <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M16 16l4.5 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </div>
+        <input
+          type="text"
+          placeholder="Search jobs..."
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && e.currentTarget.value.trim()) {
+              window.location.href = `/jobs?search=${encodeURIComponent(e.currentTarget.value.trim())}`;
+            }
+          }}
+          className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+        />
+      </div>
+
+      {/* -- KPIs ---------------------------------------------------------- */}
+      <KPIGauges kpis={kpis.data ?? undefined} />
+
+      {/* Divider: KPIs → Pipeline */}
+      <div className="border-t border-outline-variant/20" />
+
+      {/* -- Pipeline ------------------------------------------------------ */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <p className={`text-[10px] ${MONO} uppercase tracking-[0.12em] text-on-surface-variant/50`}>
+            Pipeline
+          </p>
+          <span className={`text-[9px] ${MONO} text-on-surface-variant/35`}>Tap to filter</span>
+        </div>
+        <div className="space-y-3">
+          <PipelineBar
+            label="Mitigation"
+            dotColor="#3b82f6"
+            stageOrder={MIT_STAGE_ORDER}
+            stageCounts={mitCounts}
+            selectedStage={filter?.jobType === "mitigation" ? filter.stage : null}
+            onStageClick={handleMitStageClick}
+            onClearFilter={() => setFilter(null)}
+          />
+          <PipelineBar
+            label="Reconstruction"
+            dotColor="#e85d26"
+            stageOrder={REC_STAGE_ORDER}
+            stageCounts={recCounts}
+            selectedStage={filter?.jobType === "reconstruction" ? filter.stage : null}
+            onStageClick={handleRecStageClick}
+            onClearFilter={() => setFilter(null)}
+          />
+        </div>
+      </div>
+
+      {/* Divider */}
+      <div className="border-t border-outline-variant/20" />
+
+      {/* -- Active Jobs + Live Operations (side by side) ------------------ */}
+      <div className="grid lg:grid-cols-2 gap-4">
+        <JobsList
+          tasks={taskData}
+          filter={filter}
+          now={now}
+          jobs={jobs}
+        />
         <LiveOperationsMap selectedStage={selectedStage} jobs={jobs} />
       </div>
 
-      {/* -- Row 3: Team + Activity + KPIs ---------------------------------- */}
-      <div className="grid md:grid-cols-3 gap-5">
+      {/* Divider */}
+      <div className="border-t border-outline-variant/20" />
+
+      {/* -- Team + Activity ----------------------------------------------- */}
+      <div className="grid md:grid-cols-2 gap-4">
         <OperationsTeam />
         <LatestActivity jobs={jobs} initialEvents={initialEvents} />
-        <KPIMiniGrid kpis={kpis.data ?? undefined} />
       </div>
     </div>
   );

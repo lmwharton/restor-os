@@ -17,6 +17,9 @@ interface MapJob {
   stage: string;
   stageLabel: string;
   color: string;
+  customerName: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 interface DashboardMapProps {
@@ -49,6 +52,9 @@ const MAP_STYLES: google.maps.MapTypeStyle[] = [
 const DEFAULT_CENTER = { lat: 39.8283, lng: -98.5795 };
 const DEFAULT_ZOOM = 4;
 
+// Global geocode cache — survives component unmount/remount across navigations
+const geocodeCache = new Map<string, google.maps.LatLngLiteral | null>();
+
 // ---------------------------------------------------------------------------
 //  Component
 // ---------------------------------------------------------------------------
@@ -59,7 +65,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
   const mapInstanceRef = useRef<google.maps.Map | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
   const infoWindowRef = useRef<google.maps.InfoWindow | null>(null);
-  const geocodeCacheRef = useRef<Map<string, google.maps.LatLngLiteral | null>>(new Map());
+  // Use global cache instead of ref so geocodes persist across navigations
   const [geocoding, setGeocoding] = useState(false);
   const [ready, setReady] = useState(false);
 
@@ -123,27 +129,49 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
 
       if (!addressStr.trim()) continue;
 
-      let position = geocodeCacheRef.current.get(addressStr);
+      // Use DB lat/lng if available (skips geocoding entirely)
+      let position: google.maps.LatLngLiteral | null | undefined;
+      if (job.latitude && job.longitude) {
+        position = { lat: job.latitude, lng: job.longitude };
+      } else {
+        position = geocodeCache.get(addressStr);
+      }
 
-      // Geocode if not cached
+      // Geocode only if no lat/lng and not cached
       if (position === undefined) {
         try {
           const result = await geocoder.geocode({ address: addressStr });
           if (result.results.length > 0) {
             const loc = result.results[0].geometry.location;
             position = { lat: loc.lat(), lng: loc.lng() };
-            geocodeCacheRef.current.set(addressStr, position);
+            geocodeCache.set(addressStr, position);
           } else {
-            geocodeCacheRef.current.set(addressStr, null);
+            geocodeCache.set(addressStr, null);
             position = null;
           }
         } catch {
-          geocodeCacheRef.current.set(addressStr, null);
+          geocodeCache.set(addressStr, null);
           position = null;
         }
       }
 
       if (!position) continue;
+
+      // Offset overlapping pins at the same location
+      const posKey = `${position.lat.toFixed(4)},${position.lng.toFixed(4)}`;
+      const existing = markersRef.current.filter((_, idx) => {
+        const prevJob = jobs[idx];
+        if (!prevJob) return false;
+        const prevAddr = [prevJob.address_line1, prevJob.city, prevJob.state, prevJob.zip].filter(Boolean).join(", ");
+        const prevPos = geocodeCache.get(prevAddr);
+        if (!prevPos) return false;
+        return `${prevPos.lat.toFixed(4)},${prevPos.lng.toFixed(4)}` === posKey;
+      }).length;
+      if (existing > 0) {
+        const angle = (existing * 60) * (Math.PI / 180);
+        const offset = 0.0003;
+        position = { lat: position.lat + Math.cos(angle) * offset, lng: position.lng + Math.sin(angle) * offset };
+      }
 
       const marker = new google.maps.Marker({
         map,
@@ -159,38 +187,15 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
         },
       });
 
-      // Info window on click
+      // Click pin to show info window, click again or click link to navigate
       marker.addListener("click", () => {
         const infoWindow = infoWindowRef.current;
         if (!infoWindow) return;
         infoWindow.setContent(`
-          <div style="
-            font-family: system-ui, -apple-system, sans-serif;
-            padding: 4px 2px;
-            min-width: 140px;
-          ">
-            <div style="
-              font-weight: 600;
-              font-size: 13px;
-              color: #1c1917;
-              margin-bottom: 4px;
-            ">${job.address_line1}</div>
-            <div style="
-              font-size: 11px;
-              color: #78716c;
-              margin-bottom: 6px;
-            ">${job.city}, ${job.state} ${job.zip}</div>
-            <span style="
-              display: inline-block;
-              font-size: 10px;
-              font-weight: 600;
-              text-transform: uppercase;
-              letter-spacing: 0.05em;
-              padding: 2px 8px;
-              border-radius: 4px;
-              background-color: ${job.color}20;
-              color: ${job.color};
-            ">${job.stageLabel}</span>
+          <div style="font-family:system-ui,-apple-system,sans-serif;padding:4px 2px;">
+            <div style="font-weight:600;font-size:13px;color:#1c1917;line-height:1.3;">${job.address_line1}</div>
+            <div style="font-size:11px;color:#78716c;margin-top:3px;">${job.customerName || job.city + ", " + job.state}</div>
+            <a href="/jobs/${job.id}" style="display:inline-block;margin-top:6px;font-size:11px;font-weight:600;color:#e85d26;text-decoration:underline;text-underline-offset:2px;">Open Job &rarr;</a>
           </div>
         `);
         infoWindow.open({ anchor: marker, map });
@@ -234,7 +239,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
   // Loading state when maps haven't loaded yet
   if (!mapsLoaded) {
     return (
-      <div className="relative min-h-[400px] flex-1 bg-surface-container-high rounded-xl overflow-hidden flex items-center justify-center">
+      <div className="relative min-h-[400px] h-full flex-1 bg-surface-container-high rounded-xl overflow-hidden flex items-center justify-center">
         <div className="text-center">
           <div className="w-6 h-6 border-2 border-outline-variant border-t-brand-accent rounded-full animate-spin mx-auto mb-2" />
           <p className="text-[11px] text-outline font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em]">
@@ -246,7 +251,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
   }
 
   return (
-    <div className="relative min-h-[400px] flex-1 rounded-xl overflow-hidden">
+    <div className="relative min-h-[400px] h-full flex-1 rounded-xl overflow-hidden">
       <div ref={mapRef} className="absolute inset-0" />
       {geocoding && (
         <div className="absolute top-3 left-3 z-10 flex items-center gap-2 bg-surface-container-lowest/90 backdrop-blur-sm rounded-lg px-3 py-1.5 shadow-sm">

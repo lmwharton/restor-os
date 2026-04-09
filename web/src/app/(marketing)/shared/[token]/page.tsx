@@ -55,9 +55,11 @@ function statusLabel(status: string): string {
     contracted: "Contracted",
     mitigation: "Mitigation",
     drying: "Drying",
-    job_complete: "Complete",
+    complete: "Complete",
     submitted: "Submitted",
     collected: "Collected",
+    scoping: "Scoping",
+    in_progress: "In Progress",
   };
   return map[status] ?? status;
 }

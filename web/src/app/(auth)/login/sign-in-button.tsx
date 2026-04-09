@@ -32,10 +32,7 @@ export default function SignInButton() {
     <button
       onClick={handleSignIn}
       disabled={isLoading}
-      className="group relative flex h-14 w-full cursor-pointer items-center justify-center gap-3 overflow-hidden rounded-xl text-base font-semibold text-white transition-all duration-200 hover:shadow-lg hover:shadow-[#a63500]/20 active:scale-[0.98] disabled:opacity-70 disabled:cursor-wait"
-      style={{
-        background: "linear-gradient(135deg, #a63500, #cc4911)",
-      }}
+      className="group relative flex h-14 w-full cursor-pointer items-center justify-center gap-3 overflow-hidden rounded-xl text-base font-semibold text-white transition-all duration-200 hover:shadow-lg hover:shadow-[#e85d26]/20 active:scale-[0.98] disabled:opacity-70 disabled:cursor-wait bg-brand-accent"
     >
       {/* Hover shimmer */}
       <span className="pointer-events-none absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/10 to-transparent transition-transform duration-500 group-hover:translate-x-full" />

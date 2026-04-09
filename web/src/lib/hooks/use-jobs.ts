@@ -5,32 +5,40 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
-  FloorPlan, PaginatedResponse,
+  FloorPlan, PaginatedResponse, ReconPhase,
 } from "../types";
+// Mock data fallback — remove when real backend is connected
+import { mockJobs, mockRooms, mockPhotos, mockEvents, mockReconPhases } from "../mock-data";
+const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK === "true";
 
 // ─── Job Queries ──────────────────────────────────────────────────────
 
-export function useJobs(filters?: { status?: string; search?: string }, initialData?: JobDetail[]) {
+export function useJobs(filters?: { status?: string; search?: string; job_type?: string }, initialData?: JobDetail[]) {
   return useQuery<JobDetail[]>({
     queryKey: ["jobs", filters],
     queryFn: async () => {
+      if (USE_MOCK) return mockJobs;
       const params = new URLSearchParams();
       if (filters?.status) params.set("status", filters.status);
       if (filters?.search) params.set("search", filters.search);
+      if (filters?.job_type) params.set("job_type", filters.job_type);
       params.set("limit", "100");
       const qs = params.toString();
       const data = await apiGet<JobDetail[] | PaginatedResponse<JobDetail>>(`/v1/jobs${qs ? `?${qs}` : ""}`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
     },
-    initialData,
+    initialData: USE_MOCK ? undefined : initialData,
   });
 }
 
 export function useJob(jobId: string) {
   return useQuery<JobDetail>({
     queryKey: ["jobs", jobId],
-    queryFn: () => apiGet<JobDetail>(`/v1/jobs/${jobId}`),
+    queryFn: async () => {
+      if (USE_MOCK) return mockJobs.find((j) => j.id === jobId) ?? mockJobs[0];
+      return apiGet<JobDetail>(`/v1/jobs/${jobId}`);
+    },
     enabled: !!jobId,
   });
 }
@@ -74,6 +82,7 @@ export function useRooms(jobId: string) {
   return useQuery<Room[]>({
     queryKey: ["rooms", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockRooms.filter((r) => r.job_id === jobId);
       const data = await apiGet<Room[] | PaginatedResponse<Room>>(`/v1/jobs/${jobId}/rooms`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -121,6 +130,7 @@ export function usePhotos(jobId: string) {
   return useQuery<Photo[]>({
     queryKey: ["photos", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockPhotos.filter((p) => p.job_id === jobId);
       const data = await apiGet<Photo[] | PaginatedResponse<Photo>>(`/v1/jobs/${jobId}/photos?limit=200`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -265,6 +275,7 @@ export function useJobEvents(jobId: string) {
   return useQuery<Event[]>({
     queryKey: ["events", jobId],
     queryFn: async () => {
+      if (USE_MOCK) return mockEvents.filter((e) => e.job_id === jobId);
       const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/jobs/${jobId}/events`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
@@ -277,11 +288,71 @@ export function useCompanyEvents(initialData?: Event[]) {
   return useQuery<Event[]>({
     queryKey: ["events", "company"],
     queryFn: async () => {
+      if (USE_MOCK) return mockEvents;
       const data = await apiGet<Event[] | PaginatedResponse<Event>>(`/v1/events?limit=20`);
       if (Array.isArray(data)) return data;
       return data.items ?? [];
     },
-    initialData,
+    initialData: USE_MOCK ? undefined : initialData,
+  });
+}
+
+// ─── Recon Phase Queries ─────────────────────────────────────────────
+
+export function useReconPhases(jobId: string) {
+  return useQuery<ReconPhase[]>({
+    queryKey: ["recon-phases", jobId],
+    queryFn: async () => {
+      if (USE_MOCK) return mockReconPhases.filter((p: ReconPhase) => p.job_id === jobId);
+      const data = await apiGet<ReconPhase[] | PaginatedResponse<ReconPhase>>(`/v1/jobs/${jobId}/recon-phases`);
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!jobId,
+  });
+}
+
+export function useCreateReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { phase_name: string; sort_order: number }) =>
+      apiPost<ReconPhase>(`/v1/jobs/${jobId}/recon-phases`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useUpdateReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ phaseId, ...data }: { phaseId: string; status?: string; phase_name?: string; notes?: string }) =>
+      apiPatch<ReconPhase>(`/v1/jobs/${jobId}/recon-phases/${phaseId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useDeleteReconPhase(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (phaseId: string) =>
+      apiDelete(`/v1/jobs/${jobId}/recon-phases/${phaseId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
+  });
+}
+
+export function useReorderReconPhases(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (items: { id: string; sort_order: number }[]) =>
+      apiPost(`/v1/jobs/${jobId}/recon-phases/reorder`, { phases: items }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["recon-phases", jobId] });
+    },
   });
 }
 

@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useCallback } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import type { LossType, WaterCategory, WaterClass } from "@/lib/types";
+import type { JobType, LossType, WaterCategory, WaterClass } from "@/lib/types";
+import { useJobs } from "@/lib/hooks/use-jobs";
 import { useCreateJob } from "@/lib/hooks/use-jobs";
 import { AddressAutocomplete, type AddressParts } from "@/components/address-autocomplete";
 
@@ -58,7 +59,7 @@ function ChevronDown({ open }: { open: boolean }) {
 
 function DropletIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 2.69l.66.72C13.52 4.35 16.5 7.7 16.5 11.5a4.5 4.5 0 0 1-9 0c0-3.8 2.98-7.15 3.84-8.09L12 2.69Z"
         stroke="currentColor"
@@ -74,7 +75,7 @@ function DropletIcon() {
 
 function FlameIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M12 2c.5 3.5-1.5 5.5-1.5 5.5C12.5 9 14 7 14 7c2 3.5 1 7-2 9-1.5-1-2-3-2-3s-1 2.5 0 5c-3-1.5-5-5-4-9 0 0 2-2 3-5 .5 1.5 2 2 3-2Z"
         stroke="currentColor"
@@ -90,7 +91,7 @@ function FlameIcon() {
 
 function MoldIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
       <circle cx="12" cy="12" r="8" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 3" />
       <circle cx="12" cy="12" r="1.5" fill="currentColor" />
@@ -135,9 +136,9 @@ function SegmentedButtons<T extends string>({
             type="button"
             onClick={() => onChange(opt.value)}
             title={opt.subtitle}
-            className={`flex-1 h-12 rounded-lg text-sm font-semibold transition-all duration-150 cursor-pointer ${
+            className={`flex-1 h-9 rounded-lg text-[12px] font-semibold transition-all duration-150 cursor-pointer ${
               value === opt.value
-                ? "primary-gradient text-on-primary shadow-sm"
+                ? "bg-brand-accent text-on-primary shadow-sm"
                 : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low"
             }`}
           >
@@ -190,7 +191,7 @@ function FormInput({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full h-14 px-4 rounded-lg bg-surface-container-lowest text-on-surface text-[15px] placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+        className="w-full h-10 px-3 rounded-lg bg-surface-container-lowest text-on-surface text-[13px] placeholder:text-on-surface-variant/50 outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-2 focus:ring-brand-accent/20 transition-all"
       />
     </div>
   );
@@ -219,7 +220,8 @@ function FormInputSmall({
         placeholder={placeholder}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full h-12 px-4 rounded-lg bg-surface-container-lowest text-on-surface text-[15px] placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+        onFocus={(e) => e.target.select()}
+        className="w-full h-10 px-3 rounded-lg bg-surface-container-lowest text-on-surface text-[13px] placeholder:text-on-surface-variant/50 outline-none border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-2 focus:ring-brand-accent/20 transition-all"
       />
     </div>
   );
@@ -231,7 +233,7 @@ function FormInputSmall({
 
 function StormIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M13 2L3 14h9l-1 8 10-12h-9l1-8Z"
         stroke="currentColor"
@@ -247,7 +249,7 @@ function StormIcon() {
 
 function OtherIcon() {
   return (
-    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <rect x="4" y="4" width="16" height="16" rx="3" stroke="currentColor" strokeWidth="1.5" fill="currentColor" fillOpacity="0.15" />
       <circle cx="12" cy="12" r="1.5" fill="currentColor" />
       <circle cx="8" cy="12" r="1.5" fill="currentColor" />
@@ -279,7 +281,23 @@ const classOptions: { value: WaterClass; label: string; subtitle: string }[] = [
 
 export default function NewJobPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const createJob = useCreateJob();
+
+  // Job type — read from URL param if present (?type=reconstruction)
+  const [jobType, setJobType] = useState<JobType>(
+    searchParams.get("type") === "reconstruction" ? "reconstruction" : "mitigation"
+  );
+  const [linkedJobId, setLinkedJobId] = useState<string>(searchParams.get("linked") ?? "");
+  const [linkedJobNumber, setLinkedJobNumber] = useState<string | null>(null);
+
+  // Fetch existing mitigation jobs for linking dropdown
+  const { data: allJobs } = useJobs();
+  // Filter out mitigation jobs that already have a reconstruction job linked to them
+  const linkedMitIds = new Set(
+    allJobs?.filter((j) => j.job_type === "reconstruction" && j.linked_job_id).map((j) => j.linked_job_id) ?? []
+  );
+  const mitigationJobs = allJobs?.filter((j) => j.job_type === "mitigation" && !linkedMitIds.has(j.id)) ?? [];
 
   // Core fields
   const [lossType, setLossType] = useState<LossType>("water");
@@ -305,6 +323,7 @@ export default function NewJobPage() {
   const [lossCause, setLossCause] = useState("");
   const [category, setCategory] = useState<WaterCategory | null>(null);
   const [waterClass, setWaterClass] = useState<WaterClass | null>(null);
+  const [homeYearBuilt, setHomeYearBuilt] = useState("");
 
   // Insurance
   const [carrier, setCarrier] = useState("");
@@ -313,13 +332,71 @@ export default function NewJobPage() {
   const [adjusterEmail, setAdjusterEmail] = useState("");
   const [adjusterPhone, setAdjusterPhone] = useState("");
 
-  // Error state
+  // Auto-copy fields when linking a mitigation job
+  const handleLinkJob = useCallback((jobId: string) => {
+    setLinkedJobId(jobId);
+    if (!jobId) {
+      // Clear all auto-filled fields when unlinking
+      setLinkedJobNumber(null);
+      setAddress("");
+      setAddressParts(null);
+      setCustomerName("");
+      setCustomerPhone("");
+      setCustomerEmail("");
+      setLossType("water");
+      setLossDate("");
+      setLossCause("");
+      setCarrier("");
+      setClaimNumber("");
+      setAdjusterName("");
+      setAdjusterEmail("");
+      setAdjusterPhone("");
+      return;
+    }
+    const linked = mitigationJobs.find((j) => j.id === jobId);
+    if (!linked) return;
+    setLinkedJobNumber(linked.job_number);
+    // Auto-fill address
+    setAddress(linked.address_line1);
+    setAddressParts({ address_line1: linked.address_line1, city: linked.city, state: linked.state, zip: linked.zip, latitude: linked.latitude, longitude: linked.longitude });
+    // Auto-fill customer
+    setCustomerName(linked.customer_name ?? "");
+    setCustomerPhone(linked.customer_phone ?? "");
+    setCustomerEmail(linked.customer_email ?? "");
+    // Auto-fill loss details
+    setLossType(linked.loss_type);
+    setLossDate(linked.loss_date ?? "");
+    setLossCause(linked.loss_cause ?? "");
+    // Auto-fill insurance
+    setCarrier(linked.carrier ?? "");
+    setClaimNumber(linked.claim_number ?? "");
+    setAdjusterName(linked.adjuster_name ?? "");
+    setAdjusterEmail(linked.adjuster_email ?? "");
+    setAdjusterPhone(linked.adjuster_phone ?? "");
+    // Auto-expand details so user sees what was filled
+    setShowDetails(true);
+  }, [mitigationJobs]);
+
+  // Auto-fill from URL param (?linked=jobId) once mitigation jobs load
+  const linkedParam = searchParams.get("linked");
+  useEffect(() => {
+    if (linkedParam && mitigationJobs.length > 0 && !address) {
+      handleLinkJob(linkedParam);
+    }
+  }, [linkedParam, mitigationJobs.length]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Error + validation state
   const [error, setError] = useState<string | null>(null);
+  const [attempted, setAttempted] = useState(false);
 
   const handleCreate = async () => {
+    setAttempted(true);
     setError(null);
+    if (!address.trim()) return;
     try {
       const result = await createJob.mutateAsync({
+        job_type: jobType,
+        linked_job_id: linkedJobId || undefined,
         address_line1: address.trim(),
         loss_type: lossType,
         city: addressParts?.city || undefined,
@@ -332,51 +409,122 @@ export default function NewJobPage() {
         loss_class: waterClass || undefined,
         loss_cause: lossCause.trim() || undefined,
         loss_date: lossDate || undefined,
+        home_year_built: homeYearBuilt ? parseInt(homeYearBuilt, 10) : undefined,
         claim_number: claimNumber.trim() || undefined,
         carrier: carrier.trim() || undefined,
         adjuster_name: adjusterName.trim() || undefined,
         adjuster_phone: adjusterPhone.trim() || undefined,
         adjuster_email: adjusterEmail.trim() || undefined,
+        latitude: addressParts?.latitude || undefined,
+        longitude: addressParts?.longitude || undefined,
       });
       router.push(`/jobs/${result.id}`);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create job");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setError(msg === "Failed to fetch" ? "Unable to reach the server. Check your connection and try again." : msg);
     }
   };
 
   return (
     <div className="min-h-[100dvh] bg-surface flex flex-col">
       {/* ── Header ─────────────────────────────────────────────── */}
-      <header className="flex items-center gap-3 px-5 pt-6 pb-2">
-        <Link
-          href="/jobs"
-          className="w-10 h-10 rounded-xl flex items-center justify-center text-on-surface-variant hover:bg-surface-container transition-colors"
-          aria-label="Back to jobs"
-        >
-          <ArrowLeft />
-        </Link>
-        <h1 className="text-xl font-bold tracking-tight text-on-surface">
-          New Job
-        </h1>
+      <header className="sticky top-0 z-40 bg-surface/80 backdrop-blur-xl border-b border-outline-variant/15">
+        <div className="max-w-6xl mx-auto px-4 h-14 flex items-center gap-2">
+          <Link
+            href="/jobs"
+            className="flex items-center justify-center w-10 h-10 rounded-xl bg-surface-container-low active:bg-surface-container-high transition-colors"
+            aria-label="Back to jobs"
+          >
+            <ArrowLeft />
+          </Link>
+          <h1 className="text-[16px] font-bold text-on-surface">
+            New Job
+          </h1>
+        </div>
       </header>
 
       {/* ── Form Body ──────────────────────────────────────────── */}
-      <div className="flex-1 px-5 pt-4 pb-8 space-y-6 max-w-lg mx-auto w-full lg:max-w-none lg:mx-0 lg:px-5">
+      <div className="flex-1 px-4 pt-4 pb-8 max-w-6xl mx-auto w-full lg:grid lg:grid-cols-[1fr_320px] lg:gap-6">
+        {/* Left: Form */}
+        <div className="space-y-4">
+        {/* Card 1: Job Type + Loss Type */}
+        <div className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4 space-y-4">
+        <div>
+          <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
+            Job Type
+          </label>
+          <div className="inline-flex gap-1.5 rounded-full p-1 bg-surface-container-high/60">
+            <button
+              type="button"
+              onClick={() => setJobType("mitigation")}
+              className={`flex items-center gap-2 px-4 h-8 rounded-full text-[13px] font-semibold transition-all duration-150 cursor-pointer ${
+                jobType === "mitigation"
+                  ? "bg-brand-accent text-on-primary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-container-lowest/60"
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${jobType === "mitigation" ? "bg-white" : "bg-type-mitigation"}`} />
+              Mitigation
+            </button>
+            <button
+              type="button"
+              onClick={() => { setJobType("reconstruction"); setLinkedJobId(""); }}
+              className={`flex items-center gap-2 px-4 h-8 rounded-full text-[13px] font-semibold transition-all duration-150 cursor-pointer ${
+                jobType === "reconstruction"
+                  ? "bg-brand-accent text-on-primary shadow-sm"
+                  : "text-on-surface-variant hover:bg-surface-container-lowest/60"
+              }`}
+            >
+              <span className={`w-2 h-2 rounded-full ${jobType === "reconstruction" ? "bg-white" : "bg-type-reconstruction"}`} />
+              Reconstruction
+            </button>
+          </div>
+        </div>
+
+        {/* Link to Mitigation Job — shown immediately when reconstruction selected */}
+        {jobType === "reconstruction" && (
+          <div className="animate-[fadeSlideIn_200ms_ease-out]">
+            <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">
+              Link to Mitigation Job
+            </label>
+            <p className="text-[11px] text-on-surface-variant/70 mb-2">
+              Auto-fills address, customer, and insurance from the linked job.
+            </p>
+            <select
+              value={linkedJobId}
+              onChange={(e) => handleLinkJob(e.target.value)}
+              className="w-full h-10 px-3 rounded-lg bg-surface-container-lowest text-on-surface text-[13px] outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow border border-outline-variant appearance-none cursor-pointer"
+            >
+              <option value="">No linked job (standalone)</option>
+              {mitigationJobs.map((j) => (
+                <option key={j.id} value={j.id}>
+                  {j.job_number} — {j.address_line1}, {j.city} {j.state}
+                </option>
+              ))}
+            </select>
+            {linkedJobId && linkedJobNumber && (
+              <p className="mt-1.5 text-[11px] text-[#2a9d5c] font-[family-name:var(--font-geist-mono)]">
+                Address, customer, carrier, and adjuster copied from {linkedJobNumber}.
+              </p>
+            )}
+          </div>
+        )}
+
         {/* Loss Type Selector */}
         <div>
           <label className="block text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-2">
             Loss Type
           </label>
-          <div className="grid grid-cols-3 gap-3 lg:grid-cols-5">
+          <div className="flex flex-wrap gap-2">
             {lossTypes.map((lt) => (
               <button
                 key={lt.value}
                 type="button"
                 onClick={() => setLossType(lt.value)}
-                className={`h-20 rounded-xl flex flex-col items-center justify-center gap-1.5 text-sm font-semibold transition-all duration-150 cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3 h-9 rounded-full text-[12px] font-medium transition-all duration-150 cursor-pointer ${
                   lossType === lt.value
-                    ? "primary-gradient text-on-primary shadow-md shadow-primary/20"
-                    : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low hover:border-outline"
+                    ? "bg-brand-accent text-on-primary"
+                    : "bg-surface-container-lowest text-on-surface-variant border border-outline-variant hover:bg-surface-container-low"
                 }`}
               >
                 {lt.icon}
@@ -385,16 +533,18 @@ export default function NewJobPage() {
             ))}
           </div>
         </div>
+        </div>
+
+        {/* Card 2: Address + Details */}
+        <div className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4 space-y-4">
 
         {/* Address */}
         <div>
-          <label className="flex items-center gap-2 mb-2">
+          <label className="flex items-center gap-1.5 mb-2">
             <span className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant">
               Address
             </span>
-            <span className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-brand-accent font-semibold">
-              Required
-            </span>
+            <span className="text-brand-accent text-[13px] leading-none">*</span>
           </label>
           <AddressAutocomplete
             value={address}
@@ -404,8 +554,15 @@ export default function NewJobPage() {
               setAddressParts(parts);
             }}
             placeholder="Start typing an address..."
-            className="w-full h-14 px-4 rounded-lg bg-surface-container-lowest text-on-surface text-[15px] placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
+            className={`w-full h-10 px-3 rounded-lg bg-surface-container-lowest text-on-surface text-[13px] placeholder:text-on-surface-variant/50 outline-none transition-all ${
+              attempted && !address.trim()
+                ? "border-2 border-red-400 focus:ring-2 focus:ring-red-200"
+                : "border border-outline-variant/30 focus:border-brand-accent/50 focus:ring-2 focus:ring-brand-accent/20"
+            }`}
           />
+          {attempted && !address.trim() && (
+            <p className="mt-1 text-[11px] text-red-500">Address is required to create a job.</p>
+          )}
           {addressParts && (
             <p className="mt-1.5 text-[12px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
               {addressParts.city}{addressParts.state ? `, ${addressParts.state}` : ""}{addressParts.zip ? ` ${addressParts.zip}` : ""}
@@ -436,6 +593,7 @@ export default function NewJobPage() {
                   placeholder="John Smith"
                   value={customerName}
                   onChange={setCustomerName}
+
                 />
                 <FormInputSmall
                   label="Phone"
@@ -443,6 +601,7 @@ export default function NewJobPage() {
                   placeholder="(555) 123-4567"
                   value={customerPhone}
                   onChange={setCustomerPhone}
+
                 />
                 <FormInputSmall
                   label="Email"
@@ -450,6 +609,7 @@ export default function NewJobPage() {
                   placeholder="john@example.com"
                   value={customerEmail}
                   onChange={setCustomerEmail}
+
                 />
               </section>
 
@@ -463,14 +623,16 @@ export default function NewJobPage() {
                   type="date"
                   value={lossDate}
                   onChange={setLossDate}
+
                 />
                 <FormInputSmall
                   label="Cause"
                   placeholder="Burst pipe, appliance leak, etc."
                   value={lossCause}
                   onChange={setLossCause}
+
                 />
-                {lossType === "water" && (
+                {lossType === "water" && jobType === "mitigation" && (
                   <>
                     <SegmentedButtons
                       label="Category"
@@ -488,6 +650,13 @@ export default function NewJobPage() {
                     />
                   </>
                 )}
+                <FormInputSmall
+                  label="Year Home Built"
+                  type="number"
+                  placeholder="e.g. 1975"
+                  value={homeYearBuilt}
+                  onChange={setHomeYearBuilt}
+                />
               </section>
 
               {/* Insurance Section — spans full width on desktop */}
@@ -501,18 +670,21 @@ export default function NewJobPage() {
                     placeholder="State Farm, Allstate, etc."
                     value={carrier}
                     onChange={setCarrier}
+
                   />
                   <FormInputSmall
                     label="Claim Number"
                     placeholder="CLM-2026-00123"
                     value={claimNumber}
                     onChange={setClaimNumber}
+
                   />
                   <FormInputSmall
                     label="Adjuster Name"
                     placeholder="Jane Doe"
                     value={adjusterName}
                     onChange={setAdjusterName}
+
                   />
                   <FormInputSmall
                     label="Adjuster Email"
@@ -520,6 +692,7 @@ export default function NewJobPage() {
                     placeholder="adjuster@carrier.com"
                     value={adjusterEmail}
                     onChange={setAdjusterEmail}
+
                   />
                   <FormInputSmall
                     label="Adjuster Phone"
@@ -527,11 +700,14 @@ export default function NewJobPage() {
                     placeholder="(555) 987-6543"
                     value={adjusterPhone}
                     onChange={setAdjusterPhone}
+
                   />
                 </div>
               </section>
+
             </div>
           )}
+        </div>
         </div>
 
         {/* ── Error Message ────────────────────────────────────── */}
@@ -541,11 +717,11 @@ export default function NewJobPage() {
           </div>
         )}
 
-        {/* ── Create Button ────────────────────────────────────── */}
-        <div className="lg:flex lg:items-center lg:justify-between lg:gap-4">
+        {/* ── Action Buttons ──────────────────────────────────── */}
+        <div className="flex items-center gap-3 justify-center lg:justify-end">
           <Link
             href="/jobs"
-            className="hidden lg:inline-flex text-sm font-medium text-on-surface-variant hover:text-on-surface transition-colors"
+            className="hidden lg:flex h-9 px-5 rounded-lg text-[13px] font-medium text-on-surface-variant bg-surface-container-lowest border border-outline-variant/30 items-center hover:bg-surface-container-low transition-colors"
           >
             Cancel
           </Link>
@@ -553,16 +729,68 @@ export default function NewJobPage() {
             type="button"
             onClick={handleCreate}
             disabled={!address.trim() || createJob.isPending}
-            className="w-full lg:w-auto lg:px-12 h-14 rounded-xl text-[16px] font-semibold text-on-primary primary-gradient cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:shadow-none disabled:active:scale-100"
+            className="h-10 px-8 rounded-full lg:rounded-lg lg:px-8 lg:h-9 text-[13px] font-semibold text-on-primary bg-brand-accent cursor-pointer transition-all duration-200 hover:shadow-lg hover:shadow-primary/20 active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed"
           >
-            {createJob.isPending ? "Creating..." : "Create Job \u2192"}
+            {createJob.isPending ? "Creating..." : "Create Job →"}
           </button>
         </div>
 
-        {/* ── Footer ───────────────────────────────────────────── */}
-        <p className="text-center text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.15em] text-on-surface-variant/50 pt-2">
-          Precision scoping powered by Crewmatic AI
-        </p>
+        </div>
+
+        {/* Right: Sidebar — tips & checklist */}
+        <div className="hidden lg:block space-y-4 lg:sticky lg:top-20 lg:self-start">
+          {/* Checklist */}
+          <div className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
+            <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
+              To Create This Job
+            </h3>
+            <div className="space-y-2.5">
+              <div className="flex gap-2.5">
+                <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${jobType ? "bg-emerald-500" : "bg-outline-variant"}`} />
+                <p className={`text-[12px] ${jobType ? "text-on-surface-variant" : "text-on-surface font-medium"}`}>
+                  Select job type
+                </p>
+              </div>
+              <div className="flex gap-2.5">
+                <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${address.trim() ? "bg-emerald-500" : "bg-brand-accent"}`} />
+                <div>
+                  <p className={`text-[12px] ${address.trim() ? "text-on-surface-variant" : "text-brand-accent font-semibold"}`}>
+                    {address.trim() ? "Address entered" : "Enter job address"}
+                  </p>
+                  {!address.trim() && (
+                    <p className="text-[11px] text-on-surface-variant mt-0.5">Required to create the job</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex gap-2.5">
+                <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${customerName.trim() ? "bg-emerald-500" : "bg-outline-variant"}`} />
+                <p className={`text-[12px] ${customerName.trim() ? "text-on-surface-variant" : "text-on-surface-variant"}`}>
+                  Add customer info
+                </p>
+              </div>
+              <div className="flex gap-2.5">
+                <span className={`w-2 h-2 rounded-full mt-1 shrink-0 ${carrier.trim() ? "bg-emerald-500" : "bg-outline-variant"}`} />
+                <p className={`text-[12px] ${carrier.trim() ? "text-on-surface-variant" : "text-on-surface-variant"}`}>
+                  Add insurance details
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Tips */}
+          <div className="bg-surface-container-lowest rounded-xl shadow-[0_1px_3px_rgba(31,27,23,0.04)] p-4">
+            <h3 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.1em] font-semibold text-on-surface-variant mb-3">
+              Tips
+            </h3>
+            <ul className="space-y-2.5 text-[12px] text-on-surface-variant leading-snug ml-4 list-disc">
+              <li className="pl-1">Only the <span className="font-medium text-on-surface">address</span> is required. Add other details later.</li>
+              {jobType === "reconstruction" && (
+                <li className="pl-1">Link a mitigation job to auto-fill customer and insurance.</li>
+              )}
+              <li className="pl-1">Add photos, rooms, and floor plans after creating.</li>
+            </ul>
+          </div>
+        </div>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ Edge cases: not-found, duplicate job numbers, company_id mismatch, empty updates
 """
 
 from contextlib import contextmanager
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import jwt as pyjwt
@@ -861,6 +861,8 @@ class TestUpdateJob:
         """Update job status returns 200."""
         job_id = uuid4()
         updated_row = _job_row(job_id=job_id, company_id=mock_company_id, status="mitigation")
+        updated_row["job_type"] = "mitigation"
+        updated_row["linked_job_id"] = None
 
         def jobs_handler(mock_table):
             result = MagicMock()
@@ -868,6 +870,10 @@ class TestUpdateJob:
             (
                 mock_table.update.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value
             ) = result
+            # Per-job-type status validation: select("job_type").eq().eq().is_().single().execute()
+            (
+                mock_table.select.return_value.eq.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+            ).data = {"job_type": "mitigation"}
 
         mock_client = make_mock_supabase(
             mock_user_row,
@@ -1151,3 +1157,497 @@ class TestDeleteJob:
         """Request without auth returns 401."""
         response = client.delete(f"/v1/jobs/{uuid4()}")
         assert response.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Tests: Reconstruction Job Features (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestCreateReconstructionJob:
+    """POST /v1/jobs with job_type=reconstruction and linked_job_id."""
+
+    def test_create_recon_job_success(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id, mock_user_id,
+    ):
+        """Create reconstruction job returns 201 with correct job_type."""
+        job_id = uuid4()
+        row = _job_row(
+            job_id=job_id, company_id=mock_company_id, user_id=mock_user_id,
+        )
+        row["job_type"] = "reconstruction"
+        row["linked_job_id"] = None
+
+        def jobs_handler(mock_table):
+            (
+                mock_table.select.return_value.eq.return_value
+                .like.return_value.order.return_value
+                .limit.return_value.execute.return_value
+            ).data = []
+            # For recon_phases insert (default phases)
+            mock_table.insert.return_value.execute.return_value = MagicMock(data=[{}])
+
+        def phases_handler(mock_table):
+            mock_table.insert.return_value.execute.return_value = MagicMock(data=[{}])
+
+        mock_client = make_mock_supabase(mock_user_row, {
+            "jobs": jobs_handler,
+            "recon_phases": phases_handler,
+        })
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
+
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
+            body = _create_body(job_type="reconstruction")
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["job_type"] == "reconstruction"
+
+    def test_create_linked_recon_job_validates_mitigation_source(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Linking to a non-mitigation job returns 400."""
+        source_id = uuid4()
+
+        def jobs_handler(mock_table):
+            # linked job lookup returns a reconstruction job (invalid link target)
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value.execute.return_value
+            ).data = [{"id": str(source_id), "job_type": "reconstruction"}]
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            body = _create_body(
+                job_type="reconstruction",
+                linked_job_id=str(source_id),
+            )
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "INVALID_LINK_TARGET"
+
+    def test_mitigation_job_cannot_link(
+        self, client, auth_headers, jwt_secret, mock_user_row,
+    ):
+        """Mitigation jobs cannot have linked_job_id."""
+        mock_client = make_mock_supabase(mock_user_row)
+
+        with _patch_all(jwt_secret, mock_client):
+            body = _create_body(
+                job_type="mitigation",
+                linked_job_id=str(uuid4()),
+            )
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "INVALID_LINK_TYPE"
+
+    def test_invalid_job_type_returns_400(
+        self, client, auth_headers, jwt_secret, mock_user_row,
+    ):
+        """Invalid job_type value returns 422 (Pydantic Literal validation)."""
+        mock_client = make_mock_supabase(mock_user_row)
+
+        with _patch_all(jwt_secret, mock_client):
+            body = _create_body(job_type="demolition")
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 422
+
+
+class TestStatusValidationPerJobType:
+    """PATCH /v1/jobs/{id} — status must be valid for the job's type."""
+
+    def test_mitigation_rejects_recon_status(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Setting status='scoping' on a mitigation job returns 400."""
+        job_id = uuid4()
+
+        def jobs_handler(mock_table):
+            # Per-type validation query: select("job_type").eq().eq().is_().single().execute()
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value
+                .single.return_value.execute.return_value
+            ).data = {"job_type": "mitigation"}
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.patch(
+                f"/v1/jobs/{job_id}",
+                json={"status": "scoping"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "INVALID_STATUS_FOR_TYPE"
+
+    def test_recon_rejects_mitigation_status(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Setting status='drying' on a reconstruction job returns 400."""
+        job_id = uuid4()
+
+        def jobs_handler(mock_table):
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value
+                .single.return_value.execute.return_value
+            ).data = {"job_type": "reconstruction"}
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.patch(
+                f"/v1/jobs/{job_id}",
+                json={"status": "drying"},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "INVALID_STATUS_FOR_TYPE"
+
+
+class TestCreateLinkedReconEndpoint:
+    """POST /v1/jobs/{job_id}/create-linked-recon"""
+
+    def test_linked_recon_rejects_non_mitigation_source(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Source job must be mitigation type."""
+        source_id = uuid4()
+
+        def jobs_handler(mock_table):
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value
+                .single.return_value.execute.return_value
+            ).data = {"id": str(source_id), "job_type": "reconstruction", "address_line1": "123 Main"}
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.post(
+                f"/v1/jobs/{source_id}/create-linked-recon",
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "INVALID_SOURCE_TYPE"
+
+    def test_linked_recon_source_not_found(
+        self, client, auth_headers, jwt_secret, mock_user_row,
+    ):
+        """Non-existent source job returns 404."""
+
+        def jobs_handler(mock_table):
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value
+                .single.return_value.execute.return_value
+            ).data = None
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.post(
+                f"/v1/jobs/{uuid4()}/create-linked-recon",
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Tests: Auto-Copy Fields on Linked Recon Job (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestLinkedJobAutoCopy:
+    """POST /v1/jobs with linked_job_id — auto-copy field verification."""
+
+    def test_auto_copy_fields_from_linked_mitigation(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id, mock_user_id,
+    ):
+        """Creating a linked recon job auto-copies 17 header fields from the mitigation source."""
+        source_id = uuid4()
+        new_job_id = uuid4()
+
+        source_row = _job_row(
+            job_id=source_id, company_id=mock_company_id,
+            customer_name="Brett Sodders", customer_phone="(586) 944-7700",
+            customer_email="brett@drypros.com",
+            claim_number="CLM-2026-001", carrier="State Farm",
+            adjuster_name="Jane Doe", adjuster_phone="(555) 123-4567",
+            adjuster_email="jane@statefarm.com",
+        )
+        source_row["job_type"] = "mitigation"
+        source_row["linked_job_id"] = None
+
+        new_row = _job_row(
+            job_id=new_job_id, company_id=mock_company_id, user_id=mock_user_id,
+            customer_name="Brett Sodders", customer_phone="(586) 944-7700",
+            customer_email="brett@drypros.com",
+            claim_number="CLM-2026-001", carrier="State Farm",
+            adjuster_name="Jane Doe", adjuster_phone="(555) 123-4567",
+            adjuster_email="jane@statefarm.com",
+        )
+        new_row["job_type"] = "reconstruction"
+        new_row["linked_job_id"] = str(source_id)
+
+        def jobs_handler(mock_table):
+            # For linked job lookup: select(*).eq(id).eq(company_id).is_(deleted_at).execute()
+            (
+                mock_table.select.return_value.eq.return_value
+                .eq.return_value.is_.return_value.execute.return_value
+            ).data = [source_row]
+            # For _generate_job_number: select().eq().like().order().limit().execute()
+            (
+                mock_table.select.return_value.eq.return_value
+                .like.return_value.order.return_value
+                .limit.return_value.execute.return_value
+            ).data = []
+
+        def phases_handler(mock_table):
+            mock_table.insert.return_value.execute.return_value = MagicMock(data=[{}])
+
+        mock_client = make_mock_supabase(mock_user_row, {
+            "jobs": jobs_handler,
+            "recon_phases": phases_handler,
+        })
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=new_row)
+
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
+            body = _create_body(
+                job_type="reconstruction",
+                linked_job_id=str(source_id),
+            )
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["customer_name"] == "Brett Sodders"
+        assert data["carrier"] == "State Farm"
+        assert data["claim_number"] == "CLM-2026-001"
+        assert data["adjuster_name"] == "Jane Doe"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Job Type Filter on GET /v1/jobs (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestJobTypeFilter:
+    """GET /v1/jobs?job_type=reconstruction"""
+
+    def test_list_jobs_with_job_type_filter(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Filter by job_type=reconstruction returns matching jobs."""
+        row = _job_row(company_id=mock_company_id)
+        row["job_type"] = "reconstruction"
+        row["linked_job_id"] = None
+
+        def jobs_handler(mock_table):
+            result = MagicMock()
+            result.data = [row]
+            result.count = 1
+            # With job_type filter: select().eq().is_().eq().order().range().execute()
+            (
+                mock_table.select.return_value.eq.return_value
+                .is_.return_value.eq.return_value
+                .order.return_value.range.return_value.execute.return_value
+            ) = result
+
+        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.get("/v1/jobs?job_type=reconstruction", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["items"]) == 1
+        assert data["total"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Tests: Immutable job_type (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestImmutableJobType:
+    """PATCH /v1/jobs/{id} — job_type cannot be changed after creation."""
+
+    def test_update_job_type_is_ignored(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Sending job_type in update payload is silently ignored (not in JobUpdate schema)."""
+        job_id = uuid4()
+        row = _job_row(job_id=job_id, company_id=mock_company_id, status="new")
+        row["job_type"] = "mitigation"
+        row["linked_job_id"] = None
+
+        def jobs_handler(mock_table):
+            result = MagicMock()
+            result.data = [row]
+            (
+                mock_table.update.return_value.eq.return_value
+                .eq.return_value.is_.return_value.execute.return_value
+            ) = result
+
+        mock_client = make_mock_supabase(mock_user_row, {
+            "jobs": jobs_handler,
+            "job_rooms": _counts_handler,
+            "photos": _counts_handler,
+            "floor_plans": _counts_handler,
+            "line_items": _counts_handler,
+        })
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.patch(
+                f"/v1/jobs/{job_id}",
+                json={"job_type": "reconstruction", "notes": "test"},
+                headers=auth_headers,
+            )
+
+        # Should succeed — job_type is ignored, only notes is applied
+        assert response.status_code == 200
+        assert response.json()["job_type"] == "mitigation"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Reverse Link Lookup (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestReverseLinkLookup:
+    """GET /v1/jobs/{id} — mitigation job shows linked recon via reverse query."""
+
+    def test_mitigation_shows_linked_recon_via_reverse_query(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
+    ):
+        """Mitigation job with no forward link resolves linked recon bidirectionally."""
+        mit_id = uuid4()
+        recon_id = uuid4()
+
+        mit_row = _job_row(job_id=mit_id, company_id=mock_company_id)
+        mit_row["job_type"] = "mitigation"
+        mit_row["linked_job_id"] = None
+
+        recon_summary = {
+            "id": str(recon_id),
+            "job_number": "JOB-20260409-002",
+            "job_type": "reconstruction",
+            "status": "scoping",
+        }
+
+        call_count = {"n": 0}
+
+        def jobs_handler(mock_table):
+            call_count["n"] += 1
+            n = call_count["n"]
+            if n == 1:
+                # get_job: select(*).eq(id).eq(company_id).is_().single().execute()
+                (
+                    mock_table.select.return_value.eq.return_value
+                    .eq.return_value.is_.return_value
+                    .single.return_value.execute.return_value
+                ).data = mit_row
+            elif n == 2:
+                # reverse lookup: select().eq(linked_job_id).is_().limit().execute()
+                (
+                    mock_table.select.return_value.eq.return_value
+                    .is_.return_value.limit.return_value
+                    .execute.return_value
+                ).data = [recon_summary]
+
+        mock_client = make_mock_supabase(mock_user_row, {
+            "jobs": jobs_handler,
+            "job_rooms": _counts_handler,
+            "photos": _counts_handler,
+            "floor_plans": _counts_handler,
+            "line_items": _counts_handler,
+        })
+
+        with _patch_all(jwt_secret, mock_client):
+            response = client.get(f"/v1/jobs/{mit_id}", headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["linked_job_summary"] is not None
+        assert data["linked_job_summary"]["id"] == str(recon_id)
+        assert data["linked_job_summary"]["job_type"] == "reconstruction"
+
+
+# ---------------------------------------------------------------------------
+# Tests: Default Phase Pre-Population (Spec 01B)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultPhasePrePopulation:
+    """POST /v1/jobs — recon job auto-creates 6 default phases."""
+
+    def test_recon_job_creates_default_phases(
+        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id, mock_user_id,
+    ):
+        """Creating a reconstruction job inserts 6 default phases."""
+        job_id = uuid4()
+        row = _job_row(job_id=job_id, company_id=mock_company_id, user_id=mock_user_id)
+        row["job_type"] = "reconstruction"
+        row["linked_job_id"] = None
+
+        phase_inserts = []
+
+        def jobs_handler(mock_table):
+            (
+                mock_table.select.return_value.eq.return_value
+                .like.return_value.order.return_value
+                .limit.return_value.execute.return_value
+            ).data = []
+
+        def phases_handler(mock_table):
+            original_insert = mock_table.insert
+
+            def track_insert(data):
+                if isinstance(data, list):
+                    phase_inserts.extend(data)
+                else:
+                    phase_inserts.append(data)
+                result = MagicMock()
+                result.execute = AsyncMock(return_value=MagicMock(data=data if isinstance(data, list) else [data]))
+                return result
+
+            mock_table.insert.side_effect = track_insert
+
+        mock_client = make_mock_supabase(mock_user_row, {
+            "jobs": jobs_handler,
+            "recon_phases": phases_handler,
+        })
+        mock_admin = make_mock_supabase(mock_user_row)
+        mock_admin.rpc.return_value.execute.return_value = MagicMock(data=row)
+
+        with _patch_all(jwt_secret, mock_client, mock_admin_client=mock_admin):
+            body = _create_body(job_type="reconstruction")
+            response = client.post("/v1/jobs", json=body, headers=auth_headers)
+
+        assert response.status_code == 201
+        # Verify 6 default phases were inserted
+        assert len(phase_inserts) == 6
+        phase_names = [p["phase_name"] for p in phase_inserts]
+        assert "Demo Verification" in phase_names
+        assert "Drywall" in phase_names
+        assert "Paint" in phase_names
+        assert "Flooring" in phase_names
+        assert "Trim / Moldings" in phase_names
+        assert "Final Walkthrough" in phase_names
+        # Verify sort_order is sequential
+        for i, p in enumerate(phase_inserts):
+            assert p["sort_order"] == i
+            assert p["status"] == "pending"

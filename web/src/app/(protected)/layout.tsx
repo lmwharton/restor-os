@@ -17,14 +17,22 @@ export default async function ProtectedLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  // proxy.ts already validated the JWT via getUser() — no need to repeat that
-  // network call. getSession() reads the local cookie (no network roundtrip).
+  // Use getUser() instead of getSession() — it auto-refreshes expired tokens
   const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    redirect("/login");
+  }
+
+  // Get the refreshed session for the access token
   const {
     data: { session },
   } = await supabase.auth.getSession();
 
-  if (!session?.user) {
+  if (!session?.access_token) {
     redirect("/login");
   }
 

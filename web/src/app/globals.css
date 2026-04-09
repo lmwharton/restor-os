@@ -1,6 +1,13 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
+/* Hide placeholder text when input is focused — keeps placeholder visible
+   at rest for visual hint (e.g. "--") but clears it on interaction */
+input:focus::placeholder,
+textarea:focus::placeholder {
+  color: transparent !important;
+}
+
 :root {
   --background: #fff8f4;
   --foreground: #1f1b17;
@@ -33,6 +40,21 @@
   --inverse-surface: #34302b;
   --inverse-on-surface: #f8efe8;
   --brand-accent: #e85d26;
+
+  /* Status colors — change here to update everywhere */
+  --status-new: #14b8a6;
+  --status-contracted: #f59e0b;
+  --status-mitigation: #e85d26;
+  --status-drying: #2563eb;
+  --status-complete: #14b8a6;
+  --status-submitted: #818cf8;
+  --status-collected: #10b981;
+  --status-scoping: #7c3aed;
+  --status-in-progress: #d97706;
+
+  /* Job type colors */
+  --type-mitigation: #3b82f6;
+  --type-reconstruction: #e85d26;
 }
 
 @theme inline {
@@ -85,6 +107,21 @@
 
   /* Brand accent */
   --color-brand-accent: var(--brand-accent);
+
+  /* Status colors — for badges and pipeline */
+  --color-status-new: var(--status-new);
+  --color-status-contracted: var(--status-contracted);
+  --color-status-mitigation: var(--status-mitigation);
+  --color-status-drying: var(--status-drying);
+  --color-status-complete: var(--status-complete);
+  --color-status-submitted: var(--status-submitted);
+  --color-status-collected: var(--status-collected);
+  --color-status-scoping: var(--status-scoping);
+  --color-status-in-progress: var(--status-in-progress);
+
+  /* Job type indicator colors */
+  --color-type-mitigation: var(--type-mitigation);
+  --color-type-reconstruction: var(--type-reconstruction);
 }
 
 body {
@@ -94,7 +131,7 @@ body {
 }
 
 .primary-gradient {
-  background: linear-gradient(135deg, #a63500 0%, #cc4911 100%);
+  background-color: var(--brand-accent);
 }
 
 /* Hide scrollbar but allow scrolling */
@@ -113,6 +150,30 @@ body {
   }
   to {
     opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes barFillIn {
+  from { transform: scaleX(0); }
+  to { transform: scaleX(1); }
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Hide scrollbar but keep scroll functionality */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
     transform: translateY(0);
   }
 }

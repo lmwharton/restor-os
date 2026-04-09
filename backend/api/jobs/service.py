@@ -2,11 +2,12 @@
 
 import logging
 import random
+import re
 import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate
+from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate, LinkedJobSummary
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
@@ -24,11 +25,53 @@ VALID_STATUSES = {
     "contracted",
     "mitigation",
     "drying",
-    "job_complete",
+    "scoping",
+    "in_progress",
+    "complete",
     "submitted",
     "collected",
 }
 VALID_SORT_FIELDS = {"created_at", "updated_at", "job_number", "customer_name"}
+VALID_JOB_TYPES = {"mitigation", "reconstruction"}
+
+# Which statuses are valid for each job type
+MITIGATION_STATUSES = {
+    "new", "contracted", "mitigation", "drying",
+    "complete", "submitted", "collected",
+}
+RECONSTRUCTION_STATUSES = {
+    "new", "scoping", "in_progress",
+    "complete", "submitted", "collected",
+}
+
+
+EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+PHONE_DIGITS_REGEX = re.compile(r"^\d{7,15}$")
+
+
+def _validate_contact_fields(**kwargs: str | None) -> None:
+    """Validate email and phone fields. Raises AppException on invalid values."""
+    email_fields = ["customer_email", "adjuster_email"]
+    phone_fields = ["customer_phone", "adjuster_phone"]
+
+    for field in email_fields:
+        val = kwargs.get(field)
+        if val and not EMAIL_REGEX.match(val):
+            raise AppException(
+                status_code=400,
+                detail=f"Invalid {field}: must be a valid email address",
+                error_code="INVALID_EMAIL",
+            )
+    for field in phone_fields:
+        val = kwargs.get(field)
+        if val:
+            digits = re.sub(r"[\s\-().+]", "", val)
+            if not PHONE_DIGITS_REGEX.match(digits):
+                raise AppException(
+                    status_code=400,
+                    detail=f"Invalid {field}: must contain 7-15 digits",
+                    error_code="INVALID_PHONE",
+                )
 
 
 def _validate_enums(
@@ -117,12 +160,17 @@ def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
     return _parse_job_detail(data, counts)
 
 
-def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
+def _parse_job_detail(
+    data: dict, counts: dict, linked_job_summary: LinkedJobSummary | None = None
+) -> JobDetailResponse:
     """Parse a job row dict into JobDetailResponse with computed counts."""
     return JobDetailResponse(
         id=data["id"],
         company_id=data["company_id"],
         property_id=data.get("property_id"),
+        job_type=data.get("job_type", "mitigation"),
+        linked_job_id=data.get("linked_job_id"),
+        linked_job_summary=linked_job_summary,
         job_number=data["job_number"],
         address_line1=data["address_line1"],
         city=data.get("city", ""),
@@ -141,6 +189,7 @@ def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
         loss_class=data.get("loss_class"),
         loss_cause=data.get("loss_cause"),
         loss_date=data.get("loss_date"),
+        home_year_built=data.get("home_year_built"),
         status=data["status"],
         assigned_to=data.get("assigned_to"),
         notes=data.get("notes"),
@@ -156,6 +205,26 @@ def _parse_job_detail(data: dict, counts: dict) -> JobDetailResponse:
         floor_plan_count=counts.get("floor_plan_count", 0),
         line_item_count=counts.get("line_item_count", 0),
     )
+
+
+async def _get_linked_job_summary(client, linked_job_id: str | None) -> LinkedJobSummary | None:
+    """Fetch a minimal summary of the linked job (if any)."""
+    if not linked_job_id:
+        return None
+    try:
+        result = await (
+            client.table("jobs")
+            .select("id, job_number, job_type, status")
+            .eq("id", linked_job_id)
+            .is_("deleted_at", "null")
+            .single()
+            .execute()
+        )
+        if result.data:
+            return LinkedJobSummary(**result.data)
+    except Exception as e:
+        logger.warning("Failed to fetch linked job %s: %s", linked_job_id, e)
+    return None
 
 
 async def _get_job_counts(client, job_id: str) -> dict:
@@ -193,14 +262,83 @@ async def create_job(
     """
     start = time.perf_counter()
 
+    # Validate job_type
+    if body.job_type not in VALID_JOB_TYPES:
+        raise AppException(
+            status_code=400,
+            detail=f"Invalid job_type: must be one of {', '.join(sorted(VALID_JOB_TYPES))}",
+            error_code="INVALID_JOB_TYPE",
+        )
+
+    client = await get_authenticated_client(token)
+    admin_client = await get_supabase_admin_client()
+
+    # Validate linked_job_id if provided and auto-copy fields
+    linked_job_data: dict | None = None
+    if body.linked_job_id:
+        if body.job_type != "reconstruction":
+            raise AppException(
+                status_code=400,
+                detail="Only reconstruction jobs can link to another job",
+                error_code="INVALID_LINK_TYPE",
+            )
+        linked_result = await (
+            client.table("jobs")
+            .select("*")
+            .eq("id", str(body.linked_job_id))
+            .eq("company_id", str(company_id))
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        if not linked_result.data:
+            raise AppException(
+                status_code=400,
+                detail="Linked job not found in your company",
+                error_code="LINKED_JOB_NOT_FOUND",
+            )
+        linked_job_data = linked_result.data[0]
+        if linked_job_data.get("job_type") != "mitigation":
+            raise AppException(
+                status_code=400,
+                detail="Can only link to a mitigation job",
+                error_code="INVALID_LINK_TARGET",
+            )
+
+    # Auto-copy fields from linked job (only override fields the caller didn't explicitly set)
+    if linked_job_data:
+        COPY_FIELDS = [
+            "claim_number", "carrier", "adjuster_name", "adjuster_phone", "adjuster_email",
+            "customer_name", "customer_phone", "customer_email",
+            "address_line1", "city", "state", "zip", "latitude", "longitude",
+            "property_id", "loss_type", "loss_date",
+        ]
+        explicitly_set = body.model_fields_set
+        for field in COPY_FIELDS:
+            if field not in explicitly_set:
+                linked_val = linked_job_data.get(field)
+                if linked_val is not None:
+                    # Parse date strings from PostgREST into Python date objects
+                    if field == "loss_date" and isinstance(linked_val, str):
+                        from datetime import date as date_type
+                        try:
+                            linked_val = date_type.fromisoformat(linked_val)
+                        except ValueError:
+                            linked_val = None
+                    if linked_val is not None:
+                        object.__setattr__(body, field, linked_val)
+
+    # Validate AFTER auto-copy so copied fields are also validated
     _validate_enums(
         loss_type=body.loss_type,
         loss_category=body.loss_category,
         loss_class=body.loss_class,
     )
-
-    client = await get_authenticated_client(token)
-    admin_client = await get_supabase_admin_client()
+    _validate_contact_fields(
+        customer_email=body.customer_email,
+        customer_phone=body.customer_phone,
+        adjuster_email=body.adjuster_email,
+        adjuster_phone=body.adjuster_phone,
+    )
 
     # Build optional field values
     opt_property_id = str(body.property_id) if body.property_id else None
@@ -224,8 +362,10 @@ async def create_job(
             "p_state": body.state,
             "p_zip": body.zip,
             "p_loss_type": body.loss_type,
+            "p_job_type": body.job_type,
             "p_created_by": str(user_id),
             "p_property_id": opt_property_id,
+            "p_linked_job_id": str(body.linked_job_id) if body.linked_job_id else None,
             "p_customer_name": body.customer_name,
             "p_customer_phone": body.customer_phone,
             "p_customer_email": body.customer_email,
@@ -233,11 +373,14 @@ async def create_job(
             "p_loss_class": body.loss_class,
             "p_loss_cause": body.loss_cause,
             "p_loss_date": opt_loss_date,
+            "p_home_year_built": body.home_year_built,
             "p_claim_number": body.claim_number,
             "p_carrier": body.carrier,
             "p_adjuster_name": body.adjuster_name,
             "p_adjuster_phone": body.adjuster_phone,
             "p_adjuster_email": body.adjuster_email,
+            "p_latitude": body.latitude,
+            "p_longitude": body.longitude,
             "p_notes": body.notes,
             "p_tech_notes": body.tech_notes,
         }
@@ -295,9 +438,70 @@ async def create_job(
         "duration_ms": duration_ms,
     }})
 
+    # Log job_linked event on both jobs if linked
+    new_job_id = job_data.get("id")
+    if body.linked_job_id and new_job_id:
+        event_data = {
+            "linked_job_id": str(body.linked_job_id),
+            "new_job_id": str(new_job_id),
+        }
+        await log_event(company_id, "job_linked", job_id=UUID(str(new_job_id)), user_id=user_id, event_data=event_data)
+        await log_event(company_id, "job_linked", job_id=body.linked_job_id, user_id=user_id, event_data=event_data)
+
+    # Pre-populate default phases for reconstruction jobs (batch insert)
+    if body.job_type == "reconstruction" and new_job_id:
+        DEFAULT_RECON_PHASES = [
+            "Demo Verification", "Drywall", "Paint", "Flooring",
+            "Trim / Moldings", "Final Walkthrough",
+        ]
+        phase_rows = [
+            {"job_id": str(new_job_id), "company_id": str(company_id),
+             "phase_name": name, "sort_order": i, "status": "pending"}
+            for i, name in enumerate(DEFAULT_RECON_PHASES)
+        ]
+        try:
+            await client.table("recon_phases").insert(phase_rows).execute()
+        except Exception as e:
+            logger.error("Failed to insert default phases for job %s: %s", new_job_id, e)
+
     # New job has zero counts
     counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
     return _parse_job_detail(job_data, counts)
+
+
+async def create_linked_recon(
+    token: str, company_id: UUID, user_id: UUID, source_job_id: UUID
+) -> JobDetailResponse:
+    """Convenience: create a reconstruction job linked to a mitigation job.
+
+    Validates the source is a mitigation job, then delegates to create_job
+    with linked_job_id set — which handles auto-copy, phases, and events.
+    """
+    client = await get_authenticated_client(token)
+    result = await (
+        client.table("jobs")
+        .select("id, job_type, address_line1")
+        .eq("id", str(source_job_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise AppException(status_code=404, detail="Source job not found", error_code="JOB_NOT_FOUND")
+    if result.data.get("job_type") != "mitigation":
+        raise AppException(
+            status_code=400,
+            detail="Can only create linked reconstruction from a mitigation job",
+            error_code="INVALID_SOURCE_TYPE",
+        )
+
+    body = JobCreate(
+        address_line1=result.data["address_line1"],
+        job_type="reconstruction",
+        linked_job_id=source_job_id,
+    )
+    return await create_job(token, company_id, user_id, body)
 
 
 async def _create_job_fallback(
@@ -316,15 +520,19 @@ async def _create_job_fallback(
         "state": body.state,
         "zip": body.zip,
         "loss_type": body.loss_type,
+        "job_type": body.job_type,
         "status": "new",
         "created_by": str(user_id),
     }
 
+    if body.linked_job_id:
+        insert_data["linked_job_id"] = str(body.linked_job_id)
+
     optional_fields = [
         "property_id", "customer_name", "customer_phone", "customer_email",
-        "loss_category", "loss_class", "loss_cause", "loss_date",
+        "loss_category", "loss_class", "loss_cause", "loss_date", "home_year_built",
         "claim_number", "carrier", "adjuster_name", "adjuster_phone",
-        "adjuster_email", "notes", "tech_notes",
+        "adjuster_email", "latitude", "longitude", "notes", "tech_notes",
     ]
     for field in optional_fields:
         value = getattr(body, field)
@@ -361,6 +569,7 @@ async def list_jobs(
     *,
     status: str | None = None,
     loss_type: str | None = None,
+    job_type: str | None = None,
     search: str | None = None,
     limit: int = 20,
     offset: int = 0,
@@ -389,6 +598,8 @@ async def list_jobs(
         query = query.eq("status", status)
     if loss_type:
         query = query.eq("loss_type", loss_type)
+    if job_type:
+        query = query.eq("job_type", job_type)
     if search:
         safe_search = sanitize_postgrest_search(search)
         if safe_search:
@@ -411,7 +622,7 @@ async def list_jobs(
 
 
 async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailResponse:
-    """Get a single job with computed counts."""
+    """Get a single job with computed counts and linked job summary."""
     client = await get_authenticated_client(token)
 
     result = await (
@@ -428,7 +639,26 @@ async def get_job(token: str, company_id: UUID, job_id: UUID) -> JobDetailRespon
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
     counts = await _get_job_counts(client, str(job_id))
-    return _parse_job_detail(result.data, counts)
+    linked_summary = await _get_linked_job_summary(client, result.data.get("linked_job_id"))
+
+    # Bidirectional resolution: if this is a mitigation job with no forward link,
+    # check if any reconstruction job links TO this job
+    if not linked_summary and result.data.get("job_type") == "mitigation":
+        try:
+            reverse = await (
+                client.table("jobs")
+                .select("id, job_number, job_type, status")
+                .eq("linked_job_id", str(job_id))
+                .is_("deleted_at", "null")
+                .limit(1)
+                .execute()
+            )
+            if reverse.data:
+                linked_summary = LinkedJobSummary(**reverse.data[0])
+        except Exception as e:
+            logger.warning("Failed reverse link lookup for job %s: %s", job_id, e)
+
+    return _parse_job_detail(result.data, counts, linked_summary)
 
 
 async def update_job(
@@ -458,10 +688,37 @@ async def update_job(
         loss_class=updates.get("loss_class"),
         status=updates.get("status"),
     )
+    _validate_contact_fields(
+        customer_email=updates.get("customer_email"),
+        customer_phone=updates.get("customer_phone"),
+        adjuster_email=updates.get("adjuster_email"),
+        adjuster_phone=updates.get("adjuster_phone"),
+    )
 
     updates["updated_by"] = str(user_id)
 
     client = await get_authenticated_client(token)
+
+    # Validate status against job type if status is being changed
+    if "status" in updates:
+        current = await (
+            client.table("jobs")
+            .select("job_type")
+            .eq("id", str(job_id))
+            .eq("company_id", str(company_id))
+            .is_("deleted_at", "null")
+            .single()
+            .execute()
+        )
+        if current.data:
+            jtype = current.data.get("job_type", "mitigation")
+            allowed = MITIGATION_STATUSES if jtype == "mitigation" else RECONSTRUCTION_STATUSES
+            if updates["status"] not in allowed:
+                raise AppException(
+                    status_code=400,
+                    detail=f"Status '{updates['status']}' is not valid for {jtype} jobs",
+                    error_code="INVALID_STATUS_FOR_TYPE",
+                )
 
     result = await (
         client.table("jobs")

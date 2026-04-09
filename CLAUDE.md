@@ -135,6 +135,12 @@ V1 Core (in priority order):
 7. Auto Adjuster Reports
 8. Team Management
 
+## Commit Strategy
+
+- **Never one big commit** — split by logical feature/scope for easy debugging and reverts
+- Group: types/hooks first, then each feature area, then CSS/design, then global config
+- Message format: `area: description` (e.g., `dashboard: add dual pipeline bars`, `types: add ReconPhase interface`)
+
 ## Multi-Tenancy Pattern
 
 Every data table uses `company_id` for tenant isolation. PostgreSQL RLS policies enforce boundaries at the database level. Three roles: `owner` > `admin` > `tech`. Auth via Supabase JWT.

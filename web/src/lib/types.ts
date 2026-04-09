@@ -10,21 +10,21 @@ export interface PaginatedResponse<T> {
 export type LossType = "water" | "fire" | "mold" | "storm" | "other";
 export type WaterCategory = "1" | "2" | "3";
 export type WaterClass = "1" | "2" | "3" | "4";
-export type JobStatus = "new" | "contracted" | "mitigation" | "drying" | "job_complete" | "submitted" | "collected";
+export type JobType = "mitigation" | "reconstruction";
+export type JobStatus =
+  | "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected"  // mitigation
+  | "scoping" | "in_progress";  // reconstruction-only
+// Note: "new", "complete", "submitted", "collected" are shared across both pipelines
+export type ReconPhaseStatus = "pending" | "in_progress" | "on_hold" | "complete";
 export type PhotoType = "damage" | "equipment" | "protection" | "containment" | "moisture_reading" | "before" | "after";
-export type ReportType = "full_report" | "mitigation_invoice";
+export type ReportType = "full_report" | "mitigation_invoice" | "reconstruction_report";
 export type ReportStatus = "draft" | "generating" | "ready" | "failed";
 export type ShareScope = "full" | "restoration_only" | "photos_only";
 
 // ─── Pipeline stages (for dashboard) ─────────────────────────────────
-export type PipelineStage =
-  | "new"
-  | "contracted"
-  | "mitigation"
-  | "drying"
-  | "job_complete"
-  | "submitted"
-  | "collected";
+export type MitigationPipelineStage = "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected";
+export type ReconPipelineStage = "new" | "scoping" | "in_progress" | "complete" | "submitted" | "collected";
+export type PipelineStage = MitigationPipelineStage | ReconPipelineStage;
 
 // ─── Properties ───────────────────────────────────────────────────────
 export interface Property {
@@ -46,10 +46,36 @@ export interface Property {
 }
 
 // ─── Jobs ─────────────────────────────────────────────────────────────
+// ─── Reconstruction Phases ───────────────────────────────────────────
+export interface ReconPhase {
+  id: string;
+  job_id: string;
+  company_id: string;
+  phase_name: string;
+  status: ReconPhaseStatus;
+  sort_order: number;
+  started_at: string | null;
+  completed_at: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LinkedJobSummary {
+  id: string;
+  job_number: string;
+  job_type: JobType;
+  status: JobStatus;
+}
+
+// ─── Jobs ─────────────────────────────────────────────────────────────
 export interface Job {
   id: string;
   company_id: string;
   property_id: string | null;
+  job_type: JobType;
+  linked_job_id: string | null;
+  linked_job_summary: LinkedJobSummary | null;
   job_number: string;
   address_line1: string;
   city: string;
@@ -68,6 +94,7 @@ export interface Job {
   loss_class: WaterClass | null;
   loss_cause: string | null;
   loss_date: string | null;
+  home_year_built: number | null;
   status: JobStatus;
   assigned_to: string | null;
   notes: string | null;
@@ -88,6 +115,8 @@ export interface JobDetail extends Job {
 }
 
 export interface JobCreate {
+  job_type?: JobType;
+  linked_job_id?: string;
   address_line1: string;
   loss_type?: LossType;
   city?: string;
@@ -101,11 +130,14 @@ export interface JobCreate {
   loss_class?: WaterClass;
   loss_cause?: string;
   loss_date?: string;
+  home_year_built?: number;
   claim_number?: string;
   carrier?: string;
   adjuster_name?: string;
   adjuster_phone?: string;
   adjuster_email?: string;
+  latitude?: number;
+  longitude?: number;
   notes?: string;
   tech_notes?: string;
 }

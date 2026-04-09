@@ -11,22 +11,32 @@ from api.events.service import list_company_events
 
 logger = logging.getLogger(__name__)
 
-# All valid pipeline stages in display order
+# Mitigation pipeline stages in display order
 PIPELINE_STAGES = [
     "new",
     "contracted",
     "mitigation",
     "drying",
-    "job_complete",
+    "complete",
+    "submitted",
+    "collected",
+]
+
+# Reconstruction pipeline stages in display order
+RECON_PIPELINE_STAGES = [
+    "new",
+    "scoping",
+    "in_progress",
+    "complete",
     "submitted",
     "collected",
 ]
 
 # Statuses considered "active" (not terminal)
-ACTIVE_STATUSES = {"new", "contracted", "mitigation", "drying"}
+ACTIVE_STATUSES = {"new", "contracted", "mitigation", "drying", "scoping", "in_progress"}
 
 # Statuses that indicate jobs needing attention
-PRIORITY_STATUSES = {"new", "mitigation"}
+PRIORITY_STATUSES = {"new", "mitigation", "scoping"}
 
 
 async def get_dashboard(
@@ -42,7 +52,7 @@ async def get_dashboard(
         client.table("jobs")
         .select(
             "id, job_number, address_line1, city, state, status, "
-            "customer_name, loss_type, created_at, updated_at"
+            "customer_name, loss_type, job_type, created_at, updated_at"
         )
         .eq("company_id", str(company_id))
         .is_("deleted_at", "null")
@@ -51,19 +61,33 @@ async def get_dashboard(
     )
     jobs = jobs_result.data or []
 
-    # 2. Build pipeline counts
-    status_counts: dict[str, int] = {}
+    # 2. Build pipeline counts — separate for mitigation and reconstruction
+    mit_counts: dict[str, int] = {}
+    recon_counts: dict[str, int] = {}
     for job in jobs:
         s = job.get("status", "new")
-        status_counts[s] = status_counts.get(s, 0) + 1
+        jt = job.get("job_type", "mitigation")
+        if jt == "reconstruction":
+            recon_counts[s] = recon_counts.get(s, 0) + 1
+        else:
+            mit_counts[s] = mit_counts.get(s, 0) + 1
 
     pipeline = [
         PipelineStage(
             stage=stage,
-            count=status_counts.get(stage, 0),
-            total_estimate=0.0,  # estimates not yet implemented
+            count=mit_counts.get(stage, 0),
+            total_estimate=0.0,
         )
         for stage in PIPELINE_STAGES
+    ]
+
+    reconstruction_pipeline = [
+        PipelineStage(
+            stage=stage,
+            count=recon_counts.get(stage, 0),
+            total_estimate=0.0,
+        )
+        for stage in RECON_PIPELINE_STAGES
     ]
 
     # 3. Compute KPIs
@@ -116,6 +140,7 @@ async def get_dashboard(
 
     return DashboardResponse(
         pipeline=pipeline,
+        reconstruction_pipeline=reconstruction_pipeline,
         kpis=kpis,
         recent_events=recent_events,
         priority_jobs=priority_jobs,
