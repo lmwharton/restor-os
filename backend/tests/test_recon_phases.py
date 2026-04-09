@@ -486,6 +486,13 @@ class TestReorderPhases:
                 .eq.return_value.eq.return_value
                 .eq.return_value.execute.return_value
             ).data = [{}]
+            # Validation query: select("id").eq(job_id).eq(company_id).execute()
+            (
+                mock_table.select.return_value
+                .eq.return_value.eq.return_value
+                .execute.return_value
+            ).data = [{"id": str(p1)}, {"id": str(p2)}]
+            # Final list query: select(...).eq.eq.order.execute()
             (
                 mock_table.select.return_value
                 .eq.return_value.eq.return_value

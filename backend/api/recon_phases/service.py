@@ -238,6 +238,19 @@ async def reorder_phases(
     if len(set(submitted_orders)) != len(submitted_orders):
         raise AppException(status_code=400, detail="Duplicate sort_order values in reorder request", error_code="DUPLICATE_SORT_ORDER")
 
+    # Validate submitted IDs exist for this job
+    existing = await (
+        client.table("recon_phases")
+        .select("id")
+        .eq("job_id", str(job_id))
+        .eq("company_id", str(company_id))
+        .execute()
+    )
+    existing_ids = {row["id"] for row in (existing.data or [])}
+    unknown = set(submitted_ids) - existing_ids
+    if unknown:
+        raise AppException(status_code=400, detail=f"Unknown phase IDs: {', '.join(unknown)}", error_code="UNKNOWN_PHASE_IDS")
+
     await asyncio.gather(*(
         client.table("recon_phases")
         .update({"sort_order": item.sort_order})
