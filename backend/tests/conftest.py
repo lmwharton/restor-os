@@ -21,6 +21,7 @@ import jwt  # noqa: E402
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
+from api.auth.middleware import _auth_context_cache  # noqa: E402
 from api.main import app  # noqa: E402
 
 # Restore original cwd after imports
@@ -54,6 +55,14 @@ class AsyncSupabaseMock(MagicMock):
         if name in self._ASYNC_METHODS:
             return AsyncMock(**kw)
         return super()._get_child_mock(**kw)
+
+
+@pytest.fixture(autouse=True)
+def _clear_auth_cache():
+    """Clear the auth context TTL cache between tests."""
+    _auth_context_cache.clear()
+    yield
+    _auth_context_cache.clear()
 
 
 @pytest.fixture
@@ -124,6 +133,7 @@ def mock_user_row(mock_user_id, mock_company_id):
         "company_id": str(mock_company_id),
         "role": "owner",
         "is_platform_admin": False,
+        "last_notifications_seen_at": None,
     }
 
 
@@ -146,9 +156,9 @@ def make_mock_supabase(user_row, table_handlers=None):
     def table_side_effect(table_name):
         mock_table = AsyncSupabaseMock()
         if table_name == "users":
-            # Auth middleware: select().eq().is_().single().execute().data
+            # Auth middleware: select().eq().is_().maybe_single().execute().data
             (
-                mock_table.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                mock_table.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
             ).data = user_row
         elif table_name == "event_history":
             # log_event: insert().execute() — fire-and-forget, just succeed
