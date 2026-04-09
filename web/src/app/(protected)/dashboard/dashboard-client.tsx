@@ -121,18 +121,61 @@ function getEventMeta(event: Event): EventMeta {
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M22 4L12 14.01l-3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
-    case "room_added": {
+    case "room_added":
+    case "room_created": {
       const room = d.room_name;
       return {
-        label: `Room Added${room ? ` — ${room}` : ""}`,
-        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M3 12h18M12 3v18" stroke="currentColor" strokeWidth="1.5"/></svg>,
+        label: `Room Created${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M9 12h6M12 9v6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
     }
+    case "room_updated": {
+      const room = d.room_name;
+      return {
+        label: `Room Updated${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M7 13l3 3 5-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "room_deleted": {
+      const room = d.room_name;
+      return {
+        label: `Room Deleted${room ? ` — ${room}` : ""}`,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M9 12h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    }
+    case "job_updated":
+      return {
+        label: "Job Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "job_deleted":
+      return {
+        label: "Job Deleted",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "floor_plan_created":
+    case "floor_plan_updated":
+      return {
+        label: event.event_type === "floor_plan_created" ? "Floor Plan Created" : "Floor Plan Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5"/><path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
+    case "note_added":
+    case "tech_notes_updated":
+      return {
+        label: "Notes Updated",
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8l-6-6z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/><path d="M14 2v6h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>,
+        color: "bg-surface-container", accent: "text-on-surface-variant",
+      };
     default:
       return {
         label: event.event_type.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/><path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
+        icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="1.5"/><path d="M8 12h8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
   }
@@ -460,11 +503,11 @@ function JobsList({
               <Link
                 key={t.id}
                 href={`/jobs/${t.job_id}`}
-                className="flex gap-3 items-center py-2 rounded-lg px-2 hover:bg-surface-container/60 transition-colors group"
+                className="flex gap-3 items-center py-2 rounded-lg sm:px-2 hover:bg-surface-container/60 transition-colors group"
                 role="listitem"
               >
                 <span
-                  className={`w-2 h-2 rounded-full shrink-0 ${job?.job_type === "reconstruction" ? "bg-type-reconstruction" : "bg-type-mitigation"}`}
+                  className={`w-2 h-2 rounded-full shrink-0 hidden sm:block ${job?.job_type === "reconstruction" ? "bg-type-reconstruction" : "bg-type-mitigation"}`}
                   aria-label={job?.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
                 />
                 <div className="min-w-0 flex-1">
