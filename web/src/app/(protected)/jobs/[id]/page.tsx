@@ -1861,7 +1861,7 @@ export default function JobDetailPage() {
                 tabIndex={0}
                 onClick={() => router.push(`/jobs/${jobId}/floor-plan`)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
-                className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
+                className="relative bg-surface-container-high rounded-lg min-h-[140px] sm:min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
                 <FloorPlanPreview canvasData={(() => {
                   // Show the floor with the most rooms (or first non-empty)
@@ -1875,7 +1875,16 @@ export default function JobDetailPage() {
                   }
                   return best;
                 })()} />
-                <span className="absolute bottom-3 right-3 z-10 text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
+              </div>
+              {/* View Plan link — below preview to avoid overlap */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => router.push(`/jobs/${jobId}/floor-plan`)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
+                className="flex items-center justify-end px-1 py-1 -mt-1 cursor-pointer group"
+              >
+                <span className="text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
                   View Plan &rarr;
                 </span>
               </div>
