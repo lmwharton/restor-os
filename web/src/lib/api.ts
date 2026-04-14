@@ -12,6 +12,7 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   } = await supabase.auth.getSession();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
+    "ngrok-skip-browser-warning": "true",
   };
   if (session?.access_token) {
     headers["Authorization"] = `Bearer ${session.access_token}`;
