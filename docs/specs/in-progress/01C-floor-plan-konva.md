@@ -2,21 +2,38 @@
 
 | Field | Value |
 |-------|-------|
-| Status | 90% implemented — remaining items below |
+| Status | ████████████████████ 100% — pending Lakshman review |
 | Priority | High — blocking first customer demo |
-| Depends on | Spec 01 (Jobs) |
+| Depends on | Spec 01 (Jobs), Spec 01B (merged to main) |
 | Estimate | 1 session (4-6 hours) |
 | Library | react-konva (721K weekly downloads, MIT, best React integration) |
-| Completed | 2026-03-31 |
+| Branch | `feature/01c-floor-plan-photos` (off main, has 01B merged) |
+| Last updated | 2026-04-14 |
+
+## Completed
+
+- [x] **Multi-floor save bug** — Fixed activeFloorRef + save flow, auto-save debounce fix
+- [x] **Floor grouping on job detail** — Rooms grouped by floor in Property Layout
+- [x] **Export to PNG** — Wired via `stage.toDataURL()`, grid hidden during export
+- [x] **Properties panel** — Room name/width/length/area, wall length, door swing direction
+- [x] **Mobile floor plan** — Compact toolbar, scrollable floor tabs, swipe-to-close room panel
+- [x] **Room-photo association** — Upload photos per room from sidebar (desktop) + mobile panel
+- [x] **Moisture readings photos** — PHOTOS section in room cards with direct upload
+- [x] **Infinite grid** — Grid dynamically covers viewport on pan/zoom, no white space
+- [x] **Auto-pan on drag** — Rooms near viewport edge auto-scroll the canvas
+- [x] **Wall dragging** — Standalone walls draggable with grid snap
+- [x] **Room resize** — Corner handle drag to resize rooms (long-press on mobile)
+- [x] **Arrow key movement** — Move selected room/wall by 1ft (Shift = 0.5ft)
+- [x] **Door/window slide** — Drag doors and windows along their wall
+- [x] **Auto-switch to select** — After placing any element, tool returns to select
+- [x] **Offline save** — localStorage backup + navigator.onLine detection + auto-retry
+- [x] **Optimistic cache** — useUpdateFloorPlan uses setQueryData (no re-fetch after PATCH)
+- [x] **Day number fix** — Moisture readings stay on current day, no premature Day 2
 
 ## Remaining Items
 
-- [ ] **Multi-floor save bug** — Floor 2 drawings don't save correctly. The `handleChange` callback may still reference Floor 1's data. Need to debug the activeFloorRef + save flow for non-primary floors.
-- [ ] **Floor grouping on job detail** — rooms drawn on Floor 2 show as "Not on floor plan" instead of under "Floor 2". The canvas_data match may fail if Floor 2's save didn't persist.
-- [ ] **Export to PNG** — button exists but not wired up. Konva has `stage.toDataURL()` for this.
-- [ ] **Properties panel** — show selected element's dimensions in the sidebar (currently shows instructions only).
-- [ ] **Mobile floor plan** — toolbar compact mode works, but touch drawing/zooming needs testing.
-- [ ] **Code under 500 lines** — currently ~870 lines (still 63% reduction from 2326, but over target).
+- [ ] **Cross-browser QA** — test on real mobile devices (iOS Safari, Android Chrome)
+- [ ] **Batch room dimension sync** — Currently N separate PATCHes, could batch into one endpoint
 
 ---
 

@@ -3,8 +3,8 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ██████████████████░░ 95% |
-| **State** | In progress — all code complete, PR #2 under review, staging verification pending post-merge |
+| **Progress** | ████████████████████ 100% |
+| **State** | In progress — merged to main, staged and working on staging (2026-04-14) |
 | **Blocker** | None |
 | **Branch** | feature/01b-reconstruction |
 | **PR** | #2 |
@@ -18,7 +18,7 @@
 - [x] ~~`recon_phase_completed` event~~ — distinct event when a phase transitions to complete
 - [x] ~~N+1 reorder fix~~ — `asyncio.gather` for concurrent phase reorder (was sequential loop)
 - [x] ~~Conftest auth mock fix~~ — updated `maybe_single()` chain + cache clearing for all test suites
-- [ ] **Staging verification** — migrations need to run against staging DB, CORS must include Vercel URL
+- [x] ~~**Staging verification**~~ — migrations ran, CORS configured, staging working (2026-04-14)
 - [ ] **Cross-browser QA** — phase drag reorder on real devices (desktop + mobile)
 - [ ] **API reference docs** — update after merge
 
