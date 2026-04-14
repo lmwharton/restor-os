@@ -176,11 +176,14 @@ export function useUploadPhoto(jobId: string) {
         content_type: file.type,
       });
       // Step 2: Upload to storage
-      await fetch(upload_url, {
+      const uploadRes = await fetch(upload_url, {
         method: "PUT",
         body: file,
         headers: { "Content-Type": file.type },
       });
+      if (!uploadRes.ok) {
+        throw new Error(`Storage upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+      }
       // Step 3: Confirm (with optional room association)
       return apiPost<Photo>(`/v1/jobs/${jobId}/photos/confirm`, {
         storage_path,

@@ -71,6 +71,7 @@ function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomI
   const uploadPhoto = useUploadPhoto(jobId);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const captureRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
@@ -78,17 +79,24 @@ function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomI
     if (!files || files.length === 0) return;
     const fileArray = Array.from(files);
     setUploading(true);
+    setError(null);
+    let failed = 0;
     for (let i = 0; i < fileArray.length; i++) {
       setProgress({ current: i + 1, total: fileArray.length });
       try {
         await uploadPhoto.mutateAsync({ file: fileArray[i], room_id: roomId, room_name: roomName });
       } catch (err) {
-        console.error("Upload failed:", err);
+        console.error(`Upload failed for ${fileArray[i].name}:`, err);
+        failed++;
         break;
       }
     }
     setUploading(false);
     setProgress(null);
+    if (failed > 0) {
+      setError(`Failed to upload ${failed} photo${failed > 1 ? "s" : ""}. Check your connection.`);
+      setTimeout(() => setError(null), 5000);
+    }
   }, [uploadPhoto, roomId, roomName]);
 
   if (uploading && progress) {
@@ -109,6 +117,9 @@ function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomI
 
   return (
     <>
+      {error && (
+        <p className="text-[11px] text-red-600 font-medium mb-1">{error}</p>
+      )}
       <input ref={captureRef} type="file" accept="image/*" capture="environment" className="hidden"
         onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
       <input ref={galleryRef} type="file" accept="image/jpeg,image/png" multiple className="hidden"
@@ -147,22 +158,31 @@ function CapturePanel({
   const captureRef = useRef<HTMLInputElement>(null);
   const galleryRef = useRef<HTMLInputElement>(null);
 
+  const [error, setError] = useState<string | null>(null);
+
   // Upload files immediately when captured/selected
   const handleFiles = useCallback(async (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const fileArray = Array.from(files);
     setUploading(true);
+    setError(null);
+    let failed = 0;
     for (let i = 0; i < fileArray.length; i++) {
       setProgress({ current: i + 1, total: fileArray.length });
       try {
         await uploadPhoto.mutateAsync({ file: fileArray[i], room_id: roomId, room_name: roomName });
       } catch (err) {
-        console.error("Upload failed:", err);
+        console.error(`Upload failed for ${fileArray[i].name}:`, err);
+        failed++;
         break;
       }
     }
     setUploading(false);
     setProgress(null);
+    if (failed > 0) {
+      setError(`Upload failed. Check your connection.`);
+      setTimeout(() => setError(null), 5000);
+    }
   }, [uploadPhoto, roomId, roomName]);
 
   return (
@@ -184,6 +204,11 @@ function CapturePanel({
         className="hidden"
         onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }}
       />
+
+      {/* Error message */}
+      {error && (
+        <p className="text-[11px] text-red-600 font-medium">{error}</p>
+      )}
 
       {/* Upload progress */}
       {uploading && progress ? (
