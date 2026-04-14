@@ -127,6 +127,10 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
+  // Long-press resize mode for mobile
+  const [resizeActive, setResizeActive] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Pinch-to-zoom tracking
   const lastPinchDist = useRef<number | null>(null);
   const lastPinchCenter = useRef<{ x: number; y: number } | null>(null);
@@ -268,6 +272,14 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         e.preventDefault();
         if (e.shiftKey) redo(); else undo();
       }
+      // Arrow keys move selected element (1ft per press, Shift = 0.5ft)
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && selectedIdRef.current) {
+        e.preventDefault();
+        const step = e.shiftKey ? gs / 2 : gs;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        moveSelectedRef.current(dx, dy);
+      }
     }
     document.addEventListener("keydown", onKey, true);
     return () => document.removeEventListener("keydown", onKey, true);
@@ -342,6 +354,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       const target = e.target;
       if (target === stageRef.current || (target.getClassName() === "Rect" && target.attrs.name === "grid-bg")) {
         setSelectedId(null);
+        setResizeActive(false);
       }
     }
 
@@ -473,6 +486,83 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       setStagePos((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
     }
   }, [stageSize]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Room resize via corner handles                                   */
+  /* ---------------------------------------------------------------- */
+
+  const handleCornerDragEnd = useCallback((roomId: string, cornerIdx: number, newX: number, newY: number) => {
+    const room = state.rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    const sx = snapToGrid(newX, gs);
+    const sy = snapToGrid(newY, gs);
+    const minSize = gs; // minimum 1 foot
+
+    let x = room.x, y = room.y, w = room.width, h = room.height;
+    // cornerIdx: 0=topLeft, 1=topRight, 2=bottomRight, 3=bottomLeft
+    if (cornerIdx === 0) { // top-left: move origin, adjust size
+      w = room.x + room.width - sx;
+      h = room.y + room.height - sy;
+      x = sx; y = sy;
+    } else if (cornerIdx === 1) { // top-right: adjust width + move top
+      w = sx - room.x;
+      h = room.y + room.height - sy;
+      y = sy;
+    } else if (cornerIdx === 2) { // bottom-right: adjust width + height
+      w = sx - room.x;
+      h = sy - room.y;
+    } else { // bottom-left: move left, adjust height
+      w = room.x + room.width - sx;
+      h = sy - room.y;
+      x = sx;
+    }
+    if (w < minSize || h < minSize) return; // reject too-small
+
+    const updatedRoom = { ...room, x, y, width: w, height: h };
+    // Rebuild walls for this room
+    const newWalls = state.walls.filter((wr) => wr.roomId !== roomId);
+    newWalls.push(...wallsForRoom(updatedRoom));
+    push({ ...state, rooms: state.rooms.map((r) => r.id === roomId ? updatedRoom : r), walls: newWalls });
+  }, [state, push, gs]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Arrow key movement for selected element                          */
+  /* ---------------------------------------------------------------- */
+
+  const moveSelectedRef = useRef((dx: number, dy: number) => {
+    const id = selectedIdRef.current;
+    if (!id) return;
+    const room = state.rooms.find((r) => r.id === id);
+    if (room) {
+      const updatedRoom = { ...room, x: room.x + dx, y: room.y + dy };
+      const updatedWalls = state.walls.map((w) =>
+        w.roomId === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
+      );
+      push({ ...state, rooms: state.rooms.map((r) => r.id === id ? updatedRoom : r), walls: updatedWalls });
+      return;
+    }
+    const wall = state.walls.find((w) => w.id === id && !w.roomId);
+    if (wall) {
+      push({ ...state, walls: state.walls.map((w) => w.id === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w) });
+    }
+  });
+  moveSelectedRef.current = (dx: number, dy: number) => {
+    const id = selectedIdRef.current;
+    if (!id) return;
+    const room = state.rooms.find((r) => r.id === id);
+    if (room) {
+      const updatedRoom = { ...room, x: room.x + dx, y: room.y + dy };
+      const updatedWalls = state.walls.map((w) =>
+        w.roomId === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
+      );
+      push({ ...state, rooms: state.rooms.map((r) => r.id === id ? updatedRoom : r), walls: updatedWalls });
+      return;
+    }
+    const wall = state.walls.find((w) => w.id === id && !w.roomId);
+    if (wall) {
+      push({ ...state, walls: state.walls.map((w) => w.id === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w) });
+    }
+  };
 
   /* ---------------------------------------------------------------- */
   /*  Computed values                                                  */
@@ -631,7 +721,54 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 {selectedId === room.id && (
                   <>
                     {[{ cx: 0, cy: 0 }, { cx: room.width, cy: 0 }, { cx: room.width, cy: room.height }, { cx: 0, cy: room.height }].map((h, i) => (
-                      <Circle key={i} x={h.cx} y={h.cy} radius={5} fill="#5b6abf" stroke="#ffffff" strokeWidth={2} />
+                      <Circle
+                        key={i}
+                        x={h.cx}
+                        y={h.cy}
+                        radius={resizeActive ? 12 : 7}
+                        fill={resizeActive ? "#e85d26" : "#5b6abf"}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                        draggable={!readOnly}
+                        hitStrokeWidth={resizeActive ? 20 : 10}
+                        onTouchStart={() => {
+                          // Start long-press timer — 500ms hold activates resize mode
+                          if (longPressTimer.current) clearTimeout(longPressTimer.current);
+                          longPressTimer.current = setTimeout(() => {
+                            setResizeActive(true);
+                          }, 500);
+                        }}
+                        onTouchEnd={() => {
+                          if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+                        }}
+                        onTouchMove={() => {
+                          // Cancel long-press if finger moves (user is scrolling, not pressing)
+                          if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+                        }}
+                        onDragStart={(e) => {
+                          e.cancelBubble = true;
+                          // On touch devices, only allow drag when resize mode is active (long-press)
+                          const nativeEvt = e.evt;
+                          if (nativeEvt instanceof TouchEvent && !resizeActive) {
+                            e.target.stopDrag();
+                            return;
+                          }
+                        }}
+                        onDragMove={(e) => {
+                          e.cancelBubble = true;
+                        }}
+                        onDragEnd={(e) => {
+                          e.cancelBubble = true;
+                          const newX = room.x + e.target.x();
+                          const newY = room.y + e.target.y();
+                          e.target.x(h.cx);
+                          e.target.y(h.cy);
+                          handleCornerDragEnd(room.id, i, newX, newY);
+                          setResizeActive(false);
+                        }}
+                        onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = i === 0 || i === 2 ? "nwse-resize" : "nesw-resize"; }}
+                        onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = "default"; }}
+                      />
                     ))}
                   </>
                 )}
