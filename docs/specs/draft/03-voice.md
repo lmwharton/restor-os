@@ -38,11 +38,77 @@
 
 **Problem:** Contractors are on job sites with dirty/wet gloves, holding tools, in noisy environments. Typing on a phone is slow and painful. Brett's #1 request: "I should just be speaking to it and not type."
 
-**Solution:** Voice input overlay across all forms in the app. Deepgram Nova-2 handles real-time speech-to-text. Claude extracts structured fields from natural speech. Contractors speak naturally in any order — AI maps to the right fields.
+**Solution:** Voice input across all forms in the app. A speech-to-text layer turns speech into raw text. Claude extracts structured fields from that text. Contractors speak naturally in any order — AI maps to the right fields.
 
 **Scope:**
-- IN: Deepgram streaming integration, Claude field extraction endpoint, reusable voice component, voice-to-form (job creation, room setup, moisture readings), voice-to-text (tech field notes), progressive field filling, corrections, hold-to-speak + continuous modes
+- IN: STT integration (Web Speech API first, Deepgram as upgrade path), Claude field extraction endpoint, reusable voice component, voice-to-form (job creation, room setup, moisture readings), voice-to-text (tech field notes), corrections, hold-to-speak + continuous modes
 - OUT: Voice scoping for line item generation (future), voice commands for navigation
+
+## How Voice-to-Form Actually Works
+
+**Key concept: The speech API is dumb. Claude is the brain.**
+
+The speech-to-text layer (whether Web Speech API or Deepgram) does NOT know about your form fields. It has no idea what "first name" or "address" or "loss category" means. It just turns audio into a blob of text. That's it.
+
+Claude is the one that understands "Jane Doe" is a customer name and "586-555-9600" is a phone number and "cat 1" means water category 1. The STT layer is just a microphone.
+
+```
+WHAT ACTUALLY HAPPENS:
+
+Tech speaks:    "Customer Jane Doe, phone 586-555-9600,
+                 27851 Gilbert Drive Warren Michigan,
+                 cat 1 class 2, dishwasher leak"
+                          │
+                          ▼
+Speech-to-Text:  Returns raw text string — no structure,
+(browser or       no field awareness, just words.
+ Deepgram)                │
+                          ▼
+Raw text lands:  In a SINGLE textarea (not in form fields).
+                 Tech can glance at it, fix typos if needed.
+                          │
+                 Tech taps "Done" or "Parse"
+                          │
+                          ▼
+Claude (backend): Gets the full blob of text + a system prompt
+                  that says "extract these fields from this transcript"
+                          │
+                          ▼
+Claude returns:  {
+                   "customer_name": "Jane Doe",
+                   "customer_phone": "5865559600",
+                   "address": "27851 Gilbert Drive",
+                   "city": "Warren",
+                   "state": "Michigan",
+                   "loss_category": "1",
+                   "loss_class": "2",
+                   "loss_cause": "dishwasher leak"
+                 }
+                          │
+                          ▼
+Frontend:        Maps each JSON field → fills the form fields.
+                 All fields populate at once.
+```
+
+This means:
+- The tech can speak in **any order** — "the address is... oh wait, cat 1 class 2, and the customer is Jane Doe" works fine
+- **Corrections work** — "washer leak... I mean dishwasher leak" → Claude uses the corrected value
+- **Domain jargon works** — even if STT transcribes "dee hue" or "anti mike robial", Claude's system prompt knows the domain and maps it correctly
+- **The STT layer is swappable** — whether it's Web Speech API or Deepgram, Claude gets the same text blob and does the same job
+
+### Two Approaches
+
+| | Web Speech Approach (V1) | Deepgram Approach (upgrade) |
+|---|---|---|
+| **STT** | Browser's built-in `webkitSpeechRecognition` — free, no API key, no server | Deepgram Nova-2 via WebSocket — $0.0043/min, needs API key + backend token endpoint |
+| **When Claude runs** | Once, after tech taps "Done" — one-shot parse of entire transcript | On a 2s debounce after each pause — fields fill progressively as tech speaks |
+| **UX feel** | Speak → see raw text → tap "Parse" → all 8 fields fill at once ("magic moment") | Speak → fields fill live as you talk ("it's listening to me") |
+| **Claude calls per form** | 1 (~$0.003) | 3-4 (~$0.012) |
+| **Infrastructure** | Zero — no backend STT endpoint, no API key, no WebSocket | Backend token endpoint, WebSocket management, reconnection logic |
+| **Complexity** | Low — textarea + one Claude call | Higher — debounce logic, partial field merge, correction handling across multiple calls |
+| **Proven?** | Yes — ScopeFlow (Brett's prototype) ships this exact pattern in production | Industry standard but unproven for our use case |
+
+**Recommendation:** Ship V1 with Web Speech Approach. The "magic moment" when 8 fields fill at once is actually more impressive than watching them trickle in, and we skip all Deepgram infrastructure. If field testing shows mobile web STT can't handle jobsite noise, upgrade to Deepgram — the Claude extraction layer stays identical, only the STT input changes.
 
 ## Information Architecture (Design Review)
 
@@ -371,19 +437,58 @@ Follow existing card/row pattern from DESIGN.md:
 
 ## Technical Approach
 
-### Why Deepgram Nova-2 (STT model choice)
+### STT Model Choice — Explore Web Speech API First
+
+> **⚠️ EXPLORE FIRST:** Brett's ScopeFlow prototype (Cloudflare Workers monolith) uses the free Browser Web Speech API (`webkitSpeechRecognition`) for all voice input — and it works. His architecture is: browser STT → raw transcript in a textarea (tech can glance and correct) → Claude Sonnet parses messy transcript into structured JSON with Xactimate codes. Claude compensates for STT errors ("dee hue" → "dehu"). No Deepgram, no server-side STT, zero voice infrastructure cost.
+>
+> **Before committing to Deepgram, we must answer:** On a mobile phone using our web app (not native), is Web Speech API fast and reliable enough? Specifically:
+> - **Latency:** Does interim transcript appear in <500ms on iOS Safari and Android Chrome?
+> - **Accuracy on domain jargon:** How badly does it mangle "dehu", "LGR", "cat 1 class 2", "antimicrobial"? (If Claude fixes it downstream, does it matter?)
+> - **Noisy jobsite:** With dehus and air movers running, does it still capture usable transcript?
+> - **Session length:** Does it cut out after 60s continuous? Does it auto-restart reliably?
+> - **iOS Safari support:** Safari's `webkitSpeechRecognition` has quirks — does it work in standalone PWA mode?
+>
+> **Action:** Build a quick test page (Web Speech API → textarea → Claude parse) and have Brett test it on-site before wiring up Deepgram. If Web Speech API is good enough with Claude as the cleanup layer, we skip Deepgram entirely for V1 — zero STT cost, no API key management, no WebSocket infrastructure, no temp token endpoint.
 
 | Option | Real-time? | Cost/min | Noise handling | Notes |
 |--------|-----------|----------|---------------|-------|
-| **Deepgram Nova-2** | YES (WebSocket streaming) | $0.0043 | Best for noisy environments | Our pick. Words appear as user speaks. |
+| **Browser Web Speech API** | YES | Free | Moderate | **Explore first.** ScopeFlow proves it works with Claude as cleanup layer. Zero infrastructure. No API key. Test on mobile web before ruling out. |
+| **Deepgram Nova-2** | YES (WebSocket streaming) | $0.0043 | Best for noisy environments | Fallback if Web Speech API fails field testing. Words appear as user speaks. |
 | OpenAI Whisper API | NO (batch only) | $0.006 | Good | Kills the "fields fill as you speak" magic. Non-starter. |
 | OpenAI Realtime API | YES (WebSocket) | $0.06 input | Good | 14x more expensive. Could replace Claude extraction but not worth the cost. |
-| Browser Web Speech API | YES | Free | Poor | Terrible in noisy environments. Not production-grade. |
 
-**Decision: Deepgram Nova-2.** Real-time streaming is non-negotiable (Brett needs to see fields fill as he speaks). Deepgram is the best STT for noisy construction environments, and at $0.0043/min it's the cheapest real-time option.
+**Decision: TBD — field test Web Speech API first.** If mobile web STT + Claude cleanup is good enough (Brett's ScopeFlow suggests it is), ship V1 with zero STT cost. If field testing shows unacceptable accuracy in noisy jobsites, upgrade to Deepgram Nova-2. Either way, the Claude extraction layer (Step 3) stays the same — only the STT input changes.
 
-### Architecture (3 steps)
+### Architecture
 
+**Option A: Web Speech API (explore first — zero infrastructure)**
+```
+Step 1: Browser handles STT locally (no server, no API key)
+┌──────────────┐
+│  Browser     │  webkitSpeechRecognition / SpeechRecognition
+│  (mic audio) │  → interim + final transcript events
+│              │  → user sees live transcript in textarea
+│              │  → tech can glance and correct obvious errors
+└──────┬───────┘
+       │
+Step 2: Extract structured fields via Claude (on pause or "Done")
+┌──────────────┐  POST /v1/voice/extract     ┌──────────────┐
+│  Browser     │ ──────────────────────────► │  Backend     │
+│  sends full  │  { transcript: "...",       │  calls       │
+│  accumulated │    context: "job_creation", │  Claude API  │
+│  transcript  │    fields: ["customer_name",│  to extract  │
+│  + context   │      "phone", "address"...] │  fields      │
+│              │ ◄────────────────────────── │              │
+│              │  { fields: {               │              │
+│              │    customer_name: "Jane..", │              │
+│              │    phone: "586-555-9600"   │              │
+│              │  }}                        │              │
+└──────────────┘                            └──────────────┘
+```
+
+**Why this might be enough:** ScopeFlow (Brett's prototype) uses exactly this pattern. Claude is the cleanup layer — it doesn't matter if the browser transcribes "dee hue" or "antimike robial" because the Claude prompt knows the domain and fixes it. Zero STT cost, no API key management, no WebSocket infrastructure, no temp token endpoint.
+
+**Option B: Deepgram Nova-2 (upgrade path if field testing fails)**
 ```
 Step 1: Get a temporary Deepgram key (security)
 ┌──────────────┐   GET /v1/voice/token      ┌──────────────┐
@@ -400,31 +505,29 @@ Step 2: Stream audio to Deepgram directly (real-time, low latency)
 │  (mic audio) │ ◄═══════════════════════════│  (cloud)     │
 └──────┬───────┘   interim + final words     └──────────────┘
        │
-       │  User sees live transcript (interim = gray, final = black)
-       │
-Step 3: Extract structured fields via Claude (on each utterance end)
-┌──────────────┐  POST /v1/voice/extract     ┌──────────────┐
-│  Browser     │ ──────────────────────────► │  Backend     │
-│  sends full  │  { transcript: "...",       │  calls       │
-│  accumulated │    context: "job_creation", │  Claude API  │
-│  transcript  │    fields: ["customer_name",│  to extract  │
-│  + context   │      "phone", "address"...] │  fields      │
-│              │  }                          │              │
-│              │ ◄────────────────────────── │              │
-│              │  { fields: {               │              │
-│              │    customer_name: "Jane..", │              │
-│              │    phone: "586-555-9600"   │              │
-│              │  }}                        │              │
-└──────────────┘                            └──────────────┘
+Step 3: Same Claude extraction as Option A
 ```
 
-**Why browser connects to Deepgram directly (not through backend):**
-Audio streaming through our backend would double bandwidth costs and add 50-100ms latency per hop. The browser sends audio directly to Deepgram's cloud. Our backend never touches the audio. Security is handled by temporary API keys (Step 1) that expire in 10 minutes.
+**Design for swappability:** The `useVoiceTranscription` hook should abstract the STT provider behind a common interface (`{ start(), stop(), onInterim, onFinal }`). V1 ships with Web Speech API. If field testing shows problems, swap to Deepgram without touching any form integration code.
 
-**Why Claude extraction is a separate backend call (not Deepgram's):**
-Deepgram transcribes speech to text. It doesn't understand that "cat 1 class 2" means water_category="1" and water_class="2" in our domain. Claude does the semantic mapping from natural speech to structured form fields. The backend sends the full accumulated transcript (not just the latest words) so corrections work naturally.
+**Why Claude extraction is a separate backend call (not the STT provider's):**
+Neither Web Speech API nor Deepgram understands that "cat 1 class 2" means water_category="1" and water_class="2" in our domain. Claude does the semantic mapping from natural speech to structured form fields. The backend sends the full accumulated transcript (not just the latest words) so corrections work naturally.
 
 ### Cost per voice interaction
+
+**With Web Speech API (V1 target):**
+
+| Scenario | STT | Claude (extraction) | Total |
+|---------|-----|---------------------|-------|
+| Job creation (30s speech) | $0 (browser) | ~$0.003 x 3-4 calls | ~$0.009–0.012 |
+| Room setup (15s per room) | $0 | ~$0.003 x 1 call | ~$0.003 |
+| Moisture reading (10s) | $0 | ~$0.002 x 1 call | ~$0.002 |
+| Tech field notes (2 min) | $0 | $0 (no LLM needed) | **$0** |
+| Walkthrough (10 min) | $0 | ~$0.01 x 1 call | ~$0.01 |
+
+At 10 jobs/day: ~$0.15/day. Voice is essentially free.
+
+**With Deepgram (upgrade path):**
 
 | Scenario | Deepgram (STT) | Claude (extraction) | Total |
 |---------|----------------|---------------------|-------|
@@ -434,7 +537,7 @@ Deepgram transcribes speech to text. It doesn't understand that "cat 1 class 2" 
 | Tech field notes (2 min) | $0.009 | $0 (no LLM needed) | ~$0.009 |
 | Walkthrough (10 min) | $0.043 | ~$0.01 x 1 call | ~$0.05 |
 
-At 10 jobs/day: ~$0.50/day for voice. Negligible.
+At 10 jobs/day: ~$0.50/day.
 
 ### Backend Endpoints
 
