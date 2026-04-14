@@ -344,33 +344,38 @@ export default function MoistureReadingsPage() {
 
   // Day number — calculated from loss_date, or from existing reading count
   const dayNumber = useMemo(() => {
-    if (job?.loss_date) {
-      const lossDate = new Date(job.loss_date + "T00:00:00");
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffMs = today.getTime() - lossDate.getTime();
-      const diffDays = Math.floor(diffMs / 86_400_000);
-      return Math.max(1, diffDays + 1);
-    }
-    // No loss_date — infer from existing readings
-    if (allReadings.length > 0) {
-      const maxDay = Math.max(...allReadings.map((r) => r.day_number ?? 1));
-      // Only advance to next day if the latest reading was on a previous calendar day
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const latestDateStr = allReadings.reduce((latest, r) => {
-        const d = r.reading_date || r.created_at;
-        return d && (!latest || d > latest) ? d : latest;
-      }, "" as string);
-      if (latestDateStr) {
-        const readingDate = new Date(latestDateStr);
-        readingDate.setHours(0, 0, 0, 0);
-        // Same calendar day — stay on current day number
-        if (readingDate.getTime() === today.getTime()) return maxDay;
+    if (allReadings.length === 0) {
+      // No readings yet — use loss_date if available, otherwise Day 1
+      if (job?.loss_date) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const lossDate = new Date(job.loss_date + "T00:00:00");
+        const diffMs = today.getTime() - lossDate.getTime();
+        return Math.max(1, Math.floor(diffMs / 86_400_000) + 1);
       }
-      return maxDay + 1;
+      return 1;
     }
-    return 1;
+
+    // Count distinct calendar days from readings to determine current day
+    const readingDays = new Set<string>();
+    for (const r of allReadings) {
+      const d = r.reading_date || r.created_at;
+      if (d) {
+        const dt = new Date(d);
+        readingDays.add(`${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`);
+      }
+    }
+
+    // Check if any reading was saved today
+    const today = new Date();
+    const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+    const hasReadingsToday = readingDays.has(todayKey);
+
+    // Day number = number of distinct days with readings + 1 if today is new
+    if (hasReadingsToday) {
+      return readingDays.size;
+    }
+    return readingDays.size + 1;
   }, [job?.loss_date, allReadings]);
 
   // Today's date string (local timezone, not UTC)
@@ -787,19 +792,11 @@ export default function MoistureReadingsPage() {
 
         {/* -- Day heading (when form is active) ---------------------- */}
         {rooms.length > 0 && showEntryForm && (
-          <div className="hidden lg:flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-[13px] font-semibold text-on-surface">
-                Day {dayNumber}
-              </h2>
-              {allRoomsLoggedToday && (
-                <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
-                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  All rooms logged
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+          <div className="hidden lg:flex items-center mb-3">
+            <h2 className="text-[13px] font-semibold text-on-surface">
+              Day {dayNumber}
+            </h2>
+            <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] ml-2">
               {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })} · auto-saves
             </span>
           </div>
