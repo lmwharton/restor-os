@@ -35,6 +35,8 @@ interface KonvaFloorPlanProps {
   readOnly?: boolean;
   rooms?: Array<{ id: string; room_name: string }>;
   onCreateRoom?: (name: string, dimensions?: { width: number; height: number }) => void;
+  jobId?: string;
+  onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number } | null) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -88,7 +90,7 @@ function useUndoRedo(initial: FloorPlanData) {
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom }, ref) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, jobId, onSelectionChange }, ref) {
   const data = initialData ?? emptyFloorPlan();
   const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
@@ -96,6 +98,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+
+  // Notify parent of selection changes (for mobile bottom panel)
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    if (!selectedId) { onSelectionChange(null); return; }
+    const room = state.rooms.find(r => r.id === selectedId);
+    if (!room) { onSelectionChange(null); return; }
+    const g = state.gridSize;
+    onSelectionChange({
+      selectedId,
+      type: "room",
+      name: room.name,
+      widthFt: Math.round((room.width / g) * 10) / 10,
+      heightFt: Math.round((room.height / g) * 10) / 10,
+    });
+  }, [selectedId, state.rooms, state.gridSize, onSelectionChange]);
 
   // Drawing state
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
@@ -159,9 +177,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       onChangeRef.current?.(latestStateRef.current);
     }, 2000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-    // onChange is intentionally read via ref — listed here only for array size stability
+    // onChange is read via onChangeRef (not from deps) so parent re-renders don't kill the timer
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, onChange]);
+  }, [state]);
 
   useImperativeHandle(ref, () => ({
     flush() {
@@ -302,6 +320,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         push({ ...state, walls: [...state.walls, newWall] });
         setWallStart(null);
         setDrawCurrent(null);
+        // Auto-switch back to select so user can pan/interact
+        setTool("select");
       }
     }
 
@@ -313,6 +333,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         } else {
           push({ ...state, windows: [...state.windows, { id: uid("win"), wallId: hit.wall.id, position: hit.t, width: 3 }] });
         }
+        // Auto-switch back to select so user can pan/interact
+        setTool("select");
       }
     }
 
@@ -396,6 +418,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       onCreateRoom(name, { width: widthFt, height: heightFt });
     }
     setPendingRoom(null);
+    // Auto-switch back to select so user can pan/interact
+    setTool("select");
   }, [pendingRoom, state, push, onCreateRoom, gs]);
 
   /* ---------------------------------------------------------------- */
@@ -416,18 +440,69 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       );
       push({ ...state, rooms: state.rooms.map((r) => (r.id === id ? updatedRoom : r)), walls: updatedWalls });
     }
+    if (type === "wall") {
+      const wall = state.walls.find((w) => w.id === id);
+      if (!wall) return;
+      // newPos is the drag offset from the Group's original position (0,0)
+      const dx = snapToGrid(newPos.x, gs);
+      const dy = snapToGrid(newPos.y, gs);
+      if (dx === 0 && dy === 0) return;
+      const updatedWall = { ...wall, x1: wall.x1 + dx, y1: wall.y1 + dy, x2: wall.x2 + dx, y2: wall.y2 + dy };
+      push({ ...state, walls: state.walls.map((w) => (w.id === id ? updatedWall : w)) });
+    }
   }, [state, push, gs]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Auto-pan when dragging near viewport edges                       */
+  /* ---------------------------------------------------------------- */
+
+  const handleDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const node = e.target;
+    // Get the node's absolute position on screen
+    const absPos = node.getAbsolutePosition();
+    const edgePad = 40; // px from edge to start panning
+    const panSpeed = 8;
+    let dx = 0, dy = 0;
+    if (absPos.x < edgePad) dx = panSpeed;
+    if (absPos.x > stageSize.width - edgePad) dx = -panSpeed;
+    if (absPos.y < edgePad) dy = panSpeed;
+    if (absPos.y > stageSize.height - edgePad) dy = -panSpeed;
+    if (dx !== 0 || dy !== 0) {
+      setStagePos((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+    }
+  }, [stageSize]);
 
   /* ---------------------------------------------------------------- */
   /*  Computed values                                                  */
   /* ---------------------------------------------------------------- */
 
+  // Compute grid lines that cover the entire visible viewport (accounting for pan + zoom)
+  const gridBounds = useMemo(() => {
+    const s = stageScale;
+    // Convert viewport corners to canvas coordinates
+    const x0 = -stagePos.x / s;
+    const y0 = -stagePos.y / s;
+    const x1 = (stageSize.width - stagePos.x) / s;
+    const y1 = (stageSize.height - stagePos.y) / s;
+    // Snap to grid boundaries with padding
+    const pad = gs * 2;
+    return {
+      left: Math.floor((x0 - pad) / gs) * gs,
+      top: Math.floor((y0 - pad) / gs) * gs,
+      right: Math.ceil((x1 + pad) / gs) * gs,
+      bottom: Math.ceil((y1 + pad) / gs) * gs,
+    };
+  }, [stageSize, stageScale, stagePos, gs]);
+
   const gridLines = useMemo(() => {
+    const { left, top, right, bottom } = gridBounds;
     const lines: Array<{ points: number[]; vertical: boolean }> = [];
-    for (let x = 0; x <= stageSize.width; x += gs) lines.push({ points: [x, 0, x, stageSize.height], vertical: true });
-    for (let y = 0; y <= stageSize.height; y += gs) lines.push({ points: [0, y, stageSize.width, y], vertical: false });
+    for (let x = left; x <= right; x += gs) lines.push({ points: [x, top, x, bottom], vertical: true });
+    for (let y = top; y <= bottom; y += gs) lines.push({ points: [left, y, right, y], vertical: false });
     return lines;
-  }, [stageSize, gs]);
+  }, [gridBounds, gs]);
 
   function feetLabel(pixels: number): string {
     return `${(Math.abs(pixels) / gs).toFixed(1)} ft`;
@@ -517,11 +592,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
-          style={{ cursor: tool === "select" && !selectedId ? "grab" : tool === "room" || tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
+          style={{ cursor: tool === "room" || tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
         >
-          {/* Grid layer */}
+          {/* Grid layer — extends to fill visible viewport */}
           <Layer listening={false}>
-            <Rect name="grid-bg" x={0} y={0} width={stageSize.width} height={stageSize.height} fill="#ffffff" />
+            <Rect name="grid-bg" x={gridBounds.left} y={gridBounds.top} width={gridBounds.right - gridBounds.left} height={gridBounds.bottom - gridBounds.top} fill="#ffffff" />
             {gridLines.map((line, i) => (
               <Line key={i} points={line.points} stroke="#eae6e1" strokeWidth={1} />
             ))}
@@ -535,6 +610,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 x={room.x}
                 y={room.y}
                 draggable={tool === "select" && !readOnly}
+                onDragMove={handleDragMove}
                 onDragEnd={(e) => handleDragEnd("room", room.id, { x: e.target.x(), y: e.target.y() })}
                 onClick={() => { if (tool === "select") setSelectedId(room.id); if (tool === "delete") deleteElement(room.id); }}
                 onTap={() => { if (tool === "select") setSelectedId(room.id); if (tool === "delete") deleteElement(room.id); }}
@@ -585,8 +661,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               const len = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
               const midX = (wall.x1 + wall.x2) / 2;
               const midY = (wall.y1 + wall.y2) / 2;
+              const isStandalone = !wall.roomId;
               return (
-                <Group key={wall.id}>
+                <Group
+                  key={wall.id}
+                  draggable={tool === "select" && !readOnly && isStandalone}
+                  onDragEnd={(e) => { if (isStandalone) handleDragEnd("wall", wall.id, { x: e.target.x(), y: e.target.y() }); e.target.position({ x: 0, y: 0 }); }}
+                >
                   <Line
                     points={[wall.x1, wall.y1, wall.x2, wall.y2]}
                     stroke={selectedId === wall.id ? "#5b6abf" : "#1a1a1a"}
@@ -715,6 +796,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           tool={tool}
           selectedId={selectedId}
           propertyRooms={propertyRooms}
+          jobId={jobId}
         />
       )}
       </div>

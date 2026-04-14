@@ -105,26 +105,26 @@ export function FloorPlanToolbar({
       <div className="w-px h-8 bg-[#eae6e1] mx-1" />
       <button type="button" onClick={onUndo} disabled={!canUndo} aria-label="Undo" className={btnDisabled}>
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M3 10h14a4 4 0 0 1 0 8H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 6L3 10l4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Undo</span>
+        <span className="mt-0.5">Undo</span>
       </button>
       <button type="button" onClick={onRedo} disabled={!canRedo} aria-label="Redo" className={btnDisabled}>
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M21 10H7a4 4 0 0 0 0 8h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M17 6l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Redo</span>
+        <span className="mt-0.5">Redo</span>
       </button>
       <div className="w-px h-8 bg-[#eae6e1] mx-1" />
       <button type="button" onClick={onZoomIn} aria-label="Zoom in" className={btnInactive}>
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Zoom+</span>
+        <span className="mt-0.5">Zoom+</span>
       </button>
       <button type="button" onClick={onZoomOut} aria-label="Zoom out" className={btnInactive}>
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Zoom-</span>
+        <span className="mt-0.5">Zoom-</span>
       </button>
       <button type="button" onClick={onFit} aria-label="Reset view" className={btnInactive}>
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M9 3v18M3 9h18" stroke="currentColor" strokeWidth="1" opacity="0.3" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Fit</span>
+        <span className="mt-0.5">Fit</span>
       </button>
-      <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1 hidden sm:inline">{Math.round(stageScale * 100)}%</span>
+      <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1">{Math.round(stageScale * 100)}%</span>
       <div className="w-px h-8 bg-[#eae6e1] mx-1" />
       <button
         type="button"
@@ -156,7 +156,7 @@ export function FloorPlanToolbar({
         className={btnInactive}
       >
         <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-        <span className="mt-0.5 hidden sm:inline">Export</span>
+        <span className="mt-0.5">Export</span>
       </button>
     </div>
   );

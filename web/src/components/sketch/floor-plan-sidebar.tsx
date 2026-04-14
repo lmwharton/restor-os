@@ -2,6 +2,8 @@
 
 import { Fragment } from "react";
 import type { ToolType, FloorPlanData } from "./floor-plan-tools";
+import { usePhotos } from "@/lib/hooks/use-jobs";
+import { RoomPhotoSection } from "@/components/room-photo-section";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -13,6 +15,7 @@ interface FloorPlanSidebarProps {
   tool: ToolType;
   selectedId: string | null;
   propertyRooms?: Array<{ id: string; room_name: string }>;
+  jobId?: string;
 }
 
 /* ------------------------------------------------------------------ */
@@ -197,7 +200,19 @@ function KeyboardShortcuts() {
 /*  Main sidebar                                                       */
 /* ------------------------------------------------------------------ */
 
-export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRooms }: FloorPlanSidebarProps) {
+export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRooms, jobId }: FloorPlanSidebarProps) {
+  // Fetch photos for this job (only when jobId is available)
+  const { data: allPhotos = [] } = usePhotos(jobId ?? "");
+
+  // Match selected canvas room → property room (for room_id)
+  const selectedCanvasRoom = selectedId ? state.rooms.find(r => r.id === selectedId) : null;
+  const matchedPropertyRoom = selectedCanvasRoom
+    ? propertyRooms?.find(r => r.room_name === selectedCanvasRoom.name)
+    : null;
+  const roomPhotos = matchedPropertyRoom
+    ? allPhotos.filter(p => p.room_id === matchedPropertyRoom.id)
+    : [];
+
   return (
     <div className="hidden md:flex flex-col w-[240px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-4 overflow-y-auto">
       <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[#eae6e1]">
@@ -225,7 +240,21 @@ export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRo
       })()}
 
       {selectedId ? (
-        <PropertiesPanel state={state} gridSize={gridSize} selectedId={selectedId} />
+        <>
+          <PropertiesPanel state={state} gridSize={gridSize} selectedId={selectedId} />
+          {/* Room photos — only when a room (not wall/door/window) is selected and has a property match */}
+          {jobId && matchedPropertyRoom && (
+            <div className="pt-3 border-t border-[#eae6e1]">
+              <RoomPhotoSection
+                jobId={jobId}
+                roomId={matchedPropertyRoom.id}
+                roomName={matchedPropertyRoom.room_name}
+                photos={roomPhotos}
+                variant="sidebar"
+              />
+            </div>
+          )}
+        </>
       ) : (
         <ToolInstructions tool={tool} />
       )}
