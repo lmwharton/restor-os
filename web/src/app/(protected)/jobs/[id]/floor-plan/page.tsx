@@ -192,11 +192,16 @@ export default function FloorPlanPage({
     try {
       const raw = localStorage.getItem(lsKey);
       if (!raw) return;
-      const backup = JSON.parse(raw) as { canvasData: FloorPlanData; floorId: string | null; ts: number };
-      if (Date.now() - backup.ts > 86_400_000) { localStorage.removeItem(lsKey); return; }
-      setPendingBackup(backup.canvasData);
-      lastCanvasRef.current = backup.canvasData;
-    } catch { /* corrupt data — ignore */ }
+      const parsed = JSON.parse(raw);
+      // Validate shape before trusting localStorage content
+      if (!parsed || typeof parsed !== "object" || !parsed.canvasData || typeof parsed.ts !== "number") {
+        localStorage.removeItem(lsKey);
+        return;
+      }
+      if (Date.now() - parsed.ts > 86_400_000) { localStorage.removeItem(lsKey); return; }
+      setPendingBackup(parsed.canvasData as FloorPlanData);
+      lastCanvasRef.current = parsed.canvasData as FloorPlanData;
+    } catch { localStorage.removeItem(lsKey); }
   }, [lsKey]);
 
   // Sync activeFloorId when floor plans load

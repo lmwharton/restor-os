@@ -201,8 +201,8 @@ function KeyboardShortcuts() {
 /* ------------------------------------------------------------------ */
 
 export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRooms, jobId }: FloorPlanSidebarProps) {
-  // Fetch photos for this job (only when jobId is available)
-  const { data: allPhotos = [] } = usePhotos(jobId ?? "");
+  // Fetch photos for this job (disabled when jobId is missing — enabled: !!jobId in usePhotos)
+  const { data: allPhotos = [] } = usePhotos(jobId || "");
 
   // Match selected canvas room → property room (for room_id)
   const selectedCanvasRoom = selectedId ? state.rooms.find(r => r.id === selectedId) : null;
