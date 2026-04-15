@@ -135,15 +135,19 @@ export function FloorPlanToolbar({
           const layers = stage.getLayers();
           const gridLayer = layers[0];
           if (gridLayer) gridLayer.visible(false);
-          // Deselect to hide selection handles — find and hide circles with blue fill
+          // Hide selection handles + resize handles for clean export
+          const hiddenNodes: Array<{ visible: (v: boolean) => void }> = [];
           stage.find("Circle").forEach((c: { attrs: { fill?: string }; visible: (v: boolean) => void }) => {
-            if (c.attrs.fill === "#5b6abf") c.visible(false);
+            if (c.attrs.fill === "#5b6abf" || c.attrs.fill === "#e85d26") {
+              c.visible(false);
+              hiddenNodes.push(c);
+            }
           });
           stage.draw();
           const uri = stage.toDataURL({ pixelRatio: 2 });
-          // Restore
+          // Restore only the nodes we actually hid
           if (gridLayer) gridLayer.visible(true);
-          stage.find("Circle").forEach((c: { visible: (v: boolean) => void }) => c.visible(true));
+          hiddenNodes.forEach(c => c.visible(true));
           stage.draw();
           const link = document.createElement("a");
           link.download = "floor-plan.png";

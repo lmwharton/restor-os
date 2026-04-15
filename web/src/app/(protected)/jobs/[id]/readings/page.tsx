@@ -356,19 +356,19 @@ export default function MoistureReadingsPage() {
       return 1;
     }
 
-    // Count distinct calendar days from readings to determine current day
+    // Count distinct calendar days from readings (UTC-consistent to avoid timezone drift)
     const readingDays = new Set<string>();
     for (const r of allReadings) {
       const d = r.reading_date || r.created_at;
       if (d) {
         const dt = new Date(d);
-        readingDays.add(`${dt.getFullYear()}-${dt.getMonth()}-${dt.getDate()}`);
+        readingDays.add(`${dt.getUTCFullYear()}-${dt.getUTCMonth()}-${dt.getUTCDate()}`);
       }
     }
 
-    // Check if any reading was saved today
+    // Check if any reading was saved today (UTC)
     const today = new Date();
-    const todayKey = `${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+    const todayKey = `${today.getUTCFullYear()}-${today.getUTCMonth()}-${today.getUTCDate()}`;
     const hasReadingsToday = readingDays.has(todayKey);
 
     // Day number = number of distinct days with readings + 1 if today is new

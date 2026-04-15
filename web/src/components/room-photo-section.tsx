@@ -88,13 +88,12 @@ function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomI
       } catch (err) {
         console.error(`Upload failed for ${fileArray[i].name}:`, err);
         failed++;
-        break;
       }
     }
     setUploading(false);
     setProgress(null);
     if (failed > 0) {
-      setError(`Failed to upload ${failed} photo${failed > 1 ? "s" : ""}. Check your connection.`);
+      setError(`Failed to upload ${failed} of ${fileArray.length} photo${failed > 1 ? "s" : ""}. Check your connection.`);
       setTimeout(() => setError(null), 5000);
     }
   }, [uploadPhoto, roomId, roomName]);
@@ -146,6 +145,7 @@ function CapturePanel({
   jobId,
   roomId,
   roomName,
+  onDone,
 }: {
   jobId: string;
   roomId: string;
@@ -174,13 +174,12 @@ function CapturePanel({
       } catch (err) {
         console.error(`Upload failed for ${fileArray[i].name}:`, err);
         failed++;
-        break;
       }
     }
     setUploading(false);
     setProgress(null);
     if (failed > 0) {
-      setError(`Upload failed. Check your connection.`);
+      setError(`Failed to upload ${failed} of ${fileArray.length} photo${failed > 1 ? "s" : ""}. Check your connection.`);
       setTimeout(() => setError(null), 5000);
     }
   }, [uploadPhoto, roomId, roomName]);
@@ -240,6 +239,13 @@ function CapturePanel({
           >
             <Upload size={12} />
             Gallery
+          </button>
+          <button
+            type="button"
+            onClick={onDone}
+            className="flex items-center px-2.5 py-1 rounded-lg text-[11px] text-on-surface-variant font-medium bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer ml-auto"
+          >
+            Done
           </button>
         </div>
       )}
