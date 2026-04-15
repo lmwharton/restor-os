@@ -1,4 +1,4 @@
-# Spec 04-III: Equipment & Certification
+# Spec 04C: Equipment & Certification
 
 ## Status
 | Field | Value |
@@ -35,7 +35,7 @@
 
 **Scope:**
 - IN: Equipment library (CRUD, serial numbers, deployment tracking, ROI), drying certificate generation (PDF, room-by-room summary, compliance statement)
-- OUT: Equipment alerts on dashboard (those fire from 04-I when this data exists — additive, not blocking)
+- OUT: Equipment alerts on dashboard (those fire from 04A when this data exists — additive, not blocking)
 
 ---
 
@@ -120,4 +120,4 @@ git checkout lm-dev
 - **Equipment billing is count x days, not serial numbers.** But inventory management helps owners track what they own and where it is.
 - **Drying Certificate format** from Brett's ScopeFlow demo. Required to close out mitigation billing — proves equipment days were justified.
 - **Equipment ROI tracking** is a value-add: which units generate most billing, flag underperformers.
-- **Equipment alerts (dashboard):** When 04-I is built, equipment data can trigger alerts (malfunction, delivery needed). This is additive — 04-III doesn't need 04-I, and 04-I doesn't need 04-III. They enhance each other when both exist.
+- **Equipment alerts (dashboard):** When 04A is built, equipment data can trigger alerts (malfunction, delivery needed). This is additive — 04AII doesn't need 04A, and 04A doesn't need 04AII. They enhance each other when both exist.

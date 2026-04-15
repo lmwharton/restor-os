@@ -2,9 +2,9 @@
 
 > **Note:** This spec was split on 2026-04-01 and consolidated on 2026-04-14.
 > Original sub-specs (04A–04G) were consolidated into three self-contained specs:
-> - **04-I** (Team & Operations Dashboard) ← 04A + 04B + 04F + 04G
-> - **04-II** (Job Communication) ← 04D + 04E
-> - **04-III** (Equipment & Certification) ← 04C
+> - **04A** (Team & Operations Dashboard) ← old 04A-04G consolidated
+> - **04B** (Job Communication) ← old Board & People + Daily Auto-Reports
+> - **04C** (Equipment & Certification) ← old Equipment Inventory & Drying Cert
 > Old sub-specs archived in `specs/archived/`.
 >
 > This spec retains Phase 4 (AI Past History Intelligence) and Phase 5 (Company Settings Expansion).
