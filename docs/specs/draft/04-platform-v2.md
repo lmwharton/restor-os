@@ -1,12 +1,11 @@
 # Platform V2 — AI Past History, Company Settings Expansion
 
-> **Note:** This spec was split on 2026-04-01. The following phases moved to dedicated specs:
-> - Phase 1 (Team Management) → `04A-team-management.md`
-> - Phase 2 (Board & People) → `04D-board-and-people.md`
-> - Phase 3 (Daily Auto-Reports) → `04E-daily-auto-reports.md`
-> - Phase 6 (Equipment Inventory) → `04C-equipment-inventory-drying-cert.md`
-> - Phase 6 (Scheduling/Dispatch) → `04B-scheduling-dispatch.md`
-> - Phase 7 (Drying Certificate) → `04C-equipment-inventory-drying-cert.md`
+> **Note:** This spec was split on 2026-04-01 and consolidated on 2026-04-14.
+> Original sub-specs (04A–04G) were consolidated into three self-contained specs:
+> - **04-I** (Team & Operations Dashboard) ← 04A + 04B + 04F + 04G
+> - **04-II** (Job Communication) ← 04D + 04E
+> - **04-III** (Equipment & Certification) ← 04C
+> Old sub-specs archived in `specs/archived/`.
 >
 > This spec retains Phase 4 (AI Past History Intelligence) and Phase 5 (Company Settings Expansion).
 
