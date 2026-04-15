@@ -1,4 +1,4 @@
-# Spec 04-II: Job Communication
+# Spec 04B: Job Communication
 
 ## Status
 | Field | Value |
@@ -44,7 +44,7 @@ Both share the same contacts infrastructure (adjuster email, customer email, sha
 - OUT: Push notifications for new board messages (future), file attachments on board (future), SMS notifications (future)
 
 **Relationship to other specs:**
-- **04-I (Team & Operations Dashboard):** Team Chat in 04-I is company-wide casual crew coordination. Board here is per-job formal documentation. Different audiences, different tables, no overlap.
+- **04A (Team & Operations Dashboard):** Team Chat in 04A is company-wide casual crew coordination. Board here is per-job formal documentation. Different audiences, different tables, no overlap.
 - **Spec 01 (Jobs):** Share portal links already exist from Spec 01. Contacts management extends them with per-contact sharing.
 
 ---
@@ -185,7 +185,7 @@ git checkout lm-dev
 ## Decisions & Notes
 
 - **Consolidates 04D + 04E** — Board provides real-time per-job communication, Auto-Reports provides scheduled summaries. Both share contacts infrastructure.
-- **Board is NOT Team Chat.** Board = per-job, visible to external contacts (customer, adjuster). Team Chat (04-I) = company-wide, internal crew only.
+- **Board is NOT Team Chat.** Board = per-job, visible to external contacts (customer, adjuster). Team Chat (04A) = company-wide, internal crew only.
 - **Auto-reports are a revenue tool.** Brett: "Auto-sends to the adjuster on a daily basis with limited access. This is a revenue tool." Proactive communication → faster approvals → faster payment.
 - **Author name is free-text** in V1. External contacts (customer/adjuster posting via share portal) aren't Crewmatic users, so we store their name as text rather than requiring a user account.
 - **From Brett's ScopeFlow demo:** "Board & People" tab on each job. Simple messages (name + text + timestamp). Contacts section with Customers and Adjusters tabs.

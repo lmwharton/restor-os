@@ -1,4 +1,4 @@
-# Spec 04-I: Team & Operations Dashboard
+# Spec 04A: Team & Operations Dashboard
 
 ## Status
 | Field | Value |
@@ -31,6 +31,7 @@
 - [ ] Team Chat with flat crew-wide messaging, real-time updates, unread badge
 - [ ] Scheduling: calendar board, drag-drop tech assignment, "My Schedule" view
 - [ ] Dispatch View: per-tech daily job list, tomorrow's needs, Map ↔ Dispatch toggle
+- [ ] Top-level 4-item navigation: Dashboard | Jobs | Portals | Reports (mobile bottom bar + desktop top nav)
 - [ ] Dashboard layout: 3-column desktop grid, stacked mobile, auto-refresh
 - [ ] Tests passing
 - [ ] Code review approved
@@ -308,8 +309,8 @@ CREATE TABLE job_schedules (
 - [ ] "My Schedule" view for techs: today's jobs, tomorrow's jobs, navigation links
 - [ ] GPS check-in at job site (logs arrival via browser geolocation)
 
-### Phase 9: Dispatch View + Dashboard Layout — ❌
-Map/Dispatch toggle, new dashboard layout, mobile responsive. Ties it all together.
+### Phase 9: Top-Level Navigation + Dispatch View + Dashboard Layout — ❌
+Top-level nav restructure, Map/Dispatch toggle, new dashboard layout, mobile responsive. Ties it all together.
 
 **Backend:**
 - [ ] `GET /v1/dashboard/dispatch?date=2026-04-14` — jobs grouped by tech for date (reads from `job_schedules`)
@@ -343,6 +344,17 @@ Map/Dispatch toggle, new dashboard layout, mobile responsive. Ties it all togeth
 3. Map/Dispatch toggle
 4. Tasks
 5. Team Chat
+
+**Top-Level Navigation (from Brett's Layout Summary v2.0):**
+The app moves from sidebar nav to a four-item top-level navigation. Field-friendly — minimal taps to reach critical functions.
+- [ ] Four top-level nav items: **Dashboard** | **Jobs** | **Portals** | **Reports**
+- [ ] Mobile: bottom tab bar (4 icons) — thumb-reachable on 6-inch screen
+- [ ] Desktop: horizontal top nav or collapsible sidebar with these 4 sections
+- [ ] Dashboard = this spec (map, tasks, alerts, time clock, chat)
+- [ ] Jobs = existing job list + job detail (Spec 01/01B/01C/01E)
+- [ ] Portals = external party communication (Spec 08)
+- [ ] Reports = document exports, analytics, timesheets (Spec 10)
+- [ ] Active nav item highlighted, badge counts on Portals (unread messages) and Dashboard (alerts)
 
 **Layout & cleanup:**
 - [ ] CSS Grid: `grid-template-columns: 1fr 320px 320px` desktop, single column mobile
@@ -408,13 +420,15 @@ git checkout lm-dev
 
 ## Decisions & Notes
 
-- **Source document:** Brett's "Crewmatic Dashboard — Product Specification v1.0" (April 13, 2026), filed at `/Users/lakshman/Downloads/Crewmatic Dashboard Summary.docx.pdf`
+- **Source documents:** Brett's "Crewmatic Dashboard — Product Specification v1.0" (April 13, 2026) + Brett's "UI Layout & Navigation Summary v2.0" (April 13, 2026), filed at `docs/research/layout-summary-v2.pdf`
 - **Consolidates 04A + 04B + 04F + 04G** into one self-contained spec with zero external dependencies
 - **Dashboard is a replacement, not addition.** Current KPI gauges + pipeline bars move elsewhere. Brett's spec is operations-focused, not analytics-focused.
 - **Notifications & Alerts unified.** Instead of a separate `alerts` table, extend `event_history` with `severity` column. Bell dropdown shows all events (severity NULL). Dashboard AlertsPanel shows only severity red/amber. One table, two views.
 - **Phase ordering rationale:** Team management first (foundation), then individual dashboard components (each shippable on its own), then scheduling + dispatch + layout last (ties everything together).
-- **Team Chat vs Board (04-II):** Team Chat is company-wide casual crew coordination. Board (04-II) is per-job formal documentation visible to external parties. Separate systems.
+- **Team Chat vs Board (04B):** Team Chat is company-wide casual crew coordination. Board (04B) is per-job formal documentation visible to external parties. Separate systems.
 - **Dispatch View vs Scheduling:** Scheduling (Phase 8) is the write side (create assignments). Dispatch View (Phase 9) is the read side (today's snapshot). Same spec, clear separation.
 - **Real-time strategy:** Polling first (chat 5s, alerts 30s, tasks 60s, map 2min). Supabase Realtime is the upgrade path but not blocker.
 - **GPS strategy:** Used by both Time Clock (Phase 6) and Scheduling GPS check-in (Phase 8). Same browser Geolocation API pattern. Captured passively, not shown to tech, available for owner.
+- **Top-level navigation restructure (from Layout Summary v2.0):** App moves from sidebar to 4-item top nav: Dashboard | Jobs | Portals | Reports. This is the app shell change — each section is its own spec (04A, 01-series, 05, 06). Phase 9 owns the nav component + mobile bottom bar.
+- **Related new specs from Layout Summary v2.0:** 01E (Fire/Smoke + Recon Selections/Payments), 05 (Portals), 06 (Reports). Created 2026-04-14.
 - **Brett's pain points addressed:** "I'm sending texts late at night" → Scheduling + Dispatch. "Where are my jobs?" → Map. "What needs attention?" → Alerts. "What's my crew doing?" → Dispatch + Time Clock + Chat.
