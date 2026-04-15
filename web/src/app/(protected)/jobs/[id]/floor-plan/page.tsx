@@ -156,23 +156,26 @@ export default function FloorPlanPage({
   const { data: allPhotos = [] } = usePhotos(jobId);
   const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string } | null>(null);
 
-  const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number } | null) => {
+  const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => {
     if (!info) { setMobileSelectedRoom(null); return; }
-    const propertyRoom = jobRooms?.find(r => r.room_name === info.name);
+    // Prefer propertyRoomId from canvas data; fall back to name-based lookup for legacy rooms
+    const propertyRoom = info.propertyRoomId
+      ? jobRooms?.find(r => r.id === info.propertyRoomId)
+      : jobRooms?.find(r => r.room_name === info.name);
     if (!propertyRoom) { setMobileSelectedRoom(null); return; }
     setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id });
   }, [jobRooms]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
-  const lastCanvasRef = useRef<FloorPlanData | null>(null);
+  const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error" | "offline">("idle");
   const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // localStorage key for offline backup
-  const lsKey = `fp-backup-${jobId}`;
+  // localStorage key for offline backup — keyed per-floor to prevent cross-floor data corruption
+  const lsKey = activeFloorId ? `fp-backup-${jobId}-${activeFloorId}` : `fp-backup-${jobId}`;
 
   // Persist canvas state to localStorage on every change (survives browser close)
   const backupToLocal = useCallback((canvasData: FloorPlanData, floorId: string | null) => {
@@ -186,23 +189,28 @@ export default function FloorPlanPage({
     try { localStorage.removeItem(lsKey); } catch { /* ignore */ }
   }, [lsKey]);
 
-  // On mount, check for unsaved local backup
+  // Check for unsaved local backup — synchronous read so it's available before canvas mounts
   const [pendingBackup, setPendingBackup] = useState<FloorPlanData | null>(null);
+  const [backupChecked, setBackupChecked] = useState(false);
   useEffect(() => {
+    // Only check once activeFloorId is resolved (so we read the right key)
+    if (!activeFloorId) { setBackupChecked(false); return; }
     try {
       const raw = localStorage.getItem(lsKey);
-      if (!raw) return;
+      if (!raw) { setBackupChecked(true); return; }
       const parsed = JSON.parse(raw);
-      // Validate shape before trusting localStorage content
       if (!parsed || typeof parsed !== "object" || !parsed.canvasData || typeof parsed.ts !== "number") {
         localStorage.removeItem(lsKey);
+        setBackupChecked(true);
         return;
       }
-      if (Date.now() - parsed.ts > 86_400_000) { localStorage.removeItem(lsKey); return; }
+      if (Date.now() - parsed.ts > 86_400_000) { localStorage.removeItem(lsKey); setBackupChecked(true); return; }
+      if (parsed.floorId && parsed.floorId !== activeFloorId) { setBackupChecked(true); return; }
       setPendingBackup(parsed.canvasData as FloorPlanData);
-      lastCanvasRef.current = parsed.canvasData as FloorPlanData;
+      lastCanvasRef.current = { floorId: activeFloorId, data: parsed.canvasData as FloorPlanData };
     } catch { localStorage.removeItem(lsKey); }
-  }, [lsKey]);
+    setBackupChecked(true);
+  }, [lsKey, activeFloorId]);
 
   // Sync activeFloorId when floor plans load
   useEffect(() => {
@@ -222,6 +230,8 @@ export default function FloorPlanPage({
   activeFloorIdRef.current = activeFloorId;
 
   const wasPendingRef = useRef(false);
+  const retryCount = useRef(0);
+  const MAX_RETRIES = 5;
 
   /* ---------------------------------------------------------------- */
   /*  Save — create or update                                          */
@@ -229,23 +239,28 @@ export default function FloorPlanPage({
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
-      // Skip auto-save while a floor creation is in-flight to avoid duplicates
+      // Always backup to localStorage (survives browser close) — even during pending create
+      backupToLocal(canvasData, activeFloorIdRef.current);
+
+      // Skip server save while a floor creation is in-flight to avoid duplicates
       if (createFloorPlan.isPending) {
-        lastCanvasRef.current = canvasData;
+        lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
         return;
       }
 
-      // Backup to localStorage immediately (survives browser close)
-      backupToLocal(canvasData, activeFloorIdRef.current);
-
-      // If browser reports offline, skip the API call entirely — just queue for retry
+      // If browser reports offline, queue for retry with backoff
       if (typeof navigator !== "undefined" && !navigator.onLine) {
         setSaveStatus("offline");
-        if (retryTimer.current) clearTimeout(retryTimer.current);
-        retryTimer.current = setTimeout(() => {
-          const pending = lastCanvasRef.current;
-          if (pending) handleChange(pending);
-        }, 5000);
+        if (retryCount.current < MAX_RETRIES) {
+          retryCount.current++;
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            const pending = lastCanvasRef.current;
+            if (pending) handleChangeRef.current(pending.data);
+          }, 5000 * retryCount.current);
+        } else {
+          setSaveStatus("error");
+        }
         return;
       }
 
@@ -295,7 +310,9 @@ export default function FloorPlanPage({
         if (canvasData.rooms && jobRooms) {
           const gs = canvasData.gridSize || 20;
           for (const drawnRoom of canvasData.rooms) {
-            const match = jobRooms.find((r) => r.room_name === drawnRoom.name);
+            const match = drawnRoom.propertyRoomId
+              ? jobRooms.find((r) => r.id === drawnRoom.propertyRoomId)
+              : jobRooms.find((r) => r.room_name === drawnRoom.name);
             if (match) {
               const widthFt = Math.round((drawnRoom.width / gs) * 10) / 10;
               const lengthFt = Math.round((drawnRoom.height / gs) * 10) / 10;
@@ -308,60 +325,77 @@ export default function FloorPlanPage({
           }
         }
 
-        // Success — clear local backup, show saved
+        // Success — clear local backup, reset retries, show saved
         clearLocalBackup();
+        retryCount.current = 0;
         if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
       } catch (err) {
         console.error("Failed to save floor plan:", err);
-        // Show offline status and schedule auto-retry in 5 seconds
-        setSaveStatus("offline");
-        if (retryTimer.current) clearTimeout(retryTimer.current);
-        retryTimer.current = setTimeout(() => {
-          const pending = lastCanvasRef.current;
-          if (pending) handleChange(pending);
-        }, 5000);
+        if (retryCount.current < MAX_RETRIES) {
+          retryCount.current++;
+          setSaveStatus("offline");
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            const pending = lastCanvasRef.current;
+            if (pending) handleChangeRef.current(pending.data);
+          }, 5000 * retryCount.current);
+        } else {
+          setSaveStatus("error");
+        }
       }
     },
     [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
   );
 
+  // Stable ref for handleChange — avoids stale closures in setTimeout callbacks
+  const handleChangeRef = useRef(handleChange);
+  handleChangeRef.current = handleChange;
+
+  // Clean up timers on unmount
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+  }, []);
+
   // When coming back online, retry any pending save
   useEffect(() => {
     const handleOnline = () => {
       if (lastCanvasRef.current && (saveStatus === "offline" || saveStatus === "error")) {
-        handleChange(lastCanvasRef.current);
+        retryCount.current = 0;
+        handleChangeRef.current(lastCanvasRef.current.data);
       }
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [saveStatus, handleChange]);
+  }, [saveStatus]);
 
   // Restore pending backup after handleChange is available
   useEffect(() => {
     if (!pendingBackup || !floorPlans || floorPlans.length === 0) return;
-    handleChange(pendingBackup);
+    handleChangeRef.current(pendingBackup);
     setPendingBackup(null);
-  }, [pendingBackup, floorPlans, handleChange]);
+  }, [pendingBackup, floorPlans]);
 
-  // Flush deferred save when floor creation finishes
+  // Flush deferred save when floor creation finishes — only if data matches active floor
   useEffect(() => {
     if (wasPendingRef.current && !createFloorPlan.isPending && lastCanvasRef.current) {
-      handleChange(lastCanvasRef.current);
+      if (!lastCanvasRef.current.floorId || lastCanvasRef.current.floorId === activeFloorId) {
+        handleChangeRef.current(lastCanvasRef.current.data);
+      }
     }
     wasPendingRef.current = createFloorPlan.isPending;
-  }, [createFloorPlan.isPending, handleChange]);
+  }, [createFloorPlan.isPending, activeFloorId]);
 
   /* ---------------------------------------------------------------- */
   /*  Add Floor                                                        */
   /* ---------------------------------------------------------------- */
 
   const handleAddFloor = useCallback(() => {
-    // Flush current floor's data first, then clear so it doesn't leak to the new floor
+    // Flush current floor's data — don't null lastCanvasRef yet (async save may still need it)
     canvasRef.current?.flush();
-    lastCanvasRef.current = null;
 
     const maxNum = floorPlans?.reduce((max, fp) => Math.max(max, fp.floor_number ?? 0), 0) ?? 0;
     const nextNumber = maxNum + 1;
@@ -372,6 +406,7 @@ export default function FloorPlanPage({
       },
       {
         onSuccess: (data) => {
+          lastCanvasRef.current = null; // safe to clear now — previous floor's save resolved
           queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => [
             ...(old ?? []),
             data,
@@ -551,9 +586,9 @@ export default function FloorPlanPage({
       <div className="flex-1 min-h-[400px]">
         <KonvaFloorPlan
           ref={canvasRef}
-          key={activeFloor?.id ?? "new"}
+          key={`${activeFloor?.id ?? "new"}-${backupChecked ? "ready" : "wait"}`}
           initialData={pendingBackup ?? activeFloor?.canvas_data as FloorPlanData | null | undefined}
-          onChange={(data: FloorPlanData) => { lastCanvasRef.current = data; handleChange(data); }}
+          onChange={(data: FloorPlanData) => { lastCanvasRef.current = { floorId: activeFloorId, data }; handleChange(data); }}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
           onCreateRoom={handleCreateRoom}
           jobId={jobId}
