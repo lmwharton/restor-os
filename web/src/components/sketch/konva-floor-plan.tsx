@@ -36,7 +36,7 @@ interface KonvaFloorPlanProps {
   rooms?: Array<{ id: string; room_name: string }>;
   onCreateRoom?: (name: string, dimensions?: { width: number; height: number }) => void;
   jobId?: string;
-  onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number } | null) => void;
+  onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => void;
 }
 
 /* ------------------------------------------------------------------ */
@@ -112,6 +112,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       name: room.name,
       widthFt: Math.round((room.width / g) * 10) / 10,
       heightFt: Math.round((room.height / g) * 10) / 10,
+      propertyRoomId: room.propertyRoomId,
     });
   }, [selectedId, state.rooms, state.gridSize, onSelectionChange]);
 
@@ -130,6 +131,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   // Long-press resize mode for mobile
   const [resizeActive, setResizeActive] = useState(false);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up long-press timer on unmount
+  useEffect(() => () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
 
   // Pinch-to-zoom tracking
   const lastPinchDist = useRef<number | null>(null);
@@ -420,9 +426,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
   }, [tool, readOnly, drawStart, drawCurrent, gs]);
 
-  const finalizePendingRoom = useCallback((name: string) => {
+  const finalizePendingRoom = useCallback((name: string, propertyRoomId?: string) => {
     if (!pendingRoom) return;
-    const newRoom: RoomData = { id: uid("room"), ...pendingRoom, name, fill: "#fff3ed" };
+    const newRoom: RoomData = { id: uid("room"), ...pendingRoom, name, fill: "#fff3ed", propertyRoomId };
     const roomWalls = wallsForRoom(newRoom);
     push({ ...state, rooms: [...state.rooms, newRoom], walls: [...state.walls, ...roomWalls] });
     if (onCreateRoom) {
@@ -568,7 +574,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   /*  Computed values                                                  */
   /* ---------------------------------------------------------------- */
 
-  // Compute grid lines that cover the entire visible viewport (accounting for pan + zoom)
+  // Quantize stagePos to grid-cell boundaries so grid only recomputes when pan crosses a cell
+  const qx = Math.round(stagePos.x / gs);
+  const qy = Math.round(stagePos.y / gs);
   const gridBounds = useMemo(() => {
     const s = stageScale;
     // Convert viewport corners to canvas coordinates
@@ -584,7 +592,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       right: Math.ceil((x1 + pad) / gs) * gs,
       bottom: Math.ceil((y1 + pad) / gs) * gs,
     };
-  }, [stageSize, stageScale, stagePos, gs]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageSize, stageScale, qx, qy, gs]);
 
   const gridLines = useMemo(() => {
     const { left, top, right, bottom } = gridBounds;

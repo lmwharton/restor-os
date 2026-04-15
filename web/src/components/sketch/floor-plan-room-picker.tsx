@@ -8,7 +8,7 @@ const ROOM_PRESETS = ["Kitchen", "Living Room", "Master Bedroom", "Bedroom", "Ba
 interface RoomPickerProps {
   existingRooms: RoomData[];
   propertyRooms?: Array<{ id: string; room_name: string }>;
-  onSelect: (name: string) => void;
+  onSelect: (name: string, propertyRoomId?: string) => void;
   onCancel: () => void;
 }
 
@@ -26,14 +26,14 @@ export function FloorPlanRoomPicker({ existingRooms, propertyRooms, onSelect, on
             <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">From Property Layout</p>
             <div className="flex flex-wrap gap-1.5">
               {propertyRooms
-                .filter((r) => !existingRooms.some((sr) => sr.name === r.room_name))
+                .filter((r) => !existingRooms.some((sr) => sr.propertyRoomId === r.id))
                 .map((r) => (
-                  <button key={r.id} type="button" onClick={() => onSelect(r.room_name)}
+                  <button key={r.id} type="button" onClick={() => onSelect(r.room_name, r.id)}
                     className="px-3 py-1.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[12px] font-medium hover:bg-[#e85d26] hover:text-white transition-colors cursor-pointer">
                     {r.room_name}
                   </button>
                 ))}
-              {propertyRooms.filter((r) => !existingRooms.some((sr) => sr.name === r.room_name)).length === 0 && (
+              {propertyRooms.filter((r) => !existingRooms.some((sr) => sr.propertyRoomId === r.id)).length === 0 && (
                 <p className="text-[11px] text-[#8a847e]">All rooms already drawn</p>
               )}
             </div>

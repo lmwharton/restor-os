@@ -204,10 +204,12 @@ export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRo
   // Fetch photos for this job (disabled when jobId is missing — enabled: !!jobId in usePhotos)
   const { data: allPhotos = [] } = usePhotos(jobId || "");
 
-  // Match selected canvas room → property room (for room_id)
+  // Match selected canvas room → property room (prefer ID, fall back to name for legacy data)
   const selectedCanvasRoom = selectedId ? state.rooms.find(r => r.id === selectedId) : null;
   const matchedPropertyRoom = selectedCanvasRoom
-    ? propertyRooms?.find(r => r.room_name === selectedCanvasRoom.name)
+    ? (selectedCanvasRoom.propertyRoomId
+        ? propertyRooms?.find(r => r.id === selectedCanvasRoom.propertyRoomId)
+        : propertyRooms?.find(r => r.room_name === selectedCanvasRoom.name))
     : null;
   const roomPhotos = matchedPropertyRoom
     ? allPhotos.filter(p => p.room_id === matchedPropertyRoom.id)
@@ -222,8 +224,9 @@ export function FloorPlanSidebar({ state, gridSize, tool, selectedId, propertyRo
 
       {/* Unmapped rooms from Property Layout */}
       {propertyRooms && propertyRooms.length > 0 && (() => {
+        const drawnIds = new Set(state.rooms.map(r => r.propertyRoomId).filter(Boolean));
         const drawnNames = new Set(state.rooms.map(r => r.name));
-        const unmapped = propertyRooms.filter(r => !drawnNames.has(r.room_name));
+        const unmapped = propertyRooms.filter(r => !drawnIds.has(r.id) && !drawnNames.has(r.room_name));
         if (unmapped.length === 0) return null;
         return (
           <div className="mb-3 pb-3 border-b border-[#eae6e1]">
