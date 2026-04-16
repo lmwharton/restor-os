@@ -1,210 +1,310 @@
-# Spec 01H: Floor Plan V2 — Sketch Tool Product Redesign
+# Spec 01H: Floor Plan V2 — Sketch Tool as Spatial Backbone
 
 ## Status
 | Field | Value |
 |-------|-------|
 | **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% |
-| **State** | Draft — spec review pending, not yet started |
-| **Blocker** | Property table migration (prerequisite for Phase 1) |
+| **State** | Draft — ready for implementation review |
+| **Blocker** | None — all prerequisites already in DB |
 | **Branch** | TBD (off main, after 01C merges) |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
 | **Source** | Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026) |
 
+## Metrics
+| Metric | Value |
+|--------|-------|
+| Created | 2026-04-15 |
+| Started | — |
+| Completed | — |
+| Sessions | 0 |
+| Total Time | — |
+| Files Changed | 0 |
+| Tests Written | 0 |
+
+## Reference
+- **Brett's spec:** Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026)
+- **Predecessor:** Spec 01C (Floor Plan Konva rebuild) — this spec supersedes most of 01C's canvas architecture
+- **Eng review:** Completed 2026-04-16 with 17 architectural decisions locked in (see DECISIONS section)
+
 ## Summary
 
-Brett's V2 spec redefines the sketch tool from a drawing canvas into the **spatial backbone** of the platform. Every feature — moisture readings, equipment tracking, photo documentation, billing, and carrier reports — anchors to the floor plan.
+Brett's V2 spec redefines the sketch tool from a drawing canvas into the **spatial backbone** of the Crewmatic platform. Every feature — moisture readings, equipment tracking, photo documentation, billing, and carrier reports — anchors to the floor plan.
 
-Key changes from what we built in 01C:
-- Floor plans belong to **properties**, not jobs (mitigation draws it, reconstruction inherits it)
-- Rooms become **structured records** with type, ceiling, materials, affected status — not just rectangles with names
-- Walls become **data-carrying segments** with type (exterior/interior), affected status, and SF calculations
-- Moisture readings move **onto the canvas** as spatial pins with color-coded dry status
-- Equipment tracking becomes **spatial** with placed/pulled timestamps driving billing
-- Photos gain **categories**, **before/after pairing**, and **unplaced tray** workflow
+**Key architectural shifts:**
+- Floor plans belong to **properties** (not jobs), with **job-driven versioning**
+- Rooms become **structured records** with type, ceiling, materials, affected status
+- Walls become **first-class relational entities** (needed for Xactimate line items)
+- Moisture readings become **spatial pins** with persistent locations tracked over time
+- Equipment tracking records **individual units** (not quantity counts) for billing accuracy
+- Photos gain **categories**, **before/after pairing**, and **backend-summarized clustering**
+
+## What Already Exists (Do Not Duplicate)
+
+Before this spec was finalized, several components were verified to already exist in the codebase:
+
+| Component | Status | Notes |
+|-----------|--------|-------|
+| `properties` table | ✅ Live in DB | Full schema with `usps_standardized`, `year_built`, `property_type`, `total_sqft`, `deleted_at`, `address_line2`. Has unique index on `(company_id, usps_standardized)` with soft-delete awareness. |
+| Properties CRUD API | ✅ Live | 5 endpoints: POST, GET list with search, GET by id, PATCH, DELETE (soft). Has dedup logic via `_build_usps_standardized`. |
+| `jobs.property_id` FK | ✅ Live | Already references properties table. Job creation flow auto-creates property if none exists for address. |
+| Konva canvas editor | ✅ Live (01C) | Keep the Konva framework. Replace interaction model + rendering logic. |
+| Moisture readings (atmospheric) | ✅ Live | Keep — still needed for room-level temp/RH/GPP data. |
+| Photos CRUD | ✅ Live | Extend with new fields, don't replace. |
 
 ## Done When
 
-### Phase 1: Core Canvas & Room Data
-- [ ] Properties table created; floor plans migrate from `job_id` to `property_id`
+### Phase 1: Property-Scoped Floor Plans + Versioning + Canvas + Walls
+- [ ] `floor_plans` reparented from `job_id` to `property_id` FK
+- [ ] `floor_plan_versions` table created — one version per job session, auto-frozen on archive
+- [ ] `jobs.floor_plan_version_id` FK added — pins job to a specific version
+- [ ] Active jobs auto-upgrade to latest version when another job creates a new one
+- [ ] Archived/submitted jobs are read-only (version frozen)
+- [ ] New job auto-inherits latest floor plan version (or creates fresh one if first job at property)
+- [ ] `wall_segments` table created (relational, not JSONB)
+- [ ] `wall_openings` table created (doors, windows, missing walls)
+- [ ] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing canvas_data)
 - [ ] Room creation: drop default 10×10 rectangle (dashed = unconfirmed), deform by dragging edges/corners
+- [ ] Room creation: trace perimeter method — tap corners sequentially, auto-close into room
+- [ ] Polygon data model: rooms store `points: [{x,y}]` (rectangles are 4-point polygons)
+- [ ] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles)
 - [ ] Room confirmation card: name, type, dimensions, ceiling height, ceiling type, materials, affected status
 - [ ] Room type system: 13 predefined types with auto-populated material defaults
-- [ ] 6-inch grid snap (gridSize: 10px = 6 inches)
-- [ ] Floor SF auto-calculated: length × width - floor openings
-- [ ] Wall SF auto-calculated: perimeter LF × ceiling height × ceiling multiplier - openings
-- [ ] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic (predefined levels)
+- [ ] 6-inch grid snap enforced
+- [ ] Floor SF auto-calculated (polygon area, minus floor openings)
+- [ ] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier - openings)
+- [ ] Custom wall SF override per room (for non-standard ceiling geometry)
+- [ ] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic
 - [ ] Floor openings: stairwell cutouts that subtract from floor SF
-
-### Phase 1B: Polygon Rooms
-- [ ] Trace perimeter method: tap corners sequentially, auto-close into room
-- [ ] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles)
-- [ ] RoomData changes from `{x, y, width, height}` to `{points: [{x,y}]}`
-- [ ] Wall generation from polygon edges (N walls, not always 4)
-- [ ] SF calculation from polygon area formula
-
-### Phase 2: Wall Interactions
+- [ ] **Room snap behavior:** magnetic snap within 20px of existing room walls
+- [ ] **Shared wall auto-detection:** when two rooms snap together, shared wall marked `shared=true`, excluded from each room's perimeter LF, rendered with lighter line weight
 - [ ] Wall contextual menu on tap: Add Door, Add Window, Add Opening, Wall Type, Mark Affected
 - [ ] Door height field (default 7ft, editable) — SF deduction: width × height
 - [ ] Window height field (default 4ft) + sill height (optional) — SF deduction: width × height
 - [ ] Opening (missing wall): dashed line indicator, drag handles for start/end, full SF deduction
-- [ ] Wall type toggle: exterior / interior (drives Xactimate material codes)
+- [ ] Wall type toggle: exterior / interior (drives Xactimate material codes in Spec 01D)
 - [ ] Wall affected status: per-wall mitigation scope flag (independent from room)
-- [ ] Shared wall auto-detection on room snap, lighter line weight rendering
+- [ ] **Affected Mode overlay** toggle on canvas (highlights all affected rooms/walls in red)
+- [ ] Full test coverage: SF calculations, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic
 
-### Phase 3: Moisture Pins
-- [ ] Moisture Mode toggle in toolbar (canvas dims, pin tools activate)
+### Phase 2: Moisture Pins
+- [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
+- [ ] `moisture_pin_readings` table created — time-series reading values per pin
 - [ ] Pin drop on canvas tap with placement card: location descriptor, material type, reading value
-- [ ] Pin color: red (>10% above dry standard), amber (within 10%), green (at/below)
+- [ ] Pin color: red (>10 percentage points above dry standard), amber (within 10 points), green (at/below)
 - [ ] Tap existing pin → enter new daily reading (pin shows latest color)
 - [ ] Pin history panel: chronological readings with sparkline trend chart
-- [ ] Regression detection: amber warning if reading increases day-over-day
+- [ ] Regression detection: amber warning icon if reading increases day-over-day at the same pin
 - [ ] Room dry status: not dry until every pin in room is green
-- [ ] Moisture floor plan PDF export
+- [ ] Dry standard lookup by material type (hardcoded constants, editable per-pin)
+- [ ] Moisture floor plan PDF export: single-page carrier document with pin locations + color-coded snapshot + summary table
+- [ ] Full test coverage: pin color boundaries, regression detection, dry standard lookup, PDF export snapshot
 
-### Phase 4: Equipment Pins
-- [ ] Equipment pin drop with placement card: type, quantity (air movers), auto-timestamp
+### Phase 3: Equipment Pins
+- [ ] `equipment_placements` table — one record per individual unit
+- [ ] Equipment pin drop with placement card: type, quantity selector (auto-creates N records), auto-timestamp
 - [ ] Equipment types: Air Mover, Dehumidifier, Air Scrubber, Hydroxyl Generator, Heater
-- [ ] Pull Equipment workflow: tap pin → confirm → auto-timestamp pulled date → pin grays out
-- [ ] Duration calculation: placed_at to pulled_at
+- [ ] Pull Equipment workflow: tap pin → select N units to pull → auto-timestamp → N records marked pulled
+- [ ] Canvas shows active equipment (colored icon) vs pulled (grayed out with checkmark)
+- [ ] Duration calculation: placed_at to pulled_at (per unit)
 - [ ] Duration feeds billing line items (quantity × days × rate)
+- [ ] Full test coverage: individual unit creation, partial pulls, duration calc, billing integration
 
-### Phase 5: Photo Pins & Gallery
-- [ ] Photo category selection on upload (8 categories, one tap)
+### Phase 4: Photo Pins & Gallery
+- [ ] Photo category selection on upload (8 categories ENUM: damage, equipment_placement, drying_progress, before_demo, after_demo, pre_repair, post_repair, final_completion)
 - [ ] Before/After pairing: "Updated condition photo?" prompt when room has existing photos
+- [ ] `paired_photo_id` self-referential FK on photos
 - [ ] Unplaced photos tray: batch shoot, assign rooms later, flagged until assigned
-- [ ] Photo count badge per room on canvas ("📷 14")
+- [ ] Photo count badge per room on canvas (one "📷 14" badge, not individual pins)
+- [ ] Backend photo summary endpoint: `GET /v1/jobs/{id}/photos/summary` returns per-room counts + latest thumbnail
 - [ ] Category filtering in room gallery
 - [ ] GPS auto-capture on upload (browser Geolocation API)
 - [ ] Tech name attribution on upload (from login session)
+- [ ] Full test coverage: category enum constraint, before/after pairing symmetry, summary counts
 
-### Phase 6: Annotations & Versioning
-- [ ] Annotation pins: free-text notes anchored to canvas locations
-- [ ] Annotation metadata: timestamp, tech name, include/exclude from reports
-- [ ] Sketch auto-versioning: every save creates snapshot with auto-generated change summary
+### Phase 5: Annotations + Version History UI
+- [ ] `annotations` table — free-text notes anchored to canvas locations, job-scoped
+- [ ] Annotation metadata: timestamp, tech name, include/exclude from reports toggle
+- [ ] "Past annotations at this property (N)" badge on canvas — expandable to show historical annotations from prior jobs
 - [ ] Version history panel accessible from toolbar
-- [ ] Version rollback with confirmation step
+- [ ] Version list shows: version number, created_by_job, change_summary, created_at
+- [ ] Version rollback (admin-only) with confirmation step
+- [ ] Full test coverage: version creation on first save, version freeze on archive, rollback logic
+
+---
+
+## DECISIONS (Locked During Eng Review 2026-04-16)
+
+These 17 decisions are the contract for implementation. Any deviation requires re-review.
+
+| # | Decision | Rationale |
+|---|----------|-----------|
+| 1 | Use existing properties table + API | Already has more fields than Brett's spec version. Don't duplicate. |
+| 2 | Clean cut, no backward compat | No production data exists. Transition code is dead weight. |
+| 3 | Job-driven versioning (not auto-save versioning) | Business-meaningful versions. Each job = one version. Archive freezes it. |
+| 4 | Active jobs auto-upgrade to latest version | Simpler UX. Two active jobs at same property is rare. |
+| 5 | New `moisture_pins` + `moisture_pin_readings` tables | Matches Brett's mental model: persistent pin tracked over days. Current reading-per-day model doesn't fit. |
+| 6 | Relational `wall_segments` + `wall_openings` tables | Xactimate needs queryable wall data. Walls drive material codes. |
+| 7 | Hardcoded ceiling multipliers + per-room custom override | Default values work for most cases. Override for unusual geometry until LiDAR. |
+| 8 | Individual unit records for equipment | Clean billing. 6 air movers = 6 records. UI handles friction via quantity picker. |
+| 9 | Clean canvas wipe, gridSize=10 | 10px = 6 inches matches Brett's snap grid. No migration needed (no prod data). |
+| 10 | Photo categories as ENUM (8 values) | Type safety wins. Migration to extend is 5 minutes. |
+| 11 | Backend photo summary endpoint | Scales to 500+ photos per job. Canvas renders badges from summary. |
+| 12 | Full room snap + shared wall auto-detection in Phase 1 | Wrong SF = wrong Xactimate quantities = denied claims. Must work correctly from start. |
+| 13 | Merge rectangle + polygon into single data model | `points: [{x,y}]` handles both. Rectangles are 4-point polygons. 30-40% of rooms are non-rectangular. |
+| 14 | One version per job session | First save creates version. Subsequent saves update it. Archive freezes. Clean. |
+| 15 | Annotations job-scoped with historical badge | Fresh slate per job, historical context available on demand. |
+| 16 | LiDAR moves to future spec | Not V1 or V2 scope. V1 data model accommodates it (polygon dimensions + materials). |
+| 17 | Full test coverage per phase | Spec 01 set the bar at 489+ tests. No regression. |
 
 ---
 
 ## Database Schema
 
-### Priority 1: Properties Table + Floor Plan Migration
+### Phase 1A: Floor Plan Reparenting + Versioning
 
 ```sql
--- Properties table — one property can have many jobs
-CREATE TABLE properties (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    address_line1   TEXT NOT NULL,
-    city            TEXT NOT NULL,
-    state           TEXT NOT NULL,
-    zip             TEXT NOT NULL,
-    latitude        DOUBLE PRECISION,
-    longitude       DOUBLE PRECISION,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_properties_company ON properties(company_id);
-
--- Prevent duplicate properties for the same address within a company
-CREATE UNIQUE INDEX idx_properties_address_company
-    ON properties(company_id, address_line1, city, state, zip);
-
--- RLS tenant isolation
-ALTER TABLE properties ENABLE ROW LEVEL SECURITY;
-CREATE POLICY properties_tenant ON properties
-    USING (company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid);
-```
-
-**Relationship model:**
-
-```
-properties (parent)
-  ├── jobs (children)        — job.property_id FK
-  │     ├── mitigation job   → property_id = "abc"
-  │     └── reconstruction   → property_id = "abc" (inherited via linked_job_id)
-  └── floor_plans (children) — floor_plan.property_id FK
-```
-
-**Migration for floor_plans:**
-
-```sql
--- Add property_id to floor_plans (nullable initially for migration)
+-- Step 1: Reparent floor_plans from job_id to property_id
 ALTER TABLE floor_plans ADD COLUMN property_id UUID REFERENCES properties(id) ON DELETE CASCADE;
 
--- Backfill: create properties from existing jobs, link floor plans
--- (migration script creates property per unique job address, sets property_id)
+-- Wipe existing dev/staging data (no prod data exists)
+DELETE FROM floor_plans;
 
--- After backfill, make property_id NOT NULL
+-- Drop old unique constraint, add new one
+DROP INDEX IF EXISTS idx_floor_plans_job_floor;
+ALTER TABLE floor_plans DROP COLUMN job_id;
 ALTER TABLE floor_plans ALTER COLUMN property_id SET NOT NULL;
-
--- Index for property-level queries
+CREATE UNIQUE INDEX idx_floor_plans_property_floor ON floor_plans(property_id, floor_number);
 CREATE INDEX idx_floor_plans_property ON floor_plans(property_id);
+
+-- Step 2: Floor plan versions (job-driven)
+CREATE TABLE floor_plan_versions (
+    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    floor_plan_id      UUID NOT NULL REFERENCES floor_plans(id) ON DELETE CASCADE,
+    version_number     INTEGER NOT NULL,
+    canvas_data        JSONB NOT NULL,
+    created_by_job_id  UUID REFERENCES jobs(id) ON DELETE SET NULL,
+    created_by_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+    change_summary     TEXT,  -- auto-generated: "Job 2026-04-JOB-0042 modified floor plan"
+    is_current         BOOLEAN NOT NULL DEFAULT true,  -- false when superseded
+    created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE(floor_plan_id, version_number)
+);
+
+CREATE INDEX idx_versions_floor_plan ON floor_plan_versions(floor_plan_id, version_number);
+CREATE INDEX idx_versions_current ON floor_plan_versions(floor_plan_id) WHERE is_current = true;
+
+-- RLS
+ALTER TABLE floor_plan_versions ENABLE ROW LEVEL SECURITY;
+CREATE POLICY versions_tenant ON floor_plan_versions USING (
+    floor_plan_id IN (SELECT id FROM floor_plans WHERE property_id IN (
+        SELECT id FROM properties WHERE company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+    ))
+);
+
+-- Step 3: Pin jobs to versions
+ALTER TABLE jobs ADD COLUMN floor_plan_version_id UUID REFERENCES floor_plan_versions(id) ON DELETE SET NULL;
+CREATE INDEX idx_jobs_floor_plan_version ON jobs(floor_plan_version_id) WHERE floor_plan_version_id IS NOT NULL;
 ```
 
-**Property auto-creation flow:**
-1. Job created → property auto-created from address fields → `job.property_id` set
-2. Reconstruction linked to mitigation via `linked_job_id` → `property_id` auto-copied from mitigation job
-3. Floor plan created → `floor_plan.property_id` set from `job.property_id`
-4. Both jobs see same floor plans via shared `property_id`
+**Versioning state machine:**
 
-**Auto-creation logic (in job creation service):**
+```
+Job A opens floor plan for Property X
+  ├── No versions exist yet → create version 1, pin Job A to v1
+  └── Version exists → pin Job A to latest
 
-```python
-# 1. Check if property exists for this address + company
-existing = await supabase.table("properties").select("id").eq(
-    "company_id", company_id
-).eq("address_line1", address).eq("city", city).eq("state", state).eq("zip", zip
-).maybe_single().execute()
+Job A edits floor plan
+  ├── Job A's pinned version was created by Job A → update in place
+  └── Job A's pinned version was created by another job → create new version, pin Job A to it
 
-if existing.data:
-    property_id = existing.data["id"]
-else:
-    prop = await supabase.table("properties").insert({
-        "company_id": company_id, "address_line1": address,
-        "city": city, "state": state, "zip": zip,
-        "latitude": lat, "longitude": lng,
-    }).execute()
-    property_id = prop.data[0]["id"]
+Job A is archived/submitted
+  └── Job A stays pinned to its version forever (read-only)
 
-# 2. Set on job
-insert_data["property_id"] = property_id
+Job B opens floor plan (Job A still active on same property)
+  └── Job B pins to latest version (could be Job A's current version)
+
+Job A creates new version v2 (while Job B active)
+  └── Job B auto-upgrades to v2 on next canvas load (active job behavior)
 ```
 
-**Room ownership:** Rooms stay job-scoped (`rooms.job_id` FK, not property-level). Reason: moisture readings, equipment counts, affected status, and water category are job-specific — a room can be affected in one job and not in another. The room's geometry comes from the shared property-level floor plan, but job-specific data belongs to the job. If mitigation creates 5 rooms and reconstruction inherits the floor plan, reconstruction creates its own room records with its own scope data.
-
-### Priority 2: Room Enhancements
+### Phase 1B: Room + Wall Enhancements
 
 ```sql
--- Room type enum — drives material defaults and Xactimate code suggestions
-ALTER TABLE rooms ADD COLUMN room_type TEXT
-    CHECK (room_type IN (
+-- Rooms — note actual table name is job_rooms (not "rooms")
+ALTER TABLE job_rooms ADD COLUMN room_type TEXT
+    CHECK (room_type IS NULL OR room_type IN (
         'living_room', 'kitchen', 'bathroom', 'bedroom', 'basement',
         'hallway', 'laundry_room', 'garage', 'dining_room', 'office',
         'closet', 'utility_room', 'other'
     ));
 
--- Ceiling type — drives wall SF multiplier
-ALTER TABLE rooms ADD COLUMN ceiling_type TEXT NOT NULL DEFAULT 'flat'
+ALTER TABLE job_rooms ADD COLUMN ceiling_type TEXT NOT NULL DEFAULT 'flat'
     CHECK (ceiling_type IN ('flat', 'vaulted', 'cathedral', 'sloped'));
 
--- Mitigation scope flag
-ALTER TABLE rooms ADD COLUMN affected BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE job_rooms ADD COLUMN floor_level TEXT
+    CHECK (floor_level IS NULL OR floor_level IN ('basement', 'main', 'upper', 'attic'));
 
--- Material flags — auto-populated from room type, editable
--- e.g., ["carpet", "drywall", "paint", "backsplash"]
-ALTER TABLE rooms ADD COLUMN material_flags JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE job_rooms ADD COLUMN affected BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE job_rooms ADD COLUMN material_flags JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE job_rooms ADD COLUMN wall_square_footage DECIMAL(10,2);  -- calculated, stored for reporting
+ALTER TABLE job_rooms ADD COLUMN custom_wall_sf DECIMAL(10,2);       -- tech override for unusual geometry
+ALTER TABLE job_rooms ADD COLUMN room_polygon JSONB;                  -- [{x,y}, ...] for non-rectangular rooms
+ALTER TABLE job_rooms ADD COLUMN floor_openings JSONB NOT NULL DEFAULT '[]';  -- [{x,y,width,height}, ...]
 
--- Wall SF (calculated, stored for reporting)
-ALTER TABLE rooms ADD COLUMN wall_square_footage DECIMAL(10,2);
+-- Walls (relational, not JSONB)
+CREATE TABLE wall_segments (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    room_id           UUID NOT NULL REFERENCES job_rooms(id) ON DELETE CASCADE,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    x1                DECIMAL(8,2) NOT NULL,
+    y1                DECIMAL(8,2) NOT NULL,
+    x2                DECIMAL(8,2) NOT NULL,
+    y2                DECIMAL(8,2) NOT NULL,
+    wall_type         TEXT NOT NULL DEFAULT 'interior'
+                      CHECK (wall_type IN ('exterior', 'interior')),
+    wall_height_ft    DECIMAL(5,2),  -- nullable, inherits from room.height_ft
+    affected          BOOLEAN NOT NULL DEFAULT false,
+    shared            BOOLEAN NOT NULL DEFAULT false,  -- auto-detected, excluded from perimeter LF
+    shared_with_room_id UUID REFERENCES job_rooms(id) ON DELETE SET NULL,
+    sort_order        INTEGER NOT NULL DEFAULT 0,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_walls_room ON wall_segments(room_id);
+CREATE INDEX idx_walls_company ON wall_segments(company_id);
+
+ALTER TABLE wall_segments ENABLE ROW LEVEL SECURITY;
+CREATE POLICY walls_tenant ON wall_segments USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+);
+
+-- Wall openings (doors, windows, missing walls)
+CREATE TABLE wall_openings (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    wall_id         UUID NOT NULL REFERENCES wall_segments(id) ON DELETE CASCADE,
+    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    opening_type    TEXT NOT NULL CHECK (opening_type IN ('door', 'window', 'missing_wall')),
+    position        DECIMAL(4,3) NOT NULL CHECK (position >= 0 AND position <= 1),  -- 0-1 parametric along wall
+    width_ft        DECIMAL(5,2) NOT NULL CHECK (width_ft > 0),
+    height_ft       DECIMAL(5,2) NOT NULL CHECK (height_ft > 0),  -- default 7 for door, 4 for window, wall height for missing_wall
+    sill_height_ft  DECIMAL(5,2),  -- windows only, optional
+    swing           INTEGER CHECK (swing IS NULL OR swing IN (0, 1, 2, 3)),  -- doors only, 4-quadrant
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_openings_wall ON wall_openings(wall_id);
+CREATE INDEX idx_openings_company ON wall_openings(company_id);
+
+ALTER TABLE wall_openings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY openings_tenant ON wall_openings USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+);
 ```
 
-**Existing fields to wire up (already in schema, currently unused):**
-- `height_ft` — default 8.0 in Pydantic, never set from frontend. Use for ceiling height.
-- `square_footage` — exists, never calculated. Set to `length_ft × width_ft - floor_openings`.
-
-**Ceiling type multipliers (hardcoded constants):**
+**Ceiling type multipliers (backend constants, not in DB):**
 
 | Ceiling Type | Multiplier | Use |
 |-------------|------------|-----|
@@ -213,26 +313,150 @@ ALTER TABLE rooms ADD COLUMN wall_square_footage DECIMAL(10,2);
 | cathedral | 1.5 | Peaked ceiling, maximum extra area |
 | sloped | 1.2 | Slight pitch, minor extra area |
 
-### Priority 3: Photo Enhancements
+If tech sets `custom_wall_sf` on a room, it overrides the calculated value.
+
+### Phase 2: Moisture Pins
 
 ```sql
--- Update photo_type categories to match Brett's spec
--- Current: damage | equipment | protection | containment | moisture_reading | before | after
--- New: damage | equipment_placement | drying_progress | before_demo | after_demo |
---      pre_repair | post_repair | final_completion
--- Keep old values valid during migration, add new ones
+-- Persistent spatial pins (job-scoped, tracked across days)
+CREATE TABLE moisture_pins (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    room_id           UUID REFERENCES job_rooms(id) ON DELETE SET NULL,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    canvas_x          DECIMAL(8,2) NOT NULL,
+    canvas_y          DECIMAL(8,2) NOT NULL,
+    location_name     TEXT NOT NULL,  -- e.g., "Floor, NW Corner, Living Room"
+    material          TEXT NOT NULL,  -- drives dry_standard lookup
+    dry_standard      DECIMAL(6,2) NOT NULL,  -- can be overridden per-pin
+    created_by        UUID REFERENCES users(id),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_pins_job ON moisture_pins(job_id);
+CREATE INDEX idx_pins_room ON moisture_pins(room_id) WHERE room_id IS NOT NULL;
+CREATE INDEX idx_pins_company ON moisture_pins(company_id);
+
+ALTER TABLE moisture_pins ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pins_tenant ON moisture_pins USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+);
+
+-- Time-series readings at each pin
+CREATE TABLE moisture_pin_readings (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    pin_id            UUID NOT NULL REFERENCES moisture_pins(id) ON DELETE CASCADE,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    reading_value     DECIMAL(6,2) NOT NULL,
+    reading_date      DATE NOT NULL,
+    recorded_by       UUID REFERENCES users(id),
+    meter_photo_url   TEXT,
+    notes             TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX idx_pin_reading_date ON moisture_pin_readings(pin_id, reading_date);
+CREATE INDEX idx_pin_readings_company ON moisture_pin_readings(company_id);
+
+ALTER TABLE moisture_pin_readings ENABLE ROW LEVEL SECURITY;
+CREATE POLICY pin_readings_tenant ON moisture_pin_readings USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+);
+```
+
+**Dry standard defaults by material (hardcoded backend constants):**
+
+| Material | Dry Standard | Notes |
+|----------|-------------|-------|
+| drywall | 16% | Moisture content |
+| wood_subfloor | 15% | |
+| carpet_pad | 16% | |
+| concrete | 5% | |
+| hardwood | 12% | |
+| osb_plywood | 18% | |
+| block_wall | 10% | |
+| tile | N/A | Not absorbent, no moisture reading |
+
+**Pin color logic (10 percentage points above standard):**
+
+```python
+def pin_color(reading: float, dry_standard: float) -> str:
+    if reading <= dry_standard:
+        return "green"
+    if reading <= dry_standard + 10:
+        return "amber"
+    return "red"
+```
+
+**Regression detection (frontend-only, visual flag):**
+
+```python
+# At pin render time, compare latest two readings
+if latest.reading_value > previous.reading_value:
+    show_regression_warning = True
+```
+
+**Moisture PDF export:** Server-side endpoint generates single-page PDF with:
+- Floor plan snapshot with all pin locations
+- Color-coded pins for user-selected date
+- Summary table: every pin, material type, all daily readings, dry standard met date
+- Generated via existing PDF library (html → pdf pipeline already in place for job reports)
+
+### Phase 3: Equipment Placements
+
+```sql
+-- One record per individual unit (not quantity-based)
+CREATE TABLE equipment_placements (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    room_id           UUID REFERENCES job_rooms(id) ON DELETE SET NULL,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    floor_plan_id     UUID REFERENCES floor_plans(id) ON DELETE SET NULL,
+    equipment_type    TEXT NOT NULL CHECK (equipment_type IN (
+        'air_mover', 'dehumidifier', 'air_scrubber', 'hydroxyl_generator', 'heater'
+    )),
+    canvas_x          DECIMAL(8,2),
+    canvas_y          DECIMAL(8,2),
+    placed_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+    pulled_at         TIMESTAMPTZ,     -- null = still active
+    placed_by         UUID REFERENCES users(id),
+    pulled_by         UUID REFERENCES users(id),
+    notes             TEXT,
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX idx_equip_job ON equipment_placements(job_id);
+CREATE INDEX idx_equip_active ON equipment_placements(job_id) WHERE pulled_at IS NULL;
+CREATE INDEX idx_equip_company ON equipment_placements(company_id);
+
+ALTER TABLE equipment_placements ENABLE ROW LEVEL SECURITY;
+CREATE POLICY equip_tenant ON equipment_placements USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
+);
+```
+
+**Placement UX:** Tech taps "Place 6 air movers in Living Room" → backend creates 6 records at the same canvas coordinate. Pull workflow: tech taps pin cluster → selects N units to pull → auto-timestamps N records.
+
+**Duration calculation (application-level):**
+```python
+duration_days = ceil((pulled_at - placed_at) / timedelta(days=1))
+billing_amount = duration_days * equipment_rate_per_day
+```
+
+### Phase 4: Photo Enhancements
+
+```sql
+-- Update photo_type ENUM — clean cut, no backward compat
 ALTER TABLE photos DROP CONSTRAINT IF EXISTS photos_photo_type_check;
 ALTER TABLE photos ADD CONSTRAINT photos_photo_type_check CHECK (
     photo_type IN (
-        -- V1 values (keep for backward compat)
-        'damage', 'equipment', 'protection', 'containment', 'moisture_reading', 'before', 'after',
-        -- V2 values (Brett's categories)
-        'equipment_placement', 'drying_progress', 'before_demo', 'after_demo',
-        'pre_repair', 'post_repair', 'final_completion'
+        'damage', 'equipment_placement', 'drying_progress',
+        'before_demo', 'after_demo', 'pre_repair', 'post_repair', 'final_completion'
     )
 );
 
--- Before/After pairing
+-- Before/After pairing (self-referential)
 ALTER TABLE photos ADD COLUMN paired_photo_id UUID REFERENCES photos(id) ON DELETE SET NULL;
 
 -- GPS auto-capture
@@ -241,145 +465,90 @@ ALTER TABLE photos ADD COLUMN longitude DOUBLE PRECISION;
 
 -- Tech attribution
 ALTER TABLE photos ADD COLUMN uploaded_by UUID REFERENCES users(id);
+
+-- Index for photo summary queries
+CREATE INDEX idx_photos_job_room ON photos(job_id, room_id) WHERE room_id IS NOT NULL;
 ```
 
-### Priority 4: Equipment Placements
-
-```sql
-CREATE TABLE equipment_placements (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-    room_id         UUID REFERENCES rooms(id) ON DELETE SET NULL,
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    floor_plan_id   UUID REFERENCES floor_plans(id) ON DELETE SET NULL,
-    equipment_type  TEXT NOT NULL CHECK (equipment_type IN (
-        'air_mover', 'dehumidifier', 'air_scrubber', 'hydroxyl_generator', 'heater'
-    )),
-    quantity        INTEGER NOT NULL DEFAULT 1
-        CHECK (quantity >= 1),
-    canvas_x        DECIMAL(6,2),
-    canvas_y        DECIMAL(6,2),
-    placed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    pulled_at       TIMESTAMPTZ,     -- null = still active
-    placed_by       UUID REFERENCES users(id),
-    pulled_by       UUID REFERENCES users(id),
-    notes           TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE INDEX idx_equip_job ON equipment_placements(job_id);
-CREATE INDEX idx_equip_active ON equipment_placements(job_id) WHERE pulled_at IS NULL;
-
--- RLS tenant isolation
-ALTER TABLE equipment_placements ENABLE ROW LEVEL SECURITY;
-CREATE POLICY equip_tenant ON equipment_placements
-    USING (company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid);
-```
-
-**Duration calculation (application-level):**
-```
-duration_days = CEIL((pulled_at - placed_at) / interval '1 day')
-billing = quantity × duration_days × rate_per_day
-```
-
-### Priority 5: Annotations
+### Phase 5: Annotations
 
 ```sql
 CREATE TABLE annotations (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    job_id          UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
-    floor_plan_id   UUID NOT NULL REFERENCES floor_plans(id) ON DELETE CASCADE,
-    company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    canvas_x        DECIMAL(6,2) NOT NULL,
-    canvas_y        DECIMAL(6,2) NOT NULL,
-    text            TEXT NOT NULL,
-    created_by      UUID NOT NULL REFERENCES users(id),
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    job_id            UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    floor_plan_id     UUID NOT NULL REFERENCES floor_plans(id) ON DELETE CASCADE,
+    company_id        UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
+    canvas_x          DECIMAL(8,2) NOT NULL,
+    canvas_y          DECIMAL(8,2) NOT NULL,
+    text              TEXT NOT NULL CHECK (length(text) > 0 AND length(text) <= 2000),
+    created_by        UUID NOT NULL REFERENCES users(id),
     include_in_report BOOLEAN NOT NULL DEFAULT true,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_annotations_floor_plan ON annotations(floor_plan_id);
+CREATE INDEX idx_annotations_job ON annotations(job_id);
+CREATE INDEX idx_annotations_company ON annotations(company_id);
 
--- RLS tenant isolation
 ALTER TABLE annotations ENABLE ROW LEVEL SECURITY;
-CREATE POLICY annotations_tenant ON annotations
-    USING (company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid);
-```
-
-### Priority 6: Sketch Versioning
-
-```sql
-CREATE TABLE floor_plan_versions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    floor_plan_id   UUID NOT NULL REFERENCES floor_plans(id) ON DELETE CASCADE,
-    version_number  INTEGER NOT NULL,
-    canvas_data     JSONB NOT NULL,
-    change_summary  TEXT,  -- auto-generated: "Room added: Bathroom 2"
-    created_by      UUID NOT NULL REFERENCES users(id),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(floor_plan_id, version_number)
+CREATE POLICY annotations_tenant ON annotations USING (
+    company_id = (current_setting('request.jwt.claims')::json->>'company_id')::uuid
 );
-
-CREATE INDEX idx_versions_floor_plan ON floor_plan_versions(floor_plan_id, version_number);
 ```
 
-**Versioning strategy:** Only create snapshots on meaningful changes (room added/removed, wall modified, affected status changed). Skip minor position adjustments to avoid storage bloat — an active job with 50+ saves/day over 5 days would produce 250+ full JSONB snapshots otherwise.
+**Historical badge:** Canvas queries annotations from prior jobs at the same property (via floor_plan_id → property_id → all jobs at that property). Shows badge "Past annotations (N)" — expandable to read-only view.
 
 ---
 
 ## API Endpoints
 
-### Properties (new)
+### Floor Plans (Property-Scoped)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/properties` | Member | Create property (auto-created on job creation) |
-| GET | `/v1/properties/{id}` | Member | Get property |
-| GET | `/v1/properties/{id}/floor-plans` | Member | List floor plans for property |
-| PATCH | `/v1/properties/{id}` | Member | Update property |
+| GET | `/v1/properties/{propertyId}/floor-plans` | Member | List floor plans (one per floor) |
+| POST | `/v1/properties/{propertyId}/floor-plans` | Member | Create floor plan (one per floor_number) |
+| PATCH | `/v1/properties/{propertyId}/floor-plans/{id}` | Member | Update floor plan metadata |
+| DELETE | `/v1/properties/{propertyId}/floor-plans/{id}` | Admin | Hard delete (cascades versions) |
+| GET | `/v1/jobs/{jobId}/floor-plans` | Member | Resolves via `job.property_id`, returns property-level floor plans + job's pinned version |
 
-### Floor Plans (modified — property-scoped)
+### Floor Plan Versions
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/properties/{propertyId}/floor-plans` | Member | List floor plans (replaces job-scoped) |
-| POST | `/v1/properties/{propertyId}/floor-plans` | Member | Create floor plan |
-| PATCH | `/v1/properties/{propertyId}/floor-plans/{id}` | Member | Update floor plan (canvas_data save) |
-| DELETE | `/v1/properties/{propertyId}/floor-plans/{id}` | Member | Delete floor plan |
+| GET | `/v1/floor-plans/{id}/versions` | Member | List version history |
+| GET | `/v1/floor-plans/{id}/versions/{versionNumber}` | Member | Get specific version (read-only) |
+| POST | `/v1/floor-plans/{id}/versions` | Member | Save canvas changes — auto-creates new version if job's pinned version was created by another job, otherwise updates job's existing version |
+| POST | `/v1/floor-plans/{id}/versions/{versionNumber}/rollback` | Admin | Rollback: marks this version as current, creates new version from rollback target for current job |
 
-**Backward compat:** Keep existing `/v1/jobs/{jobId}/floor-plans` as a read-only proxy that resolves `job.property_id` and queries property-level floor plans. Remove after frontend migration.
-
-**Pydantic schema changes:**
+**Save logic in service layer:**
 
 ```python
-class FloorPlanCreate(BaseModel):
-    floor_name: str = Field(default="Main Floor", max_length=50)
-    # Frontend enforces: Basement | Main Floor | Upper Floor | Attic
-    # No hard DB constraint — edge cases exist (Sub-Basement, 3rd Floor)
-    canvas_data: dict | None = None
-
-class FloorPlanResponse(BaseModel):
-    id: UUID
-    property_id: UUID                    # NEW — replaces job_id
-    job_id: UUID | None = None           # DEPRECATED — keep during transition
-    company_id: UUID
-    floor_number: int
-    floor_name: str
-    canvas_data: dict | None
-    thumbnail_url: str | None
-    created_at: datetime
-    updated_at: datetime
+async def save_canvas(job_id, floor_plan_id, canvas_data):
+    job = await get_job(job_id)
+    pinned_version = await get_version(job.floor_plan_version_id)
+    
+    if pinned_version.created_by_job_id == job_id:
+        # Job is updating its own version
+        await update_version(pinned_version.id, canvas_data)
+    else:
+        # Job is editing someone else's version → fork
+        new_version = await create_version(
+            floor_plan_id=floor_plan_id,
+            canvas_data=canvas_data,
+            created_by_job_id=job_id,
+            version_number=pinned_version.version_number + 1,
+        )
+        await mark_supersedes_current(floor_plan_id, new_version.id)
+        await pin_job_to_version(job_id, new_version.id)
+        # Auto-upgrade all active (non-archived) jobs at this property
+        await upgrade_active_jobs(floor_plan_id, new_version.id)
 ```
 
-### Rooms (modified — new fields)
+### Rooms (Modified)
 
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| POST | `/v1/jobs/{jobId}/rooms` | Member | Create room (add room_type, ceiling_type, material_flags, affected) |
-| PATCH | `/v1/jobs/{jobId}/rooms/{id}` | Member | Update room (all new fields editable) |
-
-**Pydantic schema changes:**
+Pydantic schema additions:
 
 ```python
 class RoomCreate(BaseModel):
@@ -387,214 +556,143 @@ class RoomCreate(BaseModel):
     floor_plan_id: UUID | None = None
     length_ft: Decimal | None = None
     width_ft: Decimal | None = None
-    height_ft: Decimal = Decimal("8.0")           # ceiling height
-    room_type: str | None = None                    # NEW
-    ceiling_type: str = "flat"                      # NEW
-    material_flags: list[str] = []                  # NEW
-    affected: bool = False                          # NEW
+    height_ft: Decimal = Decimal("8.0")
+    room_type: Literal[
+        "living_room", "kitchen", "bathroom", "bedroom", "basement",
+        "hallway", "laundry_room", "garage", "dining_room", "office",
+        "closet", "utility_room", "other"
+    ] | None = None
+    ceiling_type: Literal["flat", "vaulted", "cathedral", "sloped"] = "flat"
+    floor_level: Literal["basement", "main", "upper", "attic"] | None = None
+    material_flags: list[str] = []
+    affected: bool = False
+    room_polygon: list[dict] | None = None  # [{x,y}, ...] for non-rectangular
+    floor_openings: list[dict] = []          # [{x,y,width,height}, ...]
+    custom_wall_sf: Decimal | None = None
+    # Existing fields unchanged
     water_category: str | None = None
     water_class: str | None = None
     dry_standard: Decimal | None = None
-    equipment_air_movers: int = 0
-    equipment_dehus: int = 0
 ```
 
-### Equipment Placements (new)
+### Wall Segments (New)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/jobs/{jobId}/equipment-placements` | Member | List all placements (active + pulled) |
-| POST | `/v1/jobs/{jobId}/equipment-placements` | Member | Place equipment (auto-stamps placed_at) |
+| GET | `/v1/rooms/{roomId}/walls` | Member | List walls for a room |
+| POST | `/v1/rooms/{roomId}/walls` | Member | Create wall segment |
+| PATCH | `/v1/rooms/{roomId}/walls/{id}` | Member | Update wall (coords, type, affected, shared) |
+| DELETE | `/v1/rooms/{roomId}/walls/{id}` | Member | Delete wall |
+| POST | `/v1/rooms/{roomId}/walls/{id}/openings` | Member | Add door/window/missing_wall |
+| PATCH | `/v1/rooms/{roomId}/walls/{wallId}/openings/{id}` | Member | Update opening |
+| DELETE | `/v1/rooms/{roomId}/walls/{wallId}/openings/{id}` | Member | Delete opening |
+
+All list endpoints return `{items: [...], total: N}` (matching existing convention — see prior learning on `paginated-response-shape-mismatch`).
+
+### Moisture Pins (New)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/v1/jobs/{jobId}/moisture-pins` | Member | List pins with latest reading + color |
+| POST | `/v1/jobs/{jobId}/moisture-pins` | Member | Create pin + initial reading |
+| PATCH | `/v1/jobs/{jobId}/moisture-pins/{id}` | Member | Update pin metadata (material, dry_standard, location_name) |
+| DELETE | `/v1/jobs/{jobId}/moisture-pins/{id}` | Member | Delete pin (cascades readings) |
+| GET | `/v1/jobs/{jobId}/moisture-pins/{id}/readings` | Member | List all readings for trend chart |
+| POST | `/v1/jobs/{jobId}/moisture-pins/{id}/readings` | Member | Add new reading (one per day per pin enforced) |
+| PATCH | `/v1/jobs/{jobId}/moisture-pins/{id}/readings/{readingId}` | Member | Edit reading value |
+| DELETE | `/v1/jobs/{jobId}/moisture-pins/{id}/readings/{readingId}` | Member | Delete reading |
+| GET | `/v1/jobs/{jobId}/moisture-pdf` | Member | Export moisture floor plan PDF |
+
+### Equipment Placements (New)
+
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/v1/jobs/{jobId}/equipment-placements` | Member | List placements (active + pulled) |
+| POST | `/v1/jobs/{jobId}/equipment-placements` | Member | Place equipment (accepts `quantity`, creates N records) |
 | PATCH | `/v1/jobs/{jobId}/equipment-placements/{id}` | Member | Update placement |
-| POST | `/v1/jobs/{jobId}/equipment-placements/{id}/pull` | Member | Pull equipment (auto-stamps pulled_at) |
+| POST | `/v1/jobs/{jobId}/equipment-placements/pull` | Member | Pull N units from a pin cluster (body: `{placement_ids: [...]}` or `{pin_cluster_key, count}`) |
 
+**Place N units:**
 ```python
-class EquipmentPlacementCreate(BaseModel):
-    equipment_type: str  # "air_mover" | "dehumidifier" | "air_scrubber" | "hydroxyl_generator" | "heater"
-    quantity: int = Field(default=1, ge=1)
-    room_id: UUID | None = None          # auto-detected from canvas position, or explicit
-    floor_plan_id: UUID | None = None
-    canvas_x: Decimal | None = None
-    canvas_y: Decimal | None = None
-    notes: str | None = None
-
-class EquipmentPlacementResponse(BaseModel):
-    id: UUID
-    job_id: UUID
-    company_id: UUID
-    room_id: UUID | None
-    floor_plan_id: UUID | None
-    equipment_type: str
-    quantity: int
-    canvas_x: Decimal | None
-    canvas_y: Decimal | None
-    placed_at: datetime
-    pulled_at: datetime | None           # null = still active
-    placed_by: UUID | None
-    pulled_by: UUID | None
-    duration_days: int | None            # computed: ceil((pulled_at - placed_at) / 1 day)
-    notes: str | None
-    created_at: datetime
+# POST /v1/jobs/{jobId}/equipment-placements
+# Body: {equipment_type: "air_mover", quantity: 6, room_id: ..., canvas_x: 120, canvas_y: 80}
+# Creates 6 records at the same canvas coordinate.
 ```
 
-### Moisture Readings (modified — pin coordinates)
+**Pull N units:**
+```python
+# POST /v1/jobs/{jobId}/equipment-placements/pull
+# Body: {placement_ids: ["uuid1", "uuid2"]}  # explicit unit selection
+# OR: {room_id: ..., equipment_type: "air_mover", count: 2}  # pull 2 of this type from room
+# Auto-timestamps pulled_at on selected records.
+```
 
-Existing endpoints stay the same. Wire up existing `point_x`/`point_y` fields from architecture doc schema.
+### Photo Summary (New)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/jobs/{jobId}/rooms/{roomId}/readings` | Member | Create reading (add point_x, point_y for pin location) |
+| GET | `/v1/jobs/{jobId}/photos/summary` | Member | Per-room photo counts for canvas badges |
 
 ```python
-# Add to existing MoisturePointCreate:
-class MoisturePointCreate(BaseModel):
-    location_name: str
-    reading_value: Decimal
-    material: str | None = None          # NEW — for dry standard lookup
-    point_x: Decimal | None = None       # NEW — canvas pin X coordinate
-    point_y: Decimal | None = None       # NEW — canvas pin Y coordinate
-    meter_photo_url: str | None = None
+class PhotoSummaryResponse(BaseModel):
+    rooms: list[RoomPhotoSummary]  # one per room with photos
+    unplaced_count: int
+
+class RoomPhotoSummary(BaseModel):
+    room_id: UUID
+    count: int
+    latest_photo_url: str
+    latest_photo_thumbnail_url: str | None
+    categories_present: list[str]  # for filter chips in gallery
 ```
 
-### Annotations (new)
+### Annotations (New)
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| GET | `/v1/floor-plans/{floorPlanId}/annotations` | Member | List annotations |
-| POST | `/v1/floor-plans/{floorPlanId}/annotations` | Member | Create annotation |
-| PATCH | `/v1/floor-plans/{floorPlanId}/annotations/{id}` | Member | Update annotation |
-| DELETE | `/v1/floor-plans/{floorPlanId}/annotations/{id}` | Member | Delete annotation |
-
-```python
-class AnnotationCreate(BaseModel):
-    canvas_x: Decimal
-    canvas_y: Decimal
-    text: str = Field(..., min_length=1, max_length=2000)
-    include_in_report: bool = True
-
-class AnnotationResponse(BaseModel):
-    id: UUID
-    job_id: UUID
-    floor_plan_id: UUID
-    company_id: UUID
-    canvas_x: Decimal
-    canvas_y: Decimal
-    text: str
-    created_by: UUID
-    include_in_report: bool
-    created_at: datetime
-```
-
-### Floor Plan Versions (new)
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| GET | `/v1/floor-plans/{floorPlanId}/versions` | Member | List version history |
-| GET | `/v1/floor-plans/{floorPlanId}/versions/{versionNumber}` | Member | Get specific version (read-only) |
-| POST | `/v1/floor-plans/{floorPlanId}/versions/{versionNumber}/rollback` | Admin | Rollback to version |
-
-```python
-class FloorPlanVersionResponse(BaseModel):
-    id: UUID
-    floor_plan_id: UUID
-    version_number: int
-    canvas_data: dict
-    change_summary: str | None       # auto-generated: "Room added: Bathroom 2"
-    created_by: UUID
-    created_at: datetime
-```
+| GET | `/v1/floor-plans/{id}/annotations` | Member | List annotations for current job |
+| GET | `/v1/floor-plans/{id}/annotations/historical` | Member | List annotations from prior jobs at this property |
+| POST | `/v1/floor-plans/{id}/annotations` | Member | Create annotation |
+| PATCH | `/v1/floor-plans/{id}/annotations/{id}` | Member | Update text or include_in_report |
+| DELETE | `/v1/floor-plans/{id}/annotations/{id}` | Member | Delete annotation |
 
 ---
 
-## Canvas Data Model — Current vs. V2
+## Canvas Data Model
 
-### Current FloorPlanData (01C)
-
-```typescript
-interface FloorPlanData {
-  gridSize: 20;                    // 20px = 1ft
-  rooms: RoomData[];               // { id, x, y, width, height, name, fill, propertyRoomId? }
-  walls: WallData[];               // { id, x1, y1, x2, y2, thickness, roomId? }
-  doors: DoorData[];               // { id, wallId, position, width, swing }
-  windows: WindowData[];           // { id, wallId, position, width }
-}
-```
-
-### V2 FloorPlanData
+### V2 FloorPlanData (in `floor_plan_versions.canvas_data`)
 
 ```typescript
 interface FloorPlanData {
-  gridSize: 10;                     // 10px = 6 inches (CHANGED)
-  rooms: RoomData[];
-  walls: WallData[];
-  doors: DoorData[];
-  windows: WindowData[];
-  openings: OpeningData[];          // NEW — missing wall pass-throughs
+  gridSize: 10;                     // 10px = 6 inches
+  rooms: RoomCanvasData[];          // rendering hints, structural data in DB
+  walls: WallCanvasData[];          // rendering hints, structural data in DB
+  // Note: doors, windows, openings stored relationally in wall_openings table.
+  // Canvas fetches on load and renders from that data.
 }
 
-interface RoomData {
-  id: string;
-  // Phase 1A: rectangle
-  x: number; y: number;
-  width: number; height: number;
-  // Phase 1B: polygon (replaces x/y/width/height)
-  points?: Array<{ x: number; y: number }>;
+interface RoomCanvasData {
+  id: string;              // matches job_rooms.id
+  points: Array<{x: number, y: number}>;  // polygon vertices (rectangles are 4 points)
   name: string;
   fill: string;
-  propertyRoomId?: string;
-  // NEW metadata (also stored in backend rooms table)
-  roomType?: string;                // "kitchen", "bathroom", etc.
-  ceilingHeight?: number;           // feet, default 8
-  ceilingType?: string;             // "flat" | "vaulted" | "cathedral" | "sloped"
-  affected?: boolean;               // mitigation scope flag
-  materialFlags?: string[];         // ["carpet", "drywall", "paint"]
-  floorOpenings?: Array<{           // stairwell cutouts
-    id: string;
-    x: number; y: number;
-    width: number; height: number;
-  }>;
+  // Room metadata (type, ceiling, materials, affected) lives in job_rooms table.
+  // Canvas does NOT duplicate — renders by joining with DB room data.
 }
 
-interface WallData {
-  id: string;
-  x1: number; y1: number;
-  x2: number; y2: number;
-  thickness: number;
-  roomId?: string;
-  // NEW fields
-  wallType?: "exterior" | "interior";   // drives Xactimate material codes
-  affected?: boolean;                    // per-wall mitigation scope
-  shared?: boolean;                      // auto-detected from room adjacency; renders lighter line weight
-  wallHeight?: number;                   // inherits from room, can override
-}
-
-interface DoorData {
-  id: string;
-  wallId: string;
-  position: number;                 // 0-1 parametric
-  width: number;                    // feet
-  swing: 0 | 1 | 2 | 3;
-  height?: number;                  // NEW — default 7ft, for SF deduction
-}
-
-interface WindowData {
-  id: string;
-  wallId: string;
-  position: number;
-  width: number;
-  height?: number;                  // NEW — default 4ft, for SF deduction
-  sillHeight?: number;              // NEW — optional documentation field
-}
-
-// NEW type
-interface OpeningData {
-  id: string;
-  wallId: string;
-  position: number;                 // 0-1 parametric center
-  width: number;                    // feet
-  height: number;                   // defaults to wall height (full pass-through)
+interface WallCanvasData {
+  id: string;              // matches wall_segments.id
+  // Coords, type, affected, shared all live in wall_segments table.
+  // Canvas renders from DB, not from this JSONB.
 }
 ```
+
+**Why canvas_data is now minimal:** Rendering logic reads authoritative data from relational tables (rooms, walls, openings, pins, equipment, annotations). Canvas JSONB is just IDs + cached rendering hints. This means:
+- Data is queryable from backend (Xactimate, reports, portal)
+- Canvas is a renderer, not the source of truth
+- Versioning captures the snapshot of relational state at that point in time
+
+**Version snapshot strategy:** When creating a new floor plan version, the backend snapshots room + wall + opening data into the `canvas_data` JSONB alongside IDs. This gives the version full fidelity (so rolling back works) while live editing uses relational tables.
 
 ---
 
@@ -603,150 +701,213 @@ interface OpeningData {
 ### Floor SF
 
 ```typescript
-function calculateFloorSF(room: RoomData): number {
-  const grossSF = (room.width / gridSize) * (room.height / gridSize);
-  // or for polygon: use shoelace formula on room.points
-  const openingSF = (room.floorOpenings || [])
-    .reduce((sum, o) => sum + (o.width / gridSize) * (o.height / gridSize), 0);
+function calculateFloorSF(room: Room): number {
+  // Polygon area via shoelace formula
+  const points = room.room_polygon || rectangleToPoints(room);
+  const grossSF = Math.abs(shoelaceArea(points)) / (gridSize * gridSize);
+  const openingSF = room.floor_openings.reduce(
+    (sum, o) => sum + (o.width / gridSize) * (o.height / gridSize),
+    0
+  );
   return grossSF - openingSF;
+}
+
+function shoelaceArea(points: Array<{x: number, y: number}>): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const j = (i + 1) % points.length;
+    area += points[i].x * points[j].y;
+    area -= points[j].x * points[i].y;
+  }
+  return area / 2;
 }
 ```
 
 ### Wall SF
 
 ```typescript
-const CEILING_MULTIPLIERS = { flat: 1.0, vaulted: 1.3, cathedral: 1.5, sloped: 1.2 };
+const CEILING_MULTIPLIERS = {
+  flat: 1.0,
+  vaulted: 1.3,
+  cathedral: 1.5,
+  sloped: 1.2,
+};
 
-function calculateWallSF(
-  room: RoomData,
-  walls: WallData[],
-  doors: DoorData[],
-  windows: WindowData[],
-  openings: OpeningData[],
-  gridSize: number
-): number {
-  // Step 1: Perimeter LF (exclude shared walls)
-  const roomWalls = walls.filter(w => w.roomId === room.id && !w.shared);
+function calculateWallSF(room: Room, walls: Wall[], openings: Opening[]): number {
+  // If tech provided a custom override, use it
+  if (room.custom_wall_sf != null) return room.custom_wall_sf;
+  
+  // Perimeter LF — EXCLUDE shared walls (counted in the other room)
+  const roomWalls = walls.filter(w => w.room_id === room.id && !w.shared);
   const perimeterLF = roomWalls.reduce((sum, w) => {
-    const length = Math.hypot(w.x2 - w.x1, w.y2 - w.y1) / gridSize;
-    return sum + length;
+    const lengthPx = Math.hypot(w.x2 - w.x1, w.y2 - w.y1);
+    return sum + lengthPx / gridSize;
   }, 0);
 
-  // Step 2: Ceiling height
-  const ceilingHeight = room.ceilingHeight || 8;
+  // Gross wall area
+  const grossSF = perimeterLF * room.height_ft;
 
-  // Step 3: Gross wall area
-  const grossSF = perimeterLF * ceilingHeight;
+  // Opening deductions — match by wall_id, not room_id
+  const wallIds = new Set(roomWalls.map(w => w.id));
+  const openingSF = openings
+    .filter(o => wallIds.has(o.wall_id))
+    .reduce((sum, o) => sum + o.width_ft * o.height_ft, 0);
 
-  // Step 4: Opening deductions
-  const allWallIds = new Set(roomWalls.map(w => w.id));
-  const doorDeduct = doors
-    .filter(d => allWallIds.has(d.wallId))
-    .reduce((sum, d) => sum + d.width * (d.height || 7), 0);
-  const windowDeduct = windows
-    .filter(w => allWallIds.has(w.wallId))
-    .reduce((sum, w) => sum + w.width * (w.height || 4), 0);
-  const openingDeduct = openings
-    .filter(o => allWallIds.has(o.wallId))
-    .reduce((sum, o) => sum + o.width * o.height, 0);
-
-  // Step 5: Net wall area with ceiling multiplier
-  const netSF = grossSF - doorDeduct - windowDeduct - openingDeduct;
-  const multiplier = CEILING_MULTIPLIERS[room.ceilingType || "flat"];
+  const netSF = grossSF - openingSF;
+  const multiplier = CEILING_MULTIPLIERS[room.ceiling_type];
   return Math.round(netSF * multiplier * 10) / 10;
 }
 ```
 
-**Worked example — Kitchen 12×10, 8ft flat ceiling, one 3ft door, one 4ft window:**
+**Worked example — Kitchen 12×10, 8ft flat ceiling, shares one wall with adjacent Hallway, has 3ft door and 4ft window:**
+
 ```
-Perimeter: 12 + 10 + 12 + 10 = 44 LF (no shared walls)
-Gross: 44 × 8 = 352 SF
-Door: 3 × 7 = 21 SF
-Window: 4 × 4 = 16 SF
-Net: 352 - 21 - 16 = 315 SF
-Multiplier: flat = 1.0
-Final: 315 SF
+Walls: 4 total, 1 marked shared (excluded)
+Perimeter LF (excluding shared): 12 + 12 + 10 = 34 LF
+Gross wall SF: 34 × 8 = 272 SF
+Door deduction: 3 × 7 = 21 SF
+Window deduction: 4 × 4 = 16 SF
+Net SF: 272 - 21 - 16 = 235 SF
+Multiplier (flat): 1.0
+Final wall SF: 235 SF
 ```
 
 ---
 
-## Room Type → Material Defaults Mapping
+## Room Type → Material Defaults
 
-When a room type is selected on the confirmation card, these material flags auto-populate:
+When a room type is selected, these material flags auto-populate in the confirmation card:
 
 | Room Type | Default Material Flags |
 |-----------|----------------------|
-| living_room | `["carpet", "drywall", "paint"]` or `["hardwood", "drywall", "paint"]` |
-| kitchen | `["tile", "drywall", "paint", "backsplash"]` or `["vinyl", "drywall", "paint", "backsplash"]` |
+| living_room | `["carpet", "drywall", "paint"]` |
+| kitchen | `["tile", "drywall", "paint", "backsplash"]` |
 | bathroom | `["tile", "drywall", "paint"]` |
 | bedroom | `["carpet", "drywall", "paint"]` |
-| basement | `["concrete", "drywall"]` or `["carpet", "block_wall"]` |
+| basement | `["concrete", "drywall"]` |
 | hallway | `["carpet", "drywall", "paint"]` |
-| laundry_room | `["tile", "drywall", "paint"]` or `["vinyl", "drywall", "paint"]` |
-| garage | `["concrete"]` or `["concrete", "drywall"]` |
-| dining_room | `["hardwood", "drywall", "paint"]` or `["carpet", "drywall", "paint"]` |
-| office | `["carpet", "drywall", "paint"]` or `["hardwood", "drywall", "paint"]` |
+| laundry_room | `["tile", "drywall", "paint"]` |
+| garage | `["concrete"]` |
+| dining_room | `["hardwood", "drywall", "paint"]` |
+| office | `["carpet", "drywall", "paint"]` |
 | closet | `["carpet", "drywall"]` |
-| utility_room | `["concrete", "drywall"]` or `["vinyl", "drywall"]` |
-| other | `[]` (no defaults) |
+| utility_room | `["concrete", "drywall"]` |
+| other | `[]` |
 
-Defaults are editable — tech can add/remove flags on the confirmation card.
-
-**Note:** Rooms with multiple common floor types (e.g., kitchen = tile OR vinyl) present the first option as default. Tech can change via checkbox.
+Defaults are editable — tech can add/remove flags on the confirmation card. For rooms with multiple common floor types (kitchen = tile OR vinyl), present the first option by default; tech can swap.
 
 ---
 
-## Moisture Pin Color Logic
+## Canvas Toolbar
 
-```typescript
-// Brett's spec: red = "above dry standard by >10%", amber = "within 10% of dry standard"
-// Interpretation: 10 percentage points above standard (not 10% of the standard value)
-// e.g., drywall standard 16% → amber up to 26%, red above 26%
-function pinColor(reading: number, dryStandard: number): "red" | "amber" | "green" {
-  if (reading <= dryStandard) return "green";
-  if (reading <= dryStandard + 10) return "amber";
-  return "red";
-}
+Primary actions (always visible):
+
+| Tool | Icon | Behavior |
+|------|------|----------|
+| Add Room | Rectangle + plus | Drops 10×10 default OR enters Trace Mode |
+| Moisture Mode | Droplet | Toggles moisture pin layer |
+| Equipment Mode | Fan | Toggles equipment pin layer |
+| Photo Mode | Camera | Toggles photo badges + upload |
+| Affected Mode | Alert | Overlay: highlights affected rooms/walls in red |
+| Floor Selector | Stack | Dropdown: Basement / Main / Upper / Attic |
+
+Secondary actions (menu):
+
+| Action | Behavior |
+|--------|----------|
+| Zoom In / Out | Pinch or buttons |
+| Reset View | Fit all to screen |
+| Version History | Opens version history panel |
+| Export Floor Plan PDF | Full floor plan with scale |
+| Export Moisture PDF | Single-page carrier doc with pin colors |
+| Toggle Grid | Show/hide 6-inch grid |
+
+---
+
+## Affected Mode
+
+Toggle in toolbar. When active:
+- All rooms with `affected=true` render with red tint fill
+- All walls with `affected=true` render with red stroke
+- Unaffected rooms/walls render with reduced opacity (40%)
+- Moisture pins and equipment stay at full opacity (they're by definition in affected areas)
+
+Purpose: quick visual confirmation of scope boundaries. Tech can tap an affected toggle on any room or wall to flip it.
+
+---
+
+## Floor Openings
+
+Floor cutouts that reduce floor SF (stairwells, HVAC chases, laundry chutes).
+
+Stored per-room in `job_rooms.floor_openings` JSONB array:
+```json
+[
+  {"id": "op-1", "x": 50, "y": 40, "width": 30, "height": 30}
+]
 ```
 
-**Note:** Brett's spec says ">10%" which is ambiguous — could mean 10 percentage points above standard, or 10% of the standard value. The 10-point interpretation is used here because the relative interpretation creates impractically narrow amber windows for low-standard materials (concrete at 5% would have a 0.5% amber window). Confirm interpretation during implementation.
+UX: Tech taps inside a room → "Add Floor Opening" → drags out rectangle → opening subtracts from floor SF. Common in two-story water losses where the stairwell is the moisture migration path.
 
-**Regression detection:** If a reading value increases day-over-day at the same pin (e.g., Day 2 was 32%, Day 3 is 38%), the pin shows an amber warning icon regardless of its color status. This flags potential issues: new leak, equipment failure, or moisture migration from adjacent area. The regression flag is visual-only (no backend field needed) — computed by comparing the latest two readings for that pin location.
-
-**Common dry standards by material type:**
-
-| Material | Dry Standard |
-|----------|-------------|
-| Drywall | 16% |
-| Wood subfloor | 15% |
-| Carpet pad | 16% |
-| Concrete | 5% |
-| Hardwood | 12% |
-| OSB / Plywood | 18% |
-
-These are stored per-room on the `dry_standard` field. The tech can override for specific conditions.
+Rendered on canvas as dashed rectangle with "Opening" label.
 
 ---
 
-## LiDAR — V2 Roadmap (Not in Scope)
+## Moisture Floor Plan PDF
 
-LiDAR is explicitly V2. Not built now. But V1 data model must accommodate it.
+Server-side endpoint: `GET /v1/jobs/{jobId}/moisture-pdf?date=YYYY-MM-DD`
 
-**What LiDAR does:** Tech scans a room with iPhone Pro (Apple RoomPlan API, iOS 16+). Scan returns L × W × H. Values populate the same room confirmation card that manual input creates. Everything after — wall interactions, moisture pins, equipment, photos — is identical.
+Output: single-page PDF with:
+1. **Header:** Company logo, job number, property address, date of snapshot
+2. **Floor plan:** scaled rendering of canvas with all moisture pins at their locations
+3. **Pin overlay:** each pin shows reading value + color-coded dot (red/amber/green for selected date)
+4. **Summary table:**
 
-**Why V1 matters for V2:** If `RoomData` stores dimensions, ceiling height, wall segments, and openings correctly, LiDAR is just an alternative input method filling the same fields. The data model is input-agnostic.
+| Pin Location | Material | Dry Standard | Day 1 | Day 2 | Day 3 | ... | Dry Date |
+|-------------|----------|-------------|-------|-------|-------|-----|----------|
+| Floor, NW Corner, Living Room | drywall | 16% | 38% | 32% | 24% | ... | Day 5 |
 
-**Evaluation candidates:**
-- Apple RoomPlan API (free, iPhone Pro only, Swift-based)
-- Locometric framework (cross-platform, licensed, includes Xactimate ESX export)
+Generated via existing PDF library (already in use for job reports — `web/src/app/(protected)/jobs/[id]/report/`).
 
-**Verisk ESX integration:** Requires formal Verisk Strategic Alliance partnership. ESX payload is encrypted — no reverse engineering path. Partnership is a longer-term strategic goal, not V1 or V2.
+---
 
-**What NOT to build:**
-- No LiDAR scanning UI
-- No RoomPlan API integration
-- No 3D view
-- No ESX export
+## Sparkline Trend Chart
+
+Frontend-only feature. When a tech taps a moisture pin, side panel opens with:
+
+1. **Pin metadata:** location, material, dry standard
+2. **Reading history table:** date, value, tech name, status color
+3. **Sparkline chart:** line chart of reading value over time, with horizontal dashed line at dry standard
+4. **Regression warning:** if latest > previous, amber triangle icon with tooltip "Reading increased day-over-day"
+
+Implementation: lightweight SVG sparkline (no chart library needed — the data is always <30 points). Uses existing pin reading data from `GET /v1/jobs/{jobId}/moisture-pins/{id}/readings`.
+
+---
+
+## LiDAR — Future Spec
+
+LiDAR-assisted input (Apple RoomPlan / Locometric) is explicitly **out of scope** for this spec. It will be speced separately as a future enhancement.
+
+**Why V1 data model accommodates it:** Room dimensions, ceiling height, wall segments, openings — all stored as structured data. LiDAR is just an alternative input method that fills these same fields.
+
+**Verisk ESX integration** (direct Xactimate export) requires formal Verisk Strategic Alliance partnership — not V1, V2, or V3.
+
+---
+
+## Frontend-Only Changes (No Backend Impact)
+
+These items are UI-only and don't require schema or API changes beyond what's already listed:
+
+- Canvas grid visual (6-inch dotted lines)
+- Room confirmation card modal
+- Room type dropdown with material default population
+- Wall contextual menu (appears on wall tap)
+- Moisture mode toggle + pin overlay
+- Equipment mode toggle + icon overlay
+- Affected mode overlay (highlights from existing `affected` field)
+- Sparkline trend chart (reads from existing pin readings endpoint)
+- Version history panel (reads from existing versions endpoint)
+- Floor selector dropdown
 
 ---
 
@@ -754,40 +915,136 @@ LiDAR is explicitly V2. Not built now. But V1 data model must accommodate it.
 
 | Data | Where | Why |
 |------|-------|-----|
-| Room geometry (x, y, width, height, points) | canvas_data JSON | Visual rendering on canvas |
-| Room metadata (type, ceiling, materials, affected) | Backend `rooms` table | Queried by estimating engine, reports, portal |
-| Wall geometry (x1, y1, x2, y2, thickness) | canvas_data JSON | Visual rendering |
-| Wall metadata (type, affected, shared, height) | canvas_data JSON | Visual-only; parse server-side if reports need it |
-| Door/window/opening geometry + dimensions | canvas_data JSON | Visual rendering + SF calc (frontend) |
-| Moisture pin readings | Backend `moisture_readings` table | Queried for readings page, trend charts, PDF export, portal |
-| Equipment placements | Backend `equipment_placements` table | Queried for billing, duration tracking, reports |
-| Photo metadata | Backend `photos` table | Queried for gallery, portal, category filtering |
-| Annotations | Backend `annotations` table | Queried for reports, portal, include/exclude toggle |
-| Sketch versions | Backend `floor_plan_versions` table | Queried for version history, rollback, audit trail |
+| Room polygon points | `job_rooms.room_polygon` JSONB | Variable length, not individually queried |
+| Room metadata (type, ceiling, materials, affected) | `job_rooms` table columns | Queried by estimating engine, reports, portal |
+| Wall geometry + metadata | `wall_segments` table | Xactimate needs queryable wall data |
+| Wall openings (doors/windows/missing) | `wall_openings` table | Queried for SF calculations, materials |
+| Floor openings | `job_rooms.floor_openings` JSONB | Simple cutouts, not independently queried |
+| Moisture pins + readings | `moisture_pins` + `moisture_pin_readings` | Trend charts, PDF export, portal |
+| Equipment placements | `equipment_placements` table | Billing, duration tracking, reports |
+| Photo metadata | `photos` table (extended) | Gallery, portal, category filtering |
+| Annotations | `annotations` table | Reports, portal, historical view |
+| Canvas rendering hints | `floor_plan_versions.canvas_data` JSONB | Visual-only, cached from relational state |
 
 **Rule:** If queried independently or has its own history → backend table. If purely visual rendering → canvas_data JSON.
 
 ---
 
-## Open Questions
+## Testing Requirements
 
-- **Wall data: JSON vs. backend table?** — Proposed: canvas_data JSON since walls aren't queried independently. If Xactimate export or PDF reports need per-wall breakdowns without parsing JSON, we'd need a `walls` table. Depends on which downstream systems consume wall-level data.
+Spec 01 set the bar: 489 backend tests + 29 frontend tests. This spec targets similar coverage per phase.
+
+### Backend (pytest)
+
+**Phase 1:**
+- `test_property_auto_creation_on_job_create` — race condition when two jobs created simultaneously at same address
+- `test_floor_plan_reparent_migration` — existing job-scoped floor plans migrate to property scope
+- `test_version_create_on_first_save` — job's first save creates version
+- `test_version_update_on_same_job_save` — subsequent saves update existing version, not create new
+- `test_version_fork_on_other_job_edit` — editing another job's version forks into new version
+- `test_active_jobs_auto_upgrade` — active jobs see new version after another job's edit
+- `test_archived_jobs_frozen` — archived job stays on its pinned version
+- `test_sf_calculation_floor_polygon` — shoelace area formula correct for irregular rooms
+- `test_sf_calculation_wall_with_shared` — shared walls excluded from perimeter LF
+- `test_sf_calculation_with_ceiling_multiplier` — each ceiling type applied correctly
+- `test_sf_calculation_with_custom_override` — custom_wall_sf overrides calculated value
+- `test_shared_wall_auto_detection` — walls within 20px of each other marked shared
+- `test_rls_tenant_isolation_walls` — cross-company wall access blocked
+- `test_rls_tenant_isolation_versions` — cross-company version access blocked
+
+**Phase 2:**
+- `test_pin_color_boundaries` — green/amber/red at dry_standard boundaries
+- `test_pin_color_at_exact_threshold` — reading = dry_standard returns green
+- `test_pin_color_at_10_point_boundary` — reading = dry_standard + 10 returns amber, + 11 returns red
+- `test_regression_detection` — reading increase day-over-day flagged
+- `test_dry_standard_material_lookup` — each material returns correct default
+- `test_pin_reading_uniqueness_per_day` — unique constraint on (pin_id, reading_date)
+- `test_moisture_pdf_generation` — PDF has pin markers + summary table
+
+**Phase 3:**
+- `test_equipment_place_n_units_creates_n_records` — quantity=6 creates 6 records
+- `test_equipment_partial_pull` — pull 2 of 6 marks 2 records pulled_at
+- `test_equipment_duration_calculation` — ceil((pulled - placed) / 1 day)
+- `test_equipment_billing_integration` — duration × rate = billing amount
+
+**Phase 4:**
+- `test_photo_category_enum_constraint` — invalid category rejected
+- `test_before_after_pairing_symmetric` — paired_photo_id creates symmetric link
+- `test_photo_summary_counts_per_room` — summary endpoint returns correct counts
+- `test_photo_summary_unplaced_tray` — photos with null room_id counted as unplaced
+- `test_gps_capture_on_upload` — latitude/longitude persisted
+
+**Phase 5:**
+- `test_annotation_create_job_scoped` — annotation belongs to creator's job
+- `test_annotation_historical_query` — prior jobs' annotations returned via historical endpoint
+- `test_annotation_include_in_report_toggle` — flag respected in PDF export
+
+### Backend Integration Tests (real Supabase)
+
+- RLS policy verification for all new tables (walls, openings, pins, readings, equipment, annotations, versions)
+- Multi-tenant isolation tests for each new endpoint
+- Transaction tests for place-N-units (all N created atomically or none)
+
+### Frontend (Vitest + Testing Library)
+
+- `KonvaFloorPlan.test.tsx` — renders rooms from props, handles room creation events
+- `RoomConfirmationCard.test.tsx` — material defaults populate from room type, editable
+- `MoisturePinPanel.test.tsx` — renders sparkline, shows regression warning
+- `EquipmentPicker.test.tsx` — quantity selector triggers place-N flow
+
+### Frontend E2E (Playwright)
+
+- `sketch-create-room.spec.ts` — draw rectangle, confirm, appears on canvas
+- `sketch-trace-perimeter.spec.ts` — tap corners, auto-close, L-shaped room created
+- `sketch-room-snap.spec.ts` — drag room near another, snaps flush, shared wall marked
+- `sketch-wall-interactions.spec.ts` — tap wall, add door, SF updates
+- `sketch-moisture-flow.spec.ts` — enter moisture mode, drop pin, enter reading, see color
+- `sketch-version-history.spec.ts` — edit floor plan, see new version, rollback
 
 ---
+
+## Performance Considerations
+
+| Phase | Concern | Mitigation |
+|-------|---------|-----------|
+| 1 | Canvas re-render at 400+ nodes | `Konva.Layer` batching, `React.memo` on pin/icon components |
+| 1 | Auto-save frequency (~80KB JSON × many writes) | 2-second debounce (from 01C), `If-Unchanged-Since` headers |
+| 1 | Room snap check (O(n²) wall distance) | Spatial index (grid hash) for walls, only check walls within viewport |
+| 2 | Moisture pin trend queries | Index on `(pin_id, reading_date)` already in schema |
+| 4 | Photo summary query | Index on `(job_id, room_id)` already in schema |
+| 5 | Version storage (~80KB × versions) | Monitor usage. If versions × properties > 10GB, compress canvas_data JSONB. |
 
 ---
 
 ## NOT in Scope
 
-- LiDAR integration (V2 roadmap — see above)
-- Equipment icons on floor plan (beyond pins — full equipment library is Spec 04C)
-- 3D view
-- AI cleanup/straightening (Spec 02 territory)
-- Multi-user real-time collaboration
-- Verisk ESX export (requires Strategic Alliance partnership)
-- Adjuster portal floor plan view (separate spec)
-- Multi-device backup conflict resolution (flagged as M5 in 01C review, V1 acceptable with one tech per job)
+- LiDAR integration — future spec (V3+)
+- Equipment library CRUD — stays in Spec 04C (this spec uses placement model only)
+- 3D view — overkill for water jobs
+- AI cleanup/straightening — Spec 02 territory
+- Multi-user real-time collaboration — one tech per job assumption
+- Verisk ESX export — requires Strategic Alliance partnership
+- Adjuster portal floor plan view — separate spec (08)
+- Multi-device backup conflict resolution — flagged as M5 in 01C review, V1 acceptable with one tech per job
+- Custom per-company ceiling multipliers — hardcoded constants work for V1
+- Google Places address geocoding in property dedup — existing `usps_standardized` (lowercase/trim) is sufficient for V1
 
 ---
 
-*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026).*
+## Build Sequence
+
+Phase 1 is the largest (property reparenting + versioning + canvas rebuild + walls + snap). Phase 2-5 layer on top.
+
+| Phase | Est. Sessions | Depends on | Milestone |
+|-------|--------------|-----------|-----------|
+| 1 | 4-5 | — | Canvas draws real houses with accurate SF |
+| 2 | 2 | 1 | Moisture pins tracked over time with trend + PDF |
+| 3 | 2 | 1 | Equipment tracked for billing |
+| 4 | 2 | 1 | Photos categorized, clustered, paired |
+| 5 | 1-2 | 1 | Annotations + version history UI |
+
+Each phase ships independently and is usable. Phase 1 unblocks everything else.
+
+---
+
+*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16.*
