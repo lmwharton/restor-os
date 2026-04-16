@@ -154,7 +154,7 @@ def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
     counts = {
         "room_count": _extract_embedded_count(data, "job_rooms"),
         "photo_count": _extract_embedded_count(data, "photos"),
-        "floor_plan_count": _extract_embedded_count(data, "floor_plans"),
+        "floor_plan_count": 0,  # reparented to property_id (Spec 01H)
         "line_item_count": 0,  # line_items table not created yet (Spec 02)
     }
     return _parse_job_detail(data, counts)
@@ -229,13 +229,11 @@ async def _get_linked_job_summary(client, linked_job_id: str | None) -> LinkedJo
 
 async def _get_job_counts(client, job_id: str) -> dict:
     """Query counts of related entities for a job."""
-    counts: dict[str, int] = {}
+    counts: dict[str, int] = {"floor_plan_count": 0, "line_item_count": 0}
 
     for table, key in [
         ("job_rooms", "room_count"),
         ("photos", "photo_count"),
-        ("floor_plans", "floor_plan_count"),
-        # ("line_items", "line_item_count"),  # Not created yet (Spec 02)
     ]:
         try:
             result = await (
@@ -585,7 +583,9 @@ async def list_jobs(
 
     # Use PostgREST embedded counts to get photo/room/floor_plan/line_item
     # counts in a single query (no N+1).
-    select_str = "*, job_rooms(count), photos(count), floor_plans(count)"
+    # floor_plans no longer has job_id FK (reparented to property_id in Spec 01H)
+    # Count floor plans via property_id join instead
+    select_str = "*, job_rooms(count), photos(count)"
 
     query = (
         client.table("jobs")

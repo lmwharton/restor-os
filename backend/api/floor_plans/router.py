@@ -170,6 +170,143 @@ async def list_floor_plans_by_job_endpoint(
     )
 
 
+@router.post(
+    "/jobs/{job_id}/floor-plans",
+    status_code=201,
+    response_model=FloorPlanResponse,
+)
+async def create_floor_plan_by_job_endpoint(
+    body: FloorPlanCreate,
+    request: Request,
+    job: dict = Depends(get_valid_job),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Create a floor plan via job — resolves or auto-creates property from job address."""
+    token = _get_token(request)
+    property_id = job.get("property_id")
+
+    # Auto-create property if job doesn't have one (backward compat)
+    if not property_id:
+        from api.shared.database import get_authenticated_client
+
+        client = await get_authenticated_client(token)
+        prop_result = await (
+            client.table("properties")
+            .insert(
+                {
+                    "company_id": str(ctx.company_id),
+                    "address_line1": job.get("address_line1", ""),
+                    "city": job.get("city", ""),
+                    "state": job.get("state", ""),
+                    "zip": job.get("zip", ""),
+                }
+            )
+            .execute()
+        )
+        property_id = prop_result.data[0]["id"]
+        # Link job to the new property
+        await (
+            client.table("jobs")
+            .update({"property_id": property_id})
+            .eq("id", str(job["id"]))
+            .execute()
+        )
+
+    return await create_floor_plan(
+        token=token,
+        property_id=property_id,
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+        body=body,
+    )
+
+
+@router.patch(
+    "/jobs/{job_id}/floor-plans/{floor_plan_id}",
+    response_model=FloorPlanResponse,
+)
+async def update_floor_plan_by_job_endpoint(
+    body: FloorPlanUpdate,
+    request: Request,
+    floor_plan_id: UUID = Path(..., description="Floor plan ID"),
+    job: dict = Depends(get_valid_job),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Update a floor plan via job — resolves property_id from job."""
+    token = _get_token(request)
+    property_id = job.get("property_id")
+    if not property_id:
+        # Floor plan exists but job has no property — look up via floor plan
+        from api.shared.database import get_authenticated_client
+
+        client = await get_authenticated_client(token)
+        fp = await (
+            client.table("floor_plans")
+            .select("property_id")
+            .eq("id", str(floor_plan_id))
+            .single()
+            .execute()
+        )
+        if fp.data:
+            property_id = fp.data["property_id"]
+        else:
+            from api.shared.exceptions import AppException
+
+            raise AppException(
+                status_code=404,
+                detail="Floor plan not found",
+                error_code="FLOOR_PLAN_NOT_FOUND",
+            )
+    return await update_floor_plan(
+        token=token,
+        floor_plan_id=floor_plan_id,
+        property_id=property_id,
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+        body=body,
+    )
+
+
+@router.delete("/jobs/{job_id}/floor-plans/{floor_plan_id}", status_code=204)
+async def delete_floor_plan_by_job_endpoint(
+    request: Request,
+    floor_plan_id: UUID = Path(..., description="Floor plan ID"),
+    job: dict = Depends(get_valid_job),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Delete a floor plan via job — resolves property_id from job."""
+    token = _get_token(request)
+    property_id = job.get("property_id")
+    if not property_id:
+        from api.shared.database import get_authenticated_client
+
+        client = await get_authenticated_client(token)
+        fp = await (
+            client.table("floor_plans")
+            .select("property_id")
+            .eq("id", str(floor_plan_id))
+            .single()
+            .execute()
+        )
+        if fp.data:
+            property_id = fp.data["property_id"]
+        else:
+            from api.shared.exceptions import AppException
+
+            raise AppException(
+                status_code=404,
+                detail="Floor plan not found",
+                error_code="FLOOR_PLAN_NOT_FOUND",
+            )
+    await delete_floor_plan(
+        token=token,
+        floor_plan_id=floor_plan_id,
+        property_id=property_id,
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Versioning
 # ---------------------------------------------------------------------------
