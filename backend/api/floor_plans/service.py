@@ -1,5 +1,6 @@
-"""Floor Plans service — CRUD operations against Supabase.
+"""Floor Plans service — property-scoped CRUD + job-driven versioning.
 
+Floor plans belong to properties (not jobs). Jobs pin to specific versions.
 Uses authenticated client (RLS-enforced) for all operations.
 Hard deletes (no deleted_at column on floor_plans).
 """
@@ -16,6 +17,9 @@ from api.floor_plans.schemas import FloorPlanCreate, FloorPlanUpdate
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+
+# Job statuses that are considered "archived" — these jobs don't auto-upgrade versions
+_ARCHIVED_STATUSES = {"complete", "submitted", "collected"}
 
 logger = logging.getLogger(__name__)
 
@@ -303,33 +307,37 @@ def _detect_rooms(walls: list[dict], scale: int) -> list[dict]:
     return rooms
 
 
+# ---------------------------------------------------------------------------
+# CRUD — property-scoped floor plans
+# ---------------------------------------------------------------------------
+
+
 async def create_floor_plan(
     token: str,
-    job_id: UUID,
+    property_id: UUID,
     company_id: UUID,
     user_id: UUID,
     body: FloorPlanCreate,
 ) -> dict:
-    """Create a floor plan. Enforces unique (job_id, floor_number)."""
+    """Create a floor plan for a property. Enforces unique (property_id, floor_number)."""
     client = await get_authenticated_client(token)
 
-    # Check uniqueness of (job_id, floor_number)
     existing = await (
         client.table("floor_plans")
         .select("id")
-        .eq("job_id", str(job_id))
+        .eq("property_id", str(property_id))
         .eq("floor_number", body.floor_number)
         .execute()
     )
     if existing.data:
         raise AppException(
             status_code=409,
-            detail=f"Floor plan for floor {body.floor_number} already exists on this job",
+            detail=f"Floor plan for floor {body.floor_number} already exists on this property",
             error_code="FLOOR_PLAN_EXISTS",
         )
 
     row = {
-        "job_id": str(job_id),
+        "property_id": str(property_id),
         "company_id": str(company_id),
         "floor_number": body.floor_number,
         "floor_name": body.floor_name,
@@ -350,20 +358,23 @@ async def create_floor_plan(
     await log_event(
         company_id,
         "floor_plan_created",
-        job_id=job_id,
         user_id=user_id,
-        event_data={"floor_plan_id": floor_plan["id"], "floor_number": body.floor_number},
+        event_data={
+            "floor_plan_id": floor_plan["id"],
+            "property_id": str(property_id),
+            "floor_number": body.floor_number,
+        },
     )
 
     return floor_plan
 
 
-async def list_floor_plans(
+async def list_floor_plans_by_property(
     token: str,
-    job_id: UUID,
+    property_id: UUID,
     company_id: UUID,
 ) -> dict:
-    """List all floor plans for a job, ordered by floor_number.
+    """List all floor plans for a property, ordered by floor_number.
 
     Returns {"items": [...], "total": N}.
     """
@@ -372,7 +383,7 @@ async def list_floor_plans(
     result = await (
         client.table("floor_plans")
         .select("*", count="exact")
-        .eq("job_id", str(job_id))
+        .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
         .order("floor_number")
         .execute()
@@ -383,10 +394,46 @@ async def list_floor_plans(
     return {"items": items, "total": total}
 
 
+async def list_floor_plans_by_job(
+    token: str,
+    job_id: UUID,
+    company_id: UUID,
+) -> dict:
+    """Convenience: list floor plans for a job's property.
+
+    Resolves the job's property_id, then delegates to list_floor_plans_by_property.
+    Returns {"items": [...], "total": N}.
+    """
+    client = await get_authenticated_client(token)
+
+    # Get job's property_id
+    job_result = await (
+        client.table("jobs")
+        .select("property_id")
+        .eq("id", str(job_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .single()
+        .execute()
+    )
+    if not job_result.data or not job_result.data.get("property_id"):
+        raise AppException(
+            status_code=404,
+            detail="Job not found or has no property linked",
+            error_code="JOB_NO_PROPERTY",
+        )
+
+    return await list_floor_plans_by_property(
+        token=token,
+        property_id=UUID(job_result.data["property_id"]),
+        company_id=company_id,
+    )
+
+
 async def update_floor_plan(
     token: str,
     floor_plan_id: UUID,
-    job_id: UUID,
+    property_id: UUID,
     company_id: UUID,
     user_id: UUID,
     body: FloorPlanUpdate,
@@ -394,12 +441,11 @@ async def update_floor_plan(
     """Update a floor plan. Validates floor_number uniqueness if changed."""
     client = await get_authenticated_client(token)
 
-    # Get existing
     existing = await (
         client.table("floor_plans")
         .select("*")
         .eq("id", str(floor_plan_id))
-        .eq("job_id", str(job_id))
+        .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
         .single()
         .execute()
@@ -415,12 +461,11 @@ async def update_floor_plan(
     if not updates:
         return existing.data
 
-    # If floor_number is being changed, check uniqueness
     if "floor_number" in updates and updates["floor_number"] != existing.data["floor_number"]:
         dup = await (
             client.table("floor_plans")
             .select("id")
-            .eq("job_id", str(job_id))
+            .eq("property_id", str(property_id))
             .eq("floor_number", updates["floor_number"])
             .neq("id", str(floor_plan_id))
             .execute()
@@ -428,7 +473,7 @@ async def update_floor_plan(
         if dup.data:
             raise AppException(
                 status_code=409,
-                detail=f"Floor plan for floor {updates['floor_number']} already exists on this job",
+                detail=f"Floor plan for floor {updates['floor_number']} already exists",
                 error_code="FLOOR_PLAN_EXISTS",
             )
 
@@ -443,7 +488,9 @@ async def update_floor_plan(
     except APIError as e:
         logger.error(
             "Floor plan update failed: %s (code=%s, details=%s)",
-            e.message, e.code, e.details,
+            e.message,
+            e.code,
+            e.details,
         )
         raise AppException(
             status_code=500,
@@ -456,7 +503,6 @@ async def update_floor_plan(
     await log_event(
         company_id,
         "floor_plan_updated",
-        job_id=job_id,
         user_id=user_id,
         event_data={"floor_plan_id": str(floor_plan_id), "updates": list(updates.keys())},
     )
@@ -467,19 +513,18 @@ async def update_floor_plan(
 async def delete_floor_plan(
     token: str,
     floor_plan_id: UUID,
-    job_id: UUID,
+    property_id: UUID,
     company_id: UUID,
     user_id: UUID,
 ) -> None:
     """Hard delete a floor plan. Sets floor_plan_id=NULL on linked job_rooms."""
     client = await get_authenticated_client(token)
 
-    # Verify it exists
     existing = await (
         client.table("floor_plans")
         .select("id")
         .eq("id", str(floor_plan_id))
-        .eq("job_id", str(job_id))
+        .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
         .single()
         .execute()
@@ -492,29 +537,449 @@ async def delete_floor_plan(
         )
 
     # Unlink rooms that reference this floor plan
-    await client.table("job_rooms").update({"floor_plan_id": None}).eq(
-        "floor_plan_id", str(floor_plan_id)
-    ).execute()
+    await (
+        client.table("job_rooms")
+        .update({"floor_plan_id": None})
+        .eq("floor_plan_id", str(floor_plan_id))
+        .execute()
+    )
 
-    # Hard delete the floor plan
+    # Hard delete (CASCADE handles floor_plan_versions)
     await client.table("floor_plans").delete().eq("id", str(floor_plan_id)).execute()
 
     await log_event(
         company_id,
         "floor_plan_deleted",
-        job_id=job_id,
         user_id=user_id,
-        event_data={"floor_plan_id": str(floor_plan_id)},
+        event_data={"floor_plan_id": str(floor_plan_id), "property_id": str(property_id)},
     )
 
 
-async def cleanup_floor_plan(
+# ---------------------------------------------------------------------------
+# Versioning — job-driven floor plan versions
+# ---------------------------------------------------------------------------
+
+
+async def save_canvas(
     token: str,
     floor_plan_id: UUID,
     job_id: UUID,
     company_id: UUID,
     user_id: UUID,
+    canvas_data: dict,
+    change_summary: str | None = None,
+) -> dict:
+    """Save canvas changes for a job. Implements the versioning state machine:
+
+    1. Job has no pinned version → create version 1, pin the job
+    2. Job's pinned version was created by THIS job → update in place
+    3. Job's pinned version was created by ANOTHER job → fork new version, pin, auto-upgrade
+    """
+    client = await get_authenticated_client(token)
+
+    # Fetch the job to get its current pinned version
+    job_result = await (
+        client.table("jobs")
+        .select("id, floor_plan_version_id, status")
+        .eq("id", str(job_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .single()
+        .execute()
+    )
+    if not job_result.data:
+        raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
+
+    job = job_result.data
+
+    # Archived jobs cannot save
+    if job.get("status") in _ARCHIVED_STATUSES:
+        raise AppException(
+            status_code=403,
+            detail="Cannot edit floor plan for an archived job",
+            error_code="JOB_ARCHIVED",
+        )
+
+    pinned_version_id = job.get("floor_plan_version_id")
+
+    # Case 1: No pinned version — create version 1
+    if not pinned_version_id:
+        version = await _create_version(
+            client=client,
+            floor_plan_id=floor_plan_id,
+            company_id=company_id,
+            job_id=job_id,
+            user_id=user_id,
+            canvas_data=canvas_data,
+            change_summary=change_summary or "Initial floor plan version",
+        )
+        await _pin_job_to_version(client, job_id, version["id"])
+
+        await log_event(
+            company_id,
+            "floor_plan_version_created",
+            job_id=job_id,
+            user_id=user_id,
+            event_data={
+                "floor_plan_id": str(floor_plan_id),
+                "version_number": version["version_number"],
+            },
+        )
+        return version
+
+    # Fetch the pinned version
+    pinned = await (
+        client.table("floor_plan_versions")
+        .select("*")
+        .eq("id", pinned_version_id)
+        .single()
+        .execute()
+    )
+    if not pinned.data:
+        raise AppException(
+            status_code=404,
+            detail="Pinned version not found",
+            error_code="VERSION_NOT_FOUND",
+        )
+
+    pinned_version = pinned.data
+
+    # Case 2: Job owns the pinned version — update in place
+    if pinned_version.get("created_by_job_id") == str(job_id):
+        await (
+            client.table("floor_plan_versions")
+            .update(
+                {
+                    "canvas_data": canvas_data,
+                    "change_summary": change_summary or pinned_version.get("change_summary"),
+                }
+            )
+            .eq("id", pinned_version["id"])
+            .execute()
+        )
+        # Re-fetch to return updated data
+        updated = await (
+            client.table("floor_plan_versions")
+            .select("*")
+            .eq("id", pinned_version["id"])
+            .single()
+            .execute()
+        )
+
+        await log_event(
+            company_id,
+            "floor_plan_version_updated",
+            job_id=job_id,
+            user_id=user_id,
+            event_data={
+                "floor_plan_id": str(floor_plan_id),
+                "version_id": pinned_version["id"],
+                "version_number": pinned_version["version_number"],
+            },
+        )
+        return updated.data
+
+    # Case 3: Another job's version — fork into a new version
+    version = await _create_version(
+        client=client,
+        floor_plan_id=floor_plan_id,
+        company_id=company_id,
+        job_id=job_id,
+        user_id=user_id,
+        canvas_data=canvas_data,
+        change_summary=change_summary or "Floor plan edited by new job",
+    )
+
+    # Mark old current version(s) as not current
+    await (
+        client.table("floor_plan_versions")
+        .update({"is_current": False})
+        .eq("floor_plan_id", str(floor_plan_id))
+        .neq("id", version["id"])
+        .eq("is_current", True)
+        .execute()
+    )
+
+    # Pin this job to the new version
+    await _pin_job_to_version(client, job_id, version["id"])
+
+    # Auto-upgrade other active jobs at this property
+    await _auto_upgrade_active_jobs(
+        client=client,
+        floor_plan_id=floor_plan_id,
+        new_version_id=UUID(version["id"]),
+        exclude_job_id=job_id,
+        company_id=company_id,
+    )
+
+    await log_event(
+        company_id,
+        "floor_plan_version_forked",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "floor_plan_id": str(floor_plan_id),
+            "from_version": pinned_version["version_number"],
+            "new_version": version["version_number"],
+        },
+    )
+    return version
+
+
+async def list_versions(
+    token: str,
+    floor_plan_id: UUID,
+    company_id: UUID,
+) -> dict:
+    """List all versions for a floor plan, newest first.
+
+    Returns {"items": [...], "total": N}.
+    """
+    client = await get_authenticated_client(token)
+
+    result = await (
+        client.table("floor_plan_versions")
+        .select("*", count="exact")
+        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("company_id", str(company_id))
+        .order("version_number", desc=True)
+        .execute()
+    )
+
+    items = result.data or []
+    total = result.count if isinstance(result.count, int) else len(items)
+    return {"items": items, "total": total}
+
+
+async def get_version(
+    token: str,
+    floor_plan_id: UUID,
+    version_number: int,
+    company_id: UUID,
+) -> dict:
+    """Get a specific version by floor_plan_id + version_number."""
+    client = await get_authenticated_client(token)
+
+    result = await (
+        client.table("floor_plan_versions")
+        .select("*")
+        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("version_number", version_number)
+        .eq("company_id", str(company_id))
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail=f"Version {version_number} not found",
+            error_code="VERSION_NOT_FOUND",
+        )
+    return result.data
+
+
+async def rollback_version(
+    token: str,
+    floor_plan_id: UUID,
+    version_number: int,
+    job_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
+) -> dict:
+    """Rollback: create a new version from a past version's canvas_data.
+
+    Does NOT delete versions — creates a new one with the rolled-back content.
+    """
+    client = await get_authenticated_client(token)
+
+    # Fetch the target version to rollback to
+    target = await (
+        client.table("floor_plan_versions")
+        .select("*")
+        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("version_number", version_number)
+        .eq("company_id", str(company_id))
+        .single()
+        .execute()
+    )
+    if not target.data:
+        raise AppException(
+            status_code=404,
+            detail=f"Version {version_number} not found",
+            error_code="VERSION_NOT_FOUND",
+        )
+
+    # Create new version from the target's canvas_data
+    version = await _create_version(
+        client=client,
+        floor_plan_id=floor_plan_id,
+        company_id=company_id,
+        job_id=job_id,
+        user_id=user_id,
+        canvas_data=target.data["canvas_data"],
+        change_summary=f"Rolled back to version {version_number}",
+    )
+
+    # Mark all other versions as not current
+    await (
+        client.table("floor_plan_versions")
+        .update({"is_current": False})
+        .eq("floor_plan_id", str(floor_plan_id))
+        .neq("id", version["id"])
+        .eq("is_current", True)
+        .execute()
+    )
+
+    # Pin the job and auto-upgrade others
+    await _pin_job_to_version(client, job_id, version["id"])
+    await _auto_upgrade_active_jobs(
+        client=client,
+        floor_plan_id=floor_plan_id,
+        new_version_id=UUID(version["id"]),
+        exclude_job_id=job_id,
+        company_id=company_id,
+    )
+
+    await log_event(
+        company_id,
+        "floor_plan_version_rollback",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "floor_plan_id": str(floor_plan_id),
+            "rolled_back_to": version_number,
+            "new_version": version["version_number"],
+        },
+    )
+    return version
+
+
+# ---------------------------------------------------------------------------
+# Versioning helpers (private)
+# ---------------------------------------------------------------------------
+
+
+async def _create_version(
+    client,
+    floor_plan_id: UUID,
+    company_id: UUID,
+    job_id: UUID,
+    user_id: UUID,
+    canvas_data: dict,
+    change_summary: str,
+) -> dict:
+    """Create a new floor plan version with the next version_number."""
+    # Get the current max version number
+    max_result = await (
+        client.table("floor_plan_versions")
+        .select("version_number")
+        .eq("floor_plan_id", str(floor_plan_id))
+        .order("version_number", desc=True)
+        .limit(1)
+        .execute()
+    )
+    next_number = 1
+    if max_result.data:
+        next_number = max_result.data[0]["version_number"] + 1
+
+    row = {
+        "floor_plan_id": str(floor_plan_id),
+        "company_id": str(company_id),
+        "version_number": next_number,
+        "canvas_data": canvas_data,
+        "created_by_job_id": str(job_id),
+        "created_by_user_id": str(user_id),
+        "change_summary": change_summary,
+        "is_current": True,
+    }
+
+    try:
+        result = await client.table("floor_plan_versions").insert(row).execute()
+    except APIError as e:
+        raise AppException(
+            status_code=500,
+            detail=f"Failed to create version: {e.message}",
+            error_code="DB_ERROR",
+        )
+
+    return result.data[0]
+
+
+async def _pin_job_to_version(client, job_id: UUID, version_id: str) -> None:
+    """Set a job's floor_plan_version_id to the given version."""
+    await (
+        client.table("jobs")
+        .update({"floor_plan_version_id": version_id})
+        .eq("id", str(job_id))
+        .execute()
+    )
+
+
+async def _auto_upgrade_active_jobs(
+    client,
+    floor_plan_id: UUID,
+    new_version_id: UUID,
+    exclude_job_id: UUID,
+    company_id: UUID,
+) -> None:
+    """Auto-upgrade all active (non-archived) jobs at this property to the new version.
+
+    Finds jobs via: floor_plan → property_id → all jobs at that property.
+    Skips archived jobs (complete/submitted/collected) and the job that just saved.
+    """
+    # Get the property_id for this floor plan
+    fp_result = await (
+        client.table("floor_plans")
+        .select("property_id")
+        .eq("id", str(floor_plan_id))
+        .single()
+        .execute()
+    )
+    if not fp_result.data:
+        return
+
+    property_id = fp_result.data["property_id"]
+
+    # Find all active jobs at this property (excluding the current job)
+    jobs_result = await (
+        client.table("jobs")
+        .select("id, status")
+        .eq("property_id", property_id)
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .neq("id", str(exclude_job_id))
+        .execute()
+    )
+
+    if not jobs_result.data:
+        return
+
+    # Upgrade only active (non-archived) jobs
+    active_job_ids = [
+        j["id"] for j in jobs_result.data if j.get("status") not in _ARCHIVED_STATUSES
+    ]
+
+    for jid in active_job_ids:
+        await (
+            client.table("jobs")
+            .update({"floor_plan_version_id": str(new_version_id)})
+            .eq("id", jid)
+            .execute()
+        )
+
+
+# ---------------------------------------------------------------------------
+# Sketch cleanup (deterministic, no AI)
+# ---------------------------------------------------------------------------
+
+
+async def cleanup_floor_plan(
+    token: str,
+    floor_plan_id: UUID,
+    company_id: UUID,
+    user_id: UUID,
     client_canvas_data: dict | None = None,
+    job_id: UUID | None = None,
 ) -> dict:
     """Run deterministic cleanup on a floor plan sketch.
 
@@ -526,12 +991,11 @@ async def cleanup_floor_plan(
     """
     client = await get_authenticated_client(token)
 
-    # Fetch floor plan (always needed to verify ownership + for saving back)
+    # Fetch floor plan (verify ownership)
     result = await (
         client.table("floor_plans")
         .select("*")
         .eq("id", str(floor_plan_id))
-        .eq("job_id", str(job_id))
         .eq("company_id", str(company_id))
         .single()
         .execute()
@@ -578,7 +1042,7 @@ async def cleanup_floor_plan(
     if not changes_made:
         changes_made.append("Sketch already clean -- no changes needed")
 
-    # Save cleaned canvas_data back to DB (with company_id for defense-in-depth)
+    # Save cleaned canvas_data back to DB
     await (
         client.table("floor_plans")
         .update({"canvas_data": cleaned})
@@ -600,10 +1064,8 @@ async def cleanup_floor_plan(
         },
     )
 
-    # Return response matching SketchCleanupResponse schema
-    # TODO: return real event_id when log_ai_event() is implemented (Spec 02)
     return {
         "canvas_data": cleaned,
         "changes_made": changes_made,
-        "event_id": uuid4(),  # placeholder until log_ai_event()
+        "event_id": uuid4(),
     }

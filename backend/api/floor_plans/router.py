@@ -1,12 +1,23 @@
-"""Floor plan CRUD + sketch cleanup/edit endpoints.
+"""Floor plan endpoints — property-scoped CRUD + job-driven versioning.
 
-6 endpoints:
-- POST /jobs/{job_id}/floor-plans — create
-- GET /jobs/{job_id}/floor-plans — list
-- PATCH /jobs/{job_id}/floor-plans/{floor_plan_id} — update
-- DELETE /jobs/{job_id}/floor-plans/{floor_plan_id} — delete
-- POST /jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup — deterministic sketch cleanup
-- POST /jobs/{job_id}/floor-plans/{floor_plan_id}/edit — AI sketch edit (Spec 02 stub)
+Property-scoped CRUD:
+- POST /properties/{property_id}/floor-plans — create
+- GET /properties/{property_id}/floor-plans — list
+- PATCH /properties/{property_id}/floor-plans/{floor_plan_id} — update
+- DELETE /properties/{property_id}/floor-plans/{floor_plan_id} — delete
+
+Job convenience:
+- GET /jobs/{job_id}/floor-plans — list via job's property_id
+
+Versioning:
+- GET /floor-plans/{floor_plan_id}/versions — list versions
+- GET /floor-plans/{floor_plan_id}/versions/{version_number} — get version
+- POST /floor-plans/{floor_plan_id}/versions — save canvas (create/update/fork)
+- POST /floor-plans/{floor_plan_id}/versions/{version_number}/rollback — rollback
+
+Sketch cleanup:
+- POST /floor-plans/{floor_plan_id}/cleanup — deterministic cleanup
+- POST /floor-plans/{floor_plan_id}/edit — AI edit (Spec 02 stub)
 """
 
 from uuid import UUID
@@ -20,6 +31,9 @@ from api.floor_plans.schemas import (
     FloorPlanListResponse,
     FloorPlanResponse,
     FloorPlanUpdate,
+    FloorPlanVersionListResponse,
+    FloorPlanVersionResponse,
+    FloorPlanVersionSave,
     SketchCleanupRequest,
     SketchCleanupResponse,
     SketchEditRequest,
@@ -29,56 +43,78 @@ from api.floor_plans.service import (
     cleanup_floor_plan,
     create_floor_plan,
     delete_floor_plan,
-    list_floor_plans,
+    get_version,
+    list_floor_plans_by_job,
+    list_floor_plans_by_property,
+    list_versions,
+    rollback_version,
+    save_canvas,
     update_floor_plan,
 )
-from api.shared.dependencies import _get_token, get_valid_job
+from api.shared.dependencies import (
+    _get_token,
+    get_valid_floor_plan,
+    get_valid_job,
+    get_valid_property,
+)
 
 router = APIRouter(tags=["floor-plans"])
 
 
-@router.post("/jobs/{job_id}/floor-plans", status_code=201, response_model=FloorPlanResponse)
+# ---------------------------------------------------------------------------
+# Property-scoped CRUD
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/properties/{property_id}/floor-plans",
+    status_code=201,
+    response_model=FloorPlanResponse,
+)
 async def create_floor_plan_endpoint(
     body: FloorPlanCreate,
     request: Request,
-    job: dict = Depends(get_valid_job),
+    prop: dict = Depends(get_valid_property),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Create a new floor plan for a job."""
+    """Create a new floor plan for a property."""
     token = _get_token(request)
     return await create_floor_plan(
         token=token,
-        job_id=job["id"],
+        property_id=prop["id"],
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
     )
 
 
-@router.get("/jobs/{job_id}/floor-plans", response_model=FloorPlanListResponse)
-async def list_floor_plans_endpoint(
+@router.get(
+    "/properties/{property_id}/floor-plans",
+    response_model=FloorPlanListResponse,
+)
+async def list_floor_plans_by_property_endpoint(
     request: Request,
-    job: dict = Depends(get_valid_job),
+    prop: dict = Depends(get_valid_property),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """List all floor plans for a job, ordered by floor_number."""
+    """List all floor plans for a property, ordered by floor_number."""
     token = _get_token(request)
-    return await list_floor_plans(
+    return await list_floor_plans_by_property(
         token=token,
-        job_id=job["id"],
+        property_id=prop["id"],
         company_id=ctx.company_id,
     )
 
 
 @router.patch(
-    "/jobs/{job_id}/floor-plans/{floor_plan_id}",
+    "/properties/{property_id}/floor-plans/{floor_plan_id}",
     response_model=FloorPlanResponse,
 )
 async def update_floor_plan_endpoint(
     body: FloorPlanUpdate,
     request: Request,
     floor_plan_id: UUID = Path(..., description="Floor plan ID"),
-    job: dict = Depends(get_valid_job),
+    prop: dict = Depends(get_valid_property),
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Update a floor plan (name, floor_number, canvas_data, thumbnail)."""
@@ -86,44 +122,167 @@ async def update_floor_plan_endpoint(
     return await update_floor_plan(
         token=token,
         floor_plan_id=floor_plan_id,
-        job_id=job["id"],
+        property_id=prop["id"],
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
     )
 
 
-@router.delete("/jobs/{job_id}/floor-plans/{floor_plan_id}", status_code=204)
+@router.delete(
+    "/properties/{property_id}/floor-plans/{floor_plan_id}",
+    status_code=204,
+)
 async def delete_floor_plan_endpoint(
     request: Request,
     floor_plan_id: UUID = Path(..., description="Floor plan ID"),
-    job: dict = Depends(get_valid_job),
+    prop: dict = Depends(get_valid_property),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Delete a floor plan. Unlinks associated rooms (sets floor_plan_id=NULL)."""
+    """Delete a floor plan. Cascades to versions. Unlinks rooms."""
     token = _get_token(request)
     await delete_floor_plan(
         token=token,
         floor_plan_id=floor_plan_id,
-        job_id=job["id"],
+        property_id=prop["id"],
         company_id=ctx.company_id,
         user_id=ctx.user_id,
     )
 
 
-async def _do_cleanup(
-    body: SketchCleanupRequest,
+# ---------------------------------------------------------------------------
+# Job convenience — resolves via job.property_id
+# ---------------------------------------------------------------------------
+
+
+@router.get("/jobs/{job_id}/floor-plans", response_model=FloorPlanListResponse)
+async def list_floor_plans_by_job_endpoint(
     request: Request,
-    floor_plan_id: UUID,
-    job: dict,
-    ctx: AuthContext,
-) -> dict:
-    """Shared cleanup logic for both /cleanup and /ai-cleanup paths."""
+    job: dict = Depends(get_valid_job),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """List floor plans for a job's property. Resolves via job.property_id."""
+    token = _get_token(request)
+    return await list_floor_plans_by_job(
+        token=token,
+        job_id=job["id"],
+        company_id=ctx.company_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Versioning
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/floor-plans/{floor_plan_id}/versions",
+    response_model=FloorPlanVersionListResponse,
+)
+async def list_versions_endpoint(
+    request: Request,
+    fp: dict = Depends(get_valid_floor_plan),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """List all versions for a floor plan, newest first."""
+    token = _get_token(request)
+    return await list_versions(
+        token=token,
+        floor_plan_id=fp["id"],
+        company_id=ctx.company_id,
+    )
+
+
+@router.get(
+    "/floor-plans/{floor_plan_id}/versions/{version_number}",
+    response_model=FloorPlanVersionResponse,
+)
+async def get_version_endpoint(
+    request: Request,
+    version_number: int = Path(..., ge=1, description="Version number"),
+    fp: dict = Depends(get_valid_floor_plan),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Get a specific version by number."""
+    token = _get_token(request)
+    return await get_version(
+        token=token,
+        floor_plan_id=fp["id"],
+        version_number=version_number,
+        company_id=ctx.company_id,
+    )
+
+
+@router.post(
+    "/floor-plans/{floor_plan_id}/versions",
+    status_code=201,
+    response_model=FloorPlanVersionResponse,
+)
+async def save_canvas_endpoint(
+    body: FloorPlanVersionSave,
+    request: Request,
+    fp: dict = Depends(get_valid_floor_plan),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Save canvas changes. Auto-creates, updates, or forks a version depending on state."""
+    token = _get_token(request)
+    return await save_canvas(
+        token=token,
+        floor_plan_id=fp["id"],
+        job_id=body.job_id,
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+        canvas_data=body.canvas_data,
+        change_summary=body.change_summary,
+    )
+
+
+@router.post(
+    "/floor-plans/{floor_plan_id}/versions/{version_number}/rollback",
+    response_model=FloorPlanVersionResponse,
+)
+async def rollback_version_endpoint(
+    body: FloorPlanVersionSave,
+    request: Request,
+    version_number: int = Path(..., ge=1, description="Version number to rollback to"),
+    fp: dict = Depends(get_valid_floor_plan),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Rollback: create a new version from a past version's canvas_data."""
+    token = _get_token(request)
+    return await rollback_version(
+        token=token,
+        floor_plan_id=fp["id"],
+        version_number=version_number,
+        job_id=body.job_id,
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sketch cleanup / edit (kept from Spec 01C, updated for property-scoped)
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/floor-plans/{floor_plan_id}/cleanup",
+    response_model=SketchCleanupResponse,
+)
+async def cleanup_endpoint(
+    request: Request,
+    body: SketchCleanupRequest = SketchCleanupRequest(),
+    fp: dict = Depends(get_valid_floor_plan),
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Deterministic sketch cleanup — straighten walls, align corners, snap dimensions.
+
+    No AI — uses Shapely geometric operations. Zero cost.
+    """
     token = _get_token(request)
     return await cleanup_floor_plan(
         token=token,
-        floor_plan_id=floor_plan_id,
-        job_id=job["id"],
+        floor_plan_id=fp["id"],
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         client_canvas_data=body.canvas_data,
@@ -131,98 +290,34 @@ async def _do_cleanup(
 
 
 @router.post(
-    "/jobs/{job_id}/floor-plans/{floor_plan_id}/cleanup",
-    response_model=SketchCleanupResponse,
-)
-async def cleanup_endpoint(
-    request: Request,
-    body: SketchCleanupRequest = SketchCleanupRequest(),
-    floor_plan_id: UUID = Path(..., description="Floor plan ID"),
-    job: dict = Depends(get_valid_job),
-    ctx: AuthContext = Depends(get_auth_context),
-):
-    """Deterministic sketch cleanup — straighten walls, align corners, snap dimensions.
-
-    If canvas_data is provided in the request body, cleans the client's unsaved sketch.
-    If omitted, fetches the saved canvas_data from the floor plan record.
-    No AI — uses Shapely geometric operations. Zero cost.
-    """
-    return await _do_cleanup(body, request, floor_plan_id, job, ctx)
-
-
-@router.post(
-    "/jobs/{job_id}/floor-plans/{floor_plan_id}/ai-cleanup",
-    response_model=SketchCleanupResponse,
-    include_in_schema=False,
-)
-async def cleanup_endpoint_alias(
-    request: Request,
-    body: SketchCleanupRequest = SketchCleanupRequest(),
-    floor_plan_id: UUID = Path(..., description="Floor plan ID"),
-    job: dict = Depends(get_valid_job),
-    ctx: AuthContext = Depends(get_auth_context),
-):
-    """Backwards-compatible alias for /cleanup. Hidden from OpenAPI docs."""
-    return await _do_cleanup(body, request, floor_plan_id, job, ctx)
-
-
-@router.post(
-    "/jobs/{job_id}/floor-plans/{floor_plan_id}/edit",
+    "/floor-plans/{floor_plan_id}/edit",
     response_model=SketchEditResponse,
 )
 async def edit_endpoint(
     body: SketchEditRequest,
     request: Request,
-    floor_plan_id: UUID = Path(..., description="Floor plan ID"),
-    job: dict = Depends(get_valid_job),
+    fp: dict = Depends(get_valid_floor_plan),
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """AI sketch edit — modify sketch via natural language instruction.
 
-    canvas_data is fetched server-side. Claude Sonnet 4 modifies based on instruction.
     TODO: Implement when api/ai/ service layer is built (Spec 02).
     """
-    # Stub — returns current canvas_data unchanged until Spec 02
     from api.shared.events import log_event
-
-    token = _get_token(request)
-
-    # Fetch current floor plan
-    from api.shared.database import get_authenticated_client
-
-    client = await get_authenticated_client(token)
-    result = await (
-        client.table("floor_plans")
-        .select("*")
-        .eq("id", str(floor_plan_id))
-        .eq("job_id", str(job["id"]))
-        .eq("company_id", str(ctx.company_id))
-        .single()
-        .execute()
-    )
-    if not result.data:
-        from api.shared.exceptions import AppException
-
-        raise AppException(
-            status_code=404,
-            detail="Floor plan not found",
-            error_code="FLOOR_PLAN_NOT_FOUND",
-        )
 
     event_id = await log_event(
         ctx.company_id,
         "sketch_edit",
-        job_id=UUID(job["id"]),
         user_id=ctx.user_id,
         event_data={
-            "floor_plan_id": str(floor_plan_id),
+            "floor_plan_id": str(fp["id"]),
             "instruction": body.instruction,
             "stub": True,
         },
     )
 
     return SketchEditResponse(
-        canvas_data=result.data.get("canvas_data") or {},
+        canvas_data=fp.get("canvas_data") or {},
         changes_made=["Sketch edit not yet implemented — requires Spec 02 AI pipeline"],
         event_id=event_id or UUID("00000000-0000-0000-0000-000000000000"),
         cost_cents=0,

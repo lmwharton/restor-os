@@ -19,7 +19,7 @@ class FloorPlanUpdate(BaseModel):
 
 class FloorPlanResponse(BaseModel):
     id: UUID
-    job_id: UUID
+    property_id: UUID
     company_id: UUID
     floor_number: int
     floor_name: str
@@ -31,6 +31,36 @@ class FloorPlanResponse(BaseModel):
 
 class FloorPlanListResponse(BaseModel):
     items: list[FloorPlanResponse]
+    total: int
+
+
+# --- Floor Plan Versions (job-driven versioning) ---
+
+
+class FloorPlanVersionSave(BaseModel):
+    """Save canvas changes. Service layer handles create-vs-update logic."""
+
+    job_id: UUID = Field(..., description="Which job is saving (needed for version ownership)")
+    canvas_data: dict = Field(..., description="Canvas state to save")
+    change_summary: str | None = Field(default=None, max_length=500)
+
+
+class FloorPlanVersionResponse(BaseModel):
+    id: UUID
+    floor_plan_id: UUID
+    company_id: UUID
+    version_number: int
+    canvas_data: dict
+    created_by_job_id: UUID | None
+    created_by_user_id: UUID | None
+    change_summary: str | None
+    is_current: bool
+    created_at: datetime
+    updated_at: datetime
+
+
+class FloorPlanVersionListResponse(BaseModel):
+    items: list[FloorPlanVersionResponse]
     total: int
 
 
