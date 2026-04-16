@@ -15,12 +15,128 @@ import {
   usePhotos,
 } from "@/lib/hooks/use-jobs";
 import { RoomPhotoSection } from "@/components/room-photo-section";
-import { apiGet, apiPost } from "@/lib/api";
+import { apiGet, apiPost, apiDelete } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
 import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
+import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
+import type { WallSegment } from "@/lib/types";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
+
+/* ------------------------------------------------------------------ */
+/*  Wall sync: canvas walls → backend wall_segments                    */
+/* ------------------------------------------------------------------ */
+
+async function syncWallsToBackend(
+  canvasData: FloorPlanData,
+  jobRooms: Array<{ id: string; room_name: string }> | undefined,
+) {
+  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) return;
+
+  // Group canvas walls by roomId (canvas-local ID, not backend ID)
+  const wallsByRoom = new Map<string, typeof canvasData.walls>();
+  for (const wall of canvasData.walls) {
+    if (!wall.roomId) continue;
+    const existing = wallsByRoom.get(wall.roomId) ?? [];
+    existing.push(wall);
+    wallsByRoom.set(wall.roomId, existing);
+  }
+
+  // Map canvas wall IDs → backend wall IDs (needed for door/window sync)
+  const canvasToBackendWallId = new Map<string, string>();
+
+  for (const room of canvasData.rooms) {
+    const backendRoomId = room.propertyRoomId
+      ?? jobRooms.find((r) => r.room_name === room.name)?.id;
+
+    if (!backendRoomId) continue;
+
+    const roomWalls = wallsByRoom.get(room.id) ?? [];
+    if (roomWalls.length === 0) continue;
+
+    try {
+      // Get existing backend walls
+      const existing = await apiGet<{ items: WallSegment[] } | WallSegment[]>(
+        `/v1/rooms/${backendRoomId}/walls`
+      );
+      const existingWalls = Array.isArray(existing) ? existing : existing.items ?? [];
+
+      // Delete existing walls (clean slate — cascades openings)
+      for (const w of existingWalls) {
+        await apiDelete(`/v1/rooms/${backendRoomId}/walls/${w.id}`);
+      }
+
+      // Create new walls and track ID mapping
+      for (let i = 0; i < roomWalls.length; i++) {
+        const w = roomWalls[i];
+        const created = await apiPost<WallSegment>(`/v1/rooms/${backendRoomId}/walls`, {
+          x1: w.x1,
+          y1: w.y1,
+          x2: w.x2,
+          y2: w.y2,
+          wall_type: w.wallType ?? "interior",
+          affected: w.affected ?? false,
+          sort_order: i,
+        });
+        canvasToBackendWallId.set(w.id, created.id);
+      }
+    } catch (err) {
+      console.warn("Wall sync failed for room", backendRoomId, err);
+    }
+  }
+
+  // Sync doors → wall_openings (type: door, default height 7ft)
+  for (const door of canvasData.doors ?? []) {
+    const backendWallId = canvasToBackendWallId.get(door.wallId);
+    if (!backendWallId) continue;
+    // Find the room this wall belongs to
+    const wall = canvasData.walls.find(w => w.id === door.wallId);
+    if (!wall?.roomId) continue;
+    const room = canvasData.rooms.find(r => r.id === wall.roomId);
+    const backendRoomId = room?.propertyRoomId
+      ?? jobRooms.find(r => r.room_name === room?.name)?.id;
+    if (!backendRoomId) continue;
+
+    try {
+      await apiPost(`/v1/rooms/${backendRoomId}/walls/${backendWallId}/openings`, {
+        opening_type: "door",
+        position: door.position,
+        width_ft: door.width,
+        height_ft: door.height ?? 7,
+        swing: door.swing,
+      });
+    } catch (err) {
+      console.warn("Door sync failed", err);
+    }
+  }
+
+  // Sync windows → wall_openings (type: window, default height 4ft)
+  for (const win of canvasData.windows ?? []) {
+    const backendWallId = canvasToBackendWallId.get(win.wallId);
+    if (!backendWallId) continue;
+    const wall = canvasData.walls.find(w => w.id === win.wallId);
+    if (!wall?.roomId) continue;
+    const room = canvasData.rooms.find(r => r.id === wall.roomId);
+    const backendRoomId = room?.propertyRoomId
+      ?? jobRooms.find(r => r.room_name === room?.name)?.id;
+    if (!backendRoomId) continue;
+
+    // Openings with "opening" prefix are missing walls
+    const isOpening = win.id.startsWith("opening");
+
+    try {
+      await apiPost(`/v1/rooms/${backendRoomId}/walls/${backendWallId}/openings`, {
+        opening_type: isOpening ? "missing_wall" : "window",
+        position: win.position,
+        width_ft: win.width,
+        height_ft: win.height ?? (isOpening ? 8 : 4),
+      });
+    } catch (err) {
+      console.warn("Window/opening sync failed", err);
+    }
+  }
+}
 
 /* ------------------------------------------------------------------ */
 /*  Mobile bottom panel with swipe-to-close                            */
@@ -31,11 +147,15 @@ function MobileRoomPanel({
   jobId,
   photos,
   onClose,
+  onEditRoom,
+  wallSf,
 }: {
   room: { id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string };
   jobId: string;
   photos: import("@/lib/types").Photo[];
   onClose: () => void;
+  onEditRoom?: () => void;
+  wallSf?: number | null;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
@@ -78,14 +198,14 @@ function MobileRoomPanel({
   }, [onClose]);
 
   return (
-    <div className="md:hidden fixed inset-0 z-[45]">
+    <div className="md:hidden fixed inset-0 z-[60]">
       {/* Backdrop */}
       <div className="absolute inset-0 bg-black/10" onClick={onClose} />
 
       {/* Panel */}
       <div
         ref={panelRef}
-        className="absolute left-0 right-0 bottom-16 bg-surface-container-lowest rounded-t-2xl shadow-[0_-4px_20px_rgba(31,27,23,0.12)] max-h-[45vh] flex flex-col pb-[env(safe-area-inset-bottom)]"
+        className="absolute left-0 right-0 bottom-0 bg-surface-container-lowest rounded-t-2xl shadow-[0_-4px_20px_rgba(31,27,23,0.12)] min-h-[55vh] max-h-[75vh] flex flex-col pb-[env(safe-area-inset-bottom)]"
         style={{ transform: "translateY(0)", transition: "transform 200ms ease-out" }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -97,13 +217,27 @@ function MobileRoomPanel({
         </div>
 
         {/* Scrollable content */}
-        <div className="overflow-y-auto px-4 pb-4 space-y-3">
-          {/* Room header */}
-          <div className="flex items-baseline justify-between">
-            <h3 className="text-[15px] font-semibold text-on-surface">{room.name}</h3>
-            <span className="text-[12px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-              {room.widthFt} &times; {room.heightFt} ft &middot; {Math.round(room.widthFt * room.heightFt)} SF
-            </span>
+        <div className="overflow-y-auto px-4 pb-6 space-y-3">
+          {/* Room header with edit */}
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-[14px] font-semibold text-on-surface">{room.name}</h3>
+              <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                {room.widthFt} &times; {room.heightFt} ft &middot; {Math.round(room.widthFt * room.heightFt)} SF
+                {wallSf != null && wallSf > 0 && (
+                  <> &middot; Wall {wallSf} SF</>
+                )}
+              </span>
+            </div>
+            {onEditRoom && (
+              <button
+                type="button"
+                onClick={onEditRoom}
+                className="h-8 px-3 rounded-full border border-outline-variant text-[11px] font-semibold text-on-surface-variant hover:bg-surface-container-high active:scale-[0.98] cursor-pointer sm:h-7 sm:rounded-lg"
+              >
+                Edit
+              </button>
+            )}
           </div>
 
           {/* Photos section */}
@@ -155,14 +289,73 @@ export default function FloorPlanPage({
 
   const { data: allPhotos = [] } = usePhotos(jobId);
   const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string } | null>(null);
+  const [editingRoomData, setEditingRoomData] = useState<RoomConfirmationData | null>(null);
+
+  const handleEditRoom = useCallback(() => {
+    if (!mobileSelectedRoom) return;
+    const dbRoom = jobRooms?.find(r => r.id === mobileSelectedRoom.propertyRoomId);
+    // Auto-detect room type from name if DB doesn't have it (rooms created before V2)
+    const nameKey = mobileSelectedRoom.name.toLowerCase().replace(/\s+/g, "_");
+    const detectedType = dbRoom?.room_type ?? (
+      ["living_room","kitchen","bathroom","bedroom","basement","hallway","laundry_room","garage","dining_room","office","closet","utility_room","other"].includes(nameKey) ? nameKey : null
+    );
+    setEditingRoomData({
+      name: mobileSelectedRoom.name,
+      propertyRoomId: mobileSelectedRoom.propertyRoomId,
+      roomType: detectedType as RoomConfirmationData["roomType"],
+      ceilingHeight: dbRoom?.height_ft ?? 8,
+      ceilingType: (dbRoom?.ceiling_type as RoomConfirmationData["ceilingType"]) ?? "flat",
+      floorLevel: (dbRoom?.floor_level as RoomConfirmationData["floorLevel"]) ?? "main",
+      materialFlags: dbRoom?.material_flags ?? [],
+      affected: dbRoom?.affected ?? false,
+    });
+    setMobileSelectedRoom(null);
+  }, [mobileSelectedRoom, jobRooms]);
+
+  const handleEditRoomConfirm = useCallback((data: RoomConfirmationData) => {
+    if (!data.propertyRoomId) return;
+    updateRoom.mutate({
+      roomId: data.propertyRoomId,
+      room_name: data.name,
+      room_type: data.roomType,
+      height_ft: data.ceilingHeight,
+      ceiling_type: data.ceilingType,
+      floor_level: data.floorLevel,
+      material_flags: data.materialFlags,
+      affected: data.affected,
+    } as Record<string, unknown> & { roomId: string });
+    setEditingRoomData(null);
+  }, [updateRoom]);
+
+  const selectedRoomRef = useRef<{ id: string; name: string; propertyRoomId: string } | null>(null);
+
+  const handleDesktopEditRoom = useCallback(() => {
+    const sel = selectedRoomRef.current;
+    if (!sel) return;
+    const dbRoom = jobRooms?.find(r => r.id === sel.propertyRoomId);
+    const nameKey = sel.name.toLowerCase().replace(/\s+/g, "_");
+    const detectedType = dbRoom?.room_type ?? (
+      ["living_room","kitchen","bathroom","bedroom","basement","hallway","laundry_room","garage","dining_room","office","closet","utility_room","other"].includes(nameKey) ? nameKey : null
+    );
+    setEditingRoomData({
+      name: sel.name,
+      propertyRoomId: sel.propertyRoomId,
+      roomType: detectedType as RoomConfirmationData["roomType"],
+      ceilingHeight: dbRoom?.height_ft ?? 8,
+      ceilingType: (dbRoom?.ceiling_type as RoomConfirmationData["ceilingType"]) ?? "flat",
+      floorLevel: (dbRoom?.floor_level as RoomConfirmationData["floorLevel"]) ?? "main",
+      materialFlags: dbRoom?.material_flags ?? [],
+      affected: dbRoom?.affected ?? false,
+    });
+  }, [jobRooms]);
 
   const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => {
-    if (!info) { setMobileSelectedRoom(null); return; }
-    // Prefer propertyRoomId from canvas data; fall back to name-based lookup for legacy rooms
+    if (!info) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
     const propertyRoom = info.propertyRoomId
       ? jobRooms?.find(r => r.id === info.propertyRoomId)
       : jobRooms?.find(r => r.room_name === info.name);
-    if (!propertyRoom) { setMobileSelectedRoom(null); return; }
+    if (!propertyRoom) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
+    selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: propertyRoom.id };
     setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id });
   }, [jobRooms]);
 
@@ -325,6 +518,11 @@ export default function FloorPlanPage({
           }
         }
 
+        // Sync walls to backend (non-blocking — runs after save succeeds)
+        syncWallsToBackend(canvasData, jobRooms)
+          .then(() => queryClient.invalidateQueries({ queryKey: ["rooms", jobId] }))
+          .catch(() => {});
+
         // Success — clear local backup, reset retries, show saved
         clearLocalBackup();
         retryCount.current = 0;
@@ -471,7 +669,7 @@ export default function FloorPlanPage({
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="flex flex-col h-[calc(100dvh-48px)] bg-surface overflow-hidden">
+    <div className="flex flex-col h-dvh bg-surface overflow-hidden">
       {/* Navigation bar */}
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
         <button
@@ -593,15 +791,10 @@ export default function FloorPlanPage({
           onCreateRoom={handleCreateRoom}
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
+          onEditRoom={handleDesktopEditRoom}
         />
       </div>
 
-      {/* Footer — hidden on mobile when room panel is open */}
-      <div className={`py-2 px-4 text-center shrink-0 ${mobileSelectedRoom ? "hidden md:block" : ""}`}>
-        <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.15em] text-on-surface-variant/50">
-          Precision scoping powered by Crewmatic AI
-        </p>
-      </div>
 
       {/* Mobile bottom panel — room photos (md:hidden), positioned above bottom nav */}
       {mobileSelectedRoom && (
@@ -609,8 +802,26 @@ export default function FloorPlanPage({
           room={mobileSelectedRoom}
           jobId={jobId}
           photos={allPhotos.filter(p => p.room_id === mobileSelectedRoom.propertyRoomId)}
-          onClose={() => setMobileSelectedRoom(null)}
+          onClose={() => {
+            setMobileSelectedRoom(null);
+            selectedRoomRef.current = null;
+            canvasRef.current?.clearSelection();
+          }}
+          onEditRoom={handleEditRoom}
+          wallSf={jobRooms?.find(r => r.id === mobileSelectedRoom.propertyRoomId)?.wall_square_footage}
         />
+      )}
+
+      {/* Room edit modal — z-[60] to sit above bottom nav bar */}
+      {editingRoomData && (
+        <div className="fixed inset-0 z-[60]">
+          <RoomConfirmationCard
+            existingRooms={[]}
+            onConfirm={handleEditRoomConfirm}
+            onCancel={() => setEditingRoomData(null)}
+            editingRoom={editingRoomData}
+          />
+        </div>
       )}
 
       {/* Delete floor confirmation modal */}
