@@ -462,3 +462,26 @@ The current backend uses JWT-scoped Supabase clients for tenant isolation, not `
 - **Spec 02E (AI Feedback):** Agent proposals use the same feedback pattern (thumbs up/down). Shared feedback infrastructure.
 - **Spec 04F (Notifications):** Agent delivers proposals via the notification center. Push notification infrastructure is a dependency.
 - **Spec 04C (Equipment/Drying):** Equipment tracking data feeds the agent's "equipment overdue" check. The richer the equipment data, the smarter the agent.
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Agent Foundation — backend context builder + trust scoring)
+```
+
+---
+
+## Session Log
+
+| # | Date | Start | End | Duration | What was done | Phases |
+|---|------|-------|-----|----------|--------------|--------|
+
+---
+
+## Decisions & Notes
+
+Key decisions with rationale. Append-only as implementation progresses.

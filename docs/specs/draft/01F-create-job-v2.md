@@ -469,3 +469,26 @@ Auto-format as user types:
 | 3 | 7 required fields (up from 2) | Brett's spec lists explicit required fields. More friction but better data quality — contractors are on the phone with the customer when creating. |
 | 4 | Non-blocking address validation | Brett's reasoning: "emergency calls can't wait" + rural routes / new construction have non-standard addresses. Yellow warning, not red error. |
 | 5 | Latest customer info always wins | Brett's reasoning: people change numbers, houses sell, property managers rotate. No confirmation prompt — just update silently. |
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Property Search API + Autocomplete component)
+```
+
+---
+
+## Session Log
+
+| # | Date | Start | End | Duration | What was done | Phases |
+|---|------|-------|-----|----------|--------------|--------|
+
+---
+
+## Decisions & Notes
+
+Key decisions with rationale. Append-only as implementation progresses. See the Decision Log table above for the initial set captured during spec authoring.

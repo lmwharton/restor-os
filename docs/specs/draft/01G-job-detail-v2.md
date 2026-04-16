@@ -834,3 +834,26 @@ On small screens (< 640px):
 | 4 | Timeline is its own tab, not part of Overview | Brett's spec explicitly shows 4 core tabs. Dedicated tab gives timeline room to show full audit history without cluttering Overview. |
 | 5 | Default milestones auto-created for reconstruction | Common reconstruction phases are predictable. Auto-creating saves time. User can customize. |
 | 6 | Equipment/Moisture/Certificate tabs NOT in this spec | Already covered by Spec 01 and 04C. This spec handles the tab shell that includes them, not their internal implementation. |
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Job Summary Card + status transition gates)
+```
+
+---
+
+## Session Log
+
+| # | Date | Start | End | Duration | What was done | Phases |
+|---|------|-------|-----|----------|--------------|--------|
+
+---
+
+## Decisions & Notes
+
+Key decisions with rationale. Append-only as implementation progresses. See the Decision Log table above for the initial set captured during spec authoring.
