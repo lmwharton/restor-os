@@ -10,6 +10,7 @@ export interface RoomData {
   height: number;
   name: string;
   fill: string;
+  propertyRoomId?: string; // links to property_rooms.id — avoids name-based matching
 }
 
 export interface WallData {

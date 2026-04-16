@@ -8,16 +8,117 @@ import {
   useFloorPlans,
   useCreateFloorPlan,
   useUpdateFloorPlan,
+  useDeleteFloorPlan,
   useRooms,
   useCreateRoom,
   useUpdateRoom,
+  usePhotos,
 } from "@/lib/hooks/use-jobs";
+import { RoomPhotoSection } from "@/components/room-photo-section";
 import { apiGet, apiPost } from "@/lib/api";
 import type { FloorPlan } from "@/lib/types";
 import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
+
+/* ------------------------------------------------------------------ */
+/*  Mobile bottom panel with swipe-to-close                            */
+/* ------------------------------------------------------------------ */
+
+function MobileRoomPanel({
+  room,
+  jobId,
+  photos,
+  onClose,
+}: {
+  room: { id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string };
+  jobId: string;
+  photos: import("@/lib/types").Photo[];
+  onClose: () => void;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const startYRef = useRef(0);
+  const currentYRef = useRef(0);
+  const isDragging = useRef(false);
+
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    // Only track swipe on the drag handle area (first 40px)
+    const rect = panelRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const touchY = e.touches[0].clientY;
+    if (touchY > rect.top + 44) return; // only drag handle triggers swipe
+    startYRef.current = touchY;
+    currentYRef.current = touchY;
+    isDragging.current = true;
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (!isDragging.current || !panelRef.current) return;
+    currentYRef.current = e.touches[0].clientY;
+    const delta = Math.max(0, currentYRef.current - startYRef.current);
+    panelRef.current.style.transform = `translateY(${delta}px)`;
+    panelRef.current.style.transition = "none";
+  }, []);
+
+  const handleTouchEnd = useCallback(() => {
+    if (!isDragging.current || !panelRef.current) return;
+    isDragging.current = false;
+    const delta = currentYRef.current - startYRef.current;
+    if (delta > 60) {
+      // Swiped down enough — dismiss
+      panelRef.current.style.transition = "transform 200ms ease-out";
+      panelRef.current.style.transform = "translateY(100%)";
+      setTimeout(onClose, 200);
+    } else {
+      // Snap back
+      panelRef.current.style.transition = "transform 150ms ease-out";
+      panelRef.current.style.transform = "translateY(0)";
+    }
+  }, [onClose]);
+
+  return (
+    <div className="md:hidden fixed inset-0 z-[45]">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/10" onClick={onClose} />
+
+      {/* Panel */}
+      <div
+        ref={panelRef}
+        className="absolute left-0 right-0 bottom-16 bg-surface-container-lowest rounded-t-2xl shadow-[0_-4px_20px_rgba(31,27,23,0.12)] max-h-[45vh] flex flex-col pb-[env(safe-area-inset-bottom)]"
+        style={{ transform: "translateY(0)", transition: "transform 200ms ease-out" }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        {/* Drag handle — swipe down to close */}
+        <div className="pt-3 pb-1 flex items-center justify-center shrink-0">
+          <div className="w-10 h-1 rounded-full bg-outline-variant/40" />
+        </div>
+
+        {/* Scrollable content */}
+        <div className="overflow-y-auto px-4 pb-4 space-y-3">
+          {/* Room header */}
+          <div className="flex items-baseline justify-between">
+            <h3 className="text-[15px] font-semibold text-on-surface">{room.name}</h3>
+            <span className="text-[12px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+              {room.widthFt} &times; {room.heightFt} ft &middot; {Math.round(room.widthFt * room.heightFt)} SF
+            </span>
+          </div>
+
+          {/* Photos section */}
+          <RoomPhotoSection
+            jobId={jobId}
+            roomId={room.propertyRoomId}
+            roomName={room.name}
+            photos={photos}
+            variant="card"
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function FloorPlanPage({
   params,
@@ -31,6 +132,7 @@ export default function FloorPlanPage({
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
   const updateFloorPlan = useUpdateFloorPlan(jobId);
+  const deleteFloorPlan = useDeleteFloorPlan(jobId);
   const canvasRef = useRef<KonvaFloorPlanHandle>(null);
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
@@ -51,11 +153,64 @@ export default function FloorPlanPage({
     } as Record<string, unknown>);
   }, [jobRooms, createRoom, updateRoom]);
 
+  const { data: allPhotos = [] } = usePhotos(jobId);
+  const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string } | null>(null);
+
+  const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => {
+    if (!info) { setMobileSelectedRoom(null); return; }
+    // Prefer propertyRoomId from canvas data; fall back to name-based lookup for legacy rooms
+    const propertyRoom = info.propertyRoomId
+      ? jobRooms?.find(r => r.id === info.propertyRoomId)
+      : jobRooms?.find(r => r.room_name === info.name);
+    if (!propertyRoom) { setMobileSelectedRoom(null); return; }
+    setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id });
+  }, [jobRooms]);
+
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
-  const lastCanvasRef = useRef<FloorPlanData | null>(null);
-  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error" | "offline">("idle");
+  const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // localStorage key for offline backup — keyed per-floor to prevent cross-floor data corruption
+  const lsKey = activeFloorId ? `fp-backup-${jobId}-${activeFloorId}` : `fp-backup-${jobId}`;
+
+  // Persist canvas state to localStorage on every change (survives browser close)
+  const backupToLocal = useCallback((canvasData: FloorPlanData, floorId: string | null) => {
+    try {
+      localStorage.setItem(lsKey, JSON.stringify({ canvasData, floorId, ts: Date.now() }));
+    } catch { /* storage full — ignore */ }
+  }, [lsKey]);
+
+  // Clear localStorage backup after successful save
+  const clearLocalBackup = useCallback(() => {
+    try { localStorage.removeItem(lsKey); } catch { /* ignore */ }
+  }, [lsKey]);
+
+  // Check for unsaved local backup — synchronous read so it's available before canvas mounts
+  const [pendingBackup, setPendingBackup] = useState<FloorPlanData | null>(null);
+  const [backupChecked, setBackupChecked] = useState(false);
+  useEffect(() => {
+    // Only check once activeFloorId is resolved (so we read the right key)
+    if (!activeFloorId) { setBackupChecked(false); return; }
+    try {
+      const raw = localStorage.getItem(lsKey);
+      if (!raw) { setBackupChecked(true); return; }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object" || !parsed.canvasData || typeof parsed.ts !== "number") {
+        localStorage.removeItem(lsKey);
+        setBackupChecked(true);
+        return;
+      }
+      if (Date.now() - parsed.ts > 86_400_000) { localStorage.removeItem(lsKey); setBackupChecked(true); return; }
+      if (parsed.floorId && parsed.floorId !== activeFloorId) { setBackupChecked(true); return; }
+      setPendingBackup(parsed.canvasData as FloorPlanData);
+      lastCanvasRef.current = { floorId: activeFloorId, data: parsed.canvasData as FloorPlanData };
+    } catch { localStorage.removeItem(lsKey); }
+    setBackupChecked(true);
+  }, [lsKey, activeFloorId]);
 
   // Sync activeFloorId when floor plans load
   useEffect(() => {
@@ -68,9 +223,15 @@ export default function FloorPlanPage({
     ?? floorPlans?.[activeFloorIdx]
     ?? null;
 
-  // Keep a ref to activeFloor so the save callback always uses the latest
+  // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
   activeFloorRef.current = activeFloor;
+  const activeFloorIdRef = useRef(activeFloorId);
+  activeFloorIdRef.current = activeFloorId;
+
+  const wasPendingRef = useRef(false);
+  const retryCount = useRef(0);
+  const MAX_RETRIES = 5;
 
   /* ---------------------------------------------------------------- */
   /*  Save — create or update                                          */
@@ -78,11 +239,37 @@ export default function FloorPlanPage({
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
-      const currentFloor = activeFloorRef.current;
+      // Always backup to localStorage (survives browser close) — even during pending create
+      backupToLocal(canvasData, activeFloorIdRef.current);
+
+      // Skip server save while a floor creation is in-flight to avoid duplicates
+      if (createFloorPlan.isPending) {
+        lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
+        return;
+      }
+
+      // If browser reports offline, queue for retry with backoff
+      if (typeof navigator !== "undefined" && !navigator.onLine) {
+        setSaveStatus("offline");
+        if (retryCount.current < MAX_RETRIES) {
+          retryCount.current++;
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            const pending = lastCanvasRef.current;
+            if (pending) handleChangeRef.current(pending.data);
+          }, 5000 * retryCount.current);
+        } else {
+          setSaveStatus("error");
+        }
+        return;
+      }
+
+      // Try ref first, then fall back to looking up by ID in query cache
+      const currentFloor = activeFloorRef.current
+        ?? (activeFloorIdRef.current ? queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId])?.find((fp) => fp.id === activeFloorIdRef.current) : null);
       setSaveStatus("saving");
       try {
         if (currentFloor) {
-          // Use mutation hook for consistent cache invalidation
           await updateFloorPlan.mutateAsync({
             floorPlanId: currentFloor.id,
             canvas_data: canvasData as unknown as Record<string, unknown>,
@@ -101,7 +288,6 @@ export default function FloorPlanPage({
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
-              // Floor already exists (race condition) — refetch and update
               const refetched = await apiGet<{ items: FloorPlan[]; total: number } | FloorPlan[]>(
                 `/v1/jobs/${jobId}/floor-plans`,
               );
@@ -124,7 +310,9 @@ export default function FloorPlanPage({
         if (canvasData.rooms && jobRooms) {
           const gs = canvasData.gridSize || 20;
           for (const drawnRoom of canvasData.rooms) {
-            const match = jobRooms.find((r) => r.room_name === drawnRoom.name);
+            const match = drawnRoom.propertyRoomId
+              ? jobRooms.find((r) => r.id === drawnRoom.propertyRoomId)
+              : jobRooms.find((r) => r.room_name === drawnRoom.name);
             if (match) {
               const widthFt = Math.round((drawnRoom.width / gs) * 10) / 10;
               const lengthFt = Math.round((drawnRoom.height / gs) * 10) / 10;
@@ -137,23 +325,80 @@ export default function FloorPlanPage({
           }
         }
 
+        // Success — clear local backup, reset retries, show saved
+        clearLocalBackup();
+        retryCount.current = 0;
+        if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
-        saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
+        saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
       } catch (err) {
         console.error("Failed to save floor plan:", err);
-        setSaveStatus("error");
+        if (retryCount.current < MAX_RETRIES) {
+          retryCount.current++;
+          setSaveStatus("offline");
+          if (retryTimer.current) clearTimeout(retryTimer.current);
+          retryTimer.current = setTimeout(() => {
+            const pending = lastCanvasRef.current;
+            if (pending) handleChangeRef.current(pending.data);
+          }, 5000 * retryCount.current);
+        } else {
+          setSaveStatus("error");
+        }
       }
     },
-    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan]
+    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
   );
+
+  // Stable ref for handleChange — avoids stale closures in setTimeout callbacks
+  const handleChangeRef = useRef(handleChange);
+  handleChangeRef.current = handleChange;
+
+  // Clean up timers on unmount
+  useEffect(() => () => {
+    if (retryTimer.current) clearTimeout(retryTimer.current);
+    if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+  }, []);
+
+  // When coming back online, retry any pending save
+  useEffect(() => {
+    const handleOnline = () => {
+      if (lastCanvasRef.current && (saveStatus === "offline" || saveStatus === "error")) {
+        retryCount.current = 0;
+        handleChangeRef.current(lastCanvasRef.current.data);
+      }
+    };
+    window.addEventListener("online", handleOnline);
+    return () => window.removeEventListener("online", handleOnline);
+  }, [saveStatus]);
+
+  // Restore pending backup after handleChange is available
+  useEffect(() => {
+    if (!pendingBackup || !floorPlans || floorPlans.length === 0) return;
+    handleChangeRef.current(pendingBackup);
+    setPendingBackup(null);
+  }, [pendingBackup, floorPlans]);
+
+  // Flush deferred save when floor creation finishes — only if data matches active floor
+  useEffect(() => {
+    if (wasPendingRef.current && !createFloorPlan.isPending && lastCanvasRef.current) {
+      if (!lastCanvasRef.current.floorId || lastCanvasRef.current.floorId === activeFloorId) {
+        handleChangeRef.current(lastCanvasRef.current.data);
+      }
+    }
+    wasPendingRef.current = createFloorPlan.isPending;
+  }, [createFloorPlan.isPending, activeFloorId]);
 
   /* ---------------------------------------------------------------- */
   /*  Add Floor                                                        */
   /* ---------------------------------------------------------------- */
 
   const handleAddFloor = useCallback(() => {
-    const nextNumber = (floorPlans?.length ?? 0) + 1;
+    // Flush current floor's data — don't null lastCanvasRef yet (async save may still need it)
+    canvasRef.current?.flush();
+
+    const maxNum = floorPlans?.reduce((max, fp) => Math.max(max, fp.floor_number ?? 0), 0) ?? 0;
+    const nextNumber = maxNum + 1;
     createFloorPlan.mutate(
       {
         floor_number: nextNumber,
@@ -161,12 +406,48 @@ export default function FloorPlanPage({
       },
       {
         onSuccess: (data) => {
+          lastCanvasRef.current = null; // safe to clear now — previous floor's save resolved
+          queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => [
+            ...(old ?? []),
+            data,
+          ]);
           setActiveFloorId(data.id);
-          setActiveFloorIdx(nextNumber - 1);
+          setActiveFloorIdx((floorPlans?.length ?? 0));
         },
       }
     );
-  }, [floorPlans, createFloorPlan]);
+  }, [floorPlans, createFloorPlan, queryClient, jobId]);
+
+  // Floor rename state
+  const [editingFloorId, setEditingFloorId] = useState<string | null>(null);
+  const [editingFloorName, setEditingFloorName] = useState("");
+  const handleRenameFloor = useCallback((floorPlanId: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed) { setEditingFloorId(null); return; }
+    updateFloorPlan.mutate({ floorPlanId, floor_name: trimmed } as { floorPlanId: string; floor_name: string });
+    setEditingFloorId(null);
+  }, [updateFloorPlan]);
+
+  // Double-tap detection for mobile floor rename
+  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
+
+  const [deleteFloorModalId, setDeleteFloorModalId] = useState<string | null>(null);
+  const executeDeleteFloor = useCallback((floorPlanId: string) => {
+    setDeleteFloorModalId(null);
+    // Cancel any pending save for this floor before deleting
+    lastCanvasRef.current = null;
+    deleteFloorPlan.mutate(floorPlanId, {
+      onSuccess: () => {
+        // Read fresh from cache, not the closure's stale floorPlans
+        const cached = queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId]) ?? [];
+        const remaining = cached.filter((fp) => fp.id !== floorPlanId);
+        if (remaining.length > 0) {
+          setActiveFloorId(remaining[0].id);
+          setActiveFloorIdx(0);
+        }
+      },
+    });
+  }, [deleteFloorPlan, queryClient, jobId]);
 
   /* ---------------------------------------------------------------- */
   /*  Loading                                                          */
@@ -192,68 +473,109 @@ export default function FloorPlanPage({
   return (
     <div className="flex flex-col h-[calc(100dvh-48px)] bg-surface overflow-hidden">
       {/* Navigation bar */}
-      <div className="flex items-center gap-2 px-4 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest">
+      <div className="flex items-center gap-2 px-3 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
         <button
           type="button"
           onClick={() => { canvasRef.current?.flush(); router.push(`/jobs/${jobId}`); }}
-          className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
+          className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer shrink-0"
         >
           <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
             <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
-          Back to Job
+          <span className="hidden sm:inline">Back to Job</span>
+          <span className="sm:hidden">Back</span>
         </button>
 
-        {/* Save button + status */}
+        {/* Save button — always orange */}
         <button
           type="button"
           onClick={() => {
-            if (lastCanvasRef.current) handleChange(lastCanvasRef.current);
+            manualSaveRef.current = true;
+            // flush() already calls handleChange via onChangeRef — no need to call twice
+            canvasRef.current?.flush();
           }}
-          className="ml-2 px-3 py-1.5 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer hover:opacity-90 transition-opacity"
+          disabled={saveStatus === "saving"}
+          className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 ${
+            saveStatus === "offline" ? "bg-on-surface-variant/70 text-white" : "bg-brand-accent text-on-primary hover:opacity-90"
+          }`}
         >
-          {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : "Save"}
+          {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved ✓" : saveStatus === "offline" ? "Offline" : saveStatus === "error" ? "Retry" : "Save"}
         </button>
-        <div className="ml-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          {saveStatus === "saved" && <span className="text-green-600">Saved</span>}
-          {saveStatus === "error" && <span className="text-red-600">Save failed</span>}
-        </div>
 
-        {/* Floor tabs */}
-        <div className="flex items-center gap-1.5 ml-auto">
+        {/* Floor tabs — horizontally scrollable */}
+        <div className="flex items-center gap-1.5 ml-auto overflow-x-auto scrollbar-hide min-w-0 pt-1">
           {floorPlans?.map((fp, idx) => {
             const isActive = fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId);
             const roomCount = (fp.canvas_data as FloorPlanData | null)?.rooms?.length ?? 0;
+            const canDelete = (floorPlans?.length ?? 0) > 1;
             return (
-              <button
-                key={fp.id}
-                type="button"
-                onClick={() => {
-                  // Flush any pending debounced save before switching floors
-                  canvasRef.current?.flush();
-                  setActiveFloorIdx(idx);
-                  setActiveFloorId(fp.id);
-                }}
-                className={`px-4 py-2 rounded-lg text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] ${
-                  isActive
-                    ? "bg-[#1a1a1a] text-white shadow-sm"
-                    : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
-                }`}
-              >
-                <span>{fp.floor_name}</span>
-                {roomCount > 0 && (
-                  <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
-                    {roomCount} {roomCount === 1 ? "rm" : "rms"}
-                  </span>
+              <div key={fp.id} className="relative group shrink-0">
+                {editingFloorId === fp.id ? (
+                  <input
+                    type="text"
+                    value={editingFloorName}
+                    onChange={(e) => setEditingFloorName(e.target.value)}
+                    onBlur={() => handleRenameFloor(fp.id, editingFloorName)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRenameFloor(fp.id, editingFloorName);
+                      if (e.key === "Escape") setEditingFloorId(null);
+                    }}
+                    autoFocus
+                    className="px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-[13px] font-semibold font-[family-name:var(--font-geist-mono)] bg-white border-2 border-brand-accent text-[#1a1a1a] outline-none w-[80px] sm:w-[100px]"
+                  />
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      // Double-tap detection for mobile
+                      const now = Date.now();
+                      if (lastTapRef.current && lastTapRef.current.id === fp.id && now - lastTapRef.current.time < 400) {
+                        setEditingFloorId(fp.id);
+                        setEditingFloorName(fp.floor_name);
+                        lastTapRef.current = null;
+                        return;
+                      }
+                      lastTapRef.current = { id: fp.id, time: now };
+                      canvasRef.current?.flush();
+                      setActiveFloorIdx(idx);
+                      setActiveFloorId(fp.id);
+                    }}
+                    onDoubleClick={() => {
+                      setEditingFloorId(fp.id);
+                      setEditingFloorName(fp.floor_name);
+                    }}
+                    className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] whitespace-nowrap ${
+                      isActive
+                        ? "bg-[#1a1a1a] text-white shadow-sm"
+                        : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
+                    }`}
+                  >
+                    <span>{fp.floor_name}</span>
+                    {roomCount > 0 && (
+                    <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
+                      {roomCount} {roomCount === 1 ? "rm" : "rms"}
+                    </span>
+                  )}
+                  </button>
                 )}
-              </button>
+                {canDelete && isActive && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setDeleteFloorModalId(fp.id); }}
+                    className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-red-500 text-white text-[8px] sm:text-[10px] font-bold flex items-center justify-center md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-red-600 shadow-sm"
+                    aria-label={`Delete ${fp.floor_name}`}
+                  >
+                    x
+                  </button>
+                )}
+              </div>
             );
           })}
           <button
             type="button"
             onClick={handleAddFloor}
             disabled={createFloorPlan.isPending}
-            className="px-3.5 py-2 rounded-lg text-[13px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer font-[family-name:var(--font-geist-mono)] disabled:opacity-40"
+            className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer font-[family-name:var(--font-geist-mono)] disabled:opacity-40 whitespace-nowrap shrink-0"
           >
             + Floor
           </button>
@@ -264,20 +586,63 @@ export default function FloorPlanPage({
       <div className="flex-1 min-h-[400px]">
         <KonvaFloorPlan
           ref={canvasRef}
-          key={activeFloor?.id ?? "new"}
-          initialData={activeFloor?.canvas_data as FloorPlanData | null | undefined}
-          onChange={(data: FloorPlanData) => { lastCanvasRef.current = data; handleChange(data); }}
+          key={`${activeFloor?.id ?? "new"}-${backupChecked ? "ready" : "wait"}`}
+          initialData={pendingBackup ?? activeFloor?.canvas_data as FloorPlanData | null | undefined}
+          onChange={(data: FloorPlanData) => { lastCanvasRef.current = { floorId: activeFloorId, data }; handleChange(data); }}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
           onCreateRoom={handleCreateRoom}
+          jobId={jobId}
+          onSelectionChange={handleSelectionChange}
         />
       </div>
 
-      {/* Footer */}
-      <div className="py-2 px-4 text-center shrink-0">
+      {/* Footer — hidden on mobile when room panel is open */}
+      <div className={`py-2 px-4 text-center shrink-0 ${mobileSelectedRoom ? "hidden md:block" : ""}`}>
         <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.15em] text-on-surface-variant/50">
           Precision scoping powered by Crewmatic AI
         </p>
       </div>
+
+      {/* Mobile bottom panel — room photos (md:hidden), positioned above bottom nav */}
+      {mobileSelectedRoom && (
+        <MobileRoomPanel
+          room={mobileSelectedRoom}
+          jobId={jobId}
+          photos={allPhotos.filter(p => p.room_id === mobileSelectedRoom.propertyRoomId)}
+          onClose={() => setMobileSelectedRoom(null)}
+        />
+      )}
+
+      {/* Delete floor confirmation modal */}
+      {deleteFloorModalId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-inverse-surface/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-xl p-6 w-[340px] mx-4">
+            <h3 className="text-[15px] font-semibold text-[#1a1a1a] mb-2">
+              Delete {floorPlans?.find((fp) => fp.id === deleteFloorModalId)?.floor_name ?? "this floor"}?
+            </h3>
+            <p className="text-[13px] text-[#6b6560] mb-5">
+              This will permanently remove the floor and all its rooms, walls, doors, and windows.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                type="button"
+                onClick={() => setDeleteFloorModalId(null)}
+                className="px-4 h-9 rounded-lg text-[13px] font-medium text-[#6b6560] bg-[#eae6e1] hover:bg-[#ddd8d2] transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => executeDeleteFloor(deleteFloorModalId)}
+                disabled={deleteFloorPlan.isPending}
+                className="px-4 h-9 rounded-lg text-[13px] font-semibold text-white bg-red-600 hover:bg-red-700 transition-colors cursor-pointer disabled:opacity-50"
+              >
+                {deleteFloorPlan.isPending ? "Deleting..." : "Delete Floor"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

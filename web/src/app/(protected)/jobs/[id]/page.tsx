@@ -1542,6 +1542,17 @@ export default function JobDetailPage() {
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
   const { data: floorPlans } = useFloorPlans(jobId);
+  const bestFloorPlan = useMemo(() => {
+    if (!floorPlans?.length) return null;
+    let best: CanvasData | null = null;
+    let bestCount = 0;
+    for (const fp of floorPlans) {
+      const cd = fp.canvas_data as CanvasData | null;
+      const count = (cd?.rooms?.length ?? 0) + (cd?.walls?.length ?? 0);
+      if (count > bestCount) { best = cd; bestCount = count; }
+    }
+    return best;
+  }, [floorPlans]);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
@@ -1861,10 +1872,19 @@ export default function JobDetailPage() {
                 tabIndex={0}
                 onClick={() => router.push(`/jobs/${jobId}/floor-plan`)}
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
-                className="relative bg-surface-container-high rounded-lg min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
+                className="relative bg-surface-container-high rounded-lg min-h-[140px] sm:min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
-                <FloorPlanPreview canvasData={(floorPlans?.[0]?.canvas_data as CanvasData) ?? null} />
-                <span className="absolute bottom-3 right-3 z-10 text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
+                <FloorPlanPreview canvasData={bestFloorPlan} />
+              </div>
+              {/* View Plan link — below preview to avoid overlap */}
+              <div
+                role="button"
+                tabIndex={0}
+                onClick={() => router.push(`/jobs/${jobId}/floor-plan`)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
+                className="flex items-center justify-end px-1 py-1 -mt-1 cursor-pointer group"
+              >
+                <span className="text-[12px] font-semibold text-brand-accent group-hover:underline font-[family-name:var(--font-geist-mono)]">
                   View Plan &rarr;
                 </span>
               </div>

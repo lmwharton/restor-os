@@ -2,38 +2,160 @@
 
 | Field | Value |
 |-------|-------|
-| Status | ████████████████████ 100% — pending Lakshman review |
+| Status | 95% — PR #5 review fixes done (14/15), pending mobile device testing |
 | Priority | High — blocking first customer demo |
 | Depends on | Spec 01 (Jobs), Spec 01B (merged to main) |
 | Estimate | 1 session (4-6 hours) |
 | Library | react-konva (721K weekly downloads, MIT, best React integration) |
-| Branch | `feature/01c-floor-plan-photos` (off main, has 01B merged) |
-| Last updated | 2026-04-14 |
+| Branch | `feature/01c-floor-plan-photos` (off main) |
+| Last updated | 2026-04-15 |
 
-## Completed
+## Completed Items
 
-- [x] **Multi-floor save bug** — Fixed activeFloorRef + save flow, auto-save debounce fix
+- [x] **Multi-floor save bug** — Fixed activeFloorRef + debounce (removed onChange from useEffect deps)
 - [x] **Floor grouping on job detail** — Rooms grouped by floor in Property Layout
 - [x] **Export to PNG** — Wired via `stage.toDataURL()`, grid hidden during export
-- [x] **Properties panel** — Room name/width/length/area, wall length, door swing direction
+- [x] **Properties panel** — Room name/width/length/area, wall length, door swing
 - [x] **Mobile floor plan** — Compact toolbar, scrollable floor tabs, swipe-to-close room panel
-- [x] **Room-photo association** — Upload photos per room from sidebar (desktop) + mobile panel
-- [x] **Moisture readings photos** — PHOTOS section in room cards with direct upload
-- [x] **Infinite grid** — Grid dynamically covers viewport on pan/zoom, no white space
-- [x] **Auto-pan on drag** — Rooms near viewport edge auto-scroll the canvas
+- [x] **Room-photo association** — Upload per room from sidebar (desktop) + mobile panel
+- [x] **Moisture readings photos** — PHOTOS section with direct upload in room cards
+- [x] **Infinite grid** — Grid covers viewport on pan/zoom, no white space
+- [x] **Auto-pan on drag** — Rooms near viewport edge auto-scroll canvas
 - [x] **Wall dragging** — Standalone walls draggable with grid snap
-- [x] **Room resize** — Corner handle drag to resize rooms (long-press on mobile)
-- [x] **Arrow key movement** — Move selected room/wall by 1ft (Shift = 0.5ft)
-- [x] **Door/window slide** — Drag doors and windows along their wall
-- [x] **Auto-switch to select** — After placing any element, tool returns to select
-- [x] **Offline save** — localStorage backup + navigator.onLine detection + auto-retry
-- [x] **Optimistic cache** — useUpdateFloorPlan uses setQueryData (no re-fetch after PATCH)
-- [x] **Day number fix** — Moisture readings stay on current day, no premature Day 2
+- [x] **Room resize** — Corner handle drag (long-press on mobile to activate)
+- [x] **Arrow key movement** — 1ft per press, Shift = 0.5ft (web only)
+- [x] **Door/window slide** — Drag along wall to reposition
+- [x] **Auto-switch to select** — After placing any element
+- [x] **Offline save** — localStorage backup + navigator.onLine + auto-retry
+- [x] **Optimistic cache** — setQueryData instead of re-fetch after PATCH
+- [x] **Day number fix** — Count distinct calendar days from reading dates
+- [x] **Upload error feedback** — Red error message on failure, auto-clears 5s
+- [x] **Storage response validation** — Validate PUT before confirming photo
+- [x] **localStorage schema validation** — Reject corrupt backup data
+
+### PR #5 Review Fixes (Lakshman, 5.5/10 → 14/15 addressed)
+
+- [x] **C1: Per-floor localStorage backup** — Key changed from `fp-backup-{jobId}` to `fp-backup-{jobId}-{floorId}`, validates floorId on restore to prevent cross-floor data corruption
+- [x] **C2: Retry limit + exponential backoff** — Max 5 retries with `5000ms * retryCount` backoff, terminal "error" state after exhaustion, `handleChangeRef` pattern avoids stale closures in setTimeout
+- [x] **C3: CapturePanel onDone** — Destructured `onDone` prop + added "Done" button to close capture panel
+- [x] **H2: Timer cleanup on unmount** — Cleanup effects for `retryTimer`, `saveStatusTimer` (floor-plan page) and `longPressTimer` (konva-floor-plan)
+- [x] **H3/CF3: Room matching by ID** — Added `propertyRoomId` to `RoomData`, threaded through room picker → canvas → sidebar → page. ID-based matching with name fallback for legacy data
+- [x] **H4: lastCanvasRef async safety** — No longer nulled after flush(); nulled in onSuccess callback after async save resolves
+- [x] **M1: Upload batch continues on failure** — `continue` instead of `break`, error shows "Failed X of Y photos"
+- [x] **M2: Grid quantization** — `gridBounds`/`gridLines` depend on quantized `qx`/`qy`, recompute only at grid-cell boundaries (not every pan frame)
+- [x] **M3: UTC day numbers** — Readings day calculation uses `getUTCFullYear()`/`getUTCDate()` for timezone consistency
+- [x] **M4: PNG export handle fix** — Hides blue (#5b6abf) + orange (#e85d26) handles, tracks hidden nodes, restores only those
+- [x] **L2: useMemo for floor preview** — Replaced IIFE with `bestFloorPlan` memo
+- [x] **CF1: Backup before isPending** — `backupToLocal()` called before the `isPending` guard so edits during floor creation are backed up
+- [x] **CF2: lastCanvasRef stores floorId** — Stores `{ floorId, data }`, wasPendingRef replay checks floorId matches active floor
+- [x] **Backup restore race fix** — Added `backupChecked` key gate so canvas remounts after localStorage check completes (no more needing multiple reloads)
+- [ ] ~~**M5: Backup overwrites newer server data**~~ — Deferred per Lakshman ("V1 acceptable if one tech per job")
 
 ## Remaining Items
 
-- [ ] **Cross-browser QA** — test on real mobile devices (iOS Safari, Android Chrome)
-- [ ] **Batch room dimension sync** — Currently N separate PATCHes, could batch into one endpoint
+- [ ] **Real device testing** — Long-press resize (blue→orange handles), camera capture. Need Railway CORS for Vercel preview.
+- [ ] **Multi-photo upload test on mobile** — Gallery multi-select uploads immediately, not tested end-to-end on real device
+- [ ] **Batch room dimension sync** — Currently N PATCHes per save, could batch into one endpoint
+- [ ] **M5: Multi-device backup conflict** — Backup doesn't compare `updated_at` against server. Deferred to multi-device support.
+
+## Test Cases
+
+### Canvas & Drawing (tested on web ✓)
+
+| # | Test | Status |
+|---|------|--------|
+| 1 | Draw room → name it → auto-saves after 2s | ✓ Pass |
+| 2 | Draw wall → measurement shows → tool switches to Select | ✓ Pass |
+| 3 | Place door on wall → swing arc → tool switches | ✓ Pass |
+| 4 | Place window on wall | ✓ Pass |
+| 5 | Select room → drag to move → snaps to grid | ✓ Pass |
+| 6 | Select room → drag corner handle → resizes | ✓ Pass (web) |
+| 7 | Slide door along wall | ✓ Pass |
+| 8 | Move standalone wall | ✓ Pass |
+| 9 | Arrow keys move selected element | ✓ Pass (web) |
+| 10 | Delete element (Delete key) | ✓ Pass |
+| 11 | Undo/Redo (Cmd+Z / Cmd+Shift+Z) | ✓ Pass |
+| 12 | Pan canvas (drag empty space) | ✓ Pass |
+| 13 | Zoom (pinch / Ctrl+scroll) | ✓ Pass |
+| 14 | Auto-pan when dragging near edge | ✓ Pass |
+| 15 | Export PNG | ✓ Pass |
+
+### Save & Offline (tested on web ✓)
+
+| # | Test | Status |
+|---|------|--------|
+| 16 | Auto-save after 2s debounce | ✓ Pass |
+| 17 | Manual save button | ✓ Pass |
+| 18 | Offline → shows "Offline" button (not stuck "Saving...") | ✓ Pass |
+| 19 | Reconnect → auto-retries → "Saved ✓" | ✓ Pass |
+| 20 | localStorage backup visible in Application tab (per-floor key) | ✓ Pass |
+| 21 | No duplicate GET after PATCH (Network tab) | ✓ Pass |
+| 22 | Corrupt localStorage → rejected, key deleted | ✓ Pass (schema validation) |
+| 22a | Server 500 while online → retries 5x with backoff → shows "error" | ✓ Pass |
+| 22b | Backup restores to correct floor on reload (not wrong floor) | ✓ Pass |
+| 22c | Edits during floor creation → backed up to localStorage | ✓ Pass |
+
+### Multi-Floor (tested on web ✓)
+
+| # | Test | Status |
+|---|------|--------|
+| 23 | Add floor → empty canvas | ✓ Pass |
+| 24 | Switch floors → each has own rooms | ✓ Pass |
+| 25 | Double-tap floor tab → rename | ✓ Pass (web) |
+| 26 | Delete floor → confirmation modal | ✓ Pass |
+| 27 | Scrollable tabs on mobile | ✓ Pass (responsive view) |
+
+### Room Photos (tested on web ✓)
+
+| # | Test | Status |
+|---|------|--------|
+| 28 | Desktop sidebar: select room → PHOTOS section | ✓ Pass |
+| 29 | Upload photo from sidebar | ✓ Pass |
+| 30 | Mobile bottom panel: tap room → panel slides up | ✓ Pass (responsive view) |
+| 31 | Swipe to close panel | Not tested (needs real device) |
+| 32 | Delete photo (red X) → ConfirmModal | ✓ Pass |
+| 33 | Lightbox (tap thumbnail) | ✓ Pass |
+| 34 | Upload error shows red message, continues remaining uploads | ✓ Pass |
+| 35 | Broken image fallback | ✓ Pass |
+| 36 | Multi-photo gallery upload | Not tested on mobile |
+| 36a | CapturePanel "Done" button closes panel | ✓ Pass |
+| 36b | Two rooms named "Bedroom" → photos go to correct room (ID match) | ✓ Pass |
+| 36c | Duplicate rooms in picker filtered by propertyRoomId, not name | ✓ Pass |
+
+### Moisture Readings Photos (tested on web ✓)
+
+| # | Test | Status |
+|---|------|--------|
+| 37 | PHOTOS section in room cards | ✓ Pass |
+| 38 | Direct upload (Capture/Gallery) | ✓ Pass |
+| 39 | Photos shared with floor plan | ✓ Pass |
+| 40 | Day number shows correctly (Day 1, Day 2...) | ✓ Pass |
+| 41 | Past readings in history | ✓ Pass |
+
+### Mobile-Only (responsive view + real device)
+
+| # | Test | Status |
+|---|------|--------|
+| 42 | Sign in via Vercel URL on phone | Blocked (Railway CORS) |
+| 43 | Touch drawing (room, wall) | ✓ Pass (responsive view) |
+| 44 | Pinch-to-zoom | ✓ Pass (responsive view) |
+| 45 | Long-press corner to resize (blue → orange handles) | Not tested (needs real touch device) |
+| 46 | Double-tap floor tab to rename | ✓ Pass (responsive view) |
+| 47 | Swipe-to-close room panel | ✓ Pass (responsive view) |
+| 48 | Camera capture → immediate upload | Not tested (needs real device camera) |
+
+## Extra: localStorage Offline Backup
+
+| Key | Value |
+|-----|-------|
+| Storage | `localStorage` key: `fp-backup-{jobId}-{floorId}` (per-floor to prevent cross-floor corruption) |
+| Written | On every canvas change, before API call (including during pending floor creation) |
+| Cleared | After successful PATCH |
+| Expires | 24 hours (stale backups auto-deleted on page load) |
+| Schema validation | Validates shape + floorId match before restoring (rejects corrupt or wrong-floor data) |
+| Restore flow | Page mount → wait for `activeFloorId` → read backup → validate floorId → canvas remounts with backup as initialData → trigger server save |
+| Retry | Max 5 retries with exponential backoff (5s, 10s, 15s, 20s, 25s), then terminal "error" state |
+| Stored shape | `{ canvasData: FloorPlanData, floorId: string, ts: number }` |
 
 ---
 
@@ -257,7 +379,7 @@ interface FloorPlanData {
     x: number; y: number;
     width: number; height: number;  // in grid units (feet)
     name: string;
-    roomId?: string;  // links to rooms table
+    propertyRoomId?: string;  // links to property_rooms.id — used for photo/reading matching instead of name
     fill: string;
   }>;
   walls: Array<{

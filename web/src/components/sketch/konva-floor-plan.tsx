@@ -8,8 +8,6 @@ import {
   type FloorPlanData,
   type RoomData,
   type WallData,
-  type DoorData,
-  type WindowData,
   emptyFloorPlan,
   uid,
   snapToGrid,
@@ -17,16 +15,17 @@ import {
   snapEndpoint,
   wallsForRoom,
   doorPosition,
-  TOOLS,
   projectOntoWall,
 } from "./floor-plan-tools";
+import { FloorPlanToolbar } from "./floor-plan-toolbar";
+import { FloorPlanSidebar } from "./floor-plan-sidebar";
+import { FloorPlanRoomPicker } from "./floor-plan-room-picker";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
 /* ------------------------------------------------------------------ */
 
 export interface KonvaFloorPlanHandle {
-  /** Flush any pending debounced save immediately. Call before unmount / floor switch. */
   flush: () => void;
 }
 
@@ -36,10 +35,9 @@ interface KonvaFloorPlanProps {
   readOnly?: boolean;
   rooms?: Array<{ id: string; room_name: string }>;
   onCreateRoom?: (name: string, dimensions?: { width: number; height: number }) => void;
+  jobId?: string;
+  onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => void;
 }
-
-/* Common room presets for quick selection */
-const ROOM_PRESETS = ["Kitchen", "Living Room", "Master Bedroom", "Bedroom", "Bathroom", "Hallway", "Garage", "Office", "Dining Room", "Laundry"];
 
 /* ------------------------------------------------------------------ */
 /*  Undo/redo                                                          */
@@ -55,6 +53,7 @@ function useUndoRedo(initial: FloorPlanData) {
   const push = useCallback((next: FloorPlanData) => {
     setState((prev) => {
       undoStack.current.push(prev);
+      if (undoStack.current.length > 50) undoStack.current.shift();
       redoStack.current = [];
       setUndoCount(undoStack.current.length);
       setRedoCount(0);
@@ -88,61 +87,10 @@ function useUndoRedo(initial: FloorPlanData) {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Tool Icons (inline SVG paths)                                      */
-/* ------------------------------------------------------------------ */
-
-function ToolIcon({ type }: { type: string }) {
-  const s = 18;
-  switch (type) {
-    case "rect":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" />
-        </svg>
-      );
-    case "line":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <path d="M4 20L20 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-        </svg>
-      );
-    case "door":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <path d="M4 20V4h2v16" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-          <path d="M6 4a14 14 0 0 1 10 10" stroke="currentColor" strokeWidth="1.5" strokeDasharray="3 2" fill="none" />
-        </svg>
-      );
-    case "window":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <rect x="4" y="6" width="16" height="12" rx="1" stroke="currentColor" strokeWidth="2" />
-          <line x1="12" y1="6" x2="12" y2="18" stroke="currentColor" strokeWidth="1.5" />
-          <line x1="4" y1="12" x2="20" y2="12" stroke="currentColor" strokeWidth="1.5" />
-        </svg>
-      );
-    case "pointer":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <path d="M5 3l14 10-6 1-3 6z" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
-        </svg>
-      );
-    case "trash":
-      return (
-        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
-          <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      );
-    default:
-      return null;
-  }
-}
-
-/* ------------------------------------------------------------------ */
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom }, ref) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, jobId, onSelectionChange }, ref) {
   const data = initialData ?? emptyFloorPlan();
   const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
@@ -151,6 +99,23 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
 
+  // Notify parent of selection changes (for mobile bottom panel)
+  useEffect(() => {
+    if (!onSelectionChange) return;
+    if (!selectedId) { onSelectionChange(null); return; }
+    const room = state.rooms.find(r => r.id === selectedId);
+    if (!room) { onSelectionChange(null); return; }
+    const g = state.gridSize;
+    onSelectionChange({
+      selectedId,
+      type: "room",
+      name: room.name,
+      widthFt: Math.round((room.width / g) * 10) / 10,
+      heightFt: Math.round((room.height / g) * 10) / 10,
+      propertyRoomId: room.propertyRoomId,
+    });
+  }, [selectedId, state.rooms, state.gridSize, onSelectionChange]);
+
   // Drawing state
   const [drawStart, setDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [drawCurrent, setDrawCurrent] = useState<{ x: number; y: number } | null>(null);
@@ -158,30 +123,51 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
   // Room naming picker
   const [pendingRoom, setPendingRoom] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
-  const [customRoomName, setCustomRoomName] = useState("");
 
   // Zoom/pan state
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
 
+  // Long-press resize mode for mobile
+  const [resizeActive, setResizeActive] = useState(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clean up long-press timer on unmount
+  useEffect(() => () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  }, []);
+
+  // Pinch-to-zoom tracking
+  const lastPinchDist = useRef<number | null>(null);
+  const lastPinchCenter = useRef<{ x: number; y: number } | null>(null);
+
+  // Refs for zoom to avoid stale closures in rapid scroll events
+  const stageScaleRef = useRef(stageScale);
+  stageScaleRef.current = stageScale;
+  const stagePosRef = useRef(stagePos);
+  stagePosRef.current = stagePos;
+
   const handleWheel = useCallback((e: Konva.KonvaEventObject<WheelEvent>) => {
+    const evt = e.evt;
+    if (!evt.ctrlKey && !evt.metaKey) return;
     e.evt.preventDefault();
     const stage = stageRef.current;
     if (!stage) return;
-    const oldScale = stageScale;
+    const oldScale = stageScaleRef.current;
+    const oldPos = stagePosRef.current;
     const pointer = stage.getPointerPosition();
     if (!pointer) return;
     const scaleBy = 1.08;
-    const newScale = e.evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
+    const newScale = evt.deltaY < 0 ? oldScale * scaleBy : oldScale / scaleBy;
     const clampedScale = Math.max(0.3, Math.min(3, newScale));
-    const mousePointTo = { x: (pointer.x - stagePos.x) / oldScale, y: (pointer.y - stagePos.y) / oldScale };
+    const mousePointTo = { x: (pointer.x - oldPos.x) / oldScale, y: (pointer.y - oldPos.y) / oldScale };
     setStageScale(clampedScale);
     setStagePos({ x: pointer.x - mousePointTo.x * clampedScale, y: pointer.y - mousePointTo.y * clampedScale });
-  }, [stageScale, stagePos]);
+  }, []);
 
   const gs = state.gridSize;
 
-  // Auto-save debounce — refs track pending state for flush
+  // Auto-save debounce
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const prevStateRef = useRef(state);
   const onChangeRef = useRef(onChange);
@@ -193,17 +179,18 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   useEffect(() => {
     if (state === prevStateRef.current) return;
     prevStateRef.current = state;
-    if (!onChange) return;
+    if (!onChangeRef.current) return;
     hasPendingRef.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       hasPendingRef.current = false;
-      onChange(state);
+      onChangeRef.current?.(latestStateRef.current);
     }, 2000);
     return () => { if (saveTimer.current) clearTimeout(saveTimer.current); };
-  }, [state, onChange]);
+    // onChange is read via onChangeRef (not from deps) so parent re-renders don't kill the timer
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state]);
 
-  // Expose flush() so the parent can force-save before switching floors
   useImperativeHandle(ref, () => ({
     flush() {
       if (saveTimer.current) {
@@ -228,32 +215,12 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     return () => ro.disconnect();
   }, []);
 
-  // Keyboard shortcuts
-  useEffect(() => {
-    if (readOnly) return;
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") { setSelectedId(null); setDrawStart(null); setWallStart(null); }
-      if (e.key === "Delete" || e.key === "Backspace") {
-        if (selectedId) deleteElement(selectedId);
-      }
-      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
-        e.preventDefault();
-        if (e.shiftKey) redo(); else undo();
-      }
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedId, readOnly]);
-
   /* ---------------------------------------------------------------- */
   /*  Element operations                                               */
   /* ---------------------------------------------------------------- */
 
   const deleteElement = useCallback((id: string) => {
     const next = { ...state, rooms: [...state.rooms], walls: [...state.walls], doors: [...state.doors], windows: [...state.windows] };
-
-    // Delete room + its walls
     const room = next.rooms.find((r) => r.id === id);
     if (room) {
       next.rooms = next.rooms.filter((r) => r.id !== id);
@@ -265,8 +232,6 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       setSelectedId(null);
       return;
     }
-
-    // Delete wall + attached doors/windows
     const wall = next.walls.find((w) => w.id === id);
     if (wall) {
       next.walls = next.walls.filter((w) => w.id !== id);
@@ -276,8 +241,6 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       setSelectedId(null);
       return;
     }
-
-    // Delete door or window
     next.doors = next.doors.filter((d) => d.id !== id);
     next.windows = next.windows.filter((w) => w.id !== id);
     push(next);
@@ -285,7 +248,52 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   }, [state, push]);
 
   /* ---------------------------------------------------------------- */
-  /*  Mouse handlers                                                   */
+  /*  Keyboard shortcuts                                               */
+  /* ---------------------------------------------------------------- */
+
+  const selectedIdRef = useRef(selectedId);
+  selectedIdRef.current = selectedId;
+  const deleteElementRef = useRef(deleteElement);
+  deleteElementRef.current = deleteElement;
+
+  useEffect(() => {
+    if (readOnly) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        if (e.key === "Escape") setPendingRoom(null);
+        return;
+      }
+      if (e.key === "Escape") {
+        setSelectedId(null);
+        setDrawStart(null);
+        setWallStart(null);
+        setDrawCurrent(null);
+        setPendingRoom(null);
+        setTool("select");
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedIdRef.current) deleteElementRef.current(selectedIdRef.current);
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "z") {
+        e.preventDefault();
+        if (e.shiftKey) redo(); else undo();
+      }
+      // Arrow keys move selected element (1ft per press, Shift = 0.5ft)
+      if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key) && selectedIdRef.current) {
+        e.preventDefault();
+        const step = e.shiftKey ? gs / 2 : gs;
+        const dx = e.key === "ArrowLeft" ? -step : e.key === "ArrowRight" ? step : 0;
+        const dy = e.key === "ArrowUp" ? -step : e.key === "ArrowDown" ? step : 0;
+        moveSelectedRef.current(dx, dy);
+      }
+    }
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [readOnly]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Mouse / touch handlers                                           */
   /* ---------------------------------------------------------------- */
 
   const getPos = useCallback(() => {
@@ -293,7 +301,6 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     if (!stage) return { x: 0, y: 0 };
     const pos = stage.getPointerPosition();
     if (!pos) return { x: 0, y: 0 };
-    // Convert screen coords to canvas coords (account for zoom/pan)
     return {
       x: (pos.x - stagePos.x) / stageScale,
       y: (pos.y - stagePos.y) / stageScale,
@@ -302,6 +309,17 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
   const handleMouseDown = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     if (readOnly) return;
+
+    // Detect two-finger touch for pinch/pan — don't start drawing
+    const nativeEvt = e.evt as TouchEvent;
+    if (nativeEvt.touches && nativeEvt.touches.length >= 2) {
+      const t1 = nativeEvt.touches[0];
+      const t2 = nativeEvt.touches[1];
+      lastPinchDist.current = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      lastPinchCenter.current = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+      return;
+    }
+
     const pos = getPos();
 
     if (tool === "room") {
@@ -315,17 +333,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         setWallStart({ x: snapped.x, y: snapped.y });
         setDrawCurrent({ x: snapped.x, y: snapped.y });
       } else {
-        // Place wall
         const snapped = snapEndpoint(snapToGrid(pos.x, gs), snapToGrid(pos.y, gs), state.walls);
-        const newWall: WallData = {
-          id: uid("wall"),
-          x1: wallStart.x, y1: wallStart.y,
-          x2: snapped.x, y2: snapped.y,
-          thickness: 4,
-        };
+        const newWall: WallData = { id: uid("wall"), x1: wallStart.x, y1: wallStart.y, x2: snapped.x, y2: snapped.y, thickness: 4 };
         push({ ...state, walls: [...state.walls, newWall] });
         setWallStart(null);
         setDrawCurrent(null);
+        // Auto-switch back to select so user can pan/interact
+        setTool("select");
       }
     }
 
@@ -333,34 +347,57 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       const hit = findNearestWall(pos.x, pos.y, state.walls);
       if (hit) {
         if (tool === "door") {
-          const newDoor: DoorData = { id: uid("door"), wallId: hit.wall.id, position: hit.t, width: 3, swing: 0 };
-          push({ ...state, doors: [...state.doors, newDoor] });
+          push({ ...state, doors: [...state.doors, { id: uid("door"), wallId: hit.wall.id, position: hit.t, width: 3, swing: 0 }] });
         } else {
-          const newWindow: WindowData = { id: uid("win"), wallId: hit.wall.id, position: hit.t, width: 3 };
-          push({ ...state, windows: [...state.windows, newWindow] });
+          push({ ...state, windows: [...state.windows, { id: uid("win"), wallId: hit.wall.id, position: hit.t, width: 3 }] });
         }
+        // Auto-switch back to select so user can pan/interact
+        setTool("select");
       }
     }
 
     if (tool === "select") {
-      // Clicking on empty space deselects
       const target = e.target;
-      if (target === stageRef.current || target.getClassName() === "Rect" && target.attrs.name === "grid-bg") {
+      if (target === stageRef.current || (target.getClassName() === "Rect" && target.attrs.name === "grid-bg")) {
         setSelectedId(null);
+        setResizeActive(false);
       }
     }
 
     if (tool === "delete") {
-      const target = e.target;
-      const id = target.attrs?.elementId;
+      const id = e.target.attrs?.elementId;
       if (id) deleteElement(id);
     }
   }, [tool, readOnly, getPos, gs, state, push, wallStart, deleteElement]);
 
-  const handleMouseMove = useCallback(() => {
+  const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+    // Pinch-to-zoom + two-finger pan (works in readOnly too)
+    const nativeEvt = e.evt as TouchEvent;
+    if (nativeEvt.touches && nativeEvt.touches.length >= 2) {
+      e.evt.preventDefault();
+      // Cancel any in-progress drawing when second finger joins
+      if (drawStart) setDrawStart(null);
+      if (wallStart) setWallStart(null);
+
+      const t1 = nativeEvt.touches[0];
+      const t2 = nativeEvt.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const center = { x: (t1.clientX + t2.clientX) / 2, y: (t1.clientY + t2.clientY) / 2 };
+
+      if (lastPinchDist.current !== null && lastPinchCenter.current !== null) {
+        setStageScale((prev) => Math.max(0.3, Math.min(3, prev * (dist / (lastPinchDist.current ?? dist)))));
+        const dx = center.x - lastPinchCenter.current.x;
+        const dy = center.y - lastPinchCenter.current.y;
+        setStagePos((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+      }
+
+      lastPinchDist.current = dist;
+      lastPinchCenter.current = center;
+      return;
+    }
+
     if (readOnly) return;
     const pos = getPos();
-
     if (tool === "room" && drawStart) {
       setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
     }
@@ -370,41 +407,38 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
   }, [tool, readOnly, getPos, gs, drawStart, wallStart, state.walls]);
 
-  const handleMouseUp = useCallback(() => {
-    if (readOnly) return;
+  const handleMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+    // Reset pinch tracking
+    lastPinchDist.current = null;
+    lastPinchCenter.current = null;
 
+    if (readOnly) return;
     if (tool === "room" && drawStart && drawCurrent) {
       const x = Math.min(drawStart.x, drawCurrent.x);
       const y = Math.min(drawStart.y, drawCurrent.y);
       const w = Math.abs(drawCurrent.x - drawStart.x);
       const h = Math.abs(drawCurrent.y - drawStart.y);
-
       if (w >= gs && h >= gs) {
         setPendingRoom({ x, y, width: w, height: h });
-        setCustomRoomName("");
       }
       setDrawStart(null);
       setDrawCurrent(null);
     }
-  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push]);
+  }, [tool, readOnly, drawStart, drawCurrent, gs]);
 
-  const finalizePendingRoom = useCallback((name: string) => {
+  const finalizePendingRoom = useCallback((name: string, propertyRoomId?: string) => {
     if (!pendingRoom) return;
-    const newRoom: RoomData = { id: uid("room"), ...pendingRoom, name, fill: "#fff3ed" };
+    const newRoom: RoomData = { id: uid("room"), ...pendingRoom, name, fill: "#fff3ed", propertyRoomId };
     const roomWalls = wallsForRoom(newRoom);
-    push({
-      ...state,
-      rooms: [...state.rooms, newRoom],
-      walls: [...state.walls, ...roomWalls],
-    });
-    // Also create room in Property Layout if callback provided
+    push({ ...state, rooms: [...state.rooms, newRoom], walls: [...state.walls, ...roomWalls] });
     if (onCreateRoom) {
       const widthFt = Math.round((pendingRoom.width / gs) * 10) / 10;
       const heightFt = Math.round((pendingRoom.height / gs) * 10) / 10;
       onCreateRoom(name, { width: widthFt, height: heightFt });
     }
     setPendingRoom(null);
-    setCustomRoomName("");
+    // Auto-switch back to select so user can pan/interact
+    setTool("select");
   }, [pendingRoom, state, push, onCreateRoom, gs]);
 
   /* ---------------------------------------------------------------- */
@@ -425,34 +459,153 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       );
       push({ ...state, rooms: state.rooms.map((r) => (r.id === id ? updatedRoom : r)), walls: updatedWalls });
     }
+    if (type === "wall") {
+      const wall = state.walls.find((w) => w.id === id);
+      if (!wall) return;
+      // newPos is the drag offset from the Group's original position (0,0)
+      const dx = snapToGrid(newPos.x, gs);
+      const dy = snapToGrid(newPos.y, gs);
+      if (dx === 0 && dy === 0) return;
+      const updatedWall = { ...wall, x1: wall.x1 + dx, y1: wall.y1 + dy, x2: wall.x2 + dx, y2: wall.y2 + dy };
+      push({ ...state, walls: state.walls.map((w) => (w.id === id ? updatedWall : w)) });
+    }
   }, [state, push, gs]);
 
   /* ---------------------------------------------------------------- */
-  /*  Grid lines                                                       */
+  /*  Auto-pan when dragging near viewport edges                       */
   /* ---------------------------------------------------------------- */
+
+  const handleDragMove = useCallback((e: Konva.KonvaEventObject<DragEvent>) => {
+    const stage = stageRef.current;
+    if (!stage) return;
+    const node = e.target;
+    // Get the node's absolute position on screen
+    const absPos = node.getAbsolutePosition();
+    const edgePad = 40; // px from edge to start panning
+    const panSpeed = 8;
+    let dx = 0, dy = 0;
+    if (absPos.x < edgePad) dx = panSpeed;
+    if (absPos.x > stageSize.width - edgePad) dx = -panSpeed;
+    if (absPos.y < edgePad) dy = panSpeed;
+    if (absPos.y > stageSize.height - edgePad) dy = -panSpeed;
+    if (dx !== 0 || dy !== 0) {
+      setStagePos((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+    }
+  }, [stageSize]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Room resize via corner handles                                   */
+  /* ---------------------------------------------------------------- */
+
+  const handleCornerDragEnd = useCallback((roomId: string, cornerIdx: number, newX: number, newY: number) => {
+    const room = state.rooms.find((r) => r.id === roomId);
+    if (!room) return;
+    const sx = snapToGrid(newX, gs);
+    const sy = snapToGrid(newY, gs);
+    const minSize = gs; // minimum 1 foot
+
+    let x = room.x, y = room.y, w = room.width, h = room.height;
+    // cornerIdx: 0=topLeft, 1=topRight, 2=bottomRight, 3=bottomLeft
+    if (cornerIdx === 0) { // top-left: move origin, adjust size
+      w = room.x + room.width - sx;
+      h = room.y + room.height - sy;
+      x = sx; y = sy;
+    } else if (cornerIdx === 1) { // top-right: adjust width + move top
+      w = sx - room.x;
+      h = room.y + room.height - sy;
+      y = sy;
+    } else if (cornerIdx === 2) { // bottom-right: adjust width + height
+      w = sx - room.x;
+      h = sy - room.y;
+    } else { // bottom-left: move left, adjust height
+      w = room.x + room.width - sx;
+      h = sy - room.y;
+      x = sx;
+    }
+    if (w < minSize || h < minSize) return; // reject too-small
+
+    const updatedRoom = { ...room, x, y, width: w, height: h };
+    // Rebuild walls for this room
+    const newWalls = state.walls.filter((wr) => wr.roomId !== roomId);
+    newWalls.push(...wallsForRoom(updatedRoom));
+    push({ ...state, rooms: state.rooms.map((r) => r.id === roomId ? updatedRoom : r), walls: newWalls });
+  }, [state, push, gs]);
+
+  /* ---------------------------------------------------------------- */
+  /*  Arrow key movement for selected element                          */
+  /* ---------------------------------------------------------------- */
+
+  const moveSelectedRef = useRef((dx: number, dy: number) => {
+    const id = selectedIdRef.current;
+    if (!id) return;
+    const room = state.rooms.find((r) => r.id === id);
+    if (room) {
+      const updatedRoom = { ...room, x: room.x + dx, y: room.y + dy };
+      const updatedWalls = state.walls.map((w) =>
+        w.roomId === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
+      );
+      push({ ...state, rooms: state.rooms.map((r) => r.id === id ? updatedRoom : r), walls: updatedWalls });
+      return;
+    }
+    const wall = state.walls.find((w) => w.id === id && !w.roomId);
+    if (wall) {
+      push({ ...state, walls: state.walls.map((w) => w.id === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w) });
+    }
+  });
+  moveSelectedRef.current = (dx: number, dy: number) => {
+    const id = selectedIdRef.current;
+    if (!id) return;
+    const room = state.rooms.find((r) => r.id === id);
+    if (room) {
+      const updatedRoom = { ...room, x: room.x + dx, y: room.y + dy };
+      const updatedWalls = state.walls.map((w) =>
+        w.roomId === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
+      );
+      push({ ...state, rooms: state.rooms.map((r) => r.id === id ? updatedRoom : r), walls: updatedWalls });
+      return;
+    }
+    const wall = state.walls.find((w) => w.id === id && !w.roomId);
+    if (wall) {
+      push({ ...state, walls: state.walls.map((w) => w.id === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w) });
+    }
+  };
+
+  /* ---------------------------------------------------------------- */
+  /*  Computed values                                                  */
+  /* ---------------------------------------------------------------- */
+
+  // Quantize stagePos to grid-cell boundaries so grid only recomputes when pan crosses a cell
+  const qx = Math.round(stagePos.x / gs);
+  const qy = Math.round(stagePos.y / gs);
+  const gridBounds = useMemo(() => {
+    const s = stageScale;
+    // Convert viewport corners to canvas coordinates
+    const x0 = -stagePos.x / s;
+    const y0 = -stagePos.y / s;
+    const x1 = (stageSize.width - stagePos.x) / s;
+    const y1 = (stageSize.height - stagePos.y) / s;
+    // Snap to grid boundaries with padding
+    const pad = gs * 2;
+    return {
+      left: Math.floor((x0 - pad) / gs) * gs,
+      top: Math.floor((y0 - pad) / gs) * gs,
+      right: Math.ceil((x1 + pad) / gs) * gs,
+      bottom: Math.ceil((y1 + pad) / gs) * gs,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stageSize, stageScale, qx, qy, gs]);
 
   const gridLines = useMemo(() => {
+    const { left, top, right, bottom } = gridBounds;
     const lines: Array<{ points: number[]; vertical: boolean }> = [];
-    for (let x = 0; x <= stageSize.width; x += gs) {
-      lines.push({ points: [x, 0, x, stageSize.height], vertical: true });
-    }
-    for (let y = 0; y <= stageSize.height; y += gs) {
-      lines.push({ points: [0, y, stageSize.width, y], vertical: false });
-    }
+    for (let x = left; x <= right; x += gs) lines.push({ points: [x, top, x, bottom], vertical: true });
+    for (let y = top; y <= bottom; y += gs) lines.push({ points: [left, y, right, y], vertical: false });
     return lines;
-  }, [stageSize, gs]);
-
-  /* ---------------------------------------------------------------- */
-  /*  Helper: dimension label                                          */
-  /* ---------------------------------------------------------------- */
+  }, [gridBounds, gs]);
 
   function feetLabel(pixels: number): string {
     return `${(Math.abs(pixels) / gs).toFixed(1)} ft`;
   }
-
-  /* ---------------------------------------------------------------- */
-  /*  Computed: is empty                                                */
-  /* ---------------------------------------------------------------- */
 
   const wallMap = useMemo(() => {
     const map = new Map<string, WallData>();
@@ -462,85 +615,35 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
   const isEmpty = state.rooms.length === 0 && state.walls.length === 0;
 
+  const handleToolChange = useCallback((t: ToolType) => {
+    setTool(t);
+    setSelectedId(null);
+    setDrawStart(null);
+    setWallStart(null);
+  }, []);
+
   /* ---------------------------------------------------------------- */
   /*  Render                                                           */
   /* ---------------------------------------------------------------- */
 
   return (
     <div className="flex flex-col h-full">
-      {/* Toolbar */}
       {!readOnly && (
-        <div className="flex items-center gap-1 px-3 py-2 border-b border-[#eae6e1] bg-[#faf8f5] flex-wrap">
-          {TOOLS.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => { setTool(t.id); setSelectedId(null); setDrawStart(null); setWallStart(null); }}
-              aria-label={t.label}
-              className={`flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium transition-all cursor-pointer ${
-                tool === t.id
-                  ? "bg-[#e85d26]/12 text-[#e85d26]"
-                  : "text-[#6b6560] hover:bg-[#eae6e1]"
-              }`}
-            >
-              <ToolIcon type={t.icon} />
-              <span className="mt-0.5">{t.label}</span>
-            </button>
-          ))}
-          <div className="w-px h-8 bg-[#eae6e1] mx-1" />
-          <button
-            type="button"
-            onClick={undo}
-            disabled={!canUndo}
-            aria-label="Undo"
-            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
-          >
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M3 10h14a4 4 0 0 1 0 8H10" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M7 6L3 10l4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            <span className="mt-0.5 hidden sm:inline">Undo</span>
-          </button>
-          <button
-            type="button"
-            onClick={redo}
-            disabled={!canRedo}
-            aria-label="Redo"
-            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] disabled:opacity-30 cursor-pointer"
-          >
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><path d="M21 10H7a4 4 0 0 0 0 8h7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /><path d="M17 6l4 4-4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-            <span className="mt-0.5 hidden sm:inline">Redo</span>
-          </button>
-          <div className="w-px h-8 bg-[#eae6e1] mx-1" />
-          <button
-            type="button"
-            onClick={() => setStageScale((s) => Math.min(3, s * 1.2))}
-            aria-label="Zoom in"
-            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
-          >
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6M11 8v6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-            <span className="mt-0.5 hidden sm:inline">Zoom+</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => setStageScale((s) => Math.max(0.3, s / 1.2))}
-            aria-label="Zoom out"
-            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
-          >
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="2" /><path d="M21 21l-4-4M8 11h6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" /></svg>
-            <span className="mt-0.5 hidden sm:inline">Zoom-</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => { setStageScale(1); setStagePos({ x: 0, y: 0 }); }}
-            aria-label="Reset view"
-            className="flex flex-col items-center justify-center w-[36px] h-[36px] sm:w-[44px] sm:h-[44px] rounded-lg text-[10px] font-medium text-[#6b6560] hover:bg-[#eae6e1] cursor-pointer"
-          >
-            <svg width={18} height={18} viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="2" /><path d="M9 3v18M3 9h18" stroke="currentColor" strokeWidth="1" opacity="0.3" /></svg>
-            <span className="mt-0.5 hidden sm:inline">Fit</span>
-          </button>
-          <span className="text-[10px] text-[#8a847e] font-[family-name:var(--font-geist-mono)] ml-1 hidden sm:inline">{Math.round(stageScale * 100)}%</span>
-        </div>
+        <FloorPlanToolbar
+          tool={tool}
+          onToolChange={handleToolChange}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={undo}
+          onRedo={redo}
+          stageScale={stageScale}
+          onZoomIn={() => setStageScale((s) => Math.min(3, s * 1.2))}
+          onZoomOut={() => setStageScale((s) => Math.max(0.3, s / 1.2))}
+          onFit={() => { setStageScale(1); setStagePos({ x: 0, y: 0 }); }}
+          stageRef={stageRef}
+        />
       )}
 
-      {/* Canvas + Instructions */}
       <div className="flex-1 min-h-0 flex overflow-hidden">
       <div ref={containerRef} className="flex-1 min-h-0 min-w-0 relative bg-white overflow-hidden border border-[#eae6e1] rounded-sm">
         {isEmpty && !drawStart && (
@@ -560,72 +663,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           </div>
         )}
 
-        {/* Room name picker overlay */}
         {pendingRoom && (
-          <div className="absolute inset-0 z-20 flex items-center justify-center bg-black/20">
-            <div className="bg-white rounded-xl shadow-lg p-4 w-[280px] max-h-[400px] overflow-y-auto">
-              <h3 className="text-[13px] font-semibold text-[#1a1a1a] mb-3">Name this room</h3>
-
-              {/* Existing Property Layout rooms (not yet drawn) */}
-              {propertyRooms && propertyRooms.length > 0 && (
-                <div className="mb-3">
-                  <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">From Property Layout</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {propertyRooms
-                      .filter((r) => !state.rooms.some((sr) => sr.name === r.room_name))
-                      .map((r) => (
-                        <button key={r.id} type="button" onClick={() => finalizePendingRoom(r.room_name)}
-                          className="px-3 py-1.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[12px] font-medium hover:bg-[#e85d26] hover:text-white transition-colors cursor-pointer">
-                          {r.room_name}
-                        </button>
-                      ))}
-                    {propertyRooms.filter((r) => !state.rooms.some((sr) => sr.name === r.room_name)).length === 0 && (
-                      <p className="text-[11px] text-[#8a847e]">All rooms already drawn</p>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Preset room names */}
-              <div className="mb-3">
-                <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">Quick pick</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {ROOM_PRESETS
-                    .filter((name) => !state.rooms.some((r) => r.name === name))
-                    .slice(0, 6)
-                    .map((name) => (
-                      <button key={name} type="button" onClick={() => finalizePendingRoom(name)}
-                        className="px-3 py-1.5 rounded-full border border-[#eae6e1] text-[#1a1a1a] text-[12px] font-medium hover:bg-[#eae6e1] transition-colors cursor-pointer">
-                        {name}
-                      </button>
-                    ))}
-                </div>
-              </div>
-
-              {/* Custom name input */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={customRoomName}
-                  onChange={(e) => setCustomRoomName(e.target.value)}
-                  onKeyDown={(e) => { if (e.key === "Enter" && customRoomName.trim()) finalizePendingRoom(customRoomName.trim()); }}
-                  placeholder="Custom name..."
-                  autoFocus
-                  className="flex-1 h-8 px-3 rounded-lg border border-[#eae6e1] text-[13px] text-[#1a1a1a] outline-none focus:border-[#e85d26]"
-                />
-                <button type="button" onClick={() => { if (customRoomName.trim()) finalizePendingRoom(customRoomName.trim()); }}
-                  disabled={!customRoomName.trim()}
-                  className="h-8 px-3 rounded-lg bg-[#e85d26] text-white text-[12px] font-semibold cursor-pointer disabled:opacity-40 hover:opacity-90 transition-opacity">
-                  Add
-                </button>
-              </div>
-
-              <button type="button" onClick={() => { setPendingRoom(null); setCustomRoomName(""); }}
-                className="mt-2 text-[11px] text-[#8a847e] hover:text-[#1a1a1a] cursor-pointer transition-colors">
-                Cancel
-              </button>
-            </div>
-          </div>
+          <FloorPlanRoomPicker
+            existingRooms={state.rooms}
+            propertyRooms={propertyRooms}
+            onSelect={finalizePendingRoom}
+            onCancel={() => setPendingRoom(null)}
+          />
         )}
 
         <Stage
@@ -638,9 +682,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           y={stagePos.y}
           draggable={tool === "select" && !selectedId}
           onDragEnd={(e) => {
-            if (e.target === stageRef.current) {
-              setStagePos({ x: e.target.x(), y: e.target.y() });
-            }
+            if (e.target === stageRef.current) setStagePos({ x: e.target.x(), y: e.target.y() });
           }}
           onWheel={handleWheel}
           onMouseDown={handleMouseDown}
@@ -649,11 +691,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
-          style={{ cursor: tool === "select" && !selectedId ? "grab" : tool === "room" ? "crosshair" : tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
+          style={{ cursor: tool === "room" || tool === "wall" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
         >
-          {/* Grid layer */}
+          {/* Grid layer — extends to fill visible viewport */}
           <Layer listening={false}>
-            <Rect name="grid-bg" x={0} y={0} width={stageSize.width} height={stageSize.height} fill="#ffffff" />
+            <Rect name="grid-bg" x={gridBounds.left} y={gridBounds.top} width={gridBounds.right - gridBounds.left} height={gridBounds.bottom - gridBounds.top} fill="#ffffff" />
             {gridLines.map((line, i) => (
               <Line key={i} points={line.points} stroke="#eae6e1" strokeWidth={1} />
             ))}
@@ -667,61 +709,75 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 x={room.x}
                 y={room.y}
                 draggable={tool === "select" && !readOnly}
+                onDragMove={handleDragMove}
                 onDragEnd={(e) => handleDragEnd("room", room.id, { x: e.target.x(), y: e.target.y() })}
                 onClick={() => { if (tool === "select") setSelectedId(room.id); if (tool === "delete") deleteElement(room.id); }}
                 onTap={() => { if (tool === "select") setSelectedId(room.id); if (tool === "delete") deleteElement(room.id); }}
               >
                 <Rect
-                  width={room.width}
-                  height={room.height}
+                  width={room.width} height={room.height}
                   fill={room.fill}
                   stroke={selectedId === room.id ? "#5b6abf" : "#e85d26"}
                   strokeWidth={selectedId === room.id ? 3 : 2}
                   elementId={room.id}
                 />
-                {/* Room name */}
-                <Text
-                  x={room.width / 2}
-                  y={room.height / 2 - 8}
-                  text={room.name}
-                  fontSize={13}
-                  fontFamily="var(--font-geist-mono), monospace"
-                  fill="#1a1a1a"
-                  align="center"
-                  offsetX={room.name.length * 3.5}
-                />
-                {/* Dimension labels */}
-                <Text
-                  x={room.width / 2}
-                  y={-14}
-                  text={feetLabel(room.width)}
-                  fontSize={11}
-                  fontFamily="var(--font-geist-mono), monospace"
-                  fill="#6b6560"
-                  align="center"
-                  offsetX={feetLabel(room.width).length * 3}
-                />
-                {/* Height dimension on left edge */}
-                <Text
-                  x={-14}
-                  y={room.height / 2}
-                  text={feetLabel(room.height)}
-                  fontSize={11}
-                  fontFamily="var(--font-geist-mono), monospace"
-                  fill="#6b6560"
-                  rotation={-90}
-                  offsetX={feetLabel(room.height).length * 3}
-                />
-                {/* Selection handles */}
+                <Text x={room.width / 2} y={room.height / 2 - 8} text={room.name}
+                  fontSize={13} fontFamily="var(--font-geist-mono), monospace" fill="#1a1a1a" align="center" offsetX={room.name.length * 3.5} />
+                <Text x={room.width / 2} y={-14} text={feetLabel(room.width)}
+                  fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" align="center" offsetX={feetLabel(room.width).length * 3} />
+                <Text x={-14} y={room.height / 2} text={feetLabel(room.height)}
+                  fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" rotation={-90} offsetX={feetLabel(room.height).length * 3} />
                 {selectedId === room.id && (
                   <>
-                    {[
-                      { cx: 0, cy: 0 },
-                      { cx: room.width, cy: 0 },
-                      { cx: room.width, cy: room.height },
-                      { cx: 0, cy: room.height },
-                    ].map((h, i) => (
-                      <Circle key={i} x={h.cx} y={h.cy} radius={5} fill="#5b6abf" stroke="#ffffff" strokeWidth={2} />
+                    {[{ cx: 0, cy: 0 }, { cx: room.width, cy: 0 }, { cx: room.width, cy: room.height }, { cx: 0, cy: room.height }].map((h, i) => (
+                      <Circle
+                        key={i}
+                        x={h.cx}
+                        y={h.cy}
+                        radius={resizeActive ? 12 : 7}
+                        fill={resizeActive ? "#e85d26" : "#5b6abf"}
+                        stroke="#ffffff"
+                        strokeWidth={2}
+                        draggable={!readOnly}
+                        hitStrokeWidth={resizeActive ? 20 : 10}
+                        onTouchStart={() => {
+                          // Start long-press timer — 500ms hold activates resize mode
+                          if (longPressTimer.current) clearTimeout(longPressTimer.current);
+                          longPressTimer.current = setTimeout(() => {
+                            setResizeActive(true);
+                          }, 500);
+                        }}
+                        onTouchEnd={() => {
+                          if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+                        }}
+                        onTouchMove={() => {
+                          // Cancel long-press if finger moves (user is scrolling, not pressing)
+                          if (longPressTimer.current) { clearTimeout(longPressTimer.current); longPressTimer.current = null; }
+                        }}
+                        onDragStart={(e) => {
+                          e.cancelBubble = true;
+                          // On touch devices, only allow drag when resize mode is active (long-press)
+                          const nativeEvt = e.evt;
+                          if (nativeEvt instanceof TouchEvent && !resizeActive) {
+                            e.target.stopDrag();
+                            return;
+                          }
+                        }}
+                        onDragMove={(e) => {
+                          e.cancelBubble = true;
+                        }}
+                        onDragEnd={(e) => {
+                          e.cancelBubble = true;
+                          const newX = room.x + e.target.x();
+                          const newY = room.y + e.target.y();
+                          e.target.x(h.cx);
+                          e.target.y(h.cy);
+                          handleCornerDragEnd(room.id, i, newX, newY);
+                          setResizeActive(false);
+                        }}
+                        onMouseEnter={(e) => { e.target.getStage()!.container().style.cursor = i === 0 || i === 2 ? "nwse-resize" : "nesw-resize"; }}
+                        onMouseLeave={(e) => { e.target.getStage()!.container().style.cursor = "default"; }}
+                      />
                     ))}
                   </>
                 )}
@@ -732,25 +788,14 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             {tool === "room" && drawStart && drawCurrent && (
               <Group>
                 <Rect
-                  x={Math.min(drawStart.x, drawCurrent.x)}
-                  y={Math.min(drawStart.y, drawCurrent.y)}
-                  width={Math.abs(drawCurrent.x - drawStart.x)}
-                  height={Math.abs(drawCurrent.y - drawStart.y)}
-                  fill="#fff3ed"
-                  stroke="#e85d26"
-                  strokeWidth={2}
-                  dash={[6, 4]}
-                  opacity={0.7}
+                  x={Math.min(drawStart.x, drawCurrent.x)} y={Math.min(drawStart.y, drawCurrent.y)}
+                  width={Math.abs(drawCurrent.x - drawStart.x)} height={Math.abs(drawCurrent.y - drawStart.y)}
+                  fill="#fff3ed" stroke="#e85d26" strokeWidth={2} dash={[6, 4]} opacity={0.7}
                 />
                 <Text
-                  x={(drawStart.x + drawCurrent.x) / 2}
-                  y={Math.min(drawStart.y, drawCurrent.y) - 18}
+                  x={(drawStart.x + drawCurrent.x) / 2} y={Math.min(drawStart.y, drawCurrent.y) - 18}
                   text={`${feetLabel(drawCurrent.x - drawStart.x)} x ${feetLabel(drawCurrent.y - drawStart.y)}`}
-                  fontSize={12}
-                  fontFamily="var(--font-geist-mono), monospace"
-                  fill="#e85d26"
-                  align="center"
-                  offsetX={60}
+                  fontSize={12} fontFamily="var(--font-geist-mono), monospace" fill="#e85d26" align="center" offsetX={60}
                 />
               </Group>
             )}
@@ -762,29 +807,24 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               const len = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
               const midX = (wall.x1 + wall.x2) / 2;
               const midY = (wall.y1 + wall.y2) / 2;
+              const isStandalone = !wall.roomId;
               return (
-                <Group key={wall.id}>
+                <Group
+                  key={wall.id}
+                  draggable={tool === "select" && !readOnly && isStandalone}
+                  onDragEnd={(e) => { if (isStandalone) handleDragEnd("wall", wall.id, { x: e.target.x(), y: e.target.y() }); e.target.position({ x: 0, y: 0 }); }}
+                >
                   <Line
                     points={[wall.x1, wall.y1, wall.x2, wall.y2]}
                     stroke={selectedId === wall.id ? "#5b6abf" : "#1a1a1a"}
-                    strokeWidth={wall.thickness}
-                    lineCap="round"
-                    hitStrokeWidth={12}
+                    strokeWidth={wall.thickness} lineCap="round" hitStrokeWidth={12}
                     elementId={wall.id}
                     onClick={() => { if (tool === "select") setSelectedId(wall.id); if (tool === "delete") deleteElement(wall.id); }}
                     onTap={() => { if (tool === "select") setSelectedId(wall.id); if (tool === "delete") deleteElement(wall.id); }}
                   />
-                  {/* Dimension label (only for standalone walls, not room walls) */}
                   {!wall.roomId && len > 30 && (
-                    <Text
-                      x={midX}
-                      y={midY - 14}
-                      text={feetLabel(len)}
-                      fontSize={11}
-                      fontFamily="var(--font-geist-mono), monospace"
-                      fill="#6b6560"
-                      offsetX={feetLabel(len).length * 3}
-                    />
+                    <Text x={midX} y={midY - 14} text={feetLabel(len)}
+                      fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" offsetX={feetLabel(len).length * 3} />
                   )}
                 </Group>
               );
@@ -793,23 +833,12 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             {/* Wall drawing preview */}
             {tool === "wall" && wallStart && drawCurrent && (
               <Group>
-                <Line
-                  points={[wallStart.x, wallStart.y, drawCurrent.x, drawCurrent.y]}
-                  stroke="#1a1a1a"
-                  strokeWidth={4}
-                  dash={[6, 4]}
-                  opacity={0.6}
-                />
+                <Line points={[wallStart.x, wallStart.y, drawCurrent.x, drawCurrent.y]} stroke="#1a1a1a" strokeWidth={4} dash={[6, 4]} opacity={0.6} />
                 <Text
-                  x={(wallStart.x + drawCurrent.x) / 2}
-                  y={(wallStart.y + drawCurrent.y) / 2 - 16}
+                  x={(wallStart.x + drawCurrent.x) / 2} y={(wallStart.y + drawCurrent.y) / 2 - 16}
                   text={feetLabel(Math.hypot(drawCurrent.x - wallStart.x, drawCurrent.y - wallStart.y))}
-                  fontSize={12}
-                  fontFamily="var(--font-geist-mono), monospace"
-                  fill="#e85d26"
-                  offsetX={20}
+                  fontSize={12} fontFamily="var(--font-geist-mono), monospace" fill="#e85d26" offsetX={20}
                 />
-                {/* Snap indicator */}
                 <Circle x={wallStart.x} y={wallStart.y} radius={4} fill="#e85d26" />
               </Group>
             )}
@@ -822,19 +851,14 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               if (!wall) return null;
               const { px, py, angle } = doorPosition(door, wall);
               const doorPx = door.width * gs;
-              // Normalize legacy string values to numeric swing
               const swing: 0 | 1 | 2 | 3 = typeof door.swing === "number" ? door.swing : (door.swing === "left" ? 0 : 2);
-              // Quadrant: 0=hinge-left/up, 1=hinge-left/down, 2=hinge-right/down, 3=hinge-right/up
               const hingeX = (swing === 0 || swing === 1) ? -doorPx / 2 : doorPx / 2;
-              const leafDir = (swing === 0 || swing === 3) ? -1 : 1; // -1=up (negative Y), 1=down (positive Y)
+              const leafDir = (swing === 0 || swing === 3) ? -1 : 1;
               const isSelected = selectedId === door.id;
               const handleDoorInteract = () => {
                 if (tool === "select") {
                   if (isSelected) {
-                    const updated = state.doors.map((d) =>
-                      d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d
-                    );
-                    push({ ...state, doors: updated });
+                    push({ ...state, doors: state.doors.map((d) => d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d) });
                   } else {
                     setSelectedId(door.id);
                   }
@@ -843,65 +867,32 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               };
               return (
                 <Group
-                  key={door.id}
-                  x={px}
-                  y={py}
-                  rotation={(angle * 180) / Math.PI}
+                  key={door.id} x={px} y={py} rotation={(angle * 180) / Math.PI}
                   draggable={tool === "select" && !readOnly}
-                  onClick={handleDoorInteract}
-                  onTap={handleDoorInteract}
+                  onClick={handleDoorInteract} onTap={handleDoorInteract}
                   onDragMove={(e) => {
                     if (tool !== "select") return;
-                    const node = e.target;
-                    const t = projectOntoWall(node.x(), node.y(), wall);
+                    const t = projectOntoWall(e.target.x(), e.target.y(), wall);
                     if (t === null) return;
-                    node.x(wall.x1 + t * (wall.x2 - wall.x1));
-                    node.y(wall.y1 + t * (wall.y2 - wall.y1));
+                    e.target.x(wall.x1 + t * (wall.x2 - wall.x1));
+                    e.target.y(wall.y1 + t * (wall.y2 - wall.y1));
                   }}
                   onDragEnd={(e) => {
                     if (tool !== "select") return;
                     const t = projectOntoWall(e.target.x(), e.target.y(), wall);
                     if (t === null) return;
-                    const updated = state.doors.map((d) =>
-                      d.id === door.id ? { ...d, position: t } : d
-                    );
-                    push({ ...state, doors: updated });
+                    push({ ...state, doors: state.doors.map((d) => d.id === door.id ? { ...d, position: t } : d) });
                   }}
                 >
-                  {/* Invisible hit area for easier clicking */}
-                  <Rect
-                    x={-doorPx / 2 - 5}
-                    y={-doorPx - 5}
-                    width={doorPx + 10}
-                    height={doorPx * 2 + 10}
-                    fill="transparent"
-                    hitStrokeWidth={0}
-                  />
-                  {/* Gap in wall */}
+                  <Rect x={-doorPx / 2 - 5} y={-doorPx - 5} width={doorPx + 10} height={doorPx * 2 + 10} fill="transparent" hitStrokeWidth={0} />
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
-                  {/* Door leaf — solid line from hinge to end */}
                   <Line points={[hingeX, 0, hingeX, doorPx * 0.75 * leafDir]} stroke="#1a1a1a" strokeWidth={2.5} lineCap="round" />
-                  {/* Swing arc — smooth, thin, solid quarter circle */}
                   <Arc
-                    x={hingeX}
-                    y={0}
-                    innerRadius={doorPx * 0.73}
-                    outerRadius={doorPx * 0.75}
-                    angle={90}
-                    rotation={
-                      swing === 0 ? -90   // hinge-left, swing up: arc from -Y toward +X
-                        : swing === 1 ? 0    // hinge-left, swing down: arc from +X toward +Y
-                        : swing === 2 ? 90   // hinge-right, swing down: arc from +Y toward -X
-                        : 180                 // hinge-right, swing up: arc from -X toward -Y
-                    }
-                    fill="transparent"
-                    stroke="#1a1a1a"
-                    strokeWidth={1}
-                    opacity={0.5}
+                    x={hingeX} y={0} innerRadius={doorPx * 0.73} outerRadius={doorPx * 0.75} angle={90}
+                    rotation={swing === 0 ? -90 : swing === 1 ? 0 : swing === 2 ? 90 : 180}
+                    fill="transparent" stroke="#1a1a1a" strokeWidth={1} opacity={0.5}
                   />
-                  {isSelected && (
-                    <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />
-                  )}
+                  {isSelected && <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />}
                 </Group>
               );
             })}
@@ -914,48 +905,29 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               const isSelected = selectedId === win.id;
               return (
                 <Group
-                  key={win.id}
-                  x={px}
-                  y={py}
-                  rotation={(angle * 180) / Math.PI}
+                  key={win.id} x={px} y={py} rotation={(angle * 180) / Math.PI}
                   draggable={tool === "select" && !readOnly}
                   onClick={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
                   onTap={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
                   onDragMove={(e) => {
                     if (tool !== "select") return;
-                    const node = e.target;
-                    const t = projectOntoWall(node.x(), node.y(), wall);
+                    const t = projectOntoWall(e.target.x(), e.target.y(), wall);
                     if (t === null) return;
-                    node.x(wall.x1 + t * (wall.x2 - wall.x1));
-                    node.y(wall.y1 + t * (wall.y2 - wall.y1));
+                    e.target.x(wall.x1 + t * (wall.x2 - wall.x1));
+                    e.target.y(wall.y1 + t * (wall.y2 - wall.y1));
                   }}
                   onDragEnd={(e) => {
                     if (tool !== "select") return;
                     const t = projectOntoWall(e.target.x(), e.target.y(), wall);
                     if (t === null) return;
-                    const updated = state.windows.map((w) =>
-                      w.id === win.id ? { ...w, position: t } : w
-                    );
-                    push({ ...state, windows: updated });
+                    push({ ...state, windows: state.windows.map((w) => w.id === win.id ? { ...w, position: t } : w) });
                   }}
                 >
-                  {/* Invisible hit area for easier clicking (44px minimum touch target) */}
-                  <Rect
-                    x={-winPx / 2 - 5}
-                    y={-22}
-                    width={winPx + 10}
-                    height={44}
-                    fill="transparent"
-                    hitStrokeWidth={0}
-                  />
-                  {/* Gap in wall */}
+                  <Rect x={-winPx / 2 - 5} y={-22} width={winPx + 10} height={44} fill="transparent" hitStrokeWidth={0} />
                   <Line points={[-winPx / 2, 0, winPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
-                  {/* Double line for window */}
                   <Line points={[-winPx / 2, -3, winPx / 2, -3]} stroke="#5b6abf" strokeWidth={2} />
                   <Line points={[-winPx / 2, 3, winPx / 2, 3]} stroke="#5b6abf" strokeWidth={2} />
-                  {isSelected && (
-                    <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />
-                  )}
+                  {isSelected && <Circle x={0} y={0} radius={7} fill="#5b6abf" stroke="#ffffff" strokeWidth={2.5} />}
                 </Group>
               );
             })}
@@ -963,112 +935,15 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         </Stage>
       </div>
 
-      {/* Instructions Panel — desktop only */}
       {!readOnly && (
-        <div className="hidden md:flex flex-col w-[240px] shrink-0 border-l border-[#eae6e1] bg-[#faf8f5] p-4 overflow-y-auto">
-          <div className="flex items-center gap-2 mb-3 pb-2 border-b border-[#eae6e1]">
-            <div className="w-3 h-3 border border-[#eae6e1]" />
-            <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-[#6b6560]">= 1 foot</span>
-          </div>
-
-          {/* Unmapped rooms from Property Layout */}
-          {propertyRooms && propertyRooms.length > 0 && (() => {
-            const drawnNames = new Set(state.rooms.map(r => r.name));
-            const unmapped = propertyRooms.filter(r => !drawnNames.has(r.room_name));
-            if (unmapped.length === 0) return null;
-            return (
-              <div className="mb-3 pb-3 border-b border-[#eae6e1]">
-                <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-1.5">Not yet drawn</p>
-                <div className="flex flex-wrap gap-1">
-                  {unmapped.map(r => (
-                    <span key={r.id} className="px-2 py-0.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[11px] font-medium">
-                      {r.room_name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            );
-          })()}
-
-          <h3 className="text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#6b6560] font-semibold mb-3">
-            {tool === "room" ? "Room Tool" : tool === "wall" ? "Wall Tool" : tool === "door" ? "Door Tool" : tool === "window" ? "Window Tool" : tool === "select" ? "Select Tool" : tool === "delete" ? "Delete Tool" : "How to Use"}
-          </h3>
-
-          {tool === "room" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click and drag</span> to draw a room rectangle.</p>
-              <p>Dimensions show live as you draw.</p>
-              <p>Release to set the room, then enter a name.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Rooms auto-create walls on all 4 edges. Doors snap to these.</p>
-            </div>
-          )}
-
-          {tool === "wall" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click</span> to start a wall.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Click again</span> to end it.</p>
-              <p>Measurements show in feet as you draw.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Endpoints snap to nearby walls automatically.</p>
-            </div>
-          )}
-
-          {tool === "door" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click on a wall</span> to place a door.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Click a selected door</span> to cycle swing direction (4 positions).</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Drag</span> a selected door to slide it along the wall.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Switch to Select tool to move doors. Press Delete to remove.</p>
-            </div>
-          )}
-
-          {tool === "window" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click on a wall</span> to place a window.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Drag</span> a selected window to slide it along the wall.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Windows show as double lines. Press Delete to remove.</p>
-            </div>
-          )}
-
-          {tool === "select" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click</span> any element to select it.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Drag rooms</span> to reposition.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Drag doors/windows</span> along their wall.</p>
-              <p><span className="font-semibold text-[#1a1a1a]">Delete or Backspace</span> removes selected.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Escape to deselect. Click door twice to flip swing.</p>
-            </div>
-          )}
-
-          {tool === "delete" && (
-            <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
-              <p><span className="font-semibold text-[#1a1a1a]">Click</span> any element to delete it.</p>
-              <p>Deleting a room removes its walls, doors, and windows too.</p>
-              <p className="text-[11px] text-[#8a847e] mt-3">Tip: use Select tool + Delete key instead for precision.</p>
-            </div>
-          )}
-
-          <div className="mt-auto pt-4 border-t border-[#eae6e1]">
-            <h4 className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] font-semibold mb-2">
-              Keyboard
-            </h4>
-            <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-1 text-[11px]">
-              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">⌘Z</kbd>
-              <span className="text-[#6b6560]">Undo</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">⌘⇧Z</kbd>
-              <span className="text-[#6b6560]">Redo</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Del</kbd>
-              <span className="text-[#6b6560]">Remove selected</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Esc</kbd>
-              <span className="text-[#6b6560]">Deselect</span>
-              <kbd className="px-1.5 py-0.5 rounded bg-[#eae6e1] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] text-[10px]">Scroll</kbd>
-              <span className="text-[#6b6560]">Zoom in/out</span>
-            </div>
-            <p className="text-[11px] text-[#8a847e] mt-2">
-              Use Select tool + drag empty area to pan.
-            </p>
-          </div>
-
-        </div>
+        <FloorPlanSidebar
+          state={state}
+          gridSize={gs}
+          tool={tool}
+          selectedId={selectedId}
+          propertyRooms={propertyRooms}
+          jobId={jobId}
+        />
       )}
       </div>
     </div>

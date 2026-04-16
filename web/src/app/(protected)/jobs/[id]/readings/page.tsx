@@ -5,7 +5,8 @@ import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowBack, Plus } from "@/components/icons";
-import { useJob, useRooms, useReadings, useAllReadings } from "@/lib/hooks/use-jobs";
+import { useJob, useRooms, useReadings, useAllReadings, usePhotos } from "@/lib/hooks/use-jobs";
+import { RoomPhotoSection } from "@/components/room-photo-section";
 import { apiPost, apiPatch } from "@/lib/api";
 import type { MoisturePoint, MoistureReading } from "@/lib/types";
 
@@ -317,6 +318,7 @@ export default function MoistureReadingsPage() {
   // Job + room data
   const { data: job } = useJob(jobId);
   const { data: rooms = [] } = useRooms(jobId);
+  const { data: allPhotos = [] } = usePhotos(jobId);
   const [roomIndex, setRoomIndex] = useState(0);
   const currentRoom = rooms[roomIndex];
 
@@ -342,20 +344,38 @@ export default function MoistureReadingsPage() {
 
   // Day number — calculated from loss_date, or from existing reading count
   const dayNumber = useMemo(() => {
-    if (job?.loss_date) {
-      const lossDate = new Date(job.loss_date + "T00:00:00");
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const diffMs = today.getTime() - lossDate.getTime();
-      const diffDays = Math.floor(diffMs / 86_400_000);
-      return Math.max(1, diffDays + 1);
+    if (allReadings.length === 0) {
+      // No readings yet — use loss_date if available, otherwise Day 1
+      if (job?.loss_date) {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const lossDate = new Date(job.loss_date + "T00:00:00");
+        const diffMs = today.getTime() - lossDate.getTime();
+        return Math.max(1, Math.floor(diffMs / 86_400_000) + 1);
+      }
+      return 1;
     }
-    // No loss_date — infer from existing readings
-    if (allReadings.length > 0) {
-      const maxDay = Math.max(...allReadings.map((r) => r.day_number ?? 1));
-      return maxDay + 1;
+
+    // Count distinct calendar days from readings (UTC-consistent to avoid timezone drift)
+    const readingDays = new Set<string>();
+    for (const r of allReadings) {
+      const d = r.reading_date || r.created_at;
+      if (d) {
+        const dt = new Date(d);
+        readingDays.add(`${dt.getUTCFullYear()}-${dt.getUTCMonth()}-${dt.getUTCDate()}`);
+      }
     }
-    return 1;
+
+    // Check if any reading was saved today (UTC)
+    const today = new Date();
+    const todayKey = `${today.getUTCFullYear()}-${today.getUTCMonth()}-${today.getUTCDate()}`;
+    const hasReadingsToday = readingDays.has(todayKey);
+
+    // Day number = number of distinct days with readings + 1 if today is new
+    if (hasReadingsToday) {
+      return readingDays.size;
+    }
+    return readingDays.size + 1;
   }, [job?.loss_date, allReadings]);
 
   // Today's date string (local timezone, not UTC)
@@ -364,9 +384,9 @@ export default function MoistureReadingsPage() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
   })();
 
-  // Group past readings by day — exclude current day_number (shown in the entry form)
+  // Group past readings by day — show all saved days including current
   const dayGroups = useMemo(() => {
-    const pastReadings = allReadings.filter((r) => (r.day_number ?? 1) < dayNumber);
+    const pastReadings = allReadings.filter((r) => (r.day_number ?? 1) <= dayNumber);
     return groupReadingsByDay(pastReadings, roomMap);
   }, [allReadings, roomMap, dayNumber]);
 
@@ -698,12 +718,8 @@ export default function MoistureReadingsPage() {
               Moisture Readings
             </h1>
           </div>
-          {/* Mobile: current room name */}
-          <div className="text-right lg:hidden">
-            <span className="text-sm font-medium text-on-surface-variant">
-              {currentRoom?.room_name}
-            </span>
-          </div>
+          {/* spacer for mobile */}
+          <div className="lg:hidden" />
           {/* Desktop: Save All button — only when form is active */}
           {showEntryForm && (
             <button
@@ -776,19 +792,11 @@ export default function MoistureReadingsPage() {
 
         {/* -- Day heading (when form is active) ---------------------- */}
         {rooms.length > 0 && showEntryForm && (
-          <div className="hidden lg:flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-[13px] font-semibold text-on-surface">
-                Day {dayNumber}
-              </h2>
-              {allRoomsLoggedToday && (
-                <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
-                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                  All rooms logged
-                </span>
-              )}
-            </div>
-            <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+          <div className="hidden lg:flex items-center mb-3">
+            <h2 className="text-[13px] font-semibold text-on-surface">
+              Day {dayNumber}
+            </h2>
+            <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)] ml-2">
               {new Date().toLocaleDateString("en-US", { month: "short", day: "numeric" })} · auto-saves
             </span>
           </div>
@@ -796,17 +804,12 @@ export default function MoistureReadingsPage() {
 
         {/* -- Mobile: single room view ------------------------------ */}
         {currentRoom && showEntryForm && (
-        <div className="lg:hidden space-y-3">
-          {/* Room title */}
-          <div className="text-center">
-            <h2 className="text-[15px] font-bold text-on-surface">
-              {currentRoom.room_name}
-            </h2>
+        <div className="lg:hidden space-y-4">
+          {/* Room title + count */}
+          <div className="text-center pb-1.5 border-b border-outline-variant/20">
+            <h2 className="text-[15px] font-bold text-on-surface">{currentRoom.room_name}</h2>
             <p className="text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-              Room {roomIndex + 1} of {rooms.length}
-              {currentRoom.length_ft && currentRoom.width_ft
-                ? ` \u00B7 ${currentRoom.length_ft} x ${currentRoom.width_ft} ft`
-                : ""}
+              {roomIndex + 1} of {rooms.length}
             </p>
           </div>
 
@@ -916,6 +919,18 @@ export default function MoistureReadingsPage() {
             </button>
           </section>
 
+          {/* Room Photos */}
+          <section>
+            <RoomPhotoSection
+              jobId={jobId}
+              roomId={currentRoomId}
+              roomName={currentRoom.room_name}
+              photos={allPhotos.filter(p => p.room_id === currentRoomId)}
+              variant="card"
+              directUpload
+            />
+          </section>
+
           {/* Dehu Output */}
           <section>
             <label className="block text-[10px] font-semibold tracking-wider uppercase text-on-surface-variant mb-1.5 font-[family-name:var(--font-geist-mono)]">
@@ -985,7 +1000,7 @@ export default function MoistureReadingsPage() {
           </section>
 
           {/* Save CTA */}
-          <div className="pt-3 flex flex-col items-center gap-1.5">
+          <div className="pt-4 pb-2 flex flex-col items-center gap-1.5 border-t border-outline-variant/20">
             {saveError && (
               <p className="text-[12px] text-error text-center">{saveError}</p>
             )}
@@ -1133,6 +1148,18 @@ export default function MoistureReadingsPage() {
                     <Plus size={12} />
                     Add Point
                   </button>
+                </section>
+
+                {/* Room Photos */}
+                <section>
+                  <RoomPhotoSection
+                    jobId={jobId}
+                    roomId={room.id}
+                    roomName={room.room_name}
+                    photos={allPhotos.filter(p => p.room_id === room.id)}
+                    variant="card"
+                    directUpload
+                  />
                 </section>
 
                 {/* Dehu Output */}

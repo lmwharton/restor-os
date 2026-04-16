@@ -463,7 +463,7 @@ export default function PhotosPage() {
       for (let i = 0; i < fileArray.length; i++) {
         setUploadProgress({ current: i + 1, total: fileArray.length });
         try {
-          await uploadPhoto.mutateAsync(fileArray[i]);
+          await uploadPhoto.mutateAsync({ file: fileArray[i] });
         } catch (err) {
           setError(
             `Failed to upload ${fileArray[i].name}: ${err instanceof Error ? err.message : "Unknown error"}`

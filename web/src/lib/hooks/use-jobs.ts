@@ -166,7 +166,7 @@ export function useDeletePhoto(jobId: string) {
 export function useUploadPhoto(jobId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    mutationFn: async ({ file, room_id, room_name }: { file: File; room_id?: string; room_name?: string }) => {
       // Step 1: Get presigned URL
       const { upload_url, storage_path } = await apiPost<{
         upload_url: string;
@@ -176,15 +176,20 @@ export function useUploadPhoto(jobId: string) {
         content_type: file.type,
       });
       // Step 2: Upload to storage
-      await fetch(upload_url, {
+      const uploadRes = await fetch(upload_url, {
         method: "PUT",
         body: file,
         headers: { "Content-Type": file.type },
       });
-      // Step 3: Confirm
+      if (!uploadRes.ok) {
+        throw new Error(`Storage upload failed: ${uploadRes.status} ${uploadRes.statusText}`);
+      }
+      // Step 3: Confirm (with optional room association)
       return apiPost<Photo>(`/v1/jobs/${jobId}/photos/confirm`, {
         storage_path,
         filename: file.name,
+        ...(room_id && { room_id }),
+        ...(room_name && { room_name }),
       });
     },
     onSuccess: () => {
@@ -388,6 +393,21 @@ export function useUpdateFloorPlan(jobId: string) {
   return useMutation({
     mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; canvas_data?: Record<string, unknown>; floor_name?: string }) =>
       apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`, data),
+    onSuccess: (updatedFloorPlan) => {
+      // Optimistic cache update — use the PATCH response directly instead of re-fetching.
+      // Eliminates 1 GET call per auto-save (critical on low-bandwidth cellular networks).
+      qc.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) =>
+        old?.map((fp) => (fp.id === updatedFloorPlan.id ? updatedFloorPlan : fp))
+      );
+    },
+  });
+}
+
+export function useDeleteFloorPlan(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (floorPlanId: string) =>
+      apiDelete(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
     },
