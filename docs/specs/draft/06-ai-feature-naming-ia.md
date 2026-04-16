@@ -320,3 +320,13 @@ Contractors do not buy "AI." They buy "I get paid faster." Crewmatic's naming sh
 - **"Holy shit" moment:** "Generate Line Items" -> 18 items in 30 seconds, including 3 you would have missed, with citations the adjuster cannot argue. No mention of "AI."
 - **Progressive disclosure:** First job shows only the core flow. Secondary features appear after the first success.
 - **Internal code naming unchanged:** Backend modules stay `api/ai/pipeline.py` etc. This spec only affects user-facing labels.
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Naming recommendations — apply user-facing label changes across app)
+```

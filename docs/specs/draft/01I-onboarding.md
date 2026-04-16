@@ -798,3 +798,26 @@ Called by frontend after each step completes or is skipped.
 | 6 | Onboarding state on companies table, not separate table | Simple column approach. Only 5 boolean/enum fields. No need for a full `onboarding_steps` table — this isn't a multi-user flow, it's per-company. |
 | 7 | Dashboard banner is dismissible | Brett's spec: "Dismissible (user can close it)." Respects user autonomy. Banner returns if they click "Complete Setup" elsewhere. |
 | 8 | Company Profile has no Skip button | Brett's wireframe shows [Skip] [Continue] but his text says "Cannot skip this screen (company profile is required)." We follow the text — company name/phone/address are essential for job creation and reports. |
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Email/Password signup — Screen 1)
+```
+
+---
+
+## Session Log
+
+| # | Date | Start | End | Duration | What was done | Phases |
+|---|------|-------|-----|----------|--------------|--------|
+
+---
+
+## Decisions & Notes
+
+Key decisions with rationale. Append-only as implementation progresses. See the Decision Log table above for the initial set captured during spec authoring.

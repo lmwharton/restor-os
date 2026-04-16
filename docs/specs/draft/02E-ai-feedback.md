@@ -167,3 +167,13 @@ web/src/
 
 | # | Date | Start | End | Duration | What was done | Phases |
 |---|------|-------|-----|----------|--------------|--------|
+
+---
+
+## Quick Resume
+
+```bash
+# Resume working on this spec:
+cd /Users/lakshman/Workspaces/Crewmatic
+# Continue at: Phase 1 (Backend — ai_feedback table + POST /v1/ai/feedback endpoint)
+```
