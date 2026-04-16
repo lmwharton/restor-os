@@ -5,7 +5,8 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
-  FloorPlan, PaginatedResponse, ReconPhase,
+  FloorPlan, FloorPlanVersion, PaginatedResponse, ReconPhase,
+  WallSegment, WallOpening,
 } from "../types";
 // Mock data fallback — remove when real backend is connected
 import { mockJobs, mockRooms, mockPhotos, mockEvents, mockReconPhases } from "../mock-data";
@@ -414,12 +415,133 @@ export function useDeleteFloorPlan(jobId: string) {
   });
 }
 
-export function useCleanupSketch(jobId: string, floorPlanId: string) {
+export function useCleanupSketch(floorPlanId: string) {
   return useMutation({
     mutationFn: (canvasData: Record<string, unknown>) =>
       apiPost<{ canvas_data: Record<string, unknown> }>(
-        `/v1/jobs/${jobId}/floor-plans/${floorPlanId}/ai-cleanup`,
+        `/v1/floor-plans/${floorPlanId}/cleanup`,
         { canvas_data: canvasData }
       ),
+  });
+}
+
+// ─── Floor Plan Version Queries + Mutations ─────────────────────────
+
+export function useFloorPlanVersions(floorPlanId: string) {
+  return useQuery<FloorPlanVersion[]>({
+    queryKey: ["floor-plan-versions", floorPlanId],
+    queryFn: async () => {
+      const data = await apiGet<FloorPlanVersion[] | PaginatedResponse<FloorPlanVersion>>(
+        `/v1/floor-plans/${floorPlanId}/versions`
+      );
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!floorPlanId,
+  });
+}
+
+export function useSaveCanvas(floorPlanId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { job_id: string; canvas_data: Record<string, unknown>; change_summary?: string }) =>
+      apiPost<FloorPlanVersion>(`/v1/floor-plans/${floorPlanId}/versions`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["floor-plan-versions", floorPlanId] });
+    },
+  });
+}
+
+// ─── Wall Queries + Mutations ───────────────────────────────────────
+
+export function useWalls(roomId: string) {
+  return useQuery<WallSegment[]>({
+    queryKey: ["walls", roomId],
+    queryFn: async () => {
+      const data = await apiGet<WallSegment[] | PaginatedResponse<WallSegment>>(
+        `/v1/rooms/${roomId}/walls`
+      );
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!roomId,
+  });
+}
+
+export function useCreateWall(roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      x1: number; y1: number; x2: number; y2: number;
+      wall_type?: string; affected?: boolean; shared?: boolean;
+      shared_with_room_id?: string; sort_order?: number;
+    }) => apiPost<WallSegment>(`/v1/rooms/${roomId}/walls`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export function useUpdateWall(roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ wallId, ...data }: { wallId: string } & Partial<WallSegment>) =>
+      apiPatch<WallSegment>(`/v1/rooms/${roomId}/walls/${wallId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export function useDeleteWall(roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (wallId: string) =>
+      apiDelete(`/v1/rooms/${roomId}/walls/${wallId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export function useCreateOpening(roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      opening_type: string; position: number;
+      width_ft: number; height_ft: number;
+      sill_height_ft?: number; swing?: number;
+    }) => apiPost<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export function useUpdateOpening(roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ openingId, ...data }: { openingId: string } & Partial<WallOpening>) =>
+      apiPatch<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
+  });
+}
+
+export function useDeleteOpening(roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (openingId: string) =>
+      apiDelete(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms"] });
+    },
   });
 }

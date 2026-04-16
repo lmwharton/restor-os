@@ -142,10 +142,10 @@ export interface JobCreate {
   tech_notes?: string;
 }
 
-// ─── Floor Plans ──────────────────────────────────────────────────────
+// ─── Floor Plans (property-scoped, Spec 01H) ─────────────────────────
 export interface FloorPlan {
   id: string;
-  job_id: string;
+  property_id: string;
   company_id: string;
   floor_number: number;
   floor_name: string;
@@ -155,7 +155,28 @@ export interface FloorPlan {
   updated_at: string;
 }
 
-// ─── Rooms ────────────────────────────────────────────────────────────
+export interface FloorPlanVersion {
+  id: string;
+  floor_plan_id: string;
+  company_id: string;
+  version_number: number;
+  canvas_data: Record<string, unknown>;
+  created_by_job_id: string | null;
+  created_by_user_id: string | null;
+  change_summary: string | null;
+  is_current: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Rooms (extended, Spec 01H) ──────────────────────────────────────
+export type RoomType =
+  | "living_room" | "kitchen" | "bathroom" | "bedroom" | "basement"
+  | "hallway" | "laundry_room" | "garage" | "dining_room" | "office"
+  | "closet" | "utility_room" | "other";
+export type CeilingType = "flat" | "vaulted" | "cathedral" | "sloped";
+export type FloorLevel = "basement" | "main" | "upper" | "attic";
+
 export interface Room {
   id: string;
   job_id: string;
@@ -166,6 +187,17 @@ export interface Room {
   width_ft: number | null;
   height_ft: number | null;
   square_footage: number | null;
+  // V2 fields (Spec 01H) — optional with defaults for backward compat with mock data
+  room_type?: RoomType | null;
+  ceiling_type?: CeilingType;
+  floor_level?: FloorLevel | null;
+  affected?: boolean;
+  material_flags?: string[] | null;
+  wall_square_footage?: number | null;
+  custom_wall_sf?: number | null;
+  room_polygon?: Array<{ x: number; y: number }> | null;
+  floor_openings?: Array<{ x: number; y: number; width: number; height: number }> | null;
+  // Existing fields
   water_category: WaterCategory | null;
   water_class: WaterClass | null;
   dry_standard: number | null;
@@ -176,6 +208,43 @@ export interface Room {
   sort_order: number;
   reading_count: number;
   latest_reading_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Walls (new, Spec 01H) ──────────────────────────────────────────
+export type WallType = "exterior" | "interior";
+export type OpeningType = "door" | "window" | "missing_wall";
+
+export interface WallSegment {
+  id: string;
+  room_id: string;
+  company_id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  wall_type: WallType;
+  wall_height_ft: number | null;
+  affected: boolean;
+  shared: boolean;
+  shared_with_room_id: string | null;
+  sort_order: number;
+  openings: WallOpening[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WallOpening {
+  id: string;
+  wall_id: string;
+  company_id: string;
+  opening_type: OpeningType;
+  position: number;
+  width_ft: number;
+  height_ft: number;
+  sill_height_ft: number | null;
+  swing: number | null;
   created_at: string;
   updated_at: string;
 }

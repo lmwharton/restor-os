@@ -1,6 +1,6 @@
 // Floor plan tool definitions, types, and snap logic
 
-export type ToolType = "room" | "wall" | "door" | "window" | "select" | "delete";
+export type ToolType = "room" | "wall" | "door" | "window" | "opening" | "select" | "delete";
 
 export interface RoomData {
   id: string;
@@ -21,6 +21,8 @@ export interface WallData {
   y2: number;
   thickness: number;
   roomId?: string;
+  wallType?: "interior" | "exterior";
+  affected?: boolean;
 }
 
 export interface DoorData {
@@ -28,6 +30,7 @@ export interface DoorData {
   wallId: string;
   position: number; // 0-1 parametric
   width: number; // feet
+  height?: number; // feet (default 7)
   swing: 0 | 1 | 2 | 3; // 4 quadrants: 0=hinge-left-swing-up, 1=hinge-left-swing-down, 2=hinge-right-swing-down, 3=hinge-right-swing-up
 }
 
@@ -36,6 +39,7 @@ export interface WindowData {
   wallId: string;
   position: number;
   width: number;
+  height?: number; // feet (default 4 for windows, 8 for openings)
 }
 
 export interface FloorPlanData {
@@ -47,7 +51,7 @@ export interface FloorPlanData {
 }
 
 export function emptyFloorPlan(): FloorPlanData {
-  return { gridSize: 20, rooms: [], walls: [], doors: [], windows: [] };
+  return { gridSize: 10, rooms: [], walls: [], doors: [], windows: [] };
 }
 
 let _counter = 0;
@@ -145,6 +149,7 @@ export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "d
   { id: "wall", label: "Wall", icon: "line", group: "draw" },
   { id: "door", label: "Door", icon: "door", group: "place" },
   { id: "window", label: "Window", icon: "window", group: "place" },
+  { id: "opening", label: "Opening", icon: "opening", group: "place" },
   { id: "select", label: "Select", icon: "pointer", group: "edit" },
   { id: "delete", label: "Delete", icon: "trash", group: "edit" },
 ];
