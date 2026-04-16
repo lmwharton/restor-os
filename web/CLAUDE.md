@@ -31,6 +31,8 @@ See root `../CLAUDE.md` for project overview and domain context.
 - **Inputs:** add `onFocus={(e) => e.target.select()}` on all text inputs
 - **Disabled/coming-soon:** muted `bg-surface-container` with `border border-dashed border-outline-variant/50`, never a dimmed brand-accent button
 - **Never full-width buttons on desktop** — use `inline-flex px-5` for compact buttons. Full-width only inside narrow containers (cards, modals, mobile bottom sheets)
+- **Selection grids + modal action rows use `rounded-lg` (not pills), both mobile and web** — applies to RoomConfirmationCard-style flows: Property Layout / Quick Pick chips, Type / Ceiling / Floor / Affected selectors, and the Back / Confirm / Update / Cancel action row. Same shape at every breakpoint — don't introduce `rounded-full` on one. Keep grid options `h-7 sm:h-9`, action buttons `h-10 sm:h-10`. Outlined unselected (`border border-outline-variant text-on-surface-variant`), filled selected (`bg-brand-accent text-on-primary`). Material-tag display chips stay `rounded-full` — they're content tags, not action buttons.
+- **Bottom-sheet modals: sticky action footer** — Cancel (and any Back/Confirm row) must sit in a `shrink-0` section *outside* the scrollable content, with a subtle `border-t`. Never rely on `mt-auto` inside a scroll container — tall forms push actions below the clip and Cancel disappears.
 - **"New" status color:** indigo `#4f46e5`, NOT red (red reads as error)
 - **Consistency > beauty** — all section headings same size/weight, uniform spacing, don't mix monospace labels with bold headings at the same level
 - **Explain before designing** — present the approach before implementing. Get approval. Implement in one cohesive pass, not incremental CSS patches
