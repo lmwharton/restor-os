@@ -1,10 +1,18 @@
 # Spec 01H: Floor Plan V2 — Sketch Tool as Spatial Backbone
 
+> **Schema update 2026-04-18:** The two-table design (`floor_plans` container +
+> `floor_plan_versions`) was merged into a single `floor_plans` table where each
+> row IS a versioned snapshot. `jobs.floor_plan_version_id` was renamed to
+> `jobs.floor_plan_id`. See migration `e1a7c9b30201`. The DDL/code references
+> below still use the older split-table names — they reflect the original design
+> and are kept for context, but the live schema is unified.
+
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ████████████████░░░░ 80% |
-| **State** | In Progress — Phase 1 D1-D3 complete (property versioning + multi-floor selector + archival freeze); Phase E (canvas interactions) next |
+| **Progress (overall 01H)** | █████░░░░░░░░░░░░░░░ ~22% (Phase 1 closed except E7 + tests; Phases 2–5 untouched) |
+| **Progress (Phase 1 only)** | █████████████████████ ~95% (D1–D3 + E1–E6 done; schema merge done; immutability hardened; auto-save fixed; E7 still pending) |
+| **State** | In progress — **resume tomorrow with E7 (floor openings / stairwell cutouts)** + final QA + strip the `[autosave]` debug logs. |
 | **Blocker** | None |
 | **Branch** | feature/01h-floor-plan-v2-phase1 |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
@@ -16,10 +24,47 @@
 | Created | 2026-04-15 |
 | Started | 2026-04-16 |
 | Completed | — |
-| Sessions | 2 |
-| Total Time | ~14 hours |
-| Files Changed | 26 |
+| Sessions | 3 |
+| Total Time | ~26 hours |
+| Files Changed | ~38 |
 | Tests Written | 0 |
+
+## Session 3 (2026-04-18) — Schema Merge + Immutability + Auto-Save Hardening
+
+Lakshman peer-review surfaced that the two-table design (`floor_plans` container + `floor_plan_versions`) was redundant — every save wrote `canvas_data` twice, and the container served only as grouping metadata. This session merged them into a unified `floor_plans` table where each row IS a versioned snapshot. Then tightened immutability semantics and stamped out a long tail of regressions caused by the merge.
+
+**Backend changes:**
+- Migration `e1a7c9b30201`: lifts `property_id`, `floor_number`, `floor_name`, `thumbnail_url` onto `floor_plan_versions`; backfills from old container; re-points `job_rooms.floor_plan_id` from container row to is_current version row; drops old `floor_plans` table; renames `floor_plan_versions` → `floor_plans`; renames `jobs.floor_plan_version_id` → `jobs.floor_plan_id`; rebuilds indexes with unified naming.
+- `_create_version` now centrally enforces the "one is_current per (property, floor)" invariant — flips old siblings to `is_current=false` BEFORE inserting the new row at every creation point (Case 1 forks too, not just Case 3 forks).
+- `save_canvas` Case 2 now requires `pinned_still_current` in addition to `created_by_job_id` + `pinned_same_floor`. Once a version has been forked from (is_current=false), it's frozen forever — even its original creator can't update it; they have to fork on top.
+- `update_floor_plan` rejects `canvas_data` / `floor_number` writes on non-current rows (frozen-version guard).
+- `rollback_version` now mirrors `save_canvas`'s archived-job guard.
+- `_auto_upgrade_active_jobs` (57 lines) deleted — frozen-version semantics mean a job's pin only moves when that job itself saves; no auto-upgrade across siblings.
+- `create_floor_plan` accepts an optional `job_id`; when provided, stamps `created_by_job_id` on the new row.
+- `create_floor_plan_by_job_endpoint` now passes `job_id` AND pins `jobs.floor_plan_id = newRow.id` so the auto-Main shell is owned by the creating job — the user's first canvas save hits Case 2 (update v1 in place) instead of forking v2.
+- `create_floor_plan` defaults `canvas_data` to `{}` when caller omits it (the JSONB column is `NOT NULL` and the DB default only applies for absent columns; explicit `null` was hitting the constraint).
+- Linked recon job inherits `floor_plan_id` from the parent mitigation job at creation time (no more NULL pin on fresh recon jobs).
+
+**Frontend changes:**
+- `FloorPlan` type unified (no separate `FloorPlanVersion`); `Job.floor_plan_id` replaces `floor_plan_version_id`. Comprehensive rename sweep — zero remaining old-name references in source.
+- `KonvaFloorPlan` initial-data merge fix: `{ ...emptyFloorPlan(), ...(initialData ?? {}) }` so a partial `canvas_data = {}` from a freshly-created shell still gets `walls/rooms/doors/windows` arrays (was crashing on `state.walls is not iterable`).
+- Hydration logic for archived jobs hardened: never falls through to `is_current` — shows pinned version OR own-created version OR empty. Prevents recon's edits from leaking into mitigation's archived audit view.
+- `canvasReady` made sticky-per-floor with a `floorPlans.length > 0` gate. Eliminates the "Draw your first room" flash on reload AND the unmount-mid-debounce that was killing autosave timers from background refetches.
+- `handleCreatePresetFloor` `onSuccess` scoped to `wasUnpinned` — only carries live canvas state into the new floor for the auto-Main case, not for "user clicked Base while editing Main" (was leaking Main's content into all sibling preset floors).
+- **Auto-save root cause + fix:** `handleChange`'s `if (createFloorPlan.isPending) defer` was over-restrictive. React 19 / React Query batching can leave `isPending=true` for one extra render even after the new floor row is in the cache and `activeFloorId` is set. Changed to `if (createFloorPlan.isPending && !activeFloorIdRef.current)` — defer only when there's no active floor (the only real duplicate-create risk).
+- `finalizePendingRoom` now fires `onChange` immediately (bypassing the 2s debounce) when a room is confirmed — and pre-emptively sets `prevStateRef.current = newState` so the canvas's debounce useEffect bails on the next render and doesn't double-fire.
+- Save button `flush()` now always force-saves (regardless of `hasPendingRef`) — guarantees the manual Save button works as a reliable fallback.
+- `setSaveStatus("saving")` now holds for at least 400ms before flipping to "saved" so fast (<100ms) POSTs don't get batched into a single render where the indicator never paints.
+- `FloorPlanPreview` shows "Tap to start drawing" instead of "No floor plan yet" when a floor row exists with empty canvas (auto-Main shell case).
+- **Room confirmation form metadata wired to backend** — `onCreateRoom` callback signature extended to pass `roomType`, `ceilingHeight`, `ceilingType`, `floorLevel`, `materialFlags`, `affected`. `handleCreateRoom` now spreads these into `createRoom.mutate`. Previously the form collected everything but only `name` + dimensions reached `createRoom` — `floor_level`, `room_type`, etc. were silently dropped. **Note:** room METADATA (`job_rooms.floor_level`) is now correct, but the canvas RECTANGLE is still drawn on whatever floor tab the user was on. Picking "Upper" in the form labels the room as Upper but doesn't move the rectangle to Upper's canvas — that's a bigger UX change (auto-switch active floor + create the floor if missing + draw rectangle there) deferred to a follow-up.
+- **Back button in room confirmation card now actually goes back** — was clearing form fields but not resetting `nameCommitted`, so user stayed stuck on Details with empty fields.
+- **Room card mobile sizing** — `max-h-[85dvh]` on mobile (dynamic viewport height handles iOS browser chrome correctly), `min-h-0` on scroll area (lets it shrink below intrinsic content height so the sticky footer isn't pushed past the card boundary and clipped by `overflow-hidden`).
+
+**Architectural follow-ups (deferred — track for Phase 2 or follow-up specs):**
+- Race condition in `_create_version`: flip-then-insert is two async calls, not a transaction. Concurrent saves on the same floor could break the is_current uniqueness. Needs a partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + UNIQUE on `(property_id, floor_number, version_number)` + APIError catch+retry in `_create_version`. Pre-existing (predates the merge), low likelihood with single-user editing — defer to a hardening commit.
+- `COPY_FIELDS` on `_copy_rooms_from_linked_job` includes `floor_plan_id` — recon's copied rooms point at mitigation's frozen v1 row. Needs either dropping from COPY_FIELDS or repointing rooms in `_create_version` on fork. Falls under Section 19 (property_rooms split) territory.
+- Spec doc DDL block (around line 215) still uses old `floor_plan_versions` SQL. Banner at top of file warns readers but the SQL is stale. Update when convenient.
+- `[autosave]` debug logs in `konva-floor-plan.tsx` and `floor-plan/page.tsx` — strip before merge.
 
 ## Reference
 - **Brett's spec:** Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026)
@@ -98,6 +143,33 @@ Before this spec was finalized, several components were verified to already exis
 - [x] **Backend API exposes `floor_plan_version_id`** — added to `JobResponse` Pydantic schema + `_parse_job_detail` mapper so frontend hydration has access to the job's pin
 - [x] **Cross-floor corruption fixed** — Case 2 update-in-place now guards on `floor_plan_id` match so saving on Upper doesn't overwrite Main's v1 canvas_data
 - [x] **Read-only banner on archived jobs** — amber "Read-only — this job is submitted/complete/collected" banner above canvas when `jobs.status ∈ archived`; autosave short-circuits; wall context menu suppressed; empty preset pills disabled
+
+### Phase 1 — Phase E (Canvas Interactions) progress
+
+- [x] **E1: Polygon data model** — `RoomData.points` (optional polygon vertices); helpers `polygonArea`, `polygonCentroid`, `polygonBoundingBox`, `polygonToKonvaPoints`; `wallsForRoom` generalized for N-gons
+- [x] **E2: L-shape via vertex editing** — rectangles convert to polygons via "Reshape" button; drag handles on each vertex; tap-on-edge inserts a new vertex; walls regenerate; live shape preview during drag
+- [x] **E3: Magnetic room snap** — drag-end snaps room edges within 20px of neighbors (left/right/top/bottom, plus axis-aligned stacks); shares grid snap as baseline
+- [x] **E4: Shared wall auto-detection** — after snap/create, walls collinear + overlapping with another room's wall get `shared=true`; rendered muted gray + thinner stroke; backend `wall_segments.shared` persisted
+- [x] **E5: Affected Mode overlay** — "Damage" toolbar toggle; dims non-affected rooms/walls to 25% opacity; red ring+tint on active state
+- [x] **E6: Trace perimeter tool** — "Trace" toolbar button; tap corners in sequence; rubber-band preview; numbered vertex dots; dashed closing preview; floating status pill with Clear + Done actions
+- [ ] **E7: Floor openings (stairwell cutouts) — PENDING** — subtract from floor SF, rendered as a white/dashed rectangle overlay on a room's fill. **Resume here tomorrow.**
+- [ ] **Full test coverage** — SF calcs, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic, immutability guards (Case 2 pinned_still_current, frozen-row guard on update, archived-job rollback)
+- [ ] **Strip `[autosave]` debug logs** in `konva-floor-plan.tsx` and `floor-plan/page.tsx` before merge
+
+### Tomorrow's Resume Checklist (Session 4)
+1. **Strip debug logs:** grep for `[autosave]` in `web/src/components/sketch/konva-floor-plan.tsx` and `web/src/app/(protected)/jobs/[id]/floor-plan/page.tsx`. Remove all `console.log`/`console.warn` lines tagged with that prefix.
+2. **Room↔floor coupling refactor (UX cleanup):** today's fix wires the form's `floor_level` to the database, but the canvas RECTANGLE still lives on whatever floor the user happened to be on when drawing — creating a mismatch (Bathroom labeled `floor_level=upper` but rectangle on Main's canvas). Tomorrow's plan:
+   - Remove auto-Main on fresh job page load. Show an empty floor selector with all 4 preset slots dashed/empty.
+   - When user starts drawing, the room confirmation card's `Floor` field becomes the source of truth — picking "Basement" creates Basement (if missing), switches the active canvas to it, then draws the rectangle and saves the room there.
+   - **Critical:** preserve the autosave fix from session 3. Specifically:
+     - Keep `if (createFloorPlan.isPending && !activeFloorIdRef.current) defer` (not the old `if (createFloorPlan.isPending) defer`) — the new floor-pick flow will go through `createFloorPlan.mutate` AND immediately set `activeFloorIdRef.current`, so the new guard is still correct.
+     - Keep the `prevStateRef.current = newState` pre-emption in `finalizePendingRoom` to prevent the duplicate save.
+     - Keep `canvasReady` sticky-per-floor so the canvas doesn't unmount mid-debounce on background refetches.
+   - Test: draw → pick Basement → confirm → see "Saving…" → "Saved ✓" (single chain, no double POST).
+3. **E7 floor openings:** stairwell cutouts. Render as white/dashed rectangle overlay on room fill. Subtract from floor SF. Match the wall-opening UX (place via tool, draggable handles to resize).
+4. **Race condition hardening (optional):** add the partial unique indexes + APIError retry in `_create_version`. New migration `e1a7c9b30202_floor_plans_uniq_indexes.py`.
+5. **QA pass:** mitigation→recon fork flow (recon should fork v2 cleanly, mitigation's archived view should never show recon's edits), multi-floor save, floor switch, undo/redo, autosave timing.
+6. **PR for Lakshman.** Highlight the merge migration + the immutability semantics + the auto-save fix + the new floor-pick flow. Note the deferred race-condition hardening as a known follow-up.
 
 > **Known limitation — multi-floor archival freeze (track separately).**
 > `jobs.floor_plan_version_id` is a single column — it can only pin to ONE
