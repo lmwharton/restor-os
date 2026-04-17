@@ -7,6 +7,8 @@ import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
+from postgrest.exceptions import APIError
+
 from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate, LinkedJobSummary
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
@@ -191,7 +193,7 @@ def _parse_job_detail(
         loss_date=data.get("loss_date"),
         home_year_built=data.get("home_year_built"),
         status=data["status"],
-        floor_plan_version_id=data.get("floor_plan_version_id"),
+        floor_plan_id=data.get("floor_plan_id"),
         assigned_to=data.get("assigned_to"),
         notes=data.get("notes"),
         tech_notes=data.get("tech_notes"),
@@ -476,6 +478,35 @@ async def create_job(
             company_id=company_id,
         )
         room_count = copied
+
+        # Inherit the parent's floor plan pin so the new recon job opens straight
+        # to mitigation's current floor (no null floor_plan_id state, no UI
+        # fallback). Recon's first canvas save will hit save_canvas Case 3
+        # (pinned version is owned by mitigation, not recon) and correctly fork
+        # a new version — the pre-pin doesn't change versioning, only the
+        # initial UX so the floor selector shows mitigation's v1 immediately.
+        parent_pin = linked_job_data.get("floor_plan_id") if linked_job_data else None
+        if parent_pin:
+            try:
+                await (
+                    client.table("jobs")
+                    .update({"floor_plan_id": parent_pin})
+                    .eq("id", str(new_job_id))
+                    .execute()
+                )
+                # Reflect the pin in job_data so the response payload isn't null.
+                job_data["floor_plan_id"] = parent_pin
+            except APIError as e:
+                # Non-fatal: the recon job is created and rooms are copied. Worst
+                # case the user opens the floor plan with floor_plan_id=NULL and
+                # their first save hits Case 1 (no pin) → forks v2 against
+                # mitigation's existing v1 — same end state, just one extra step.
+                logger.warning(
+                    "Failed to inherit floor_plan_id from linked job %s to new job %s: %s",
+                    body.linked_job_id,
+                    new_job_id,
+                    e.message,
+                )
 
     counts = {
         "room_count": room_count,
