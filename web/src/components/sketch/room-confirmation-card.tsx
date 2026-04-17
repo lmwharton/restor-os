@@ -213,7 +213,7 @@ export function RoomConfirmationCard({
   const showNameStep = !nameCommitted && !isEditing;
 
   return (
-    <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center">
+    <div className="fixed inset-0 z-20 flex items-end sm:items-center justify-center">
       <div className="absolute inset-0 bg-black/25" onClick={onCancel} />
 
       <div
@@ -494,43 +494,41 @@ export function RoomConfirmationCard({
               Cancel
             </button>
           ) : (
-            <>
-              <div className="flex gap-1.5 sm:gap-2">
-                {!isEditing && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Back goes to the Name step. Must reset nameCommitted —
-                      // without it, the form fields clear but the user stays on
-                      // Details with no name, which looks broken.
-                      setName("");
-                      setPropertyRoomId(undefined);
-                      setRoomType(null);
-                      setMaterialFlags([]);
-                      setNameCommitted(false);
-                    }}
-                    className="flex-1 h-10 rounded-lg border border-outline-variant text-[12px] font-medium text-on-surface-variant active:scale-[0.98] cursor-pointer sm:h-10 sm:text-[13px]"
-                  >
-                    Back
-                  </button>
-                )}
+            <div className="flex gap-1.5 sm:gap-2">
+              {!isEditing && (
                 <button
                   type="button"
-                  onClick={handleConfirm}
-                  disabled={!name.trim()}
-                  className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all sm:h-10 sm:text-[13px]"
+                  onClick={() => {
+                    // Back goes to the Name step. Must reset nameCommitted —
+                    // without it, the form fields clear but the user stays on
+                    // Details with no name, which looks broken.
+                    setName("");
+                    setPropertyRoomId(undefined);
+                    setRoomType(null);
+                    setMaterialFlags([]);
+                    setNameCommitted(false);
+                  }}
+                  className="flex-1 h-10 rounded-lg border border-outline-variant text-[12px] font-medium text-on-surface-variant active:scale-[0.98] cursor-pointer sm:h-10 sm:text-[13px]"
                 >
-                  {isEditing ? "Update" : "Confirm"}
+                  Back
                 </button>
-              </div>
+              )}
               <button
                 type="button"
                 onClick={onCancel}
-                className="mt-3 w-full h-10 rounded-lg border border-red-200 text-[12px] font-medium text-red-600 hover:bg-red-50 cursor-pointer transition-colors sm:h-10 sm:text-[13px]"
+                className="flex-1 h-10 rounded-lg border border-red-200 text-[12px] font-medium text-red-600 hover:bg-red-50 cursor-pointer transition-colors sm:h-10 sm:text-[13px]"
               >
                 Cancel
               </button>
-            </>
+              <button
+                type="button"
+                onClick={handleConfirm}
+                disabled={!name.trim()}
+                className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all sm:h-10 sm:text-[13px]"
+              >
+                {isEditing ? "Update" : "Confirm"}
+              </button>
+            </div>
           )}
         </div>
       </div>
