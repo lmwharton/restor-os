@@ -30,10 +30,8 @@ from api.floor_plans.schemas import (
     FloorPlanCreate,
     FloorPlanListResponse,
     FloorPlanResponse,
+    FloorPlanSaveRequest,
     FloorPlanUpdate,
-    FloorPlanVersionListResponse,
-    FloorPlanVersionResponse,
-    FloorPlanVersionSave,
     SketchCleanupRequest,
     SketchCleanupResponse,
     SketchEditRequest,
@@ -181,15 +179,21 @@ async def create_floor_plan_by_job_endpoint(
     job: dict = Depends(get_valid_job),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Create a floor plan via job — resolves or auto-creates property from job address."""
+    """Create a floor plan via job — resolves or auto-creates property from job address.
+
+    Stamps the new row with `created_by_job_id=job.id` and pins the job's
+    `floor_plan_id` to it so the job's first content save updates v1 in place
+    (Case 2 in save_canvas) instead of forking v2.
+    """
     token = _get_token(request)
     property_id = job.get("property_id")
 
+    from api.shared.database import get_authenticated_client
+
+    client = await get_authenticated_client(token)
+
     # Auto-create property if job doesn't have one (backward compat)
     if not property_id:
-        from api.shared.database import get_authenticated_client
-
-        client = await get_authenticated_client(token)
         prop_result = await (
             client.table("properties")
             .insert(
@@ -212,13 +216,41 @@ async def create_floor_plan_by_job_endpoint(
             .execute()
         )
 
-    return await create_floor_plan(
+    floor_plan = await create_floor_plan(
         token=token,
         property_id=property_id,
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
+        job_id=job["id"],
     )
+
+    # Pin the creating job to this v1 shell. Without this, the next save would
+    # see job.floor_plan_id=NULL, fall into Case 1, and fork v2 immediately.
+    # Non-fatal if it fails: the floor plan exists with created_by_job_id stamped,
+    # so a follow-up save would still hit Case 2 once the pin lands. We log + return
+    # so the caller doesn't 500 on a pin failure.
+    import logging
+
+    from postgrest.exceptions import APIError
+
+    logger = logging.getLogger(__name__)
+    try:
+        await (
+            client.table("jobs")
+            .update({"floor_plan_id": floor_plan["id"]})
+            .eq("id", str(job["id"]))
+            .execute()
+        )
+    except APIError as e:
+        logger.warning(
+            "Failed to pin job %s to new floor plan %s: %s. Auto-Main UX may show null pin until next save.",
+            job["id"],
+            floor_plan["id"],
+            e.message,
+        )
+
+    return floor_plan
 
 
 @router.patch(
@@ -314,7 +346,7 @@ async def delete_floor_plan_by_job_endpoint(
 
 @router.get(
     "/floor-plans/{floor_plan_id}/versions",
-    response_model=FloorPlanVersionListResponse,
+    response_model=FloorPlanListResponse,
 )
 async def list_versions_endpoint(
     request: Request,
@@ -332,7 +364,7 @@ async def list_versions_endpoint(
 
 @router.get(
     "/floor-plans/{floor_plan_id}/versions/{version_number}",
-    response_model=FloorPlanVersionResponse,
+    response_model=FloorPlanResponse,
 )
 async def get_version_endpoint(
     request: Request,
@@ -353,10 +385,10 @@ async def get_version_endpoint(
 @router.post(
     "/floor-plans/{floor_plan_id}/versions",
     status_code=201,
-    response_model=FloorPlanVersionResponse,
+    response_model=FloorPlanResponse,
 )
 async def save_canvas_endpoint(
-    body: FloorPlanVersionSave,
+    body: FloorPlanSaveRequest,
     request: Request,
     fp: dict = Depends(get_valid_floor_plan),
     ctx: AuthContext = Depends(get_auth_context),
@@ -376,10 +408,10 @@ async def save_canvas_endpoint(
 
 @router.post(
     "/floor-plans/{floor_plan_id}/versions/{version_number}/rollback",
-    response_model=FloorPlanVersionResponse,
+    response_model=FloorPlanResponse,
 )
 async def rollback_version_endpoint(
-    body: FloorPlanVersionSave,
+    body: FloorPlanSaveRequest,
     request: Request,
     version_number: int = Path(..., ge=1, description="Version number to rollback to"),
     fp: dict = Depends(get_valid_floor_plan),

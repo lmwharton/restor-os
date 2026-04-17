@@ -18,13 +18,21 @@ class FloorPlanUpdate(BaseModel):
 
 
 class FloorPlanResponse(BaseModel):
+    """Unified floor plan response — each row IS a versioned snapshot after
+    the container/versions merge (see Alembic e1a7c9b30201)."""
+
     id: UUID
     property_id: UUID
     company_id: UUID
     floor_number: int
     floor_name: str
+    version_number: int
     canvas_data: dict | None
-    thumbnail_url: str | None
+    created_by_job_id: UUID | None = None
+    created_by_user_id: UUID | None = None
+    change_summary: str | None = None
+    is_current: bool = False
+    thumbnail_url: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -34,34 +42,15 @@ class FloorPlanListResponse(BaseModel):
     total: int
 
 
-# --- Floor Plan Versions (job-driven versioning) ---
+# --- Canvas save (job-driven versioning, single endpoint) ---
 
 
-class FloorPlanVersionSave(BaseModel):
-    """Save canvas changes. Service layer handles create-vs-update logic."""
+class FloorPlanSaveRequest(BaseModel):
+    """Save canvas changes. Service layer handles create-vs-update-vs-fork logic."""
 
     job_id: UUID = Field(..., description="Which job is saving (needed for version ownership)")
     canvas_data: dict = Field(..., description="Canvas state to save")
     change_summary: str | None = Field(default=None, max_length=500)
-
-
-class FloorPlanVersionResponse(BaseModel):
-    id: UUID
-    floor_plan_id: UUID
-    company_id: UUID
-    version_number: int
-    canvas_data: dict
-    created_by_job_id: UUID | None
-    created_by_user_id: UUID | None
-    change_summary: str | None
-    is_current: bool
-    created_at: datetime
-    updated_at: datetime
-
-
-class FloorPlanVersionListResponse(BaseModel):
-    items: list[FloorPlanVersionResponse]
-    total: int
 
 
 # --- Sketch Cleanup (deterministic, no AI) ---

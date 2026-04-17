@@ -318,8 +318,19 @@ async def create_floor_plan(
     company_id: UUID,
     user_id: UUID,
     body: FloorPlanCreate,
+    job_id: UUID | None = None,
 ) -> dict:
-    """Create a floor plan for a property. Enforces unique (property_id, floor_number)."""
+    """Create the initial floor plan (version 1) for a (property, floor).
+
+    After the container/versions merge, a "floor plan" IS a versioned snapshot.
+    The first save for a given (property_id, floor_number) becomes v1 with
+    is_current=true. Subsequent saves route through `save_canvas`.
+
+    When `job_id` is provided (typical: the by-job create endpoint), the row is
+    stamped as `created_by_job_id=job_id`. The caller is responsible for pinning
+    the job to this row so that the job's first content save lands on v1
+    (Case 2: update in place) instead of forking v2.
+    """
     client = await get_authenticated_client(token)
 
     existing = await (
@@ -327,6 +338,7 @@ async def create_floor_plan(
         .select("id")
         .eq("property_id", str(property_id))
         .eq("floor_number", body.floor_number)
+        .eq("is_current", True)
         .execute()
     )
     if existing.data:
@@ -341,7 +353,18 @@ async def create_floor_plan(
         "company_id": str(company_id),
         "floor_number": body.floor_number,
         "floor_name": body.floor_name,
-        "canvas_data": body.canvas_data,
+        # canvas_data is NOT NULL with a JSONB default, but the DB default only
+        # applies for absent columns. Sending explicit NULL violates the
+        # constraint, so coerce None → {} when the caller doesn't provide one
+        # (e.g., creating an empty floor shell before the user draws anything).
+        "canvas_data": body.canvas_data if body.canvas_data is not None else {},
+        # Unified floor_plans schema adds version bookkeeping.
+        "version_number": 1,
+        "is_current": True,
+        "created_by_user_id": str(user_id),
+        # Stamp the creating job (if any) so save_canvas's Case 2 ownership
+        # check matches on the very first content save and updates v1 in place.
+        "created_by_job_id": str(job_id) if job_id else None,
     }
 
     try:
@@ -374,9 +397,12 @@ async def list_floor_plans_by_property(
     property_id: UUID,
     company_id: UUID,
 ) -> dict:
-    """List all floor plans for a property, ordered by floor_number.
+    """List the CURRENT floor plan for each floor at a property.
 
-    Returns {"items": [...], "total": N}.
+    After the container/versions merge, a "floor plan" is a versioned row.
+    Listing returns one entry per floor (the is_current=true snapshot),
+    preserving the API contract callers expect ("one floor_plan per floor").
+    To enumerate history for a specific floor, use `list_versions`.
     """
     client = await get_authenticated_client(token)
 
@@ -385,6 +411,7 @@ async def list_floor_plans_by_property(
         .select("*", count="exact")
         .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
+        .eq("is_current", True)
         .order("floor_number")
         .execute()
     )
@@ -467,12 +494,28 @@ async def update_floor_plan(
     if not updates:
         return existing.data
 
+    # Frozen-version guard: only is_current rows accept canvas_data / floor_number
+    # changes. Non-current rows are immutable history. thumbnail_url and floor_name
+    # remain editable on any row (thumbnail is a re-rendered derivative; floor_name
+    # is a label, not content).
+    if not existing.data.get("is_current") and (
+        "canvas_data" in updates or "floor_number" in updates
+    ):
+        raise AppException(
+            status_code=403,
+            detail="Cannot modify canvas_data or floor_number on a frozen (non-current) version",
+            error_code="VERSION_FROZEN",
+        )
+
     if "floor_number" in updates and updates["floor_number"] != existing.data["floor_number"]:
+        # Post-merge: multiple rows can share (property_id, floor_number) as versions.
+        # The uniqueness rule we enforce is: only one CURRENT version per floor.
         dup = await (
             client.table("floor_plans")
             .select("id")
             .eq("property_id", str(property_id))
             .eq("floor_number", updates["floor_number"])
+            .eq("is_current", True)
             .neq("id", str(floor_plan_id))
             .execute()
         )
@@ -523,12 +566,18 @@ async def delete_floor_plan(
     company_id: UUID,
     user_id: UUID,
 ) -> None:
-    """Hard delete a floor plan. Sets floor_plan_id=NULL on linked job_rooms."""
+    """Hard delete an ENTIRE floor (all version rows for that floor_number).
+
+    Post-merge: the passed `floor_plan_id` is a single version row, but the
+    caller's intent is to remove the whole floor from the property. We resolve
+    the floor_number from that row, then delete every version for it.
+    Linked job_rooms get `floor_plan_id=NULL`.
+    """
     client = await get_authenticated_client(token)
 
     existing = await (
         client.table("floor_plans")
-        .select("id")
+        .select("id, floor_number")
         .eq("id", str(floor_plan_id))
         .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
@@ -541,17 +590,33 @@ async def delete_floor_plan(
             detail="Floor plan not found",
             error_code="FLOOR_PLAN_NOT_FOUND",
         )
+    floor_number = existing.data["floor_number"]
 
-    # Unlink rooms that reference this floor plan
-    await (
-        client.table("job_rooms")
-        .update({"floor_plan_id": None})
-        .eq("floor_plan_id", str(floor_plan_id))
+    # Collect ids of all versions for this floor to unlink job_rooms + delete.
+    versions_result = await (
+        client.table("floor_plans")
+        .select("id")
+        .eq("property_id", str(property_id))
+        .eq("floor_number", floor_number)
         .execute()
     )
+    version_ids = [v["id"] for v in (versions_result.data or [])]
 
-    # Hard delete (CASCADE handles floor_plan_versions)
-    await client.table("floor_plans").delete().eq("id", str(floor_plan_id)).execute()
+    if version_ids:
+        # Unlink rooms that reference any of those floor-plan rows
+        await (
+            client.table("job_rooms")
+            .update({"floor_plan_id": None})
+            .in_("floor_plan_id", version_ids)
+            .execute()
+        )
+        # Hard delete all versions for this floor
+        await (
+            client.table("floor_plans")
+            .delete()
+            .in_("id", version_ids)
+            .execute()
+        )
 
     await log_event(
         company_id,
@@ -577,16 +642,41 @@ async def save_canvas(
 ) -> dict:
     """Save canvas changes for a job. Implements the versioning state machine:
 
-    1. Job has no pinned version → create version 1, pin the job
-    2. Job's pinned version was created by THIS job → update in place
-    3. Job's pinned version was created by ANOTHER job → fork new version, pin, auto-upgrade
+    1. No pin → create v1, pin this job.
+    2. Pin is owned by this job AND points at this floor AND is still is_current
+       → update in place.
+    3. Otherwise → fork a new version (inherits content from current), pin this
+       job. Sibling jobs keep their own pins (no auto-upgrade) — frozen-version
+       semantics: a job's pin only moves when that job itself saves.
+
+    After the container/versions merge, `floor_plan_id` is a row in the unified
+    floor_plans table (i.e., a specific version). We resolve its property_id +
+    floor_number to scope fork/current-flip operations to the right floor.
     """
     client = await get_authenticated_client(token)
+
+    # Resolve (property_id, floor_number) for the passed floor_plan_id — these
+    # are the "floor identity" fields we scope version history to post-merge.
+    target_floor_result = await (
+        client.table("floor_plans")
+        .select("property_id, floor_number")
+        .eq("id", str(floor_plan_id))
+        .single()
+        .execute()
+    )
+    if not target_floor_result.data:
+        raise AppException(
+            status_code=404,
+            detail="Floor plan not found",
+            error_code="FLOOR_PLAN_NOT_FOUND",
+        )
+    target_property_id = target_floor_result.data["property_id"]
+    target_floor_number = target_floor_result.data["floor_number"]
 
     # Fetch the job to get its current pinned version
     job_result = await (
         client.table("jobs")
-        .select("id, floor_plan_version_id, status")
+        .select("id, floor_plan_id, status")
         .eq("id", str(job_id))
         .eq("company_id", str(company_id))
         .is_("deleted_at", "null")
@@ -606,13 +696,15 @@ async def save_canvas(
             error_code="JOB_ARCHIVED",
         )
 
-    pinned_version_id = job.get("floor_plan_version_id")
+    pinned_version_id = job.get("floor_plan_id")
 
     # Case 1: No pinned version — create version 1
     if not pinned_version_id:
         version = await _create_version(
             client=client,
-            floor_plan_id=floor_plan_id,
+            property_id=UUID(target_property_id),
+            floor_number=target_floor_number,
+            floor_name=None,  # inherits from any existing version of this floor
             company_id=company_id,
             job_id=job_id,
             user_id=user_id,
@@ -620,7 +712,6 @@ async def save_canvas(
             change_summary=change_summary or "Initial floor plan version",
         )
         await _pin_job_to_version(client, job_id, version["id"])
-        await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
 
         await log_event(
             company_id,
@@ -628,7 +719,7 @@ async def save_canvas(
             job_id=job_id,
             user_id=user_id,
             event_data={
-                "floor_plan_id": str(floor_plan_id),
+                "floor_plan_id": version["id"],
                 "version_number": version["version_number"],
             },
         )
@@ -636,7 +727,7 @@ async def save_canvas(
 
     # Fetch the pinned version
     pinned = await (
-        client.table("floor_plan_versions")
+        client.table("floor_plans")
         .select("*")
         .eq("id", pinned_version_id)
         .single()
@@ -651,17 +742,28 @@ async def save_canvas(
 
     pinned_version = pinned.data
 
-    # Case 2: Job owns the pinned version AND the pin is for THIS floor plan
-    # → update it in place. The floor_plan_id check is critical for multi-floor:
-    # without it, saving on Upper would corrupt Main's pinned version because
-    # the job only has one `floor_plan_version_id` column (single pin) but
-    # the user may be editing a different floor.
+    # Case 2: Job owns the pinned version AND the pin is for THIS floor AND
+    # the pinned row is STILL the current row (no newer version has superseded
+    # it). All three conditions must hold to update in place.
+    #
+    # Immutability rule: once a version has been forked from (is_current=false),
+    # it is frozen forever. Even its original creator can't modify it anymore —
+    # they have to fork a new version on top. This is stricter than the
+    # previous "same job + same floor" check, which would let mitigation keep
+    # editing v1 after recon forked v2. Now v1 is truly permanent history
+    # regardless of mitigation's job status or how many times mitigation saves.
+    pinned_same_floor = (
+        str(pinned_version.get("property_id")) == target_property_id
+        and pinned_version.get("floor_number") == target_floor_number
+    )
+    pinned_still_current = bool(pinned_version.get("is_current"))
     if (
         pinned_version.get("created_by_job_id") == str(job_id)
-        and str(pinned_version.get("floor_plan_id")) == str(floor_plan_id)
+        and pinned_same_floor
+        and pinned_still_current
     ):
         await (
-            client.table("floor_plan_versions")
+            client.table("floor_plans")
             .update(
                 {
                     "canvas_data": canvas_data,
@@ -671,10 +773,9 @@ async def save_canvas(
             .eq("id", pinned_version["id"])
             .execute()
         )
-        await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
         # Re-fetch to return updated data
         updated = await (
-            client.table("floor_plan_versions")
+            client.table("floor_plans")
             .select("*")
             .eq("id", pinned_version["id"])
             .single()
@@ -687,17 +788,19 @@ async def save_canvas(
             job_id=job_id,
             user_id=user_id,
             event_data={
-                "floor_plan_id": str(floor_plan_id),
-                "version_id": pinned_version["id"],
+                "floor_plan_id": pinned_version["id"],
                 "version_number": pinned_version["version_number"],
             },
         )
         return updated.data
 
-    # Case 3: Another job's version — fork into a new version
+    # Case 3: Another job's version (or a different floor) — fork new version.
+    # _create_version handles the is_current flip on old siblings for us.
     version = await _create_version(
         client=client,
-        floor_plan_id=floor_plan_id,
+        property_id=UUID(target_property_id),
+        floor_number=target_floor_number,
+        floor_name=None,
         company_id=company_id,
         job_id=job_id,
         user_id=user_id,
@@ -705,28 +808,11 @@ async def save_canvas(
         change_summary=change_summary or "Floor plan edited by new job",
     )
 
-    # Mark old current version(s) as not current
-    await (
-        client.table("floor_plan_versions")
-        .update({"is_current": False})
-        .eq("floor_plan_id", str(floor_plan_id))
-        .neq("id", version["id"])
-        .eq("is_current", True)
-        .execute()
-    )
-
-    # Pin this job to the new version
-    await _pin_job_to_version(client, job_id, version["id"])
-    await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
-
-    # Auto-upgrade other active jobs at this property
-    await _auto_upgrade_active_jobs(
-        client=client,
-        floor_plan_id=floor_plan_id,
-        new_version_id=UUID(version["id"]),
-        exclude_job_id=job_id,
-        company_id=company_id,
-    )
+    # Pin this job to the new version. Sibling jobs are NOT auto-upgraded —
+    # per the frozen-version semantics: every job stays on the version it last
+    # saved, regardless of its status. A job's pin only moves when that job
+    # itself saves. This prevents recon's edits from spilling onto a still-active
+    # mitigation job that never explicitly adopted the new version.
 
     await log_event(
         company_id,
@@ -747,16 +833,29 @@ async def list_versions(
     floor_plan_id: UUID,
     company_id: UUID,
 ) -> dict:
-    """List all versions for a floor plan, newest first.
+    """List all version snapshots for the floor that `floor_plan_id` belongs to,
+    newest first. Scopes by (property_id, floor_number) resolved from the row.
 
     Returns {"items": [...], "total": N}.
     """
     client = await get_authenticated_client(token)
 
+    # Resolve the floor identity from the passed row.
+    anchor = await (
+        client.table("floor_plans")
+        .select("property_id, floor_number")
+        .eq("id", str(floor_plan_id))
+        .single()
+        .execute()
+    )
+    if not anchor.data:
+        return {"items": [], "total": 0}
+
     result = await (
-        client.table("floor_plan_versions")
+        client.table("floor_plans")
         .select("*", count="exact")
-        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("property_id", anchor.data["property_id"])
+        .eq("floor_number", anchor.data["floor_number"])
         .eq("company_id", str(company_id))
         .order("version_number", desc=True)
         .execute()
@@ -773,13 +872,28 @@ async def get_version(
     version_number: int,
     company_id: UUID,
 ) -> dict:
-    """Get a specific version by floor_plan_id + version_number."""
+    """Get a specific version by (this floor's property + floor_number, version_number)."""
     client = await get_authenticated_client(token)
 
+    anchor = await (
+        client.table("floor_plans")
+        .select("property_id, floor_number")
+        .eq("id", str(floor_plan_id))
+        .single()
+        .execute()
+    )
+    if not anchor.data:
+        raise AppException(
+            status_code=404,
+            detail="Floor plan not found",
+            error_code="FLOOR_PLAN_NOT_FOUND",
+        )
+
     result = await (
-        client.table("floor_plan_versions")
+        client.table("floor_plans")
         .select("*")
-        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("property_id", anchor.data["property_id"])
+        .eq("floor_number", anchor.data["floor_number"])
         .eq("version_number", version_number)
         .eq("company_id", str(company_id))
         .single()
@@ -805,14 +919,54 @@ async def rollback_version(
     """Rollback: create a new version from a past version's canvas_data.
 
     Does NOT delete versions — creates a new one with the rolled-back content.
+    Floor identity (property_id, floor_number) is resolved from the passed row.
+    Archived jobs cannot rollback — frozen-version semantics, mirrors save_canvas.
     """
     client = await get_authenticated_client(token)
 
+    # Reject rollback from archived jobs — same rule as save_canvas. Without this,
+    # an archived job could mint a new version + repin itself, breaking the
+    # "frozen once archived" contract.
+    job_result = await (
+        client.table("jobs")
+        .select("status")
+        .eq("id", str(job_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .single()
+        .execute()
+    )
+    if not job_result.data:
+        raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
+    if job_result.data.get("status") in _ARCHIVED_STATUSES:
+        raise AppException(
+            status_code=403,
+            detail="Cannot rollback floor plan for an archived job",
+            error_code="JOB_ARCHIVED",
+        )
+
+    anchor = await (
+        client.table("floor_plans")
+        .select("property_id, floor_number")
+        .eq("id", str(floor_plan_id))
+        .single()
+        .execute()
+    )
+    if not anchor.data:
+        raise AppException(
+            status_code=404,
+            detail="Floor plan not found",
+            error_code="FLOOR_PLAN_NOT_FOUND",
+        )
+    target_property_id = anchor.data["property_id"]
+    target_floor_number = anchor.data["floor_number"]
+
     # Fetch the target version to rollback to
     target = await (
-        client.table("floor_plan_versions")
+        client.table("floor_plans")
         .select("*")
-        .eq("floor_plan_id", str(floor_plan_id))
+        .eq("property_id", target_property_id)
+        .eq("floor_number", target_floor_number)
         .eq("version_number", version_number)
         .eq("company_id", str(company_id))
         .single()
@@ -825,10 +979,13 @@ async def rollback_version(
             error_code="VERSION_NOT_FOUND",
         )
 
-    # Create new version from the target's canvas_data
+    # Create new version from the target's canvas_data. _create_version
+    # handles the is_current flip on old siblings.
     version = await _create_version(
         client=client,
-        floor_plan_id=floor_plan_id,
+        property_id=UUID(target_property_id),
+        floor_number=target_floor_number,
+        floor_name=None,
         company_id=company_id,
         job_id=job_id,
         user_id=user_id,
@@ -836,25 +993,9 @@ async def rollback_version(
         change_summary=f"Rolled back to version {version_number}",
     )
 
-    # Mark all other versions as not current
-    await (
-        client.table("floor_plan_versions")
-        .update({"is_current": False})
-        .eq("floor_plan_id", str(floor_plan_id))
-        .neq("id", version["id"])
-        .eq("is_current", True)
-        .execute()
-    )
-
-    # Pin the job and auto-upgrade others
+    # Pin the job to this rolled-back version. Sibling jobs NOT auto-upgraded
+    # (frozen-version semantics — see save_canvas for rationale).
     await _pin_job_to_version(client, job_id, version["id"])
-    await _auto_upgrade_active_jobs(
-        client=client,
-        floor_plan_id=floor_plan_id,
-        new_version_id=UUID(version["id"]),
-        exclude_job_id=job_id,
-        company_id=company_id,
-    )
 
     await log_event(
         company_id,
@@ -862,7 +1003,7 @@ async def rollback_version(
         job_id=job_id,
         user_id=user_id,
         event_data={
-            "floor_plan_id": str(floor_plan_id),
+            "floor_plan_id": version["id"],
             "rolled_back_to": version_number,
             "new_version": version["version_number"],
         },
@@ -877,30 +1018,63 @@ async def rollback_version(
 
 async def _create_version(
     client,
-    floor_plan_id: UUID,
+    property_id: UUID,
+    floor_number: int,
+    floor_name: str | None,
     company_id: UUID,
     job_id: UUID,
     user_id: UUID,
     canvas_data: dict,
     change_summary: str,
 ) -> dict:
-    """Create a new floor plan version with the next version_number."""
-    # Get the current max version number
-    max_result = await (
-        client.table("floor_plan_versions")
-        .select("version_number")
-        .eq("floor_plan_id", str(floor_plan_id))
+    """Create a new floor plan version for a (property, floor).
+
+    Post-merge: a new version = a new row in the unified floor_plans table.
+    Looks up the next version_number from existing rows for this floor. If
+    the caller doesn't provide floor_name, inherits from the latest row.
+
+    Also: every call here becomes the new "latest" on this floor. We flip
+    is_current=false on all older rows first, THEN insert the new row with
+    is_current=true. Enforces the invariant "at most one current row per
+    (property, floor)" at every creation point — not just Case 3 forks.
+    """
+    # Find existing rows for this floor — used for version_number + floor_name inheritance
+    siblings = await (
+        client.table("floor_plans")
+        .select("version_number, floor_name")
+        .eq("property_id", str(property_id))
+        .eq("floor_number", floor_number)
         .order("version_number", desc=True)
         .limit(1)
         .execute()
     )
     next_number = 1
-    if max_result.data:
-        next_number = max_result.data[0]["version_number"] + 1
+    inherited_name = floor_name
+    if siblings.data:
+        next_number = siblings.data[0]["version_number"] + 1
+        if inherited_name is None:
+            inherited_name = siblings.data[0].get("floor_name")
+
+    # Flip any existing is_current=true rows on this floor to false BEFORE
+    # inserting the new one — keeps the "one current per floor" invariant.
+    # Note: this DOES NOT move any job's pin (jobs.floor_plan_id). Pins only
+    # move when that job itself saves; we're only managing the "which row
+    # is the latest snapshot" pointer.
+    if siblings.data:
+        await (
+            client.table("floor_plans")
+            .update({"is_current": False})
+            .eq("property_id", str(property_id))
+            .eq("floor_number", floor_number)
+            .eq("is_current", True)
+            .execute()
+        )
 
     row = {
-        "floor_plan_id": str(floor_plan_id),
+        "property_id": str(property_id),
         "company_id": str(company_id),
+        "floor_number": floor_number,
+        "floor_name": inherited_name or f"Floor {floor_number}",
         "version_number": next_number,
         "canvas_data": canvas_data,
         "created_by_job_id": str(job_id),
@@ -910,7 +1084,7 @@ async def _create_version(
     }
 
     try:
-        result = await client.table("floor_plan_versions").insert(row).execute()
+        result = await client.table("floor_plans").insert(row).execute()
     except APIError as e:
         raise AppException(
             status_code=500,
@@ -922,80 +1096,13 @@ async def _create_version(
 
 
 async def _pin_job_to_version(client, job_id: UUID, version_id: str) -> None:
-    """Set a job's floor_plan_version_id to the given version."""
+    """Set a job's floor_plan_id to the given version row."""
     await (
         client.table("jobs")
-        .update({"floor_plan_version_id": version_id})
+        .update({"floor_plan_id": version_id})
         .eq("id", str(job_id))
         .execute()
     )
-
-
-async def _mirror_to_floor_plan(client, floor_plan_id: UUID, canvas_data: dict) -> None:
-    """Mirror the current version's canvas_data back to floor_plans.canvas_data.
-
-    Serves as a denormalized cache for thumbnail rendering and other reads
-    that haven't been migrated to query floor_plan_versions directly.
-    """
-    await (
-        client.table("floor_plans")
-        .update({"canvas_data": canvas_data})
-        .eq("id", str(floor_plan_id))
-        .execute()
-    )
-
-
-async def _auto_upgrade_active_jobs(
-    client,
-    floor_plan_id: UUID,
-    new_version_id: UUID,
-    exclude_job_id: UUID,
-    company_id: UUID,
-) -> None:
-    """Auto-upgrade all active (non-archived) jobs at this property to the new version.
-
-    Finds jobs via: floor_plan → property_id → all jobs at that property.
-    Skips archived jobs (complete/submitted/collected) and the job that just saved.
-    """
-    # Get the property_id for this floor plan
-    fp_result = await (
-        client.table("floor_plans")
-        .select("property_id")
-        .eq("id", str(floor_plan_id))
-        .single()
-        .execute()
-    )
-    if not fp_result.data:
-        return
-
-    property_id = fp_result.data["property_id"]
-
-    # Find all active jobs at this property (excluding the current job)
-    jobs_result = await (
-        client.table("jobs")
-        .select("id, status")
-        .eq("property_id", property_id)
-        .eq("company_id", str(company_id))
-        .is_("deleted_at", "null")
-        .neq("id", str(exclude_job_id))
-        .execute()
-    )
-
-    if not jobs_result.data:
-        return
-
-    # Upgrade only active (non-archived) jobs
-    active_job_ids = [
-        j["id"] for j in jobs_result.data if j.get("status") not in _ARCHIVED_STATUSES
-    ]
-
-    for jid in active_job_ids:
-        await (
-            client.table("jobs")
-            .update({"floor_plan_version_id": str(new_version_id)})
-            .eq("id", jid)
-            .execute()
-        )
 
 
 # ---------------------------------------------------------------------------

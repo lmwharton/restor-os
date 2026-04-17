@@ -92,7 +92,7 @@ UPDATE job_rooms
 -- container (no longer needed — container metadata is on the row now).
 -- =========================================================================
 
--- Drop the cascade FK first, then the column.
+-- Drop the column. PostgreSQL cascade-drops the FK constraint on floor_plan_id.
 ALTER TABLE floor_plan_versions DROP COLUMN floor_plan_id;
 
 -- =========================================================================
