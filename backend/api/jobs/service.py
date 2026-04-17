@@ -191,6 +191,7 @@ def _parse_job_detail(
         loss_date=data.get("loss_date"),
         home_year_built=data.get("home_year_built"),
         status=data["status"],
+        floor_plan_version_id=data.get("floor_plan_version_id"),
         assigned_to=data.get("assigned_to"),
         notes=data.get("notes"),
         tech_notes=data.get("tech_notes"),
@@ -462,9 +463,91 @@ async def create_job(
         except Exception as e:
             logger.error("Failed to insert default phases for job %s: %s", new_job_id, e)
 
-    # New job has zero counts
-    counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
+    # Copy rooms from the linked job so the new job inherits its room list (and
+    # matching floor-plan geometry via the property's current floor plan version).
+    # Moisture readings, photos, equipment logs stay with the original job — only
+    # the room definitions are cloned.
+    room_count = 0
+    if body.linked_job_id and new_job_id:
+        copied = await _copy_rooms_from_linked_job(
+            client=client,
+            source_job_id=body.linked_job_id,
+            new_job_id=UUID(str(new_job_id)),
+            company_id=company_id,
+        )
+        room_count = copied
+
+    counts = {
+        "room_count": room_count,
+        "photo_count": 0,
+        "floor_plan_count": 0,
+        "line_item_count": 0,
+    }
     return _parse_job_detail(job_data, counts)
+
+
+async def _copy_rooms_from_linked_job(
+    client,
+    source_job_id: UUID,
+    new_job_id: UUID,
+    company_id: UUID,
+) -> int:
+    """Copy each job_rooms row from source_job to new_job. Returns count copied.
+
+    This is a workaround for the fact that the current schema crams two concerns
+    into one table: the building's physical rooms (property-level reality) and
+    each job's scope on those rooms (per-job state). A future refactor should
+    split these into `property_rooms` (name, geometry, room_type, ceiling,
+    floor_level, polygon) and `job_rooms` (water_category, equipment counts,
+    affected, material_flags, notes, moisture_readings link).
+
+    Until that split lands, we clone only the STRUCTURAL fields from the linked
+    job. Per-job scope fields (water category, equipment, damage notes) must
+    NOT carry over — the new job starts fresh on its own scope decisions.
+    Moisture readings, equipment logs, and photos are per-job entities anyway
+    (separate tables with job_id FK) and stay with the original job.
+    """
+    # Property-level fields only — the building's physical reality, safe to copy.
+    # Intentionally excludes: water_category, water_class, dry_standard,
+    # equipment_air_movers, equipment_dehus, affected, material_flags, notes,
+    # room_sketch_data — those are mitigation's scope, not reconstruction's.
+    COPY_FIELDS = [
+        "room_name", "floor_plan_id",
+        "length_ft", "width_ft", "height_ft", "square_footage",
+        "room_type", "ceiling_type", "floor_level",
+        "room_polygon", "floor_openings", "custom_wall_sf",
+        "sort_order",
+    ]
+
+    try:
+        source_rooms = await (
+            client.table("job_rooms")
+            .select(",".join(COPY_FIELDS))
+            .eq("job_id", str(source_job_id))
+            .eq("company_id", str(company_id))
+            .execute()
+        )
+    except Exception as e:
+        logger.warning("Failed to fetch rooms from linked job %s: %s", source_job_id, e)
+        return 0
+
+    if not source_rooms.data:
+        return 0
+
+    new_rows = [
+        {**row, "job_id": str(new_job_id), "company_id": str(company_id)}
+        for row in source_rooms.data
+    ]
+
+    try:
+        await client.table("job_rooms").insert(new_rows).execute()
+        return len(new_rows)
+    except Exception as e:
+        logger.error(
+            "Failed to copy %d rooms from %s to %s: %s",
+            len(new_rows), source_job_id, new_job_id, e,
+        )
+        return 0
 
 
 async def create_linked_recon(

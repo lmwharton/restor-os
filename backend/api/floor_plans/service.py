@@ -416,12 +416,18 @@ async def list_floor_plans_by_job(
         .single()
         .execute()
     )
-    if not job_result.data or not job_result.data.get("property_id"):
+    if not job_result.data:
         raise AppException(
             status_code=404,
-            detail="Job not found or has no property linked",
-            error_code="JOB_NO_PROPERTY",
+            detail="Job not found",
+            error_code="JOB_NOT_FOUND",
         )
+
+    # Job exists but has no property yet — return an empty list rather than 404.
+    # Property is auto-created on first floor-plan creation (see create_floor_plan_by_job_endpoint),
+    # so "no property" is a valid transitional state, not an error.
+    if not job_result.data.get("property_id"):
+        return {"items": [], "total": 0}
 
     return await list_floor_plans_by_property(
         token=token,
@@ -614,6 +620,7 @@ async def save_canvas(
             change_summary=change_summary or "Initial floor plan version",
         )
         await _pin_job_to_version(client, job_id, version["id"])
+        await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
 
         await log_event(
             company_id,
@@ -644,8 +651,15 @@ async def save_canvas(
 
     pinned_version = pinned.data
 
-    # Case 2: Job owns the pinned version — update in place
-    if pinned_version.get("created_by_job_id") == str(job_id):
+    # Case 2: Job owns the pinned version AND the pin is for THIS floor plan
+    # → update it in place. The floor_plan_id check is critical for multi-floor:
+    # without it, saving on Upper would corrupt Main's pinned version because
+    # the job only has one `floor_plan_version_id` column (single pin) but
+    # the user may be editing a different floor.
+    if (
+        pinned_version.get("created_by_job_id") == str(job_id)
+        and str(pinned_version.get("floor_plan_id")) == str(floor_plan_id)
+    ):
         await (
             client.table("floor_plan_versions")
             .update(
@@ -657,6 +671,7 @@ async def save_canvas(
             .eq("id", pinned_version["id"])
             .execute()
         )
+        await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
         # Re-fetch to return updated data
         updated = await (
             client.table("floor_plan_versions")
@@ -702,6 +717,7 @@ async def save_canvas(
 
     # Pin this job to the new version
     await _pin_job_to_version(client, job_id, version["id"])
+    await _mirror_to_floor_plan(client, floor_plan_id, canvas_data)
 
     # Auto-upgrade other active jobs at this property
     await _auto_upgrade_active_jobs(
@@ -911,6 +927,20 @@ async def _pin_job_to_version(client, job_id: UUID, version_id: str) -> None:
         client.table("jobs")
         .update({"floor_plan_version_id": version_id})
         .eq("id", str(job_id))
+        .execute()
+    )
+
+
+async def _mirror_to_floor_plan(client, floor_plan_id: UUID, canvas_data: dict) -> None:
+    """Mirror the current version's canvas_data back to floor_plans.canvas_data.
+
+    Serves as a denormalized cache for thumbnail rendering and other reads
+    that haven't been migrated to query floor_plan_versions directly.
+    """
+    await (
+        client.table("floor_plans")
+        .update({"canvas_data": canvas_data})
+        .eq("id", str(floor_plan_id))
         .execute()
     )
 
