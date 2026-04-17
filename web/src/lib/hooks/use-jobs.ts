@@ -41,6 +41,13 @@ export function useJob(jobId: string) {
       return apiGet<JobDetail>(`/v1/jobs/${jobId}`);
     },
     enabled: !!jobId,
+    // The job's floor_plan_version_id changes via backend side-effects (saves on
+    // this job, forks from sibling jobs, auto-upgrades). Components that render
+    // floor-plan thumbnails or hydration depend on this being fresh. Override
+    // the global 1-minute staleTime so navigating between job pages always
+    // re-reads the current pin instead of trusting a potentially-stale snapshot.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 

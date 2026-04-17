@@ -96,6 +96,7 @@ export interface Job {
   loss_date: string | null;
   home_year_built: number | null;
   status: JobStatus;
+  floor_plan_version_id: string | null;
   assigned_to: string | null;
   notes: string | null;
   tech_notes: string | null;
