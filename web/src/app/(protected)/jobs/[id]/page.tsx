@@ -11,6 +11,7 @@ import {
   useDeleteJob,
   useCreateShareLink,
   useFloorPlans,
+  useFloorPlanVersions,
   useUpdateJob,
 
   useCreateRoom,
@@ -1541,9 +1542,29 @@ export default function JobDetailPage() {
 
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
-  const { data: floorPlans } = useFloorPlans(jobId);
+  const { data: floorPlans, isLoading: floorPlansLoading } = useFloorPlans(jobId);
+  // Load versions for the first (primary) floor plan so the thumbnail can render
+  // THIS JOB's pinned version — archived jobs correctly show their frozen snapshot
+  // instead of whatever a sibling job most-recently saved.
+  const primaryFloorPlanId = floorPlans?.[0]?.id ?? "";
+  const { data: fpVersions } = useFloorPlanVersions(primaryFloorPlanId);
   const bestFloorPlan = useMemo(() => {
     if (!floorPlans?.length) return null;
+    if (!job) return null;
+
+    // Multi-floor pragmatic rule: the thumbnail shows whichever floor has the
+    // most content (rooms + walls). A single thumbnail can't represent 4
+    // floors at once, and `job.floor_plan_version_id` only pins to ONE
+    // floor's version — not applicable for multi-floor rendering.
+    //
+    // Try the pinned version first (covers archived jobs on a single-floor
+    // property), then fall through to the richest mirror (covers multi-floor
+    // and pre-versioning legacy data).
+    if (job.floor_plan_version_id && fpVersions) {
+      const pinned = fpVersions.find((v) => v.id === job.floor_plan_version_id);
+      if (pinned?.canvas_data) return pinned.canvas_data as CanvasData;
+    }
+
     let best: CanvasData | null = null;
     let bestCount = 0;
     for (const fp of floorPlans) {
@@ -1552,7 +1573,7 @@ export default function JobDetailPage() {
       if (count > bestCount) { best = cd; bestCount = count; }
     }
     return best;
-  }, [floorPlans]);
+  }, [floorPlans, fpVersions, job]);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
@@ -1874,7 +1895,19 @@ export default function JobDetailPage() {
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
                 className="relative bg-surface-container-high rounded-lg min-h-[140px] sm:min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
-                <FloorPlanPreview canvasData={bestFloorPlan} />
+                {jobLoading || floorPlansLoading ? (
+                  /* Loading shimmer while fetches resolve — prevents the
+                     "No floor plan yet" flash on reload when data is still
+                     in flight from the backend. */
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-full h-full bg-gradient-to-r from-surface-container-high via-surface-container to-surface-container-high animate-pulse rounded-lg" />
+                    <span className="relative text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/40">
+                      Loading…
+                    </span>
+                  </div>
+                ) : (
+                  <FloorPlanPreview canvasData={bestFloorPlan} />
+                )}
               </div>
               {/* View Plan link — below preview to avoid overlap */}
               <div
@@ -1933,9 +1966,9 @@ export default function JobDetailPage() {
                         <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1.5 px-1">
                           {floorName}
                         </p>
-                        {/* Header row */}
+                        {/* Header row — room name column has no label (the floor header above labels this block) */}
                         <div className="grid grid-cols-[1fr_60px_60px_50px_28px] gap-1.5 px-1 mb-1">
-                          <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">Room</span>
+                          <span />
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">W ft</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">L ft</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">SF</span>

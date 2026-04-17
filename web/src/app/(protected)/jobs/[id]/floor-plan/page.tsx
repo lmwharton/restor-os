@@ -5,10 +5,11 @@ import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import {
+  useJob,
   useFloorPlans,
   useCreateFloorPlan,
-  useUpdateFloorPlan,
   useDeleteFloorPlan,
+  useFloorPlanVersions,
   useRooms,
   useCreateRoom,
   useUpdateRoom,
@@ -20,6 +21,7 @@ import type { FloorPlan } from "@/lib/types";
 import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
 import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
+import { FloorSelector } from "@/components/sketch/floor-selector";
 import type { WallSegment } from "@/lib/types";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
@@ -263,9 +265,12 @@ export default function FloorPlanPage({
   const router = useRouter();
   const queryClient = useQueryClient();
 
+  const { data: job } = useJob(jobId);
+  // Jobs in these statuses are read-only — backend returns 403 on any save attempt,
+  // and the job's pinned version is frozen against auto-upgrade from sibling jobs.
+  const isJobArchived = job?.status === "complete" || job?.status === "submitted" || job?.status === "collected";
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
-  const updateFloorPlan = useUpdateFloorPlan(jobId);
   const deleteFloorPlan = useDeleteFloorPlan(jobId);
   const canvasRef = useRef<KonvaFloorPlanHandle>(null);
   const { data: jobRooms } = useRooms(jobId);
@@ -416,6 +421,42 @@ export default function FloorPlanPage({
     ?? floorPlans?.[activeFloorIdx]
     ?? null;
 
+  // Load versions for the active floor plan. Hydration rules:
+  //   - Pinned job (job.floor_plan_version_id set) → MUST load that exact version,
+  //     never substitute. Archived jobs rely on this to stay frozen.
+  //   - Unpinned job (freshly created) → load is_current so it inherits the latest
+  //     snapshot from the property's shared floor plan.
+  const { data: versions } = useFloorPlanVersions(activeFloor?.id ?? "");
+  const hydrationCanvasData = (() => {
+    if (!versions) return undefined;
+    // Multi-floor reality: jobs.floor_plan_version_id is a single pointer and
+    // can only track one floor's version at a time. Each floor maintains its
+    // own version history in floor_plan_versions (with unique floor_plan_id
+    // per row). So we:
+    //   1. If the job's pin matches a version ON THIS FLOOR, use it (archived
+    //      freeze for this floor — protects against sibling job forks).
+    //   2. Otherwise, use the latest (is_current) version of THIS floor. This
+    //      is how multi-floor works in practice: the pin can only anchor one
+    //      floor; other floors render from their own is_current.
+    if (job?.floor_plan_version_id) {
+      const pinned = versions.find((v) => v.id === job.floor_plan_version_id);
+      if (pinned) return pinned.canvas_data as unknown as FloorPlanData;
+    }
+    const latest = versions.find((v) => v.is_current) ?? versions[0] ?? null;
+    return (latest?.canvas_data as unknown as FloorPlanData | undefined)
+      ?? (activeFloor?.canvas_data as unknown as FloorPlanData | null | undefined);
+  })();
+
+  // Live readiness flag (not sticky). A sticky gate only helps the initial
+  // mount — floor switches remount the canvas (via key change), and during
+  // that remount `versions` is undefined while React Query fetches the new
+  // floor's version list. Without this live check, the canvas briefly mounts
+  // empty and you see "Draw your first room" flash before hydration arrives.
+  const canvasReady =
+    !!job
+    && floorPlans !== undefined
+    && !(activeFloor?.id && versions === undefined);
+
   // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
   activeFloorRef.current = activeFloor;
@@ -426,12 +467,20 @@ export default function FloorPlanPage({
   const retryCount = useRef(0);
   const MAX_RETRIES = 5;
 
+  // Ref so the save callback can short-circuit without needing to be recreated when status changes.
+  const isJobArchivedRef = useRef(isJobArchived);
+  isJobArchivedRef.current = isJobArchived;
+
   /* ---------------------------------------------------------------- */
   /*  Save — create or update                                          */
   /* ---------------------------------------------------------------- */
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
+      // Archived jobs are read-only — skip server save entirely. Backend would
+      // reject with 403 "Cannot edit floor plan for an archived job" anyway.
+      if (isJobArchivedRef.current) return;
+
       // Always backup to localStorage (survives browser close) — even during pending create
       backupToLocal(canvasData, activeFloorIdRef.current);
 
@@ -463,21 +512,50 @@ export default function FloorPlanPage({
       setSaveStatus("saving");
       try {
         if (currentFloor) {
-          await updateFloorPlan.mutateAsync({
-            floorPlanId: currentFloor.id,
-            canvas_data: canvasData as unknown as Record<string, unknown>,
+          // Save through the versioning state machine. Backend decides: create v1,
+          // update in place, or fork a new version based on job ownership.
+          await apiPost(`/v1/floor-plans/${currentFloor.id}/versions`, {
+            job_id: jobId,
+            canvas_data: canvasData,
           });
+          queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", currentFloor.id] });
+          // Backend updates jobs.floor_plan_version_id on first save (Case 1)
+          // and on forks (Case 3, plus auto-upgrade to sibling active jobs).
+          // Refetch the job so hydration reads the fresh pin, and invalidate all
+          // jobs so sibling tabs pick up auto-upgrades without a hard reload.
+          queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+          queryClient.invalidateQueries({ queryKey: ["jobs"] });
         } else {
-          // No floor plan yet — create one
+          // No floor plan yet — create the floor plan shell first (metadata only),
+          // then save canvas through the versioning endpoint.
           const floorNum = (floorPlans?.length ?? 0) + 1;
           try {
             const created = await apiPost<FloorPlan>(`/v1/jobs/${jobId}/floor-plans`, {
               floor_number: floorNum,
               floor_name: `Floor ${floorNum}`,
-              canvas_data: canvasData,
+            });
+            // Inject into React Query cache instead of invalidating — avoids a refetch
+            // round-trip that briefly returns `floorPlans=undefined`, which would
+            // unmount the canvas and flash "no rooms yet" during first-room save.
+            queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+              if (!old) return [created];
+              return old.some((fp) => fp.id === created.id) ? old : [...old, created];
             });
             setActiveFloorId(created.id);
-            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+            // Re-bind lastCanvasRef to the newly-created floor. It was captured
+            // with floorId=null (no floor existed when the user started drawing),
+            // and without this rebind, switching to another preset would "leak"
+            // this canvas state onto that new floor via the initialData fallback.
+            if (lastCanvasRef.current && lastCanvasRef.current.floorId === null) {
+              lastCanvasRef.current = { floorId: created.id, data: lastCanvasRef.current.data };
+            }
+            await apiPost(`/v1/floor-plans/${created.id}/versions`, {
+              job_id: jobId,
+              canvas_data: canvasData,
+            });
+            queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", created.id] });
+            queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+            queryClient.invalidateQueries({ queryKey: ["jobs"] });
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
@@ -489,10 +567,13 @@ export default function FloorPlanPage({
               if (plans.length > 0) {
                 const fp = plans[0];
                 setActiveFloorId(fp.id);
-                await updateFloorPlan.mutateAsync({
-                  floorPlanId: fp.id,
-                  canvas_data: canvasData as unknown as Record<string, unknown>,
+                await apiPost(`/v1/floor-plans/${fp.id}/versions`, {
+                  job_id: jobId,
+                  canvas_data: canvasData,
                 });
+                queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", fp.id] });
+                queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+                queryClient.invalidateQueries({ queryKey: ["jobs"] });
               }
             } else {
               throw err;
@@ -545,7 +626,7 @@ export default function FloorPlanPage({
         }
       }
     },
-    [floorPlans, jobId, queryClient, jobRooms, updateRoom, updateFloorPlan, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
+    [floorPlans, jobId, queryClient, jobRooms, updateRoom, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
   );
 
   // Stable ref for handleChange — avoids stale closures in setTimeout callbacks
@@ -591,43 +672,75 @@ export default function FloorPlanPage({
   /*  Add Floor                                                        */
   /* ---------------------------------------------------------------- */
 
-  const handleAddFloor = useCallback(() => {
-    // Flush current floor's data — don't null lastCanvasRef yet (async save may still need it)
+  // Create a specific preset floor (Basement/Main/Upper/Attic) on tap.
+  // Unlike handleAddFloor's auto-increment, this uses a fixed floor_number so
+  // preset slots always land on the same row in the selector.
+  const handleCreatePresetFloor = useCallback((floorNumber: number, floorName: string) => {
     canvasRef.current?.flush();
-
-    const maxNum = floorPlans?.reduce((max, fp) => Math.max(max, fp.floor_number ?? 0), 0) ?? 0;
-    const nextNumber = maxNum + 1;
     createFloorPlan.mutate(
-      {
-        floor_number: nextNumber,
-        floor_name: `Floor ${nextNumber}`,
-      },
+      { floor_number: floorNumber, floor_name: floorName },
       {
         onSuccess: (data) => {
-          lastCanvasRef.current = null; // safe to clear now — previous floor's save resolved
-          queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => [
-            ...(old ?? []),
-            data,
-          ]);
+          // If the user drew BEFORE any floor existed (lastCanvasRef.floorId === null),
+          // carry their drawings into the newly-created floor instead of clearing.
+          // Without this, the auto-Main flow wipes the user's rooms the moment the
+          // POST /floor-plans call resolves — because the canvas remounts with
+          // empty hydration data and no lastCanvasRef to fall back to.
+          if (lastCanvasRef.current && lastCanvasRef.current.floorId === null) {
+            const inFlightData = lastCanvasRef.current.data;
+            lastCanvasRef.current = { floorId: data.id, data: inFlightData };
+            // Also persist the pre-floor drawings to the new floor's v1 so reload
+            // doesn't lose them if the 2s autosave debounce hasn't fired yet.
+            // Drive the visible save status too — the canvas remount on activeFloorId
+            // change cancels the pending debounce timer, so without this the UI
+            // would never flip to "Saving…" / "Saved ✓" despite the data being persisted.
+            setSaveStatus("saving");
+            apiPost(`/v1/floor-plans/${data.id}/versions`, {
+              job_id: jobId,
+              canvas_data: inFlightData,
+            })
+              .then(() => {
+                queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", data.id] });
+                queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+                setSaveStatus("saved");
+                if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+                saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
+              })
+              .catch((err) => {
+                console.warn("Failed to persist pre-floor drawings to new floor", err);
+                setSaveStatus("error");
+              });
+          } else {
+            lastCanvasRef.current = null;
+          }
+          queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+            const next = [...(old ?? [])];
+            if (!next.some((fp) => fp.id === data.id)) next.push(data);
+            return next;
+          });
           setActiveFloorId(data.id);
-          setActiveFloorIdx((floorPlans?.length ?? 0));
         },
       }
     );
-  }, [floorPlans, createFloorPlan, queryClient, jobId]);
+  }, [createFloorPlan, queryClient, jobId]);
 
-  // Floor rename state
-  const [editingFloorId, setEditingFloorId] = useState<string | null>(null);
-  const [editingFloorName, setEditingFloorName] = useState("");
-  const handleRenameFloor = useCallback((floorPlanId: string, newName: string) => {
-    const trimmed = newName.trim();
-    if (!trimmed) { setEditingFloorId(null); return; }
-    updateFloorPlan.mutate({ floorPlanId, floor_name: trimmed } as { floorPlanId: string; floor_name: string });
-    setEditingFloorId(null);
-  }, [updateFloorPlan]);
-
-  // Double-tap detection for mobile floor rename
-  const lastTapRef = useRef<{ id: string; time: number } | null>(null);
+  // Auto-create Main Floor on first page load if the property has no floors yet.
+  // Without this, a fresh job opens with 4 dashed pills and no active floor —
+  // drawing a room before tapping a preset has nowhere to save and gets lost
+  // on refresh. Main is the safe default (most buildings have a main floor);
+  // the user can still tap Base/Upper/Attic to create/switch to those, and
+  // can delete Main if they really don't need it.
+  const mainAutoCreatedRef = useRef(false);
+  useEffect(() => {
+    if (mainAutoCreatedRef.current) return;
+    if (!floorPlans) return;                // still loading
+    if (floorPlans.length > 0) return;      // property already has at least one floor
+    if (createFloorPlan.isPending) return;  // creation in flight
+    if (!job) return;                        // wait for job data
+    if (isJobArchived) return;               // archived jobs are read-only
+    mainAutoCreatedRef.current = true;
+    handleCreatePresetFloor(1, "Main Floor");
+  }, [floorPlans, createFloorPlan.isPending, job, isJobArchived, handleCreatePresetFloor]);
 
   const [deleteFloorModalId, setDeleteFloorModalId] = useState<string | null>(null);
   const executeDeleteFloor = useCallback((floorPlanId: string) => {
@@ -675,13 +788,14 @@ export default function FloorPlanPage({
         <button
           type="button"
           onClick={() => { canvasRef.current?.flush(); router.push(`/jobs/${jobId}`); }}
+          aria-label="Back to job"
           className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer shrink-0"
         >
-          <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
+          <svg width={20} height={20} viewBox="0 0 24 24" fill="none" className="sm:w-[18px] sm:h-[18px]">
             <path d="M15 18l-6-6 6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
           </svg>
+          {/* Text label desktop-only — mobile relies on the arrow alone to save toolbar space */}
           <span className="hidden sm:inline">Back to Job</span>
-          <span className="sm:hidden">Back</span>
         </button>
 
         {/* Save button — always orange */}
@@ -700,99 +814,91 @@ export default function FloorPlanPage({
           {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved ✓" : saveStatus === "offline" ? "Offline" : saveStatus === "error" ? "Retry" : "Save"}
         </button>
 
-        {/* Floor tabs — horizontally scrollable */}
-        <div className="flex items-center gap-1.5 ml-auto overflow-x-auto scrollbar-hide min-w-0 pt-1">
-          {floorPlans?.map((fp, idx) => {
-            const isActive = fp.id === activeFloorId || (idx === activeFloorIdx && !activeFloorId);
-            const roomCount = (fp.canvas_data as FloorPlanData | null)?.rooms?.length ?? 0;
-            const canDelete = (floorPlans?.length ?? 0) > 1;
-            return (
-              <div key={fp.id} className="relative group shrink-0">
-                {editingFloorId === fp.id ? (
-                  <input
-                    type="text"
-                    value={editingFloorName}
-                    onChange={(e) => setEditingFloorName(e.target.value)}
-                    onBlur={() => handleRenameFloor(fp.id, editingFloorName)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter") handleRenameFloor(fp.id, editingFloorName);
-                      if (e.key === "Escape") setEditingFloorId(null);
-                    }}
-                    autoFocus
-                    className="px-2 py-1 sm:px-3 sm:py-1.5 rounded-lg text-[11px] sm:text-[13px] font-semibold font-[family-name:var(--font-geist-mono)] bg-white border-2 border-brand-accent text-[#1a1a1a] outline-none w-[80px] sm:w-[100px]"
-                  />
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      // Double-tap detection for mobile
-                      const now = Date.now();
-                      if (lastTapRef.current && lastTapRef.current.id === fp.id && now - lastTapRef.current.time < 400) {
-                        setEditingFloorId(fp.id);
-                        setEditingFloorName(fp.floor_name);
-                        lastTapRef.current = null;
-                        return;
-                      }
-                      lastTapRef.current = { id: fp.id, time: now };
-                      canvasRef.current?.flush();
-                      setActiveFloorIdx(idx);
-                      setActiveFloorId(fp.id);
-                    }}
-                    onDoubleClick={() => {
-                      setEditingFloorId(fp.id);
-                      setEditingFloorName(fp.floor_name);
-                    }}
-                    className={`px-3 py-1.5 sm:px-4 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold transition-all duration-150 cursor-pointer font-[family-name:var(--font-geist-mono)] whitespace-nowrap ${
-                      isActive
-                        ? "bg-[#1a1a1a] text-white shadow-sm"
-                        : "bg-[#eae6e1] text-[#6b6560] hover:bg-[#ddd8d2]"
-                    }`}
-                  >
-                    <span>{fp.floor_name}</span>
-                    {roomCount > 0 && (
-                    <span className={`ml-1.5 text-[10px] font-bold ${isActive ? "text-white/60" : "text-[#6b6560]/60"}`}>
-                      {roomCount} {roomCount === 1 ? "rm" : "rms"}
-                    </span>
-                  )}
-                  </button>
-                )}
-                {canDelete && isActive && (
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setDeleteFloorModalId(fp.id); }}
-                    className="absolute -top-1 -right-1 w-4 h-4 sm:w-5 sm:h-5 rounded-full bg-red-500 text-white text-[8px] sm:text-[10px] font-bold flex items-center justify-center md:opacity-0 md:group-hover:opacity-100 transition-opacity cursor-pointer hover:bg-red-600 shadow-sm"
-                    aria-label={`Delete ${fp.floor_name}`}
-                  >
-                    x
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <button
-            type="button"
-            onClick={handleAddFloor}
-            disabled={createFloorPlan.isPending}
-            className="px-3 py-1.5 sm:px-3.5 sm:py-2 rounded-lg text-[12px] sm:text-[13px] font-semibold text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/15 transition-colors cursor-pointer font-[family-name:var(--font-geist-mono)] disabled:opacity-40 whitespace-nowrap shrink-0"
-          >
-            + Floor
-          </button>
+        {/* Floor selector — 4 preset slots (Basement/Main/Upper/Attic) with version chip on active */}
+        <div className="ml-auto min-w-0">
+          <FloorSelector
+            floorPlans={floorPlans}
+            activeFloorId={activeFloorId}
+            onSelectFloor={(id) => {
+              canvasRef.current?.flush();
+              // Clear in-memory canvas state so switching floors doesn't carry
+              // one floor's drawings into another via the initialData fallback.
+              lastCanvasRef.current = null;
+              setActiveFloorId(id);
+            }}
+            onCreateFloor={handleCreatePresetFloor}
+            currentVersion={
+              job?.floor_plan_version_id
+                ? versions?.find((v) => v.id === job.floor_plan_version_id)?.version_number ?? null
+                : null
+            }
+            disabled={isJobArchived}
+            // NOTE: intentionally not forwarding createFloorPlan.isPending here.
+            // Disabling empty presets during an in-flight create blocks the user
+            // for ~500ms-1s and feels "stuck" — and the DB unique constraint on
+            // (property_id, floor_number) already prevents duplicate creations
+            // at the backend level, so defensive UI disabling isn't needed.
+          />
         </div>
       </div>
 
+      {/* Archived-job banner — shown when job.status ∈ {complete, submitted, collected}.
+          The floor plan is frozen to its pinned version; edits are blocked. */}
+      {isJobArchived && (
+        <div className="px-4 py-2 bg-amber-50 border-y border-amber-200 text-[12px] text-amber-900 flex items-center gap-2">
+          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+            <rect x="3" y="11" width="18" height="11" rx="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          <span>
+            <span className="font-semibold">Read-only.</span> This job is {job?.status} — its floor plan is locked to the version pinned at that time.
+          </span>
+        </div>
+      )}
+
       {/* Canvas — takes remaining viewport height minus header + footer */}
-      <div className="flex-1 min-h-[400px]">
-        <KonvaFloorPlan
+      <div className="flex-1 min-h-[400px] relative">
+        {!canvasReady && (
+          /* Visible loader while job + versions are still in flight — prevents
+             the "Draw your first room" empty-state flash on reload. */
+          <div className="absolute inset-0 flex items-center justify-center bg-surface-container-low">
+            <div className="flex flex-col items-center gap-3 text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)] text-[11px] uppercase tracking-wider">
+              <div className="w-7 h-7 rounded-full border-2 border-brand-accent/20 border-t-brand-accent animate-spin" />
+              <span>Loading floor plan…</span>
+            </div>
+          </div>
+        )}
+        {canvasReady && <KonvaFloorPlan
           ref={canvasRef}
-          key={`${activeFloor?.id ?? "new"}-${backupChecked ? "ready" : "wait"}`}
-          initialData={pendingBackup ?? activeFloor?.canvas_data as FloorPlanData | null | undefined}
+          // Key only tracks floor id. Previously also included backupChecked,
+          // versionsLoading, and job presence — each gate flip remounted the
+          // canvas and caused a ~1s stutter during the first-room save flow.
+          // Gating readiness via `canvasReady` (sticky state) means mount
+          // happens ONCE when data is ready, and the only subsequent remount is
+          // the unavoidable "new"→real-id transition on first save.
+          key={activeFloor?.id ?? "new"}
+          initialData={
+            pendingBackup
+              // Carry user's in-memory canvas across the remount that happens when
+              // the first save transitions the canvas key from "new" → real id.
+              // Strictly scoped to THIS floor — no null-floor fallback, which used
+              // to let pre-floor state leak across floor switches.
+              ?? (
+                lastCanvasRef.current
+                && lastCanvasRef.current.floorId === activeFloorId
+                  ? lastCanvasRef.current.data
+                  : undefined
+              )
+              ?? hydrationCanvasData
+          }
           onChange={(data: FloorPlanData) => { lastCanvasRef.current = { floorId: activeFloorId, data }; handleChange(data); }}
+          readOnly={isJobArchived}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
           onCreateRoom={handleCreateRoom}
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
           onEditRoom={handleDesktopEditRoom}
-        />
+        />}
       </div>
 
 
