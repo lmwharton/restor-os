@@ -13,6 +13,7 @@ interface WallContextMenuProps {
   onClose: () => void;
   wallType?: "interior" | "exterior";
   affected?: boolean;
+  hasOpening?: boolean;
 }
 
 export function WallContextMenu({
@@ -25,6 +26,7 @@ export function WallContextMenu({
   onClose,
   wallType = "interior",
   affected = false,
+  hasOpening = false,
 }: WallContextMenuProps) {
   return (
     <div
@@ -64,16 +66,18 @@ export function WallContextMenu({
           Add Window
         </button>
 
-        <button
-          type="button"
-          onClick={() => { onAddOpening(); onClose(); }}
-          className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12px] font-medium text-on-surface hover:bg-surface-container transition-colors cursor-pointer text-left"
-        >
-          <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeDasharray="4 3">
-            <line x1="3" y1="12" x2="21" y2="12" />
-          </svg>
-          Add Opening
-        </button>
+        {!hasOpening && (
+          <button
+            type="button"
+            onClick={() => { onAddOpening(); onClose(); }}
+            className="w-full flex items-center gap-2.5 px-3 py-2.5 text-[12px] font-medium text-on-surface hover:bg-surface-container transition-colors cursor-pointer text-left"
+          >
+            <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeDasharray="4 3">
+              <line x1="3" y1="12" x2="21" y2="12" />
+            </svg>
+            Add Opening
+          </button>
+        )}
 
         <div className="h-px bg-outline-variant/20 mx-2" />
 

@@ -836,17 +836,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               position={{ x: clampedX, y: clampedY }}
               wallType={wall.wallType ?? "interior"}
               affected={wall.affected ?? false}
+              hasOpening={state.windows.some(w => w.wallId === wall.id && w.id.startsWith("opening"))}
               onAddDoor={() => {
                 const newDoor = { id: uid("door"), wallId: wall.id, position: 0.5, width: 3, swing: 0 as const };
                 push({ ...state, doors: [...state.doors, newDoor] });
+                setSelectedId(newDoor.id);
               }}
               onAddWindow={() => {
                 const newWindow = { id: uid("win"), wallId: wall.id, position: 0.5, width: 3 };
                 push({ ...state, windows: [...state.windows, newWindow] });
+                setSelectedId(newWindow.id);
               }}
               onAddOpening={() => {
                 const newWindow = { id: uid("opening"), wallId: wall.id, position: 0.5, width: 4 };
                 push({ ...state, windows: [...state.windows, newWindow] });
+                setSelectedId(newWindow.id);
               }}
               onToggleType={() => {
                 const newType = wall.wallType === "exterior" ? "interior" : "exterior";
@@ -1199,16 +1203,6 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                       {/* Missing wall — white gap with dashed red outline */}
                       <Line points={[-winPx / 2, 0, winPx / 2, 0]} stroke="#ffffff" strokeWidth={8} />
                       <Line points={[-winPx / 2, 0, winPx / 2, 0]} stroke="#ba1a1a" strokeWidth={2} dash={[6, 4]} />
-                      <Text
-                        x={-winPx / 2}
-                        y={8}
-                        text="Opening"
-                        fontSize={9}
-                        fontFamily="var(--font-geist-mono), monospace"
-                        fill="#ba1a1a"
-                        width={winPx}
-                        align="center"
-                      />
                     </>
                   ) : (
                     <>
