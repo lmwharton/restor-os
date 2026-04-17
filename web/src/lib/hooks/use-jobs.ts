@@ -5,7 +5,7 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
-  FloorPlan, FloorPlanVersion, PaginatedResponse, ReconPhase,
+  FloorPlan, PaginatedResponse, ReconPhase,
   WallSegment, WallOpening,
 } from "../types";
 // Mock data fallback — remove when real backend is connected
@@ -41,11 +41,11 @@ export function useJob(jobId: string) {
       return apiGet<JobDetail>(`/v1/jobs/${jobId}`);
     },
     enabled: !!jobId,
-    // The job's floor_plan_version_id changes via backend side-effects (saves on
-    // this job, forks from sibling jobs, auto-upgrades). Components that render
-    // floor-plan thumbnails or hydration depend on this being fresh. Override
-    // the global 1-minute staleTime so navigating between job pages always
-    // re-reads the current pin instead of trusting a potentially-stale snapshot.
+    // The job's floor_plan_id changes when this job saves (forks or pins to
+    // a new version). Components that render floor-plan thumbnails or hydrate
+    // the canvas depend on this being fresh. Override the global 1-minute
+    // staleTime so navigating between job pages always re-reads the current
+    // pin instead of trusting a potentially-stale snapshot.
     staleTime: 0,
     refetchOnMount: "always",
   });
@@ -432,13 +432,16 @@ export function useCleanupSketch(floorPlanId: string) {
   });
 }
 
-// ─── Floor Plan Version Queries + Mutations ─────────────────────────
+// ─── Floor Plan History + Canvas Save ────────────────────────────────
+// After the container/versions merge (migration e1a7c9b30201), each floor_plan
+// row IS a versioned snapshot. `useFloorPlanHistory` fetches the history
+// timeline for a given floor; `useSaveCanvas` posts a new snapshot.
 
-export function useFloorPlanVersions(floorPlanId: string) {
-  return useQuery<FloorPlanVersion[]>({
-    queryKey: ["floor-plan-versions", floorPlanId],
+export function useFloorPlanHistory(floorPlanId: string) {
+  return useQuery<FloorPlan[]>({
+    queryKey: ["floor-plan-history", floorPlanId],
     queryFn: async () => {
-      const data = await apiGet<FloorPlanVersion[] | PaginatedResponse<FloorPlanVersion>>(
+      const data = await apiGet<FloorPlan[] | PaginatedResponse<FloorPlan>>(
         `/v1/floor-plans/${floorPlanId}/versions`
       );
       if (Array.isArray(data)) return data;
@@ -452,9 +455,9 @@ export function useSaveCanvas(floorPlanId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { job_id: string; canvas_data: Record<string, unknown>; change_summary?: string }) =>
-      apiPost<FloorPlanVersion>(`/v1/floor-plans/${floorPlanId}/versions`, data),
+      apiPost<FloorPlan>(`/v1/floor-plans/${floorPlanId}/versions`, data),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["floor-plan-versions", floorPlanId] });
+      qc.invalidateQueries({ queryKey: ["floor-plan-history", floorPlanId] });
     },
   });
 }

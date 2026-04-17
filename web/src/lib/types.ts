@@ -96,7 +96,7 @@ export interface Job {
   loss_date: string | null;
   home_year_built: number | null;
   status: JobStatus;
-  floor_plan_version_id: string | null;
+  floor_plan_id: string | null;
   assigned_to: string | null;
   notes: string | null;
   tech_notes: string | null;
@@ -143,32 +143,26 @@ export interface JobCreate {
   tech_notes?: string;
 }
 
-// ─── Floor Plans (property-scoped, Spec 01H) ─────────────────────────
+// ─── Floor Plans (property-scoped, unified table, Spec 01H) ──────────
+// Post-merge: one table. Each row IS a versioned snapshot of a floor at a
+// property. No separate container + versions — they're the same thing now.
 export interface FloorPlan {
   id: string;
   property_id: string;
   company_id: string;
   floor_number: number;
   floor_name: string;
+  version_number: number;
   canvas_data: Record<string, unknown> | null;
+  is_current: boolean;
+  created_by_job_id: string | null;
+  created_by_user_id: string | null;
+  change_summary: string | null;
   thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface FloorPlanVersion {
-  id: string;
-  floor_plan_id: string;
-  company_id: string;
-  version_number: number;
-  canvas_data: Record<string, unknown>;
-  created_by_job_id: string | null;
-  created_by_user_id: string | null;
-  change_summary: string | null;
-  is_current: boolean;
-  created_at: string;
-  updated_at: string;
-}
 
 // ─── Rooms (extended, Spec 01H) ──────────────────────────────────────
 export type RoomType =
