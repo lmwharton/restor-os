@@ -9,7 +9,7 @@ import {
   useFloorPlans,
   useCreateFloorPlan,
   useDeleteFloorPlan,
-  useFloorPlanVersions,
+  useFloorPlanHistory,
   useRooms,
   useCreateRoom,
   useUpdateRoom,
@@ -79,6 +79,7 @@ async function syncWallsToBackend(
           y2: w.y2,
           wall_type: w.wallType ?? "interior",
           affected: w.affected ?? false,
+          shared: w.shared ?? false,
           sort_order: i,
         });
         canvasToBackendWallId.set(w.id, created.id);
@@ -150,14 +151,18 @@ function MobileRoomPanel({
   photos,
   onClose,
   onEditRoom,
+  onEditShape,
   wallSf,
+  isPolygon,
 }: {
   room: { id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string };
   jobId: string;
   photos: import("@/lib/types").Photo[];
   onClose: () => void;
   onEditRoom?: () => void;
+  onEditShape?: () => void;
   wallSf?: number | null;
+  isPolygon?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
@@ -231,15 +236,31 @@ function MobileRoomPanel({
                 )}
               </span>
             </div>
-            {onEditRoom && (
-              <button
-                type="button"
-                onClick={onEditRoom}
-                className="h-8 px-3 rounded-full border border-outline-variant text-[11px] font-semibold text-on-surface-variant hover:bg-surface-container-high active:scale-[0.98] cursor-pointer sm:h-7 sm:rounded-lg"
-              >
-                Edit
-              </button>
-            )}
+            <div className="flex items-center gap-1.5">
+              {onEditShape && (
+                /* "Edit shape" action: dismisses this panel so the user has
+                   unobstructed access to vertex drag handles on the canvas.
+                   For rectangles, tapping this also converts the room to a
+                   4-point polygon so its corners become draggable vertices
+                   (enables L-shape and irregular shape editing). */
+                <button
+                  type="button"
+                  onClick={onEditShape}
+                  className="h-8 px-3 rounded-full border border-outline-variant text-[11px] font-semibold text-on-surface-variant hover:bg-surface-container-high active:scale-[0.98] cursor-pointer sm:h-7 sm:rounded-lg"
+                >
+                  {isPolygon ? "Edit shape" : "Reshape"}
+                </button>
+              )}
+              {onEditRoom && (
+                <button
+                  type="button"
+                  onClick={onEditRoom}
+                  className="h-8 px-3 rounded-full border border-outline-variant text-[11px] font-semibold text-on-surface-variant hover:bg-surface-container-high active:scale-[0.98] cursor-pointer sm:h-7 sm:rounded-lg"
+                >
+                  Edit
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Photos section */}
@@ -276,7 +297,18 @@ export default function FloorPlanPage({
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
-  const handleCreateRoom = useCallback((name: string, dimensions?: { width: number; height: number }) => {
+  const handleCreateRoom = useCallback((
+    name: string,
+    dimensions?: { width: number; height: number },
+    metadata?: {
+      roomType?: string | null;
+      ceilingHeight?: number;
+      ceilingType?: string;
+      floorLevel?: string | null;
+      materialFlags?: string[];
+      affected?: boolean;
+    },
+  ) => {
     // Check if room already exists in Property Layout — update dimensions if so
     const existing = jobRooms?.find((r) => r.room_name === name);
     if (existing) {
@@ -289,11 +321,20 @@ export default function FloorPlanPage({
       room_name: name,
       length_ft: dimensions?.height ?? null,
       width_ft: dimensions?.width ?? null,
+      // Persist the form's metadata so floor_level / room_type / ceiling / etc.
+      // actually land in job_rooms — picking "Upper" in the form should mean
+      // the room belongs to the Upper floor, not whatever canvas it was drawn on.
+      ...(metadata?.roomType !== undefined && { room_type: metadata.roomType }),
+      ...(metadata?.ceilingHeight !== undefined && { height_ft: metadata.ceilingHeight }),
+      ...(metadata?.ceilingType !== undefined && { ceiling_type: metadata.ceilingType }),
+      ...(metadata?.floorLevel !== undefined && { floor_level: metadata.floorLevel }),
+      ...(metadata?.materialFlags !== undefined && { material_flags: metadata.materialFlags }),
+      ...(metadata?.affected !== undefined && { affected: metadata.affected }),
     } as Record<string, unknown>);
   }, [jobRooms, createRoom, updateRoom]);
 
   const { data: allPhotos = [] } = usePhotos(jobId);
-  const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string } | null>(null);
+  const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string; isPolygon?: boolean } | null>(null);
   const [editingRoomData, setEditingRoomData] = useState<RoomConfirmationData | null>(null);
 
   const handleEditRoom = useCallback(() => {
@@ -330,6 +371,12 @@ export default function FloorPlanPage({
       affected: data.affected,
     } as Record<string, unknown> & { roomId: string });
     setEditingRoomData(null);
+    // Also deselect the room on the canvas + close the mobile detail panel.
+    // Otherwise the MobileRoomPanel (with "Add photos" section) pops back up
+    // right after the user hits Update, which feels unfinished.
+    setMobileSelectedRoom(null);
+    selectedRoomRef.current = null;
+    canvasRef.current?.clearSelection();
   }, [updateRoom]);
 
   const selectedRoomRef = useRef<{ id: string; name: string; propertyRoomId: string } | null>(null);
@@ -354,14 +401,14 @@ export default function FloorPlanPage({
     });
   }, [jobRooms]);
 
-  const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string } | null) => {
+  const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => {
     if (!info) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
     const propertyRoom = info.propertyRoomId
       ? jobRooms?.find(r => r.id === info.propertyRoomId)
       : jobRooms?.find(r => r.room_name === info.name);
     if (!propertyRoom) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
     selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: propertyRoom.id };
-    setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id });
+    setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id, isPolygon: info.isPolygon });
   }, [jobRooms]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
@@ -422,40 +469,68 @@ export default function FloorPlanPage({
     ?? null;
 
   // Load versions for the active floor plan. Hydration rules:
-  //   - Pinned job (job.floor_plan_version_id set) → MUST load that exact version,
+  //   - Pinned job (job.floor_plan_id set) → MUST load that exact version,
   //     never substitute. Archived jobs rely on this to stay frozen.
   //   - Unpinned job (freshly created) → load is_current so it inherits the latest
   //     snapshot from the property's shared floor plan.
-  const { data: versions } = useFloorPlanVersions(activeFloor?.id ?? "");
+  const { data: versions } = useFloorPlanHistory(activeFloor?.id ?? "");
   const hydrationCanvasData = (() => {
     if (!versions) return undefined;
-    // Multi-floor reality: jobs.floor_plan_version_id is a single pointer and
-    // can only track one floor's version at a time. Each floor maintains its
-    // own version history in floor_plan_versions (with unique floor_plan_id
-    // per row). So we:
-    //   1. If the job's pin matches a version ON THIS FLOOR, use it (archived
-    //      freeze for this floor — protects against sibling job forks).
-    //   2. Otherwise, use the latest (is_current) version of THIS floor. This
-    //      is how multi-floor works in practice: the pin can only anchor one
-    //      floor; other floors render from their own is_current.
-    if (job?.floor_plan_version_id) {
-      const pinned = versions.find((v) => v.id === job.floor_plan_version_id);
-      if (pinned) return pinned.canvas_data as unknown as FloorPlanData;
+    // Linear history rule:
+    //   - ARCHIVED jobs (submitted/complete/collected) render their PINNED
+    //     version — frozen audit view, shows exactly what was submitted.
+    //   - ACTIVE jobs render the LATEST (is_current) version — so edits
+    //     always go on top of the building's current state. When mitigation
+    //     un-archives and saves, v3 inherits from v2 (recon's additions),
+    //     not v1 (mitigation's original). DB still preserves every snapshot
+    //     (immutability guarantee) — this rule only governs what the CANVAS
+    //     shows to the user.
+    if (isJobArchived) {
+      // Strict mode for archived jobs: never fall through to is_current.
+      // Falling through would leak post-archival edits — e.g., a recon job's
+      // Base addition would appear when viewing mitigation's archived Base
+      // view. Show only versions this job is pinned to or that it created.
+      if (job?.floor_plan_id) {
+        const pinned = versions.find((v) => v.id === job.floor_plan_id);
+        if (pinned) return pinned.canvas_data as unknown as FloorPlanData;
+      }
+      const ownVersion = versions.find((v) => v.created_by_job_id === jobId);
+      if (ownVersion) return ownVersion.canvas_data as unknown as FloorPlanData;
+      // This archived job never touched this floor — render empty (don't show
+      // another job's content as if it were part of this job's audit trail).
+      return undefined;
     }
     const latest = versions.find((v) => v.is_current) ?? versions[0] ?? null;
     return (latest?.canvas_data as unknown as FloorPlanData | undefined)
       ?? (activeFloor?.canvas_data as unknown as FloorPlanData | null | undefined);
   })();
 
-  // Live readiness flag (not sticky). A sticky gate only helps the initial
-  // mount — floor switches remount the canvas (via key change), and during
-  // that remount `versions` is undefined while React Query fetches the new
-  // floor's version list. Without this live check, the canvas briefly mounts
-  // empty and you see "Draw your first room" flash before hydration arrives.
-  const canvasReady =
+  // Sticky-per-floor readiness flag. Live gate prevents the initial "Draw
+  // your first room" flash while data loads. But after the canvas mounts, we
+  // must NOT let it unmount mid-edit — React Query background refetches (e.g.
+  // after createRoom.mutate invalidates jobs) can momentarily flip live gates
+  // false, which would unmount the canvas and kill the in-flight 2s debounce
+  // timer that was about to save the user's drawing. So once a given floor is
+  // ready, stay ready until activeFloorId changes (real floor switch).
+  //
+  // Active jobs additionally wait for at least one floor to exist. On a fresh
+  // property, floorPlans loads as [] and auto-Main fires asynchronously.
+  const liveCanvasReady =
     !!job
     && floorPlans !== undefined
+    && (isJobArchived || floorPlans.length > 0)
     && !(activeFloor?.id && versions === undefined);
+  const stickyReadyRef = useRef<{ floorId: string | null; ready: boolean }>({ floorId: null, ready: false });
+  const currentFloorIdForReady = activeFloor?.id ?? null;
+  if (stickyReadyRef.current.floorId !== currentFloorIdForReady) {
+    // Floor switched — reset stickiness so the new floor goes through the
+    // live gate before mounting (waits for that floor's versions to load).
+    stickyReadyRef.current = { floorId: currentFloorIdForReady, ready: false };
+  }
+  if (liveCanvasReady) {
+    stickyReadyRef.current.ready = true;
+  }
+  const canvasReady = stickyReadyRef.current.ready;
 
   // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
@@ -477,15 +552,28 @@ export default function FloorPlanPage({
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
+      // eslint-disable-next-line no-console
+      console.log("[autosave] handleChange called", { isPending: createFloorPlan.isPending, archived: isJobArchivedRef.current, activeFloorId: activeFloorIdRef.current });
       // Archived jobs are read-only — skip server save entirely. Backend would
       // reject with 403 "Cannot edit floor plan for an archived job" anyway.
-      if (isJobArchivedRef.current) return;
+      if (isJobArchivedRef.current) {
+        // eslint-disable-next-line no-console
+        console.log("[autosave] handleChange EXIT: archived");
+        return;
+      }
 
       // Always backup to localStorage (survives browser close) — even during pending create
       backupToLocal(canvasData, activeFloorIdRef.current);
 
-      // Skip server save while a floor creation is in-flight to avoid duplicates
-      if (createFloorPlan.isPending) {
+      // Defer ONLY when a floor creation is in flight AND we have no active
+      // floor to save against. The original guard deferred on isPending alone,
+      // which was over-restrictive: React 19 / React Query batching can leave
+      // isPending=true for one extra render even after the new floor's row is
+      // already in the query cache and activeFloorId is set. If we have an
+      // active floor, we know exactly what to POST to — no duplicate risk.
+      if (createFloorPlan.isPending && !activeFloorIdRef.current) {
+        // eslint-disable-next-line no-console
+        console.log("[autosave] handleChange DEFER: createFloorPlan.isPending AND no active floor");
         lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
         return;
       }
@@ -509,7 +597,13 @@ export default function FloorPlanPage({
       // Try ref first, then fall back to looking up by ID in query cache
       const currentFloor = activeFloorRef.current
         ?? (activeFloorIdRef.current ? queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId])?.find((fp) => fp.id === activeFloorIdRef.current) : null);
+      // eslint-disable-next-line no-console
+      console.log("[autosave] handleChange POSTING", { floorId: currentFloor?.id, hasCurrentFloor: !!currentFloor });
       setSaveStatus("saving");
+      // Track when "saving" started so the indicator stays visible long enough
+      // for the human eye even if the POST returns in <100ms (otherwise React
+      // batches saving→saved into a single render and you only see "Saved ✓").
+      const savingStartTime = Date.now();
       try {
         if (currentFloor) {
           // Save through the versioning state machine. Backend decides: create v1,
@@ -518,11 +612,11 @@ export default function FloorPlanPage({
             job_id: jobId,
             canvas_data: canvasData,
           });
-          queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", currentFloor.id] });
-          // Backend updates jobs.floor_plan_version_id on first save (Case 1)
-          // and on forks (Case 3, plus auto-upgrade to sibling active jobs).
-          // Refetch the job so hydration reads the fresh pin, and invalidate all
-          // jobs so sibling tabs pick up auto-upgrades without a hard reload.
+          queryClient.invalidateQueries({ queryKey: ["floor-plan-history", currentFloor.id] });
+          // Backend may update jobs.floor_plan_id on first save (Case 1) or
+          // fork (Case 3). Sibling jobs keep their own pins — no auto-upgrade.
+          // Refetch this job so hydration reads the fresh pin; invalidate jobs
+          // broadly so other open tabs pick up the new version in their lists.
           queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
         } else {
@@ -553,7 +647,7 @@ export default function FloorPlanPage({
               job_id: jobId,
               canvas_data: canvasData,
             });
-            queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", created.id] });
+            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
             queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
             queryClient.invalidateQueries({ queryKey: ["jobs"] });
           } catch (err: unknown) {
@@ -571,7 +665,7 @@ export default function FloorPlanPage({
                   job_id: jobId,
                   canvas_data: canvasData,
                 });
-                queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", fp.id] });
+                queryClient.invalidateQueries({ queryKey: ["floor-plan-history", fp.id] });
                 queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
                 queryClient.invalidateQueries({ queryKey: ["jobs"] });
               }
@@ -608,6 +702,15 @@ export default function FloorPlanPage({
         clearLocalBackup();
         retryCount.current = 0;
         if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
+        // Hold "Saving…" for at least 400ms so the user actually sees it.
+        // Without this floor, fast POSTs (<100ms) batch saving→saved into one
+        // render and the indicator looks like it never appeared.
+        const elapsed = Date.now() - savingStartTime;
+        if (elapsed < 400) {
+          await new Promise((resolve) => setTimeout(resolve, 400 - elapsed));
+        }
+        // eslint-disable-next-line no-console
+        console.log("[autosave] save SUCCEEDED, flipping to Saved ✓");
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
@@ -676,18 +779,25 @@ export default function FloorPlanPage({
   // Unlike handleAddFloor's auto-increment, this uses a fixed floor_number so
   // preset slots always land on the same row in the selector.
   const handleCreatePresetFloor = useCallback((floorNumber: number, floorName: string) => {
+    // Snapshot pin state BEFORE the create. Only when there's no active floor
+    // (auto-Main / fresh property) is it correct to carry the canvas's live
+    // state into the new floor. For "user clicked Base while editing Main",
+    // canvas state belongs to the OLD floor — flush() already persisted it
+    // there, and reading it again would leak it into the new floor's row.
+    const wasUnpinned = activeFloorIdRef.current === null;
     canvasRef.current?.flush();
     createFloorPlan.mutate(
       { floor_number: floorNumber, floor_name: floorName },
       {
         onSuccess: (data) => {
-          // If the user drew BEFORE any floor existed (lastCanvasRef.floorId === null),
-          // carry their drawings into the newly-created floor instead of clearing.
-          // Without this, the auto-Main flow wipes the user's rooms the moment the
-          // POST /floor-plans call resolves — because the canvas remounts with
-          // empty hydration data and no lastCanvasRef to fall back to.
-          if (lastCanvasRef.current && lastCanvasRef.current.floorId === null) {
-            const inFlightData = lastCanvasRef.current.data;
+          // Only inspect live canvas state in the auto-Main case; for
+          // subsequent preset creates it would be content from another floor.
+          const liveState = wasUnpinned ? canvasRef.current?.getCurrentState() : null;
+          const hasUserDrawings = !!liveState && (
+            liveState.rooms.length > 0 || liveState.walls.length > 0
+          );
+          if (hasUserDrawings || (lastCanvasRef.current && lastCanvasRef.current.floorId === null)) {
+            const inFlightData = liveState ?? lastCanvasRef.current!.data;
             lastCanvasRef.current = { floorId: data.id, data: inFlightData };
             // Also persist the pre-floor drawings to the new floor's v1 so reload
             // doesn't lose them if the 2s autosave debounce hasn't fired yet.
@@ -700,7 +810,7 @@ export default function FloorPlanPage({
               canvas_data: inFlightData,
             })
               .then(() => {
-                queryClient.invalidateQueries({ queryKey: ["floor-plan-versions", data.id] });
+                queryClient.invalidateQueries({ queryKey: ["floor-plan-history", data.id] });
                 queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
                 setSaveStatus("saved");
                 if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
@@ -828,8 +938,8 @@ export default function FloorPlanPage({
             }}
             onCreateFloor={handleCreatePresetFloor}
             currentVersion={
-              job?.floor_plan_version_id
-                ? versions?.find((v) => v.id === job.floor_plan_version_id)?.version_number ?? null
+              job?.floor_plan_id
+                ? versions?.find((v) => v.id === job.floor_plan_id)?.version_number ?? null
                 : null
             }
             disabled={isJobArchived}
@@ -891,9 +1001,14 @@ export default function FloorPlanPage({
               )
               ?? hydrationCanvasData
           }
-          onChange={(data: FloorPlanData) => { lastCanvasRef.current = { floorId: activeFloorId, data }; handleChange(data); }}
+          onChange={(data: FloorPlanData) => {
+            // eslint-disable-next-line no-console
+            console.log("[autosave] canvas onChange fired in parent", { activeFloorId, rooms: data.rooms?.length, walls: data.walls?.length });
+            lastCanvasRef.current = { floorId: activeFloorId, data };
+            handleChange(data);
+          }}
           readOnly={isJobArchived}
-          rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name }))}
+          rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name, affected: r.affected }))}
           onCreateRoom={handleCreateRoom}
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
@@ -914,6 +1029,16 @@ export default function FloorPlanPage({
             canvasRef.current?.clearSelection();
           }}
           onEditRoom={handleEditRoom}
+          // Dismiss the panel but KEEP canvas selection so vertex drag handles
+          // stay visible unobstructed. For RECTANGLES, first convert them to
+          // 4-point polygons so their corners become draggable vertices.
+          onEditShape={() => {
+            if (!mobileSelectedRoom.isPolygon) {
+              canvasRef.current?.convertRoomToPolygon(mobileSelectedRoom.id);
+            }
+            setMobileSelectedRoom(null);
+          }}
+          isPolygon={mobileSelectedRoom.isPolygon}
           wallSf={jobRooms?.find(r => r.id === mobileSelectedRoom.propertyRoomId)?.wall_square_footage}
         />
       )}
