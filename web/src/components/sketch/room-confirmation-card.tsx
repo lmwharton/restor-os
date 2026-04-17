@@ -86,6 +86,10 @@ export function RoomConfirmationCard({
 }: RoomConfirmationCardProps) {
   const isEditing = !!editingRoom;
   const [name, setName] = useState(editingRoom?.name ?? "");
+  // Tracks whether the user has committed a name and moved to the details step.
+  // Can't derive this from `name.length > 0` — that would flip after the first
+  // keystroke and hide the text input mid-typing.
+  const [nameCommitted, setNameCommitted] = useState(isEditing);
   const [propertyRoomId, setPropertyRoomId] = useState<string | undefined>(
     editingRoom?.propertyRoomId
   );
@@ -120,6 +124,7 @@ export function RoomConfirmationCard({
     (selectedName: string, propRoomId?: string) => {
       setName(selectedName);
       setPropertyRoomId(propRoomId);
+      setNameCommitted(true);
       const match = ROOM_TYPE_OPTIONS.find(
         (o) =>
           o.value === selectedName.toLowerCase().replace(/\s+/g, "_") ||
@@ -205,7 +210,7 @@ export function RoomConfirmationCard({
       )
   ).slice(0, 8);
 
-  const showNameStep = !name && !isEditing;
+  const showNameStep = !nameCommitted && !isEditing;
 
   return (
     <div className="absolute inset-0 z-20 flex items-end sm:items-center justify-center">

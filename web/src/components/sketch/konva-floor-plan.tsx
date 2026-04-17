@@ -1073,6 +1073,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     lineCap="round" hitStrokeWidth={12}
                     elementId={wall.id}
                     onClick={(e) => {
+                      if (readOnly) return;
                       if (tool === "select") {
                         setSelectedId(wall.id);
                         const stage = e.target.getStage();
@@ -1084,6 +1085,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                       if (tool === "delete") deleteElement(wall.id);
                     }}
                     onTap={(e) => {
+                      if (readOnly) return;
                       if (tool === "select") {
                         setSelectedId(wall.id);
                         const stage = e.target.getStage();
