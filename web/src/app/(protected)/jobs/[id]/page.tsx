@@ -11,7 +11,7 @@ import {
   useDeleteJob,
   useCreateShareLink,
   useFloorPlans,
-  useFloorPlanVersions,
+  useFloorPlanHistory,
   useUpdateJob,
 
   useCreateRoom,
@@ -229,7 +229,7 @@ function TrashIcon({ size = 18 }: { size?: number }) {
 /*  Floor Plan Preview (SVG thumbnail)                                 */
 /* ------------------------------------------------------------------ */
 
-function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
+function FloorPlanPreview({ canvasData, hasFloorPlan = false }: { canvasData: CanvasData | null; hasFloorPlan?: boolean }) {
   const rawWalls = canvasData?.walls;
   const walls = Array.isArray(rawWalls) ? rawWalls : [];
   const rawRooms = canvasData?.rooms;
@@ -252,7 +252,12 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
             <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
             <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5" />
           </svg>
-          <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">No floor plan yet</span>
+          {/* If a floor plan row exists but the canvas is empty, the user has
+              created a floor (e.g. via auto-Main) but hasn't drawn anything
+              yet. Saying "No floor plan yet" is misleading in that case. */}
+          <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">
+            {hasFloorPlan ? "Tap to start drawing" : "No floor plan yet"}
+          </span>
         </div>
       </>
     );
@@ -1547,21 +1552,19 @@ export default function JobDetailPage() {
   // THIS JOB's pinned version — archived jobs correctly show their frozen snapshot
   // instead of whatever a sibling job most-recently saved.
   const primaryFloorPlanId = floorPlans?.[0]?.id ?? "";
-  const { data: fpVersions } = useFloorPlanVersions(primaryFloorPlanId);
+  const { data: fpVersions } = useFloorPlanHistory(primaryFloorPlanId);
   const bestFloorPlan = useMemo(() => {
     if (!floorPlans?.length) return null;
     if (!job) return null;
+    const isArchived = job.status === "complete" || job.status === "submitted" || job.status === "collected";
 
-    // Multi-floor pragmatic rule: the thumbnail shows whichever floor has the
-    // most content (rooms + walls). A single thumbnail can't represent 4
-    // floors at once, and `job.floor_plan_version_id` only pins to ONE
-    // floor's version — not applicable for multi-floor rendering.
-    //
-    // Try the pinned version first (covers archived jobs on a single-floor
-    // property), then fall through to the richest mirror (covers multi-floor
-    // and pre-versioning legacy data).
-    if (job.floor_plan_version_id && fpVersions) {
-      const pinned = fpVersions.find((v) => v.id === job.floor_plan_version_id);
+    // Linear history rule for thumbnail:
+    //   - ARCHIVED jobs show their pinned version (frozen audit view).
+    //   - ACTIVE jobs show the is_current snapshot — since floorPlans already
+    //     filters to is_current rows at the list endpoint, we just pick the
+    //     floor with the most content (rooms + walls) as the thumbnail focus.
+    if (isArchived && job.floor_plan_id && fpVersions) {
+      const pinned = fpVersions.find((v) => v.id === job.floor_plan_id);
       if (pinned?.canvas_data) return pinned.canvas_data as CanvasData;
     }
 
@@ -1906,7 +1909,10 @@ export default function JobDetailPage() {
                     </span>
                   </div>
                 ) : (
-                  <FloorPlanPreview canvasData={bestFloorPlan} />
+                  <FloorPlanPreview
+                    canvasData={bestFloorPlan}
+                    hasFloorPlan={!!floorPlans && floorPlans.length > 0}
+                  />
                 )}
               </div>
               {/* View Plan link — below preview to avoid overlap */}
