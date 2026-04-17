@@ -218,7 +218,7 @@ export function RoomConfirmationCard({
 
       <div
         ref={panelRef}
-        className="relative bg-surface-container-lowest rounded-t-2xl sm:rounded-xl shadow-[0_-4px_24px_rgba(31,27,23,0.1)] sm:shadow-[0_8px_24px_rgba(31,27,23,0.1)] w-full sm:w-[360px] min-h-[55vh] sm:min-h-[420px] max-h-[85vh] sm:max-h-[80vh] overflow-hidden overscroll-contain flex flex-col"
+        className="relative bg-surface-container-lowest rounded-t-2xl sm:rounded-xl shadow-[0_-4px_24px_rgba(31,27,23,0.1)] sm:shadow-[0_8px_24px_rgba(31,27,23,0.1)] w-full sm:w-[360px] min-h-[55vh] sm:min-h-[420px] max-h-[85dvh] sm:max-h-[80vh] overflow-hidden overscroll-contain flex flex-col"
         style={{ animation: "slideUp 0.15s ease-out" }}
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
@@ -229,8 +229,12 @@ export function RoomConfirmationCard({
           <div className="w-8 h-0.5 rounded-full bg-outline-variant/40" />
         </div>
 
-        {/* Scrollable content area — actions pinned below in a sticky footer */}
-        <div className="px-4 pt-3 sm:px-4 sm:pt-4 flex-1 overflow-y-auto overscroll-contain">
+        {/* Scrollable content area — actions pinned below in a sticky footer.
+            min-h-0 is REQUIRED: flex children default to min-height:auto, which
+            refuses to shrink below intrinsic content height. Without min-h-0, a
+            tall form pushes the footer past the card's max-h boundary and
+            overflow-hidden chops the Cancel button off. */}
+        <div className="px-4 pt-3 sm:px-4 sm:pt-4 flex-1 min-h-0 overflow-y-auto overscroll-contain">
           {/* Header */}
           <div className="mb-3 sm:mb-2.5">
             <h3 className="text-[15px] font-semibold text-on-surface sm:text-[16px]">
@@ -479,7 +483,7 @@ export function RoomConfirmationCard({
           )}
         </div>
 
-        {/* Sticky action footer — always visible, outside the scroll area */}
+        {/* Sticky action footer — always visible, outside the scroll area. */}
         <div className="shrink-0 px-4 pt-3 pb-4 sm:px-4 sm:pt-3 sm:pb-4 border-t border-outline-variant/30 bg-surface-container-lowest">
           {showNameStep ? (
             <button
@@ -496,10 +500,14 @@ export function RoomConfirmationCard({
                   <button
                     type="button"
                     onClick={() => {
+                      // Back goes to the Name step. Must reset nameCommitted —
+                      // without it, the form fields clear but the user stays on
+                      // Details with no name, which looks broken.
                       setName("");
                       setPropertyRoomId(undefined);
                       setRoomType(null);
                       setMaterialFlags([]);
+                      setNameCommitted(false);
                     }}
                     className="flex-1 h-10 rounded-lg border border-outline-variant text-[12px] font-medium text-on-surface-variant active:scale-[0.98] cursor-pointer sm:h-10 sm:text-[13px]"
                   >

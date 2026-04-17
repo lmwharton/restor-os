@@ -156,6 +156,14 @@ function ToolInstructions({ tool }: { tool: ToolType }) {
         <p className="text-[11px] text-[#8a847e] mt-3">Rooms auto-create walls on all 4 edges. Doors snap to these.</p>
       </div>
     ),
+    trace: (
+      <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+        <p><span className="font-semibold text-[#1a1a1a]">Tap each corner</span> of the room in sequence.</p>
+        <p>A dashed rubber-band line previews the next edge.</p>
+        <p><span className="font-semibold text-[#1a1a1a]">Tap the first corner</span> again to close the shape.</p>
+        <p className="text-[11px] text-[#8a847e] mt-3">Use for L-shapes and irregular rooms. Escape to cancel.</p>
+      </div>
+    ),
     wall: (
       <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
         <p><span className="font-semibold text-[#1a1a1a]">Click</span> to start a wall.</p>
@@ -205,7 +213,7 @@ function ToolInstructions({ tool }: { tool: ToolType }) {
   };
 
   const toolNames: Record<ToolType, string> = {
-    room: "Room Tool", wall: "Wall Tool", door: "Door Tool",
+    room: "Room Tool", trace: "Trace Tool", wall: "Wall Tool", door: "Door Tool",
     window: "Window Tool", opening: "Opening Tool", select: "Select Tool", delete: "Delete Tool",
   };
 
