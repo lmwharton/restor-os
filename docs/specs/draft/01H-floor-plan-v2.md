@@ -3,10 +3,10 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% |
-| **State** | Draft — ready for implementation review |
-| **Blocker** | None — all prerequisites already in DB |
-| **Branch** | TBD (off main, after 01C merges) |
+| **Progress** | ████████████████░░░░ 80% |
+| **State** | In Progress — Phase 1 D1-D3 complete (property versioning + multi-floor selector + archival freeze); Phase E (canvas interactions) next |
+| **Blocker** | None |
+| **Branch** | feature/01h-floor-plan-v2-phase1 |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
 | **Source** | Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026) |
 
@@ -14,11 +14,11 @@
 | Metric | Value |
 |--------|-------|
 | Created | 2026-04-15 |
-| Started | — |
+| Started | 2026-04-16 |
 | Completed | — |
-| Sessions | 0 |
-| Total Time | — |
-| Files Changed | 0 |
+| Sessions | 2 |
+| Total Time | ~14 hours |
+| Files Changed | 26 |
 | Tests Written | 0 |
 
 ## Reference
@@ -54,37 +54,60 @@ Before this spec was finalized, several components were verified to already exis
 ## Done When
 
 ### Phase 1: Property-Scoped Floor Plans + Versioning + Canvas + Walls
-- [ ] `floor_plans` reparented from `job_id` to `property_id` FK
-- [ ] `floor_plan_versions` table created — one version per job session, auto-frozen on archive
-- [ ] `jobs.floor_plan_version_id` FK added — pins job to a specific version
-- [ ] Active jobs auto-upgrade to latest version when another job creates a new one
-- [ ] Archived/submitted jobs are read-only (version frozen)
-- [ ] New job auto-inherits latest floor plan version (or creates fresh one if first job at property)
-- [ ] `wall_segments` table created (relational, not JSONB)
-- [ ] `wall_openings` table created (doors, windows, missing walls)
-- [ ] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing canvas_data)
+- [x] `floor_plans` reparented from `job_id` to `property_id` FK
+- [x] `floor_plan_versions` table created — one version per job session, auto-frozen on archive
+- [x] `jobs.floor_plan_version_id` FK added — pins job to a specific version
+- [x] Active jobs auto-upgrade to latest version when another job creates a new one
+- [x] Archived/submitted jobs are read-only (version frozen)
+- [x] New job auto-inherits latest floor plan version (or creates fresh one if first job at property)
+- [x] `wall_segments` table created (relational, not JSONB)
+- [x] `wall_openings` table created (doors, windows, missing walls)
+- [x] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing canvas_data)
 - [ ] Room creation: drop default 10×10 rectangle (dashed = unconfirmed), deform by dragging edges/corners
 - [ ] Room creation: trace perimeter method — tap corners sequentially, auto-close into room
 - [ ] Polygon data model: rooms store `points: [{x,y}]` (rectangles are 4-point polygons)
 - [ ] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles)
-- [ ] Room confirmation card: name, type, dimensions, ceiling height, ceiling type, materials, affected status
-- [ ] Room type system: 13 predefined types with auto-populated material defaults
-- [ ] 6-inch grid snap enforced
-- [ ] Floor SF auto-calculated (polygon area, minus floor openings)
-- [ ] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier - openings)
-- [ ] Custom wall SF override per room (for non-standard ceiling geometry)
-- [ ] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic
+- [x] Room confirmation card: name, type, dimensions, ceiling height, ceiling type, materials, affected status
+- [x] Room type system: 13 predefined types with auto-populated material defaults
+- [x] 6-inch grid snap enforced
+- [x] Floor SF auto-calculated (polygon area, minus floor openings)
+- [x] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier - openings)
+- [x] Custom wall SF override per room (for non-standard ceiling geometry)
+- [x] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic (pill selector with room-count badge + version chip `v1`/`v2` on active pill; horizontal scroll on mobile; auto-creates "Main Floor" on first load for fresh jobs)
 - [ ] Floor openings: stairwell cutouts that subtract from floor SF
 - [ ] **Room snap behavior:** magnetic snap within 20px of existing room walls
 - [ ] **Shared wall auto-detection:** when two rooms snap together, shared wall marked `shared=true`, excluded from each room's perimeter LF, rendered with lighter line weight
-- [ ] Wall contextual menu on tap: Add Door, Add Window, Add Opening, Wall Type, Mark Affected
-- [ ] Door height field (default 7ft, editable) — SF deduction: width × height
-- [ ] Window height field (default 4ft) + sill height (optional) — SF deduction: width × height
-- [ ] Opening (missing wall): dashed line indicator, drag handles for start/end, full SF deduction
-- [ ] Wall type toggle: exterior / interior (drives Xactimate material codes in Spec 01D)
-- [ ] Wall affected status: per-wall mitigation scope flag (independent from room)
+- [x] Wall contextual menu on tap: Add Door, Add Window, Add Opening, Wall Type, Mark Affected
+- [x] Door height field (default 7ft, editable) — SF deduction: width × height
+- [x] Window height field (default 4ft) + sill height (optional) — SF deduction: width × height
+- [x] Opening (missing wall): dashed line indicator, drag handles for start/end, full SF deduction
+- [x] Wall type toggle: exterior / interior (drives Xactimate material codes in Spec 01D)
+- [x] Wall affected status: per-wall mitigation scope flag (independent from room)
 - [ ] **Affected Mode overlay** toggle on canvas (highlights all affected rooms/walls in red)
 - [ ] Full test coverage: SF calculations, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic
+- [x] Wall sync to backend on auto-save (walls + doors + windows + openings → wall_segments + wall_openings)
+- [x] Opening tool in toolbar (place openings directly by clicking walls)
+- [x] Mobile bottom sheet editor for door/window/opening width + height
+- [x] Room edit mode (tap room → Edit → modify type, ceiling, floor, affected)
+- [x] Exterior wall visual indicator (blue, thicker stroke)
+- [x] Affected wall visual indicator (red stroke)
+- [x] **D1: Save through versioning endpoint** — autosave now POSTs to `/v1/floor-plans/{fpId}/versions` instead of PATCHing `floor_plans.canvas_data` directly; backend state machine handles Case 1/2/3 (initial, update-in-place, fork)
+- [x] **D2: Pinned-version hydration** — floor plan editor + job detail thumbnail both read the job's pinned version via `jobs.floor_plan_version_id`; strict match with floor_plan_id to prevent cross-floor corruption
+- [x] **D3: Multi-floor + version badge UI** — 4 preset pills (Basement/Main/Upper/Attic) with room-count circle badge + `v{N}` chip on active pill; auto-Main-create on fresh job; sticky loading gate prevents empty-state flash on reload; mobile Back button reduced to arrow-only
+- [x] **Linked recon inherits job_rooms** — `_copy_rooms_from_linked_job` on job creation copies structural fields only (geometry, type, ceiling, polygon) — per-job scope fields (water_category, equipment counts, affected, material_flags, notes) intentionally reset for the new job
+- [x] **Backend API exposes `floor_plan_version_id`** — added to `JobResponse` Pydantic schema + `_parse_job_detail` mapper so frontend hydration has access to the job's pin
+- [x] **Cross-floor corruption fixed** — Case 2 update-in-place now guards on `floor_plan_id` match so saving on Upper doesn't overwrite Main's v1 canvas_data
+- [x] **Read-only banner on archived jobs** — amber "Read-only — this job is submitted/complete/collected" banner above canvas when `jobs.status ∈ archived`; autosave short-circuits; wall context menu suppressed; empty preset pills disabled
+
+> **Known limitation — multi-floor archival freeze (track separately).**
+> `jobs.floor_plan_version_id` is a single column — it can only pin to ONE
+> floor's version. When a mitigation job with data on multiple floors (e.g.
+> Basement + Main) is archived, only the most-recently-saved floor's version
+> is frozen by the pin. Other floors of the archived job will render their
+> latest `is_current` version, which may include later edits from a linked
+> reconstruction job. The fix requires per-floor pins (new `job_floor_pins`
+> junction table or snapshot-on-archive logic) — out of scope for Phase 1.
+> File a separate spec (e.g. 01J) before real archival claims are filed.
 
 ### Phase 2: Moisture Pins
 - [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
