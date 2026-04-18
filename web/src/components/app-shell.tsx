@@ -539,8 +539,11 @@ function MobileBottomNav() {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { data: user = null } = useMe() as { data: UserProfile | null | undefined };
   const pathname = usePathname();
-  // Full-bleed routes: hide mobile bottom nav so bottom-sheet modals aren't clipped
-  const hideMobileNav = pathname?.includes("/floor-plan");
+  // Full-bleed routes: hide mobile header + bottom nav to give the canvas the
+  // full viewport. Desktop top bar is already hidden for /jobs/* routes.
+  const isFloorPlan = pathname?.includes("/floor-plan");
+  const hideMobileNav = isFloorPlan;
+  const hideMobileHeader = isFloorPlan;
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -548,8 +551,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <DesktopSidebar user={user} />
       <DesktopTopBar user={user} />
 
-      {/* Mobile/Tablet: full header */}
-      <MobileHeader user={user} />
+      {/* Mobile/Tablet: full header (hidden on floor-plan for more canvas) */}
+      {!hideMobileHeader && <MobileHeader user={user} />}
 
       {/* Main content — offset for sidebar on lg: */}
       <main className={`flex-1 lg:ml-56 ${hideMobileNav ? "" : "pb-20 md:pb-0"}`}>{children}</main>
