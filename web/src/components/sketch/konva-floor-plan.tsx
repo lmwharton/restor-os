@@ -446,23 +446,17 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     if (!onChangeRef.current) return;
     hasPendingRef.current = true;
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // eslint-disable-next-line no-console
-    console.log("[autosave] state changed, debounce started", { rooms: state.rooms.length, walls: state.walls.length });
     saveTimer.current = setTimeout(() => {
       hasPendingRef.current = false;
-      // eslint-disable-next-line no-console
-      console.log("[autosave] 2s timer fired, calling onChange");
       onChangeRef.current?.(latestStateRef.current);
     }, 2000);
     return () => {
       if (saveTimer.current) {
-        // eslint-disable-next-line no-console
-        console.log("[autosave] cleanup ran, clearing pending timer");
         clearTimeout(saveTimer.current);
       }
     };
-    // onChange is read via onChangeRef (not from deps) so parent re-renders don't kill the timer
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // onChange is read via onChangeRef (not from deps) so parent re-renders
+    // don't kill the timer. state is the only real trigger we care about.
   }, [state]);
 
   const pushRef = useRef(push);
@@ -841,12 +835,10 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       // values (common: drew a rough 2×3, actually wants 4×6 stairwell).
       setEditingCutoutId(newCutout.id);
     }
-  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push]);
+  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push, flashToast]);
 
   const finalizePendingRoom = useCallback((data: RoomConfirmationData) => {
     if (!pendingRoom) return;
-    // eslint-disable-next-line no-console
-    console.log("[autosave] finalizePendingRoom CALLED", { name: data.name });
 
     // Cross-floor route: Floor picked in the card differs from the active
     // canvas. Hand off to the parent, which merges the room into the target
@@ -923,13 +915,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       saveTimer.current = null;
     }
     if (onChangeRef.current) {
-      // eslint-disable-next-line no-console
-      console.log("[autosave] finalizePendingRoom → calling onChange immediately", { rooms: newState.rooms.length });
       onChangeRef.current(newState);
       hasPendingRef.current = false;
-    } else {
-      // eslint-disable-next-line no-console
-      console.warn("[autosave] finalizePendingRoom: onChangeRef is null, save will not fire!");
     }
     setPendingRoom(null);
     setTool("select");

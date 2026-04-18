@@ -556,13 +556,9 @@ export default function FloorPlanPage({
 
   const handleChange = useCallback(
     async (canvasData: FloorPlanData) => {
-      // eslint-disable-next-line no-console
-      console.log("[autosave] handleChange called", { isPending: createFloorPlan.isPending, archived: isJobArchivedRef.current, activeFloorId: activeFloorIdRef.current });
       // Archived jobs are read-only — skip server save entirely. Backend would
       // reject with 403 "Cannot edit floor plan for an archived job" anyway.
       if (isJobArchivedRef.current) {
-        // eslint-disable-next-line no-console
-        console.log("[autosave] handleChange EXIT: archived");
         return;
       }
 
@@ -576,8 +572,6 @@ export default function FloorPlanPage({
       // already in the query cache and activeFloorId is set. If we have an
       // active floor, we know exactly what to POST to — no duplicate risk.
       if (createFloorPlan.isPending && !activeFloorIdRef.current) {
-        // eslint-disable-next-line no-console
-        console.log("[autosave] handleChange DEFER: createFloorPlan.isPending AND no active floor");
         lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
         return;
       }
@@ -601,8 +595,6 @@ export default function FloorPlanPage({
       // Try ref first, then fall back to looking up by ID in query cache
       const currentFloor = activeFloorRef.current
         ?? (activeFloorIdRef.current ? queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId])?.find((fp) => fp.id === activeFloorIdRef.current) : null);
-      // eslint-disable-next-line no-console
-      console.log("[autosave] handleChange POSTING", { floorId: currentFloor?.id, hasCurrentFloor: !!currentFloor });
       setSaveStatus("saving");
       // Track when "saving" started so the indicator stays visible long enough
       // for the human eye even if the POST returns in <100ms (otherwise React
@@ -760,8 +752,6 @@ export default function FloorPlanPage({
         if (elapsed < 400) {
           await new Promise((resolve) => setTimeout(resolve, 400 - elapsed));
         }
-        // eslint-disable-next-line no-console
-        console.log("[autosave] save SUCCEEDED, flipping to Saved ✓");
         setSaveStatus("saved");
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
@@ -1162,8 +1152,6 @@ export default function FloorPlanPage({
               ?? hydrationCanvasData
           }
           onChange={(data: FloorPlanData) => {
-            // eslint-disable-next-line no-console
-            console.log("[autosave] canvas onChange fired in parent", { activeFloorId, rooms: data.rooms?.length, walls: data.walls?.length });
             lastCanvasRef.current = { floorId: activeFloorId, data };
             handleChange(data);
           }}
