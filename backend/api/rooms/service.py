@@ -350,8 +350,15 @@ async def update_room(
             )
         updates["floor_plan_id"] = str(updates["floor_plan_id"])
 
-    # If room_type changed and material_flags not explicitly provided, auto-populate
-    if "room_type" in updates and "material_flags" not in updates:
+    # If room_type changed to a non-null value and material_flags not explicitly
+    # provided, auto-populate defaults. When room_type is cleared (set to null)
+    # we DON'T wipe materials — the user may want to keep their custom flags
+    # even after removing the type label.
+    if (
+        "room_type" in updates
+        and updates["room_type"]
+        and "material_flags" not in updates
+    ):
         updates["material_flags"] = _get_material_defaults(updates["room_type"])
 
     # Re-calculate square_footage if length or width changed

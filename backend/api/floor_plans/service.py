@@ -1145,6 +1145,17 @@ async def cleanup_floor_plan(
             error_code="FLOOR_PLAN_NOT_FOUND",
         )
 
+    # Frozen-version guard — matches the rule in `update_floor_plan` and
+    # `save_canvas` Case 2. Cleanup writes the cleaned canvas back to the
+    # row (line below), which would silently mutate a frozen snapshot and
+    # break the audit guarantee. Non-current rows are immutable history.
+    if not result.data.get("is_current"):
+        raise AppException(
+            status_code=403,
+            detail="Cannot run cleanup on a frozen (non-current) version",
+            error_code="VERSION_FROZEN",
+        )
+
     # Use client-supplied canvas_data (unsaved edits) or fall back to saved version
     canvas_data = client_canvas_data or result.data.get("canvas_data")
     if not canvas_data or not canvas_data.get("walls"):
