@@ -67,6 +67,10 @@ interface RoomConfirmationCardProps {
   onConfirm: (data: RoomConfirmationData) => void;
   onCancel: () => void;
   editingRoom?: RoomConfirmationData | null;
+  /** When true (no active floor yet), the Floor field is required — the
+   *  Confirm button stays disabled until the user picks one. Prevents the
+   *  first room from being saved against a null floor. */
+  requireFloorLevel?: boolean;
 }
 
 function Label({ children }: { children: React.ReactNode }) {
@@ -83,6 +87,7 @@ export function RoomConfirmationCard({
   onConfirm,
   onCancel,
   editingRoom,
+  requireFloorLevel = false,
 }: RoomConfirmationCardProps) {
   const isEditing = !!editingRoom;
   const [name, setName] = useState(editingRoom?.name ?? "");
@@ -380,7 +385,12 @@ export function RoomConfirmationCard({
 
               {/* Floor level — same grid style as ceiling */}
               <div className="mb-2 sm:mb-4">
-                <Label>Floor</Label>
+                <div className="flex items-baseline gap-1 mb-1">
+                  <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant">Floor</p>
+                  {requireFloorLevel && !floorLevel && (
+                    <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-red-600">· required</span>
+                  )}
+                </div>
                 <div className="grid grid-cols-4 gap-1 sm:gap-1.5">
                   {FLOOR_LEVEL_OPTIONS.map((o) => (
                     <button
@@ -523,7 +533,7 @@ export function RoomConfirmationCard({
               <button
                 type="button"
                 onClick={handleConfirm}
-                disabled={!name.trim()}
+                disabled={!name.trim() || (requireFloorLevel && !floorLevel)}
                 className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[12px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all sm:h-10 sm:text-[13px]"
               >
                 {isEditing ? "Update" : "Confirm"}

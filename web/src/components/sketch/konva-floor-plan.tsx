@@ -61,6 +61,27 @@ interface KonvaFloorPlanProps {
       affected?: boolean;
     },
   ) => void;
+  /** Semantic level of the active floor (basement/main/upper/attic) — used to
+   *  detect when the confirmation card's Floor field targets a different
+   *  floor, triggering the cross-floor create path in the parent. */
+  activeFloorLevel?: "basement" | "main" | "upper" | "attic" | null;
+  /** Called when the user confirms a room with a Floor different from the
+   *  active canvas. Parent handles: target floor creation (if missing), merge
+   *  into target canvas, POST, activeFloor switch, job_rooms row insert. */
+  onCreateRoomOnDifferentFloor?: (
+    targetLevel: "basement" | "main" | "upper" | "attic",
+    roomData: RoomConfirmationData,
+    pendingBounds: { x: number; y: number; width: number; height: number; points?: Array<{ x: number; y: number }> },
+    gridSize: number,
+  ) => void;
+  /** True when no floor is active (fresh job, no floors created yet). Tools
+   *  still render so the user sees the full palette, but draw-start handlers
+   *  intercept and call `onDrawAttemptWithoutFloor` instead of starting a
+   *  stroke. Pan/zoom/select stay available. */
+  noActiveFloor?: boolean;
+  /** Called when the user attempts to draw (room/wall/door/window/trace) with
+   *  no floor active. Parent should open the pick-floor modal. */
+  onDrawAttemptWithoutFloor?: () => void;
   jobId?: string;
   onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => void;
   onEditRoom?: () => void;
@@ -235,7 +256,7 @@ function MobileOpeningEditor({ type, isOpening, width, height, onWidthChange, on
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, jobId, onSelectionChange, onEditRoom }, ref) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, onSelectionChange, onEditRoom }, ref) {
   // Merge defaults UNDER initialData so a partial canvas_data (e.g. an empty
   // {} from a freshly-created floor shell) still gets walls/rooms/doors/windows
   // arrays. Without this, state.walls is undefined and every iteration crashes.
@@ -432,13 +453,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
       }
-      // ALWAYS fire onChange (not just when hasPending). User clicked Save —
-      // they want to save NOW, regardless of whether the debounce thinks
-      // there are pending changes. Idempotent on the backend (Case 2 update
-      // in place) so re-firing doesn't break anything.
+      // Only fire onChange when there are genuinely pending changes. Switching
+      // floors / navigating back used to POST a redundant no-op save every
+      // time (backend handled it idempotently via Case 2, but users saw the
+      // wasted network flash). Explicit Save button flow is handled by the
+      // caller — it can show "Saved ✓" without a roundtrip when nothing's dirty.
+      if (!hasPendingRef.current) return;
       if (onChangeRef.current) {
-        // eslint-disable-next-line no-console
-        console.log("[autosave] flush() called → forcing save", { hadPending: hasPendingRef.current, rooms: latestStateRef.current.rooms.length });
         hasPendingRef.current = false;
         onChangeRef.current(latestStateRef.current);
       }
@@ -592,6 +613,16 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
     const pos = getPos();
 
+    // Gate: no active floor. Wall / door / window / trace / opening save
+    // immediately via autosave, so they must have a floor ready — intercept
+    // and open the pick-floor modal. ROOM is intentionally NOT intercepted:
+    // it has its own confirmation card with a Floor field, so the rectangle
+    // drags normally and the user picks the floor at Confirm time.
+    if (noActiveFloor && (tool === "wall" || tool === "trace" || tool === "door" || tool === "window" || tool === "opening")) {
+      onDrawAttemptWithoutFloor?.();
+      return;
+    }
+
     if (tool === "room") {
       setDrawStart({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
       setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
@@ -662,7 +693,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       const id = e.target.attrs?.elementId;
       if (id) deleteElement(id);
     }
-  }, [tool, readOnly, getPos, gs, state, push, wallStart, traceVertices, deleteElement]);
+  }, [tool, readOnly, getPos, gs, state, push, wallStart, traceVertices, deleteElement, noActiveFloor, onDrawAttemptWithoutFloor]);
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     // Pinch-to-zoom + two-finger pan (works in readOnly too)
@@ -729,6 +760,34 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     if (!pendingRoom) return;
     // eslint-disable-next-line no-console
     console.log("[autosave] finalizePendingRoom CALLED", { name: data.name });
+
+    // Cross-floor route: Floor picked in the card differs from the active
+    // canvas. Hand off to the parent, which merges the room into the target
+    // floor's canvas and switches. We clear local state so the rectangle
+    // doesn't briefly appear on this (wrong) canvas before the remount.
+    if (
+      data.floorLevel
+      && activeFloorLevel
+      && data.floorLevel !== activeFloorLevel
+      && onCreateRoomOnDifferentFloor
+    ) {
+      onCreateRoomOnDifferentFloor(
+        data.floorLevel,
+        data,
+        {
+          x: pendingRoom.x,
+          y: pendingRoom.y,
+          width: pendingRoom.width,
+          height: pendingRoom.height,
+          points: pendingRoom.points,
+        },
+        gs,
+      );
+      setPendingRoom(null);
+      setTool("select");
+      return;
+    }
+
     const newRoom: RoomData = {
       id: uid("room"),
       x: pendingRoom.x,
@@ -787,7 +846,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
     setPendingRoom(null);
     setTool("select");
-  }, [pendingRoom, state, push, onCreateRoom, gs]);
+  }, [pendingRoom, state, push, onCreateRoom, gs, activeFloorLevel, onCreateRoomOnDifferentFloor]);
 
   /* ---------------------------------------------------------------- */
   /*  Drag handlers for select tool                                    */
@@ -1176,6 +1235,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               // mode after backing out — matches the behavior on Confirm.
               setTool("select");
             }}
+            requireFloorLevel={noActiveFloor}
           />
         )}
 

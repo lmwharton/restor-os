@@ -17,11 +17,14 @@ import {
 } from "@/lib/hooks/use-jobs";
 import { RoomPhotoSection } from "@/components/room-photo-section";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
-import type { FloorPlan } from "@/lib/types";
-import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
+import type { FloorPlan, FloorLevel } from "@/lib/types";
+import { FLOOR_LEVEL_TO_NUMBER, FLOOR_LEVEL_LABEL, floorNumberToLevel } from "@/lib/types";
+import type { FloorPlanData, RoomData } from "@/components/sketch/floor-plan-tools";
+import { wallsForRoom, detectSharedWalls, uid } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
 import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
 import { FloorSelector } from "@/components/sketch/floor-selector";
+import { PickFloorModal } from "@/components/sketch/pick-floor-modal";
 import type { WallSegment } from "@/lib/types";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
@@ -513,12 +516,13 @@ export default function FloorPlanPage({
   // timer that was about to save the user's drawing. So once a given floor is
   // ready, stay ready until activeFloorId changes (real floor switch).
   //
-  // Active jobs additionally wait for at least one floor to exist. On a fresh
-  // property, floorPlans loads as [] and auto-Main fires asynchronously.
+  // Ready = data loaded. Whether to render the canvas or the "pick a floor"
+  // empty state is decided below at render time. We intentionally allow ready=true
+  // with zero floors — fresh jobs show the empty state until the user picks a floor
+  // (via the selector or the first room's Floor field).
   const liveCanvasReady =
     !!job
     && floorPlans !== undefined
-    && (isJobArchived || floorPlans.length > 0)
     && !(activeFloor?.id && versions === undefined);
   const stickyReadyRef = useRef<{ floorId: string | null; ready: boolean }>({ floorId: null, ready: false });
   const currentFloorIdForReady = activeFloor?.id ?? null;
@@ -775,82 +779,174 @@ export default function FloorPlanPage({
   /*  Add Floor                                                        */
   /* ---------------------------------------------------------------- */
 
-  // Create a specific preset floor (Basement/Main/Upper/Attic) on tap.
-  // Unlike handleAddFloor's auto-increment, this uses a fixed floor_number so
-  // preset slots always land on the same row in the selector.
-  const handleCreatePresetFloor = useCallback((floorNumber: number, floorName: string) => {
-    // Snapshot pin state BEFORE the create. Only when there's no active floor
-    // (auto-Main / fresh property) is it correct to carry the canvas's live
-    // state into the new floor. For "user clicked Base while editing Main",
-    // canvas state belongs to the OLD floor — flush() already persisted it
-    // there, and reading it again would leak it into the new floor's row.
-    const wasUnpinned = activeFloorIdRef.current === null;
-    canvasRef.current?.flush();
-    createFloorPlan.mutate(
-      { floor_number: floorNumber, floor_name: floorName },
-      {
-        onSuccess: (data) => {
-          // Only inspect live canvas state in the auto-Main case; for
-          // subsequent preset creates it would be content from another floor.
-          const liveState = wasUnpinned ? canvasRef.current?.getCurrentState() : null;
-          const hasUserDrawings = !!liveState && (
-            liveState.rooms.length > 0 || liveState.walls.length > 0
-          );
-          if (hasUserDrawings || (lastCanvasRef.current && lastCanvasRef.current.floorId === null)) {
-            const inFlightData = liveState ?? lastCanvasRef.current!.data;
-            lastCanvasRef.current = { floorId: data.id, data: inFlightData };
-            // Also persist the pre-floor drawings to the new floor's v1 so reload
-            // doesn't lose them if the 2s autosave debounce hasn't fired yet.
-            // Drive the visible save status too — the canvas remount on activeFloorId
-            // change cancels the pending debounce timer, so without this the UI
-            // would never flip to "Saving…" / "Saved ✓" despite the data being persisted.
-            setSaveStatus("saving");
-            apiPost(`/v1/floor-plans/${data.id}/versions`, {
-              job_id: jobId,
-              canvas_data: inFlightData,
-            })
-              .then(() => {
-                queryClient.invalidateQueries({ queryKey: ["floor-plan-history", data.id] });
-                queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
-                setSaveStatus("saved");
-                if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
-                saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
-              })
-              .catch((err) => {
-                console.warn("Failed to persist pre-floor drawings to new floor", err);
-                setSaveStatus("error");
-              });
-          } else {
-            lastCanvasRef.current = null;
-          }
-          queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
-            const next = [...(old ?? [])];
-            if (!next.some((fp) => fp.id === data.id)) next.push(data);
-            return next;
-          });
-          setActiveFloorId(data.id);
-        },
-      }
-    );
-  }, [createFloorPlan, queryClient, jobId]);
+  // NOTE: Auto-Main on fresh page load has been removed (Spec 01H Session 4).
+  // Floors are now created on-demand — either by tapping a preset slot in the
+  // FloorSelector or by confirming a room with a Floor field set.
 
-  // Auto-create Main Floor on first page load if the property has no floors yet.
-  // Without this, a fresh job opens with 4 dashed pills and no active floor —
-  // drawing a room before tapping a preset has nowhere to save and gets lost
-  // on refresh. Main is the safe default (most buildings have a main floor);
-  // the user can still tap Base/Upper/Attic to create/switch to those, and
-  // can delete Main if they really don't need it.
-  const mainAutoCreatedRef = useRef(false);
-  useEffect(() => {
-    if (mainAutoCreatedRef.current) return;
-    if (!floorPlans) return;                // still loading
-    if (floorPlans.length > 0) return;      // property already has at least one floor
-    if (createFloorPlan.isPending) return;  // creation in flight
-    if (!job) return;                        // wait for job data
-    if (isJobArchived) return;               // archived jobs are read-only
-    mainAutoCreatedRef.current = true;
-    handleCreatePresetFloor(1, "Main Floor");
-  }, [floorPlans, createFloorPlan.isPending, job, isJobArchived, handleCreatePresetFloor]);
+  // Ensure a floor exists for the given level. Returns the floor row. Creates
+  // the floor plan shell via the backend if missing (stamps + pins so the next
+  // save lands as Case 2 in save_canvas, not Case 1 ghost-fork). Does NOT
+  // activate — callers decide when to switch. Safe to call repeatedly.
+  //
+  // 409 recovery: React Query cache can fall behind the DB (another tab,
+  // stale cache on back-nav, etc.). If the backend says "floor already
+  // exists" we refetch and return the canonical row instead of surfacing
+  // the error to the user.
+  const ensureFloor = useCallback(async (level: FloorLevel): Promise<FloorPlan> => {
+    const targetNumber = FLOOR_LEVEL_TO_NUMBER[level];
+    const existing = floorPlans?.find((fp) => fp.floor_number === targetNumber);
+    if (existing) return existing;
+    try {
+      const created = await createFloorPlan.mutateAsync({
+        floor_number: targetNumber,
+        floor_name: FLOOR_LEVEL_LABEL[level],
+      });
+      queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+        const next = [...(old ?? [])];
+        if (!next.some((fp) => fp.id === created.id)) next.push(created);
+        return next;
+      });
+      return created;
+    } catch (err: unknown) {
+      const apiErr = err as { status?: number };
+      if (apiErr.status === 409) {
+        // Stale cache — refetch and find the existing row
+        const refetched = await apiGet<{ items: FloorPlan[]; total: number } | FloorPlan[]>(
+          `/v1/jobs/${jobId}/floor-plans`,
+        );
+        const plans = Array.isArray(refetched) ? refetched : refetched.items ?? [];
+        queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], plans);
+        const found = plans.find((fp) => fp.floor_number === targetNumber);
+        if (found) return found;
+      }
+      throw err;
+    }
+  }, [floorPlans, createFloorPlan, queryClient, jobId]);
+
+  // Create a specific preset floor (Basement/Main/Upper/Attic) on tap, or
+  // switch to it if it already exists. Pre-floor drawing carry-over logic is
+  // gone — with the noActiveFloor intercept, the user can't draw before a
+  // floor exists. ensureFloor handles 409 recovery if the cache is stale.
+  const handleCreatePresetFloor = useCallback(async (floorNumber: number, _floorName: string) => {
+    const level = floorNumberToLevel(floorNumber);
+    if (!level) return;
+    canvasRef.current?.flush();
+    try {
+      const fp = await ensureFloor(level);
+      lastCanvasRef.current = null;
+      setActiveFloorId(fp.id);
+    } catch (err) {
+      console.error("Failed to create/switch preset floor", err);
+    }
+  }, [ensureFloor]);
+
+  // Cross-floor room create: user drew on the active canvas but picked a
+  // different Floor in the confirmation card. Merge the new room into the
+  // target floor's canvas, POST to its versions endpoint, switch active,
+  // then create the job_rooms row. Preserves both floors' existing content.
+  const handleCreateRoomOnDifferentFloor = useCallback(async (
+    targetLevel: FloorLevel,
+    roomData: RoomConfirmationData,
+    pendingBounds: { x: number; y: number; width: number; height: number; points?: Array<{ x: number; y: number }> },
+    gridSize: number,
+  ) => {
+    try {
+      const targetFloor = await ensureFloor(targetLevel);
+
+      const newRoom: RoomData = {
+        id: uid("room"),
+        x: pendingBounds.x,
+        y: pendingBounds.y,
+        width: pendingBounds.width,
+        height: pendingBounds.height,
+        points: pendingBounds.points,
+        name: roomData.name,
+        fill: roomData.affected ? "#fee2e2" : "#fff3ed",
+        propertyRoomId: roomData.propertyRoomId,
+      };
+      const newRoomWalls = wallsForRoom(newRoom);
+
+      const existingCanvas = (targetFloor.canvas_data as FloorPlanData | null) ?? {
+        gridSize, rooms: [], walls: [], doors: [], windows: [],
+      };
+      const mergedCanvas: FloorPlanData = {
+        ...existingCanvas,
+        gridSize: existingCanvas.gridSize ?? gridSize,
+        rooms: [...(existingCanvas.rooms ?? []), newRoom],
+        walls: detectSharedWalls([...(existingCanvas.walls ?? []), ...newRoomWalls]),
+      };
+
+      setSaveStatus("saving");
+      const savedVersion = await apiPost<FloorPlan>(`/v1/floor-plans/${targetFloor.id}/versions`, {
+        job_id: jobId,
+        canvas_data: mergedCanvas,
+      });
+
+      // Prime both caches synchronously BEFORE switching floors so the
+      // canvas hydrates from the merged data on first mount (no empty-state
+      // flash while the background refetch runs):
+      //   1. floorPlans list → update the target row's canvas_data so
+      //      activeFloor.canvas_data already has the new room.
+      //   2. floor-plan-history → seed with the returned version so
+      //      `versions.find(is_current)` returns it immediately.
+      queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+        if (!old) return old;
+        return old.map((fp) =>
+          fp.id === targetFloor.id
+            ? { ...fp, canvas_data: mergedCanvas as unknown as Record<string, unknown> }
+            : fp,
+        );
+      });
+      queryClient.setQueryData<FloorPlan[]>(["floor-plan-history", targetFloor.id], (old) => {
+        const next = (old ?? []).map((v) => v.id === savedVersion.id ? savedVersion : v);
+        if (!next.some((v) => v.id === savedVersion.id)) next.unshift(savedVersion);
+        return next;
+      });
+      queryClient.invalidateQueries({ queryKey: ["floor-plan-history", targetFloor.id] });
+      queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+      setSaveStatus("saved");
+      if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+      saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
+
+      // Switch active canvas to the target floor so the user sees their room
+      // land where they picked. Caches are primed above, so hydration shows
+      // the merged canvas immediately with no empty-state flash.
+      setActiveFloorId(targetFloor.id);
+
+      // Create the job_rooms row with metadata (floor_level locked to target).
+      const widthFt = Math.round((pendingBounds.width / gridSize) * 10) / 10;
+      const heightFt = Math.round((pendingBounds.height / gridSize) * 10) / 10;
+      handleCreateRoom(roomData.name, { width: widthFt, height: heightFt }, {
+        roomType: roomData.roomType,
+        ceilingHeight: roomData.ceilingHeight,
+        ceilingType: roomData.ceilingType,
+        floorLevel: targetLevel,
+        materialFlags: roomData.materialFlags,
+        affected: roomData.affected,
+      });
+    } catch (err) {
+      console.error("Cross-floor room create failed", err);
+      setSaveStatus("error");
+    }
+  }, [ensureFloor, queryClient, jobId, handleCreateRoom]);
+
+  // Derive active floor's semantic level for the canvas to compare against the
+  // confirmation card's Floor field.
+  const activeFloorLevel: FloorLevel | null = floorNumberToLevel(activeFloor?.floor_number);
+
+  // Intercept modal — opens when the user attempts to draw (wall/door/window/
+  // trace/room) while no floor is active. Picking a floor here creates or
+  // switches into it; modal closes on pick or backdrop tap.
+  const [pickFloorOpen, setPickFloorOpen] = useState(false);
+  const handlePickFloorFromModal = useCallback(async (level: FloorLevel) => {
+    try {
+      const fp = await ensureFloor(level);
+      setActiveFloorId(fp.id);
+      setPickFloorOpen(false);
+    } catch (err) {
+      console.error("Failed to pick floor from modal", err);
+    }
+  }, [ensureFloor]);
 
   const [deleteFloorModalId, setDeleteFloorModalId] = useState<string | null>(null);
   const executeDeleteFloor = useCallback((floorPlanId: string) => {
@@ -897,7 +993,16 @@ export default function FloorPlanPage({
       <div className="flex items-center gap-2 px-3 py-2.5 border-b border-outline-variant/40 bg-surface-container-lowest overflow-hidden">
         <button
           type="button"
-          onClick={() => { canvasRef.current?.flush(); router.push(`/jobs/${jobId}`); }}
+          onClick={() => {
+            canvasRef.current?.flush();
+            // Invalidate job-level caches so the detail page's Property Layout
+            // and floor pills reflect any rooms/floors created here. Without
+            // this, back-navigation shows stale data until a hard refresh.
+            queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+            queryClient.invalidateQueries({ queryKey: ["rooms", jobId] });
+            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+            router.push(`/jobs/${jobId}`);
+          }}
           aria-label="Back to job"
           className="flex items-center gap-1 text-[13px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer shrink-0"
         >
@@ -913,8 +1018,15 @@ export default function FloorPlanPage({
           type="button"
           onClick={() => {
             manualSaveRef.current = true;
-            // flush() already calls handleChange via onChangeRef — no need to call twice
+            // flush() only fires when there are pending changes. If nothing
+            // to save, still give brief "Saved ✓" feedback so the click isn't
+            // a silent no-op. If flush fires, handleChange drives saveStatus.
             canvasRef.current?.flush();
+            if (saveStatus === "idle" || saveStatus === "saved") {
+              setSaveStatus("saved");
+              if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
+              saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 1200);
+            }
           }}
           disabled={saveStatus === "saving"}
           className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 ${
@@ -1010,6 +1122,10 @@ export default function FloorPlanPage({
           readOnly={isJobArchived}
           rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name, affected: r.affected }))}
           onCreateRoom={handleCreateRoom}
+          activeFloorLevel={activeFloorLevel}
+          onCreateRoomOnDifferentFloor={handleCreateRoomOnDifferentFloor}
+          noActiveFloor={!activeFloor && !isJobArchived}
+          onDrawAttemptWithoutFloor={() => setPickFloorOpen(true)}
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
           onEditRoom={handleDesktopEditRoom}
@@ -1085,6 +1201,13 @@ export default function FloorPlanPage({
           </div>
         </div>
       )}
+
+      <PickFloorModal
+        open={pickFloorOpen}
+        floorPlans={floorPlans}
+        onPick={handlePickFloorFromModal}
+        onClose={() => setPickFloorOpen(false)}
+      />
     </div>
   );
 }
