@@ -1548,24 +1548,69 @@ export default function JobDetailPage() {
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
   const { data: floorPlans, isLoading: floorPlansLoading } = useFloorPlans(jobId);
-  // Load versions for the first (primary) floor plan so the thumbnail can render
-  // THIS JOB's pinned version — archived jobs correctly show their frozen snapshot
-  // instead of whatever a sibling job most-recently saved.
-  const primaryFloorPlanId = floorPlans?.[0]?.id ?? "";
-  const { data: fpVersions } = useFloorPlanHistory(primaryFloorPlanId);
+  const isArchived =
+    job?.status === "complete" || job?.status === "submitted" || job?.status === "collected";
+  // Archived jobs prefer anchoring on their own pin so the resolved floor
+  // matches the frozen view. When the pin is missing (legacy row without
+  // floor_plan_id set), fall back to the first is_current row — list_versions
+  // scopes by (property, floor_number), so ANY row on a floor this job
+  // touched will surface all versions including the ones this job created,
+  // enabling the created_by_job_id fallback in bestFloorPlan below.
+  const primaryFloorPlanId =
+    (isArchived && job?.floor_plan_id) ||
+    floorPlans?.[0]?.id ||
+    "";
+  const { data: fpVersions, isLoading: fpVersionsLoading } = useFloorPlanHistory(primaryFloorPlanId);
   const bestFloorPlan = useMemo(() => {
     if (!floorPlans?.length) return null;
     if (!job) return null;
-    const isArchived = job.status === "complete" || job.status === "submitted" || job.status === "collected";
 
-    // Linear history rule for thumbnail:
-    //   - ARCHIVED jobs show their pinned version (frozen audit view).
-    //   - ACTIVE jobs show the is_current snapshot — since floorPlans already
-    //     filters to is_current rows at the list endpoint, we just pick the
-    //     floor with the most content (rooms + walls) as the thumbnail focus.
-    if (isArchived && job.floor_plan_id && fpVersions) {
-      const pinned = fpVersions.find((v) => v.id === job.floor_plan_id);
-      if (pinned?.canvas_data) return pinned.canvas_data as CanvasData;
+    // Linear history rule for thumbnail (archived jobs):
+    //   1. Pin — frozen audit view, exactly what was submitted.
+    //   2. Version this job created (latest) — fallback when the pin is
+    //      legacy/stale (e.g., shell created but never re-pinned after a
+    //      Case 3 fork before today's backend fix).
+    //   3. Floor with most content from floorPlans — last resort for very
+    //      old archived data where neither pin nor created_by_job_id resolves.
+    //      Not strictly the "frozen" canvas, but guarantees users see SOMETHING
+    //      rather than the misleading "Tap to start drawing" empty state on
+    //      a job they obviously drew on.
+    //
+    // Active jobs always show the is_current snapshot (floorPlans filters
+    // server-side).
+    const hasContent = (cd: CanvasData | null | undefined): boolean => {
+      if (!cd) return false;
+      const r = Array.isArray(cd.rooms) ? cd.rooms.length : 0;
+      const w = Array.isArray(cd.walls) ? cd.walls.length : 0;
+      return r > 0 || w > 0;
+    };
+    if (isArchived) {
+      if (!fpVersions) return null; // wait for history
+      // 1. Pin
+      if (job.floor_plan_id) {
+        const pinned = fpVersions.find((v) => v.id === job.floor_plan_id);
+        const cd = pinned?.canvas_data as CanvasData | null | undefined;
+        if (hasContent(cd)) return cd as CanvasData;
+      }
+      // 2. Latest version created_by this job
+      const ownVersion = [...fpVersions]
+        .filter((v) => v.created_by_job_id === job.id)
+        .sort((a, b) => b.version_number - a.version_number)[0];
+      const ownCd = ownVersion?.canvas_data as CanvasData | null | undefined;
+      if (hasContent(ownCd)) return ownCd as CanvasData;
+      // 3. Any is_current floor with content (legacy-data safety net).
+      // KNOWN LIMITATION: this CAN leak sibling job content into an archived
+      // job's preview when pins were lost to legacy bugs. Accept for now so
+      // the preview shows *something* rather than a misleading empty state.
+      // FOLLOW-UP (tracked in spec 01H Phase 1 TODO): data migration to
+      // backfill archived jobs' pins (`jobs.floor_plan_id`) from
+      // `created_by_job_id` on floor_plans rows. Once pins are clean, remove
+      // this tier so archived previews strictly reflect the frozen snapshot.
+      for (const fp of floorPlans) {
+        const cd = fp.canvas_data as CanvasData | null;
+        if (hasContent(cd)) return cd as CanvasData;
+      }
+      return null;
     }
 
     let best: CanvasData | null = null;
@@ -1576,7 +1621,7 @@ export default function JobDetailPage() {
       if (count > bestCount) { best = cd; bestCount = count; }
     }
     return best;
-  }, [floorPlans, fpVersions, job]);
+  }, [floorPlans, fpVersions, job, isArchived]);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
@@ -1898,10 +1943,13 @@ export default function JobDetailPage() {
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
                 className="relative bg-surface-container-high rounded-lg min-h-[140px] sm:min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
-                {jobLoading || floorPlansLoading ? (
+                {jobLoading || floorPlansLoading || (isArchived && fpVersionsLoading) ? (
                   /* Loading shimmer while fetches resolve — prevents the
                      "No floor plan yet" flash on reload when data is still
-                     in flight from the backend. */
+                     in flight from the backend. Archived jobs additionally
+                     wait on fpVersions so the pinned-version canvas resolves
+                     before rendering (avoids an empty-state flash before the
+                     frozen snapshot arrives). */
                   <div className="absolute inset-0 flex items-center justify-center">
                     <div className="w-full h-full bg-gradient-to-r from-surface-container-high via-surface-container to-surface-container-high animate-pulse rounded-lg" />
                     <span className="relative text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/40">
@@ -1930,45 +1978,40 @@ export default function JobDetailPage() {
 
               {/* Room list grouped by floor */}
               {rooms && rooms.length > 0 && (() => {
-                // Build floor → room name mapping from canvas data
-                const floorRoomNames = new Map<string, Set<string>>();
-                floorPlans?.forEach((fp) => {
-                  const cd = fp.canvas_data as CanvasData | null;
-                  if (cd?.rooms) {
-                    const names = new Set(cd.rooms.map((r: { name?: string }) => r.name).filter(Boolean) as string[]);
-                    floorRoomNames.set(fp.floor_name, names);
-                  }
-                });
-
-                // Group rooms: assign each room to its floor, or "Unassigned"
-                const grouped: Array<{ floorName: string; floorRooms: typeof rooms }> = [];
+                // Group by floor_plan.id (stable, unique) — NOT floor_name
+                // (legacy data can have duplicate "Floor 1" rows from before
+                // the preset-naming refactor, which would crash React with
+                // duplicate keys).
+                const grouped: Array<{ key: string; floorName: string; floorRooms: typeof rooms }> = [];
                 const assigned = new Set<string>();
 
                 floorPlans?.forEach((fp) => {
-                  const names = floorRoomNames.get(fp.floor_name);
-                  if (names && names.size > 0) {
-                    const floorRooms = rooms.filter((r) => names.has(r.room_name));
-                    if (floorRooms.length > 0) {
-                      grouped.push({ floorName: fp.floor_name, floorRooms });
-                      floorRooms.forEach((r) => assigned.add(r.id));
-                    }
+                  const cd = fp.canvas_data as CanvasData | null;
+                  const names = cd?.rooms
+                    ? new Set(cd.rooms.map((r: { name?: string }) => r.name).filter(Boolean) as string[])
+                    : new Set<string>();
+                  if (names.size === 0) return;
+                  const floorRooms = rooms.filter((r) => names.has(r.room_name) && !assigned.has(r.id));
+                  if (floorRooms.length > 0) {
+                    grouped.push({ key: fp.id, floorName: fp.floor_name, floorRooms });
+                    floorRooms.forEach((r) => assigned.add(r.id));
                   }
                 });
 
                 const unassigned = rooms.filter((r) => !assigned.has(r.id));
                 if (unassigned.length > 0) {
-                  grouped.push({ floorName: grouped.length === 0 ? "Rooms" : "Not on floor plan", floorRooms: unassigned });
+                  grouped.push({ key: "__unassigned", floorName: grouped.length === 0 ? "Rooms" : "Not on floor plan", floorRooms: unassigned });
                 }
 
                 // If no floor plans at all, just show "Rooms"
                 if (grouped.length === 0) {
-                  grouped.push({ floorName: "Rooms", floorRooms: rooms });
+                  grouped.push({ key: "__all", floorName: "Rooms", floorRooms: rooms });
                 }
 
                 return (
                   <div className="space-y-4">
-                    {grouped.map(({ floorName, floorRooms }) => (
-                      <div key={floorName} className="space-y-0.5">
+                    {grouped.map(({ key, floorName, floorRooms }) => (
+                      <div key={key} className="space-y-0.5">
                         <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1.5 px-1">
                           {floorName}
                         </p>
