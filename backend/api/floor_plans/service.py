@@ -808,11 +808,12 @@ async def save_canvas(
         change_summary=change_summary or "Floor plan edited by new job",
     )
 
-    # Pin this job to the new version. Sibling jobs are NOT auto-upgraded —
-    # per the frozen-version semantics: every job stays on the version it last
-    # saved, regardless of its status. A job's pin only moves when that job
-    # itself saves. This prevents recon's edits from spilling onto a still-active
-    # mitigation job that never explicitly adopted the new version.
+    # Pin THIS job to the new version it just created. Sibling jobs are NOT
+    # auto-upgraded — per frozen-version semantics, every job stays on the
+    # version it last saved. Without this pin update, the same job's next
+    # save would re-read its stale pin, fall into Case 3 again, and fork
+    # another version — producing the "version explosion" observed in staging.
+    await _pin_job_to_version(client, job_id, version["id"])
 
     await log_event(
         company_id,
