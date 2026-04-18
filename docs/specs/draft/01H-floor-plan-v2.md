@@ -10,9 +10,9 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress (overall 01H)** | █████░░░░░░░░░░░░░░░ ~22% (Phase 1 closed except E7 + tests; Phases 2–5 untouched) |
-| **Progress (Phase 1 only)** | █████████████████████ ~95% (D1–D3 + E1–E6 done; schema merge done; immutability hardened; auto-save fixed; E7 still pending) |
-| **State** | In progress — **resume tomorrow with E7 (floor openings / stairwell cutouts)** + final QA + strip the `[autosave]` debug logs. |
+| **Progress (overall 01H)** | ███████░░░░░░░░░░░░░ ~30% (Phase 1 feature-complete; Phases 2–5 untouched) |
+| **Progress (Phase 1 only)** | █████████████████████ ~100% (D1–D3 + E1–E7 done; schema merge done; immutability hardened; auto-save fixed; Case 3 pin fix shipped; floor-pick UX done; cutouts done) |
+| **State** | Ready for review — Phase 1 canvas feature set complete. Known limitations tracked below; follow-up hardening deferred. |
 | **Blocker** | None |
 | **Branch** | feature/01h-floor-plan-v2-phase1 |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
@@ -24,9 +24,9 @@
 | Created | 2026-04-15 |
 | Started | 2026-04-16 |
 | Completed | — |
-| Sessions | 3 |
-| Total Time | ~26 hours |
-| Files Changed | ~38 |
+| Sessions | 4 |
+| Total Time | ~34 hours |
+| Files Changed | ~45 |
 | Tests Written | 0 |
 
 ## Session 3 (2026-04-18) — Schema Merge + Immutability + Auto-Save Hardening
@@ -64,7 +64,58 @@ Lakshman peer-review surfaced that the two-table design (`floor_plans` container
 - Race condition in `_create_version`: flip-then-insert is two async calls, not a transaction. Concurrent saves on the same floor could break the is_current uniqueness. Needs a partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + UNIQUE on `(property_id, floor_number, version_number)` + APIError catch+retry in `_create_version`. Pre-existing (predates the merge), low likelihood with single-user editing — defer to a hardening commit.
 - `COPY_FIELDS` on `_copy_rooms_from_linked_job` includes `floor_plan_id` — recon's copied rooms point at mitigation's frozen v1 row. Needs either dropping from COPY_FIELDS or repointing rooms in `_create_version` on fork. Falls under Section 19 (property_rooms split) territory.
 - Spec doc DDL block (around line 215) still uses old `floor_plan_versions` SQL. Banner at top of file warns readers but the SQL is stale. Update when convenient.
-- `[autosave]` debug logs in `konva-floor-plan.tsx` and `floor-plan/page.tsx` — strip before merge.
+
+## Session 4 (2026-04-18) — Floor-Pick-First UX + Case 3 Pin Fix + E7 Cutouts
+
+Closed out Phase 1 with two overlapping pieces: a pick-floor-first UX that replaces the auto-Main-on-load flow (resolves the "floor_level mismatch" deferred from Session 3 where the card's Floor field labeled the room but didn't move the rectangle), and E7 floor cutouts (stairwells) with end-to-end net-SF math. Session 3's `[autosave]` debug logs stripped before merge.
+
+**Backend:**
+- `save_canvas` Case 3 now calls `_pin_job_to_version` after forking. The line was missing — comment said "Pin this job to the new version" but the code wasn't there. Effect was a version explosion (one fork per save, chip stuck on the inherited pin) because the next save re-read the stale pin and forked again.
+
+**Frontend — floor-pick-first:**
+- Removed the auto-Main effect. Fresh jobs show 4 dashed preset slots in the selector and a `noActiveFloor`-driven empty state on the canvas.
+- New `PickFloorModal` intercepts Wall / Door / Window / Trace / Opening / Cutout when no floor is active — 4 buttons matching ConfirmModal conventions (red-outline Cancel, rounded-lg).
+- Room tool: Floor field marked "required" when no floor is active, Confirm disabled until picked.
+- Cross-floor room creation: confirming a room with a Floor different from the active canvas calls a new `handleCreateRoomOnDifferentFloor` that merges the new room into the target floor's canvas, POSTs to that floor's versions endpoint, primes both `floorPlans` and `floor-plan-history` caches, then switches active — canvas hydrates instantly with the room already on the target floor (no empty-state flash).
+- `ensureFloor(level)` creates/returns the preset row; 409 "floor already exists" recovery refetches and returns the canonical row.
+- `flush()` no-ops when nothing's pending. No more wasted POST on floor switch / back-nav.
+- Save button shows a brief "Saved ✓" chip on no-op flushes so the click isn't a silent dead end.
+- Back button invalidates `jobs` / `rooms` / `floor-plans` caches so the job detail Property Layout reflects new rooms/floors without a hard refresh.
+- Archived preview on the job detail page anchors the versions query on the job's pin (not `floorPlans[0]`), with a fallback chain for legacy pins; hides the preview until history resolves so it never flashes "Tap to start drawing" on a frozen job.
+- Fixed duplicate-`Floor 1` React key on the job detail Property Layout (legacy rows with the same `floor_name`; now keyed on `floor_plan.id`).
+- Mobile header hidden on `/floor-plan` for full-bleed canvas.
+
+**Frontend — E7 floor cutouts:**
+- New "Cutout" tool. Drag inside a room → dashed white preview; turns red if the center isn't inside any room (live feedback this drag won't commit).
+- Live clamping via `dragBoundFunc` on move + resize so cutouts physically stop at the host room's bbox edge instead of following the finger outside and snapping back on release.
+- New `CutoutEditorSheet` (bottom sheet on mobile, centered card on desktop): optional Name, Width, Length with "Max X ft" validation against host bbox. Sticky Delete + Done footer matching RoomConfirmationCard conventions. Opens immediately after placement AND on subsequent taps. Keyed on cutout id so state re-seeds from fresh dims on each open.
+- Canvas labels rethought: room shows net SF under its name (bold orange when cutouts present, neutral grey otherwise). Cutout shows Name + SF area above the dashed rect when selected (SF is the business-relevant number; raw W × L lives in the editor).
+- Persistent floor-total chip pinned at the top-right of the canvas: "Floor N SF (M cutouts)". Always-visible reference so SF stays readable even when a cutout overlaps a room's center label.
+- Cutout fill opacity dropped to 0.45 so room labels bleed through when a cutout sits over the room center.
+- Toast feedback when a cutout drag ends outside any room; persistent orange hint when the Cutout tool is active on a canvas with no rooms.
+- SF end-to-end: `roomFloorArea(room, gs)` = polygon area − cutout area. Canvas save includes `square_footage` (net) and `floor_openings` (converted px → ft) in the `updateRoom.mutate` payload. Detail page Property Layout preview renders cutouts as dashed rects and shows net SF in the room label. `RoomRow` SF cell prefers the stored `square_footage` over bbox math with a tooltip noting cutout presence.
+
+**Types:**
+- `FloorOpeningData {id, x, y, width, height, name?}` on `RoomData.floor_openings`.
+- `FLOOR_LEVEL_TO_NUMBER`, `FLOOR_LEVEL_LABEL`, `floorNumberToLevel` — single source of truth for UI ↔ DB mapping (basement=0, main=1, upper=2, attic=3).
+
+**Test summary:**
+All manual cases in the Session 4 test matrix passed — fresh-job empty state, preset-tap create, draw → confirm → save, cross-floor create, switch floors with no-op flush, cutout placement + resize clamp, cutout sheet open/save/delete, archived read-only hydration, back-nav cache refresh, bidirectional visibility between active mit/recon, Case 3 pin moves correctly after fork.
+
+**Deferred follow-ups (to be bundled into a hardening pass before production archival claims):**
+1. **Multi-floor archival pin.** `jobs.floor_plan_id` is a single column — archived jobs with content on multiple floors freeze only the pinned floor. Other floors hydrate from `is_current` and may show sibling job edits. Fix requires either a `job_floor_pins` junction table or snapshot-on-archive logic. Single-floor archived jobs work correctly; **do not file insurance claims on multi-floor archived jobs until this ships.**
+2. **Archived preview tier-3 fallback cleanup.** `web/src/app/(protected)/jobs/[id]/page.tsx` `bestFloorPlan` has a tier-3 fallback that returns any `is_current` floor's canvas_data when both the pin and `created_by_job_id` lookups fail. Safety net for legacy rows whose pins were lost to the pre-Session-4 Case 3 bug. Can leak sibling content on the thumbnail. One-off pin-repair migration below, then tier 3 can be removed:
+   ```sql
+   UPDATE jobs SET floor_plan_id = (
+     SELECT id FROM floor_plans
+     WHERE created_by_job_id = jobs.id
+     ORDER BY version_number DESC LIMIT 1
+   )
+   WHERE floor_plan_id IS NULL
+      OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
+   ```
+3. **Race hardening in `_create_version`.** Flip-then-insert is not a transaction. Needs partial unique indexes + APIError retry before concurrent editing.
+4. **Room+door tap-overlap on resize handles.** Corner handle not tappable when a door sits near it — z-order / hit-area issue in Konva rendering. Pre-existing, surfaced during Session 4 testing.
 
 ## Reference
 - **Brett's spec:** Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026)
@@ -109,26 +160,26 @@ Before this spec was finalized, several components were verified to already exis
 - [x] `wall_openings` table created (doors, windows, missing walls)
 - [x] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing canvas_data)
 - [ ] Room creation: drop default 10×10 rectangle (dashed = unconfirmed), deform by dragging edges/corners
-- [ ] Room creation: trace perimeter method — tap corners sequentially, auto-close into room
-- [ ] Polygon data model: rooms store `points: [{x,y}]` (rectangles are 4-point polygons)
-- [ ] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles)
+- [x] Room creation: trace perimeter method — tap corners sequentially, auto-close into room (see E6 below)
+- [x] Polygon data model: rooms store `points: [{x,y}]` (rectangles are 4-point polygons) (see E1 below)
+- [x] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles) (see E2 below)
 - [x] Room confirmation card: name, type, dimensions, ceiling height, ceiling type, materials, affected status
 - [x] Room type system: 13 predefined types with auto-populated material defaults
 - [x] 6-inch grid snap enforced
 - [x] Floor SF auto-calculated (polygon area, minus floor openings)
 - [x] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier - openings)
 - [x] Custom wall SF override per room (for non-standard ceiling geometry)
-- [x] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic (pill selector with room-count badge + version chip `v1`/`v2` on active pill; horizontal scroll on mobile; auto-creates "Main Floor" on first load for fresh jobs)
-- [ ] Floor openings: stairwell cutouts that subtract from floor SF
-- [ ] **Room snap behavior:** magnetic snap within 20px of existing room walls
-- [ ] **Shared wall auto-detection:** when two rooms snap together, shared wall marked `shared=true`, excluded from each room's perimeter LF, rendered with lighter line weight
+- [x] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic (pill selector with room-count badge + version chip on active pill; horizontal scroll on mobile; pick-floor-first UX — fresh jobs show 4 dashed preset slots, user picks via the selector or the first room's Floor field)
+- [x] Floor openings: stairwell cutouts that subtract from floor SF (E7 — see Session 4 below)
+- [x] **Room snap behavior:** magnetic snap within 20px of existing room walls (see E3 below)
+- [x] **Shared wall auto-detection:** when two rooms snap together, shared wall marked `shared=true`, excluded from each room's perimeter LF, rendered with lighter line weight (see E4 below)
 - [x] Wall contextual menu on tap: Add Door, Add Window, Add Opening, Wall Type, Mark Affected
 - [x] Door height field (default 7ft, editable) — SF deduction: width × height
 - [x] Window height field (default 4ft) + sill height (optional) — SF deduction: width × height
 - [x] Opening (missing wall): dashed line indicator, drag handles for start/end, full SF deduction
 - [x] Wall type toggle: exterior / interior (drives Xactimate material codes in Spec 01D)
 - [x] Wall affected status: per-wall mitigation scope flag (independent from room)
-- [ ] **Affected Mode overlay** toggle on canvas (highlights all affected rooms/walls in red)
+- [x] **Affected Mode overlay** toggle on canvas (highlights all affected rooms/walls in red) (see E5 below)
 - [ ] Full test coverage: SF calculations, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic
 - [x] Wall sync to backend on auto-save (walls + doors + windows + openings → wall_segments + wall_openings)
 - [x] Opening tool in toolbar (place openings directly by clicking walls)
@@ -152,34 +203,53 @@ Before this spec was finalized, several components were verified to already exis
 - [x] **E4: Shared wall auto-detection** — after snap/create, walls collinear + overlapping with another room's wall get `shared=true`; rendered muted gray + thinner stroke; backend `wall_segments.shared` persisted
 - [x] **E5: Affected Mode overlay** — "Damage" toolbar toggle; dims non-affected rooms/walls to 25% opacity; red ring+tint on active state
 - [x] **E6: Trace perimeter tool** — "Trace" toolbar button; tap corners in sequence; rubber-band preview; numbered vertex dots; dashed closing preview; floating status pill with Clear + Done actions
-- [ ] **E7: Floor openings (stairwell cutouts) — PENDING** — subtract from floor SF, rendered as a white/dashed rectangle overlay on a room's fill. **Resume here tomorrow.**
+- [x] **E7: Floor openings (stairwell cutouts)** — subtract from floor SF, dashed rect overlay, optional name. End-to-end net-SF math (canvas labels, property layout preview, `job_rooms.square_footage` sync). Editor bottom sheet with typed W × L inputs.
 - [ ] **Full test coverage** — SF calcs, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic, immutability guards (Case 2 pinned_still_current, frozen-row guard on update, archived-job rollback)
-- [ ] **Strip `[autosave]` debug logs** in `konva-floor-plan.tsx` and `floor-plan/page.tsx` before merge
+- [x] **Strip `[autosave]` debug logs** in `konva-floor-plan.tsx` and `floor-plan/page.tsx`
 
-### Tomorrow's Resume Checklist (Session 4)
-1. **Strip debug logs:** grep for `[autosave]` in `web/src/components/sketch/konva-floor-plan.tsx` and `web/src/app/(protected)/jobs/[id]/floor-plan/page.tsx`. Remove all `console.log`/`console.warn` lines tagged with that prefix.
-2. **Room↔floor coupling refactor (UX cleanup):** today's fix wires the form's `floor_level` to the database, but the canvas RECTANGLE still lives on whatever floor the user happened to be on when drawing — creating a mismatch (Bathroom labeled `floor_level=upper` but rectangle on Main's canvas). Tomorrow's plan:
-   - Remove auto-Main on fresh job page load. Show an empty floor selector with all 4 preset slots dashed/empty.
-   - When user starts drawing, the room confirmation card's `Floor` field becomes the source of truth — picking "Basement" creates Basement (if missing), switches the active canvas to it, then draws the rectangle and saves the room there.
-   - **Critical:** preserve the autosave fix from session 3. Specifically:
-     - Keep `if (createFloorPlan.isPending && !activeFloorIdRef.current) defer` (not the old `if (createFloorPlan.isPending) defer`) — the new floor-pick flow will go through `createFloorPlan.mutate` AND immediately set `activeFloorIdRef.current`, so the new guard is still correct.
-     - Keep the `prevStateRef.current = newState` pre-emption in `finalizePendingRoom` to prevent the duplicate save.
-     - Keep `canvasReady` sticky-per-floor so the canvas doesn't unmount mid-debounce on background refetches.
-   - Test: draw → pick Basement → confirm → see "Saving…" → "Saved ✓" (single chain, no double POST).
-3. **E7 floor openings:** stairwell cutouts. Render as white/dashed rectangle overlay on room fill. Subtract from floor SF. Match the wall-opening UX (place via tool, draggable handles to resize).
-4. **Race condition hardening (optional):** add the partial unique indexes + APIError retry in `_create_version`. New migration `e1a7c9b30202_floor_plans_uniq_indexes.py`.
-5. **QA pass:** mitigation→recon fork flow (recon should fork v2 cleanly, mitigation's archived view should never show recon's edits), multi-floor save, floor switch, undo/redo, autosave timing.
-6. **PR for Lakshman.** Highlight the merge migration + the immutability semantics + the auto-save fix + the new floor-pick flow. Note the deferred race-condition hardening as a known follow-up.
+### Known Limitations (Phase 1 — track for follow-up hardening)
 
-> **Known limitation — multi-floor archival freeze (track separately).**
-> `jobs.floor_plan_version_id` is a single column — it can only pin to ONE
-> floor's version. When a mitigation job with data on multiple floors (e.g.
-> Basement + Main) is archived, only the most-recently-saved floor's version
-> is frozen by the pin. Other floors of the archived job will render their
-> latest `is_current` version, which may include later edits from a linked
-> reconstruction job. The fix requires per-floor pins (new `job_floor_pins`
-> junction table or snapshot-on-archive logic) — out of scope for Phase 1.
-> File a separate spec (e.g. 01J) before real archival claims are filed.
+> **Multi-floor archival freeze.** `jobs.floor_plan_id` is a single column —
+> it pins to ONE floor's version. When a job with data on multiple floors is
+> archived, only the most-recently-saved floor is frozen by the pin. Other
+> floors of that archived job hydrate from `is_current` and may show later
+> edits from a linked sibling job. Fix requires per-floor pins (`job_floor_pins`
+> junction table or snapshot-on-archive). Single-floor archival works
+> correctly; **do not file insurance claims on multi-floor archived jobs
+> until this ships.**
+
+> **Archived preview legacy-pin fallback.**
+> `web/src/app/(protected)/jobs/[id]/page.tsx` `bestFloorPlan` has a tier-3
+> fallback that returns any `is_current` floor's `canvas_data` when both the
+> pin and `created_by_job_id` lookups fail. Safety net for legacy rows whose
+> pins were lost to the pre–Session-4 Case 3 bug. Can leak sibling content on
+> the thumbnail. Fix via one-off pin-repair migration:
+> ```sql
+> UPDATE jobs SET floor_plan_id = (
+>   SELECT id FROM floor_plans
+>   WHERE created_by_job_id = jobs.id
+>   ORDER BY version_number DESC LIMIT 1
+> )
+> WHERE floor_plan_id IS NULL
+>    OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
+> ```
+> Once pins are clean, remove tier 3 so archived previews strictly reflect
+> the pinned snapshot. Not blocking for Phase 1 — the locked floor-plan
+> page always renders the correct pinned version; only the thumbnail
+> approximates.
+
+> **Race hardening in `_create_version`.** Flip-then-insert is two async
+> calls, not a transaction. Under concurrent saves (multi-tech editing)
+> the "one is_current per floor" invariant could break. Needs partial
+> unique indexes (`CREATE UNIQUE INDEX ON floor_plans (property_id,
+> floor_number) WHERE is_current = true`) + APIError catch+retry in
+> `_create_version`. Low likelihood under single-user editing; predates
+> the Session 3 schema merge. Track as hardening.
+
+> **Room+door tap-overlap.** Resize corner handle on a room isn't tappable
+> when a door / window / opening sits near it — hit-area overlap in Konva
+> rendering. Pre-existing, surfaced during Session 4 testing. Fix via
+> z-order bump on room handles + tightened door hit-area near wall ends.
 
 ### Phase 2: Moisture Pins
 - [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
