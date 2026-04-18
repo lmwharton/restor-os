@@ -172,6 +172,29 @@ export type RoomType =
 export type CeilingType = "flat" | "vaulted" | "cathedral" | "sloped";
 export type FloorLevel = "basement" | "main" | "upper" | "attic";
 
+// Mapping between the semantic FloorLevel enum (UI) and the integer
+// floor_number stored on floor_plans (DB). Kept alongside the type so
+// imports are single-source. Mirrors FLOOR_PRESETS in floor-selector.tsx.
+export const FLOOR_LEVEL_TO_NUMBER: Record<FloorLevel, number> = {
+  basement: 0,
+  main: 1,
+  upper: 2,
+  attic: 3,
+};
+export const FLOOR_LEVEL_LABEL: Record<FloorLevel, string> = {
+  basement: "Basement",
+  main: "Main Floor",
+  upper: "Upper Floor",
+  attic: "Attic",
+};
+export function floorNumberToLevel(n: number | null | undefined): FloorLevel | null {
+  if (n === 0) return "basement";
+  if (n === 1) return "main";
+  if (n === 2) return "upper";
+  if (n === 3) return "attic";
+  return null;
+}
+
 export interface Room {
   id: string;
   job_id: string;
