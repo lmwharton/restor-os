@@ -678,9 +678,24 @@ export default function FloorPlanPage({
             }
           }
         }
-        // Sync room dimensions from sketch to Property Layout rooms
+        // Sync room dimensions, floor_openings (cutouts), and net square
+        // footage from sketch to Property Layout rooms. Floor openings live
+        // on the canvas room AND the job_rooms row; keep them in lockstep so
+        // backend SF calculations + Xactimate line items see the cutouts.
         if (canvasData.rooms && jobRooms) {
           const gs = canvasData.gridSize || 20;
+          // Shoelace area for polygon rooms; bbox area for rectangles.
+          // Mirrors floor-plan-tools.roomFloorArea but inlined so this file
+          // doesn't need a canvas-state import.
+          const polyArea = (pts: Array<{ x: number; y: number }>): number => {
+            if (pts.length < 3) return 0;
+            let s = 0;
+            for (let i = 0; i < pts.length; i++) {
+              const a = pts[i], b = pts[(i + 1) % pts.length];
+              s += a.x * b.y - b.x * a.y;
+            }
+            return Math.abs(s) / 2;
+          };
           for (const drawnRoom of canvasData.rooms) {
             const match = drawnRoom.propertyRoomId
               ? jobRooms.find((r) => r.id === drawnRoom.propertyRoomId)
@@ -690,8 +705,40 @@ export default function FloorPlanPage({
               const lengthFt = Math.round((drawnRoom.height / gs) * 10) / 10;
               const currentW = Math.round((match.width_ft ?? 0) * 10) / 10;
               const currentL = Math.round((match.length_ft ?? 0) * 10) / 10;
-              if (widthFt !== currentW || lengthFt !== currentL) {
-                updateRoom.mutate({ roomId: match.id, width_ft: widthFt, length_ft: lengthFt } as Record<string, unknown> & { roomId: string });
+              const dimsChanged = widthFt !== currentW || lengthFt !== currentL;
+
+              // Cutouts compared as JSON — small arrays, infrequent changes.
+              // Convert canvas px → feet so the backend stores business units.
+              const drawnCutouts = (drawnRoom.floor_openings ?? []).map((o) => ({
+                x: Math.round((o.x / gs) * 100) / 100,
+                y: Math.round((o.y / gs) * 100) / 100,
+                width: Math.round((o.width / gs) * 100) / 100,
+                height: Math.round((o.height / gs) * 100) / 100,
+              }));
+              const currentCutouts = (match.floor_openings ?? []).map((o: { x: number; y: number; width: number; height: number }) => ({
+                x: o.x, y: o.y, width: o.width, height: o.height,
+              }));
+              const cutoutsChanged = JSON.stringify(drawnCutouts) !== JSON.stringify(currentCutouts);
+
+              // Net SF: polygon (or bbox) area − cutout area, in sq ft.
+              const hasPolygon = Array.isArray(drawnRoom.points) && drawnRoom.points.length >= 3;
+              const areaPx = hasPolygon
+                ? polyArea(drawnRoom.points!)
+                : drawnRoom.width * drawnRoom.height;
+              const cutoutsPx = (drawnRoom.floor_openings ?? []).reduce(
+                (sum, o) => sum + Math.abs(o.width * o.height),
+                0,
+              );
+              const netSf = Math.max(0, Math.round(((areaPx - cutoutsPx) / (gs * gs)) * 10) / 10);
+              const currentSf = Math.round((match.square_footage ?? 0) * 10) / 10;
+              const sfChanged = netSf !== currentSf;
+
+              if (dimsChanged || cutoutsChanged || sfChanged) {
+                const payload: Record<string, unknown> & { roomId: string } = { roomId: match.id };
+                if (dimsChanged) { payload.width_ft = widthFt; payload.length_ft = lengthFt; }
+                if (cutoutsChanged) { payload.floor_openings = drawnCutouts; }
+                if (sfChanged) { payload.square_footage = netSf; }
+                updateRoom.mutate(payload);
               }
             }
           }
@@ -827,7 +874,8 @@ export default function FloorPlanPage({
   // switch to it if it already exists. Pre-floor drawing carry-over logic is
   // gone — with the noActiveFloor intercept, the user can't draw before a
   // floor exists. ensureFloor handles 409 recovery if the cache is stale.
-  const handleCreatePresetFloor = useCallback(async (floorNumber: number, _floorName: string) => {
+  const handleCreatePresetFloor = useCallback(async (floorNumber: number, floorName: string) => {
+    void floorName; // label derived from level inside ensureFloor; arg kept to match FloorSelector's signature
     const level = floorNumberToLevel(floorNumber);
     if (!level) return;
     canvasRef.current?.flush();

@@ -194,6 +194,13 @@ function ToolInstructions({ tool }: { tool: ToolType }) {
         <p className="text-[11px] text-[#8a847e] mt-3">Openings show as dashed red lines. Full wall height deducted from SF.</p>
       </div>
     ),
+    cutout: (
+      <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+        <p><span className="font-semibold text-[#1a1a1a]">Click and drag inside a room</span> to place a floor cutout (stairwell, HVAC shaft, elevator).</p>
+        <p>Select a cutout to drag it or resize via corner handles.</p>
+        <p className="text-[11px] text-[#8a847e] mt-3">Cutouts render as dashed white rectangles. Their area is subtracted from floor SF.</p>
+      </div>
+    ),
     select: (
       <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
         <p><span className="font-semibold text-[#1a1a1a]">Click</span> any element to select it.</p>
@@ -214,7 +221,8 @@ function ToolInstructions({ tool }: { tool: ToolType }) {
 
   const toolNames: Record<ToolType, string> = {
     room: "Room Tool", trace: "Trace Tool", wall: "Wall Tool", door: "Door Tool",
-    window: "Window Tool", opening: "Opening Tool", select: "Select Tool", delete: "Delete Tool",
+    window: "Window Tool", opening: "Opening Tool", cutout: "Cutout Tool",
+    select: "Select Tool", delete: "Delete Tool",
   };
 
   return (

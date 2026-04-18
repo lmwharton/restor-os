@@ -1,6 +1,30 @@
 // Floor plan tool definitions, types, and snap logic
 
-export type ToolType = "room" | "wall" | "door" | "window" | "opening" | "select" | "delete" | "trace";
+export type ToolType =
+  | "room"
+  | "wall"
+  | "door"
+  | "window"
+  | "opening"
+  | "cutout"
+  | "select"
+  | "delete"
+  | "trace";
+
+/** Floor opening (stairwell, HVAC shaft, elevator): a rectangular cutout
+ *  inside a room that subtracts from its floor SF. Lives on the parent
+ *  RoomData so SF math stays per-room. Persisted into
+ *  `job_rooms.floor_openings` JSONB on save. */
+export interface FloorOpeningData {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Optional label for clarity in reports / the properties panel
+   *  (e.g., "Stairwell", "HVAC Shaft", "Elevator"). */
+  name?: string;
+}
 
 export interface RoomData {
   id: string;
@@ -16,6 +40,9 @@ export interface RoomData {
    *  bounding box (derived). Rectangles may leave this undefined; the four
    *  corners are implied from x/y/width/height. */
   points?: Array<{ x: number; y: number }>;
+  /** Rectangular cutouts in the room floor (stairwells etc.). Rendered as
+   *  dashed white rectangles and subtracted from floor SF. Axis-aligned. */
+  floor_openings?: FloorOpeningData[];
 }
 
 export interface WallData {
@@ -318,6 +345,7 @@ export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "d
   { id: "door", label: "Door", icon: "door", group: "place" },
   { id: "window", label: "Window", icon: "window", group: "place" },
   { id: "opening", label: "Opening", icon: "opening", group: "place" },
+  { id: "cutout", label: "Cutout", icon: "cutout", group: "place" },
   { id: "select", label: "Select", icon: "pointer", group: "edit" },
   { id: "delete", label: "Delete", icon: "trash", group: "edit" },
 ];
@@ -395,4 +423,36 @@ export function polygonBoundingBox(points: Array<{ x: number; y: number }>): {
 /** Returns flat [x1,y1,x2,y2,...] for Konva's Line component. */
 export function polygonToKonvaPoints(points: Array<{ x: number; y: number }>): number[] {
   return points.flatMap((p) => [p.x, p.y]);
+}
+
+/** Ray-casting point-in-polygon test. Used to determine which room (if any)
+ *  a cutout placement falls inside. */
+export function pointInPolygon(
+  pt: { x: number; y: number },
+  polygon: Array<{ x: number; y: number }>,
+): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    const intersect =
+      yi > pt.y !== yj > pt.y &&
+      pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Floor area (SF) with cutouts subtracted. `gridSize` = pixels per foot.
+ *  Used for Xactimate quantity accuracy — stairwells and HVAC shafts reduce
+ *  the billable floor square footage. */
+export function roomFloorArea(room: RoomData, gridSize: number): number {
+  const pts = getRoomPoints(room);
+  const areaPx = polygonArea(pts);
+  const cutoutsPx = (room.floor_openings ?? []).reduce(
+    (sum, o) => sum + Math.abs(o.width * o.height),
+    0,
+  );
+  const net = Math.max(0, areaPx - cutoutsPx);
+  return net / (gridSize * gridSize);
 }

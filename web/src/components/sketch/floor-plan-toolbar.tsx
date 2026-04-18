@@ -57,6 +57,15 @@ function ToolIcon({ type }: { type: string }) {
           <line x1="20" y1="8" x2="20" y2="16" stroke="currentColor" strokeWidth="2" />
         </svg>
       );
+    case "cutout":
+      // Dashed rectangle with a thin X through it — evokes "hole punched in the floor"
+      // (stairwell, HVAC shaft, elevator). Tool=cutout places a FloorOpeningData.
+      return (
+        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+          <rect x="4" y="4" width="16" height="16" rx="1.5" stroke="currentColor" strokeWidth="2" strokeDasharray="3 3" />
+          <path d="M9 9l6 6M15 9l-6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" opacity="0.55" />
+        </svg>
+      );
     case "pointer":
       return (
         <svg width={s} height={s} viewBox="0 0 24 24" fill="none">

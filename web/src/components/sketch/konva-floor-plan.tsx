@@ -8,6 +8,7 @@ import {
   type FloorPlanData,
   type RoomData,
   type WallData,
+  type FloorOpeningData,
   emptyFloorPlan,
   uid,
   snapToGrid,
@@ -21,11 +22,15 @@ import {
   polygonCentroid,
   polygonBoundingBox,
   polygonToKonvaPoints,
+  pointInPolygon,
+  getRoomPoints,
+  roomFloorArea,
 } from "./floor-plan-tools";
 import { FloorPlanToolbar } from "./floor-plan-toolbar";
 import { FloorPlanSidebar } from "./floor-plan-sidebar";
 import { RoomConfirmationCard, type RoomConfirmationData } from "./room-confirmation-card";
 import { WallContextMenu } from "./wall-context-menu";
+import { CutoutEditorSheet } from "./cutout-editor-sheet";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -333,6 +338,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     points?: Array<{ x: number; y: number }>;
   } | null>(null);
 
+  // Cutout editor state — opens on placement AND on subsequent taps. We track
+  // the id (not the cutout object) so edits always read fresh state after
+  // push/undo/redo instead of stale props.
+  const [editingCutoutId, setEditingCutoutId] = useState<string | null>(null);
+
+  // Transient message shown near the top of the canvas for ephemeral user
+  // feedback (e.g. "drag inside a room to place a cutout"). Auto-clears via
+  // a timer so the user isn't stuck staring at a stale hint.
+  const [canvasToast, setCanvasToast] = useState<string | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const flashToast = useCallback((msg: string) => {
+    setCanvasToast(msg);
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    toastTimer.current = setTimeout(() => setCanvasToast(null), 2500);
+  }, []);
+
   // Zoom/pan state
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
@@ -530,6 +551,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
     next.doors = next.doors.filter((d) => d.id !== id);
     next.windows = next.windows.filter((w) => w.id !== id);
+    // Cutouts (floor openings) live on the parent room's floor_openings array.
+    // Walk rooms and strip any opening with matching id.
+    next.rooms = next.rooms.map((r) =>
+      r.floor_openings?.some((o) => o.id === id)
+        ? { ...r, floor_openings: r.floor_openings.filter((o) => o.id !== id) }
+        : r,
+    );
     push(next);
     setSelectedId(null);
   }, [state, push]);
@@ -613,17 +641,26 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
     const pos = getPos();
 
-    // Gate: no active floor. Wall / door / window / trace / opening save
-    // immediately via autosave, so they must have a floor ready — intercept
-    // and open the pick-floor modal. ROOM is intentionally NOT intercepted:
-    // it has its own confirmation card with a Floor field, so the rectangle
-    // drags normally and the user picks the floor at Confirm time.
-    if (noActiveFloor && (tool === "wall" || tool === "trace" || tool === "door" || tool === "window" || tool === "opening")) {
+    // Gate: no active floor. Wall / door / window / trace / opening / cutout
+    // save immediately via autosave, so they must have a floor ready —
+    // intercept and open the pick-floor modal. ROOM is intentionally NOT
+    // intercepted: it has its own confirmation card with a Floor field, so
+    // the rectangle drags normally and the user picks the floor at Confirm.
+    if (noActiveFloor && (tool === "wall" || tool === "trace" || tool === "door" || tool === "window" || tool === "opening" || tool === "cutout")) {
       onDrawAttemptWithoutFloor?.();
       return;
     }
 
     if (tool === "room") {
+      setDrawStart({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
+      setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
+    }
+
+    // Cutout (floor opening): drag a rectangle inside a room. On release we
+    // assign the cutout to whichever room polygon contains the rect's center.
+    // Shares drawStart/drawCurrent with the Room tool — their lifecycles
+    // never overlap (different ToolType values).
+    if (tool === "cutout") {
       setDrawStart({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
       setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
     }
@@ -726,6 +763,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     if (tool === "room" && drawStart) {
       setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
     }
+    if (tool === "cutout" && drawStart) {
+      setDrawCurrent({ x: snapToGrid(pos.x, gs), y: snapToGrid(pos.y, gs) });
+    }
     if (tool === "wall" && wallStart) {
       const snapped = snapEndpoint(snapToGrid(pos.x, gs), snapToGrid(pos.y, gs), state.walls);
       setDrawCurrent({ x: snapped.x, y: snapped.y });
@@ -754,7 +794,54 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       setDrawStart(null);
       setDrawCurrent(null);
     }
-  }, [tool, readOnly, drawStart, drawCurrent, gs]);
+
+    // Cutout commit: find the room whose polygon contains the rect's center,
+    // clamp the cutout into that room's bbox, then push onto its
+    // `floor_openings`. Silent failures used to leave the user staring at an
+    // empty canvas — now we flash a toast telling them what went wrong.
+    if (tool === "cutout" && drawStart && drawCurrent) {
+      const x = Math.min(drawStart.x, drawCurrent.x);
+      const y = Math.min(drawStart.y, drawCurrent.y);
+      const w = Math.abs(drawCurrent.x - drawStart.x);
+      const h = Math.abs(drawCurrent.y - drawStart.y);
+      setDrawStart(null);
+      setDrawCurrent(null);
+      if (w < gs || h < gs) return; // ignore accidental taps / tiny drags
+      const center = { x: x + w / 2, y: y + h / 2 };
+      const hostRoom = state.rooms.find((r) => pointInPolygon(center, getRoomPoints(r)));
+      if (!hostRoom) {
+        flashToast(
+          state.rooms.length === 0
+            ? "Draw a room first — cutouts go inside existing rooms."
+            : "Drag inside a room to place a cutout.",
+        );
+        return;
+      }
+      // Clamp the new cutout into the host room's bbox so a drag that
+      // extends past the room edge gets trimmed instead of escaping.
+      const hostBbox = polygonBoundingBox(getRoomPoints(hostRoom));
+      let cx = x, cy = y, cw = w, ch = h;
+      if (cx < hostBbox.x) { cw -= (hostBbox.x - cx); cx = hostBbox.x; }
+      if (cy < hostBbox.y) { ch -= (hostBbox.y - cy); cy = hostBbox.y; }
+      cw = Math.min(cw, hostBbox.x + hostBbox.width - cx);
+      ch = Math.min(ch, hostBbox.y + hostBbox.height - cy);
+      if (cw < gs || ch < gs) return;
+      const newCutout: FloorOpeningData = { id: uid("cutout"), x: cx, y: cy, width: cw, height: ch };
+      push({
+        ...state,
+        rooms: state.rooms.map((r) =>
+          r.id === hostRoom.id
+            ? { ...r, floor_openings: [...(r.floor_openings ?? []), newCutout] }
+            : r,
+        ),
+      });
+      setSelectedId(newCutout.id);
+      setTool("select");
+      // Immediately open the dimensions sheet so the user can type exact
+      // values (common: drew a rough 2×3, actually wants 4×6 stairwell).
+      setEditingCutoutId(newCutout.id);
+    }
+  }, [tool, readOnly, drawStart, drawCurrent, gs, state, push]);
 
   const finalizePendingRoom = useCallback((data: RoomConfirmationData) => {
     if (!pendingRoom) return;
@@ -1207,6 +1294,41 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
       <div className="flex-1 min-h-0 flex overflow-hidden">
       <div ref={containerRef} className="flex-1 min-h-0 min-w-0 relative bg-white overflow-hidden border border-[#eae6e1] rounded-sm">
+        {/* Transient toast — ephemeral hints like "Drag inside a room".
+            Pinned at top center, dismisses on its own after ~2.5s. */}
+        {canvasToast && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-full bg-[#1a1a1a]/90 text-white text-[12px] font-[family-name:var(--font-geist-mono)] shadow-lg pointer-events-none max-w-[calc(100%-24px)] text-center">
+            {canvasToast}
+          </div>
+        )}
+
+        {/* Persistent floor-total chip — always-visible reference so SF stays
+            readable even when a cutout overlaps a room's center label. Sums
+            net SF across every room on this floor (after cutout subtraction).
+            Hidden when the canvas is empty to avoid "0 SF" clutter. */}
+        {state.rooms.length > 0 && (() => {
+          const totalSf = state.rooms.reduce((acc, r) => acc + roomFloorArea(r, gs), 0);
+          const cutoutCount = state.rooms.reduce((acc, r) => acc + (r.floor_openings?.length ?? 0), 0);
+          return (
+            <div className="absolute top-3 right-3 z-20 px-3 py-1.5 rounded-lg bg-white/90 backdrop-blur-sm border border-[#eae6e1] text-[11px] font-[family-name:var(--font-geist-mono)] shadow-sm pointer-events-none max-w-[calc(100%-24px)]">
+              <span className="text-[#8a847e]">Floor </span>
+              <span className="font-semibold text-[#1a1a1a] tabular-nums">{Math.round(totalSf)} SF</span>
+              {cutoutCount > 0 && (
+                <span className="text-[#c13f1d] ml-1">({cutoutCount} cutout{cutoutCount === 1 ? "" : "s"})</span>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* Hint when Cutout tool is active but no rooms exist yet. Visible
+            before the user even tries to drag — complements the generic
+            "Draw your first room" overlay with tool-specific guidance. */}
+        {tool === "cutout" && state.rooms.length === 0 && !drawStart && (
+          <div className="absolute top-3 left-1/2 -translate-x-1/2 z-20 px-3 py-1.5 rounded-full bg-[#fff3ed] text-[#e85d26] text-[12px] font-[family-name:var(--font-geist-mono)] font-medium shadow-sm pointer-events-none max-w-[calc(100%-24px)] text-center border border-[#e85d26]/20">
+            Draw a room first, then place cutouts inside it
+          </div>
+        )}
+
         {isEmpty && !drawStart && (
           <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
             <div className="flex flex-col items-center gap-3 text-center px-6">
@@ -1238,6 +1360,73 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             requireFloorLevel={noActiveFloor}
           />
         )}
+
+        {/* Cutout dimensions editor — opens immediately after placement and
+            on any subsequent tap (Select tool). Find the cutout fresh from
+            state each render so the sheet always sees committed values. */}
+        {editingCutoutId && (() => {
+          let hostRoom: RoomData | null = null;
+          let cutout: FloorOpeningData | null = null;
+          for (const r of state.rooms) {
+            const found = r.floor_openings?.find((o) => o.id === editingCutoutId);
+            if (found) { hostRoom = r; cutout = found; break; }
+          }
+          if (!cutout || !hostRoom) {
+            // Cutout was deleted elsewhere — close the sheet.
+            setEditingCutoutId(null);
+            return null;
+          }
+          const hostBbox = polygonBoundingBox(getRoomPoints(hostRoom));
+          const maxWidthFt = Math.floor((hostBbox.width / gs) * 10) / 10;
+          const maxLengthFt = Math.floor((hostBbox.height / gs) * 10) / 10;
+          return (
+            <CutoutEditorSheet
+              // Key on cutout id → fresh mount per cutout, so local input
+              // state re-seeds from new dimensions without setState-in-effect.
+              key={cutout.id}
+              open
+              cutout={cutout}
+              gridSize={gs}
+              maxWidthFt={maxWidthFt}
+              maxLengthFt={maxLengthFt}
+              onSave={(widthFt, lengthFt, name) => {
+                // Convert ft → px, snap, then clamp origin + size into host
+                // bbox. Shares the same clamp logic as canvas drag/resize
+                // so all paths produce consistent results.
+                let newW = snapToGrid(widthFt * gs, gs);
+                let newH = snapToGrid(lengthFt * gs, gs);
+                let newX = cutout!.x;
+                let newY = cutout!.y;
+                if (newX < hostBbox.x) { newW -= (hostBbox.x - newX); newX = hostBbox.x; }
+                if (newY < hostBbox.y) { newH -= (hostBbox.y - newY); newY = hostBbox.y; }
+                newW = Math.min(newW, hostBbox.x + hostBbox.width - newX);
+                newH = Math.min(newH, hostBbox.y + hostBbox.height - newY);
+                if (newW < gs || newH < gs) return; // sanity: at least 1 grid
+                push({
+                  ...state,
+                  rooms: state.rooms.map((r) =>
+                    r.id === hostRoom!.id
+                      ? {
+                          ...r,
+                          floor_openings: (r.floor_openings ?? []).map((o) =>
+                            o.id === cutout!.id
+                              ? { ...o, x: newX, y: newY, width: newW, height: newH, name: name?.trim() || undefined }
+                              : o,
+                          ),
+                        }
+                      : r,
+                  ),
+                });
+                setEditingCutoutId(null);
+              }}
+              onDelete={() => {
+                deleteElement(editingCutoutId);
+                setEditingCutoutId(null);
+              }}
+              onClose={() => setEditingCutoutId(null)}
+            />
+          );
+        })()}
 
         {/* Trace-mode floating status bar — visible whenever Trace tool is
             active. Pill-shaped, fits on one line; status + actions all inline. */}
@@ -1483,9 +1672,37 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                   const labelY = isPolygon
                     ? polygonCentroid(room.points!).y - fitSize / 2
                     : room.height / 2 - fitSize / 2;
+                  // Net floor SF (subtracts cutouts). Shown below the room
+                  // name so the tech can verify the math live without
+                  // leaving the canvas. Bolder orange when cutouts exist
+                  // — draws the eye to "this number is net, look here".
+                  const cutoutCount = room.floor_openings?.length ?? 0;
+                  const hasCutouts = cutoutCount > 0;
+                  const sfText = hasCutouts
+                    ? `${Math.round(roomFloorArea(room, gs))} SF net`
+                    : `${Math.round(roomFloorArea(room, gs))} SF`;
+                  // Bump font weight + size slightly when cutouts are
+                  // affecting the number — signals "this is calculated".
+                  const sfSize = hasCutouts
+                    ? Math.max(8, Math.round(fitSize * 0.85))
+                    : Math.max(7, Math.round(fitSize * 0.75));
+                  const sfW = sfText.length * CHAR_W * (sfSize / 13);
                   return (
-                    <Text x={labelX} y={labelY} text={label}
-                      fontSize={fitSize} fontFamily="var(--font-geist-mono), monospace" fill="#1a1a1a" align="center" offsetX={labelWpx / 2} />
+                    <>
+                      <Text x={labelX} y={labelY} text={label}
+                        fontSize={fitSize} fontFamily="var(--font-geist-mono), monospace" fill="#1a1a1a" align="center" offsetX={labelWpx / 2} />
+                      <Text
+                        x={labelX}
+                        y={labelY + fitSize + 3}
+                        text={sfText}
+                        fontSize={sfSize}
+                        fontFamily="var(--font-geist-mono), monospace"
+                        fontStyle={hasCutouts ? "bold" : "normal"}
+                        fill={hasCutouts ? "#c13f1d" : "#6b6560"}
+                        align="center"
+                        offsetX={sfW / 2}
+                      />
+                    </>
                   );
                 })()}
                 {/* Dimension labels. Rect rooms: Group sits at (room.x, room.y),
@@ -1649,6 +1866,248 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                   fontSize={12} fontFamily="var(--font-geist-mono), monospace" fill="#e85d26" align="center" offsetX={60}
                 />
               </Group>
+            )}
+
+            {/* Drawing preview for cutout (floor opening). White-filled dashed
+                rect evokes "hole being cut out of the floor". Turns red if the
+                center isn't inside any room — user gets feedback that this
+                drag won't commit. Label shows live SF so the tech sees
+                exactly how much will be subtracted from the room's floor SF. */}
+            {tool === "cutout" && drawStart && drawCurrent && (() => {
+              const px = Math.min(drawStart.x, drawCurrent.x);
+              const py = Math.min(drawStart.y, drawCurrent.y);
+              const pw = Math.abs(drawCurrent.x - drawStart.x);
+              const ph = Math.abs(drawCurrent.y - drawStart.y);
+              const center = { x: px + pw / 2, y: py + ph / 2 };
+              const inRoom = state.rooms.some((r) => pointInPolygon(center, getRoomPoints(r)));
+              const stroke = inRoom ? "#6b6560" : "#dc2626";
+              const sfVal = Math.round(((pw * ph) / (gs * gs)) * 10) / 10;
+              const sfText = `${sfVal} SF`;
+              return (
+                <Group listening={false}>
+                  <Rect
+                    x={px} y={py} width={pw} height={ph}
+                    fill="#ffffff" opacity={0.7}
+                    stroke={stroke} strokeWidth={1.5} dash={[5, 4]}
+                  />
+                  <Text
+                    x={px + pw / 2} y={py - 18}
+                    text={sfText}
+                    fontSize={12} fontStyle="bold" fontFamily="var(--font-geist-mono), monospace" fill={stroke} align="center" offsetX={sfText.length * 4}
+                  />
+                </Group>
+              );
+            })()}
+
+            {/* Floor openings (cutouts) — rendered AFTER all rooms so they
+                layer on top of room fills. Stored in absolute coordinates on
+                the parent room's `floor_openings` array. Selectable, movable,
+                resizable via corner handles (Select tool). Deletable via the
+                Delete tool or Backspace. Subtracted from room floor SF. */}
+            {!readOnly && state.rooms.flatMap((room) =>
+              (room.floor_openings ?? []).map((op) => {
+                const isSelected = selectedId === op.id;
+                // Clamp helpers: cutout must stay inside host room's bbox.
+                // We clamp rect origin + dimensions together so oversized
+                // resizes shrink the cutout instead of pushing the origin
+                // negative (earlier bug — corners escaped above/left of
+                // the room when the handle drag exceeded bbox).
+                const hostPoints = getRoomPoints(room);
+                const bbox = polygonBoundingBox(hostPoints);
+                const clampRect = (x: number, y: number, w: number, h: number) => {
+                  // Origin can't be less than bbox corner
+                  if (x < bbox.x) { w -= (bbox.x - x); x = bbox.x; }
+                  if (y < bbox.y) { h -= (bbox.y - y); y = bbox.y; }
+                  // Size can't exceed remaining bbox room
+                  w = Math.min(w, bbox.x + bbox.width - x);
+                  h = Math.min(h, bbox.y + bbox.height - y);
+                  return { x, y, w, h };
+                };
+                return (
+                  <Group key={op.id}>
+                    <Rect
+                      x={op.x} y={op.y} width={op.width} height={op.height}
+                      // Low-opacity fill so the room's own Name/SF label
+                      // underneath bleeds through when a cutout sits in the
+                      // middle of a room. Dashed stroke carries the visual
+                      // identity — fill is secondary.
+                      fill="#ffffff" opacity={0.45}
+                      stroke={isSelected ? "#5b6abf" : "#6b6560"}
+                      strokeWidth={isSelected ? 2 : 1.5}
+                      dash={[5, 4]}
+                      elementId={op.id}
+                      draggable={tool === "select"}
+                      // Live clamp during drag — keeps the cutout visually
+                      // inside the host room as the finger moves, instead
+                      // of letting it follow the cursor outside and
+                      // snapping back on release (jarring). Converts Konva's
+                      // absolute stage coords ↔ logical canvas coords.
+                      dragBoundFunc={(pos) => {
+                        const localX = (pos.x - stagePos.x) / stageScale;
+                        const localY = (pos.y - stagePos.y) / stageScale;
+                        const clampedX = Math.max(bbox.x, Math.min(localX, bbox.x + bbox.width - op.width));
+                        const clampedY = Math.max(bbox.y, Math.min(localY, bbox.y + bbox.height - op.height));
+                        return {
+                          x: clampedX * stageScale + stagePos.x,
+                          y: clampedY * stageScale + stagePos.y,
+                        };
+                      }}
+                      onDragEnd={(e) => {
+                        // Move only — size doesn't change. Clamp origin so
+                        // the cutout stays inside the host room's bbox.
+                        const { x: cx, y: cy } = clampRect(e.target.x(), e.target.y(), op.width, op.height);
+                        const nx = snapToGrid(cx, gs);
+                        const ny = snapToGrid(cy, gs);
+                        // Reset Konva's internal position so the next render
+                        // reflects the committed state (otherwise the shape
+                        // "jumps" on the next drag).
+                        e.target.position({ x: nx, y: ny });
+                        push({
+                          ...state,
+                          rooms: state.rooms.map((r) =>
+                            r.id === room.id
+                              ? { ...r, floor_openings: (r.floor_openings ?? []).map((o) => o.id === op.id ? { ...o, x: nx, y: ny } : o) }
+                              : r,
+                          ),
+                        });
+                      }}
+                      onClick={() => {
+                        if (tool === "select") {
+                          setSelectedId(op.id);
+                          setEditingCutoutId(op.id);
+                        }
+                        if (tool === "delete") deleteElement(op.id);
+                      }}
+                      onTap={() => {
+                        if (tool === "select") {
+                          setSelectedId(op.id);
+                          setEditingCutoutId(op.id);
+                        }
+                        if (tool === "delete") deleteElement(op.id);
+                      }}
+                    />
+                    {/* Cutout label — only shown when SELECTED, rendered ABOVE
+                        the cutout rectangle so the room's own name/SF stays
+                        readable in the middle. Shows Name (if set) + AREA in
+                        SF (the number that matters for billing — raw W × L
+                        dimensions are secondary info only visible in the
+                        editor sheet). Falls back to below for cutouts near
+                        the top edge of the canvas. */}
+                    {isSelected && (() => {
+                      const areaSf = Math.round(((op.width * op.height) / (gs * gs)) * 10) / 10;
+                      const sizeText = `${areaSf} SF`;
+                      const nameText = op.name?.trim() || "";
+                      const sizeCharW = 6;
+                      const sizeFont = 11;
+                      const nameFont = 12;
+                      const cx = op.x + op.width / 2;
+                      const aboveY = op.y - 6;
+                      const belowY = op.y + op.height + 6;
+                      const useAbove = aboveY - (nameText ? nameFont + sizeFont + 4 : sizeFont) > 0;
+                      const baseY = useAbove
+                        ? aboveY - (nameText ? nameFont + sizeFont + 4 : sizeFont)
+                        : belowY;
+                      return (
+                        <>
+                          {nameText && (
+                            <Text
+                              x={cx}
+                              y={baseY}
+                              text={nameText}
+                              fontSize={nameFont}
+                              fontStyle="bold"
+                              fontFamily="var(--font-geist-mono), monospace"
+                              fill="#5b6abf"
+                              align="center"
+                              offsetX={(nameText.length * sizeCharW * (nameFont / 12)) / 2}
+                            />
+                          )}
+                          <Text
+                            x={cx}
+                            y={nameText ? baseY + nameFont + 2 : baseY}
+                            text={sizeText}
+                            fontSize={sizeFont}
+                            fontStyle="bold"
+                            fontFamily="var(--font-geist-mono), monospace"
+                            fill="#5b6abf"
+                            align="center"
+                            offsetX={(sizeText.length * sizeCharW * (sizeFont / 12)) / 2}
+                          />
+                        </>
+                      );
+                    })()}
+                    {/* Corner resize handles — only when selected. Chunky enough
+                        for fingers (hitStrokeWidth 14px tappable area). Each
+                        handle snaps its corner to the grid on drag. */}
+                    {isSelected && tool === "select" && (
+                      <>
+                        {[
+                          { key: "tl", cx: op.x, cy: op.y },
+                          { key: "tr", cx: op.x + op.width, cy: op.y },
+                          { key: "br", cx: op.x + op.width, cy: op.y + op.height },
+                          { key: "bl", cx: op.x, cy: op.y + op.height },
+                        ].map((h) => (
+                          <Circle
+                            key={h.key}
+                            x={h.cx} y={h.cy}
+                            radius={7}
+                            fill="#5b6abf"
+                            stroke="#ffffff"
+                            strokeWidth={2}
+                            draggable
+                            hitStrokeWidth={14}
+                            // Live clamp the handle itself so it can't be
+                            // dragged past the host room's bbox. Prevents
+                            // the "cutout grew outside the room" bug.
+                            dragBoundFunc={(pos) => {
+                              const localX = (pos.x - stagePos.x) / stageScale;
+                              const localY = (pos.y - stagePos.y) / stageScale;
+                              const clampedX = Math.max(bbox.x, Math.min(localX, bbox.x + bbox.width));
+                              const clampedY = Math.max(bbox.y, Math.min(localY, bbox.y + bbox.height));
+                              return {
+                                x: clampedX * stageScale + stagePos.x,
+                                y: clampedY * stageScale + stagePos.y,
+                              };
+                            }}
+                            onDragEnd={(e) => {
+                              // Handle's canvas-space position after drag —
+                              // snap to grid, then recompute the cutout's
+                              // rectangle keeping the opposite corner fixed.
+                              const hx = snapToGrid(e.target.x(), gs);
+                              const hy = snapToGrid(e.target.y(), gs);
+                              let { x, y, width: w, height: hh } = op;
+                              if (h.key === "tl") { const dx = hx - x; const dy = hy - y; x = hx; y = hy; w -= dx; hh -= dy; }
+                              if (h.key === "tr") { const dy = hy - y; y = hy; w = hx - x; hh -= dy; }
+                              if (h.key === "br") { w = hx - x; hh = hy - y; }
+                              if (h.key === "bl") { const dx = hx - x; x = hx; w -= dx; hh = hy - y; }
+                              // Clamp origin AND size into host bbox. Prevents
+                              // the "cutout escapes the room" bug where a
+                              // drag past the room edge used to push x/y
+                              // negative and leave w/h oversized.
+                              ({ x, y, w, h: hh } = clampRect(x, y, w, hh));
+                              // Enforce minimum 1 grid cell AFTER clamp.
+                              if (w < gs || hh < gs) {
+                                // Snap handle back to its original spot so the
+                                // canvas matches state.
+                                e.target.position({ x: h.cx, y: h.cy });
+                                return;
+                              }
+                              push({
+                                ...state,
+                                rooms: state.rooms.map((r) =>
+                                  r.id === room.id
+                                    ? { ...r, floor_openings: (r.floor_openings ?? []).map((o) => o.id === op.id ? { ...o, x, y, width: w, height: hh } : o) }
+                                    : r,
+                                ),
+                              });
+                            }}
+                          />
+                        ))}
+                      </>
+                    )}
+                  </Group>
+                );
+              }),
             )}
 
             {/* E6 trace tool preview: chunky, clearly visible vertex dots +

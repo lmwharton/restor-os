@@ -55,6 +55,14 @@ interface CanvasWall {
   y2: number;
 }
 
+interface CanvasFloorOpening {
+  id?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface CanvasRoom {
   id: string;
   x: number;
@@ -63,6 +71,8 @@ interface CanvasRoom {
   height: number;
   name: string;
   fill: string;
+  points?: Array<{ x: number; y: number }>;
+  floor_openings?: CanvasFloorOpening[];
 }
 
 interface CanvasData {
@@ -288,45 +298,80 @@ function FloorPlanPreview({ canvasData, hasFloorPlan = false }: { canvasData: Ca
         preserveAspectRatio="xMidYMid meet"
         aria-label="Floor plan preview"
       >
-        {rooms.map((room) => (
-          <g key={room.id}>
-            <rect
-              x={room.x}
-              y={room.y}
-              width={room.width}
-              height={room.height}
-              fill={room.fill ?? "rgba(232,93,38,0.08)"}
-              stroke="#e85d26"
-              strokeWidth={Math.max(1, vbW / 200)}
-            />
-            {room.name && (
-              <>
-                <text
-                  x={room.x + room.width / 2}
-                  y={room.y + room.height / 2 - 5}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
-                  fill="#6b6560"
-                  fontFamily="var(--font-geist-mono), monospace"
-                >
-                  {room.name}
-                </text>
-                <text
-                  x={room.x + room.width / 2}
-                  y={room.y + room.height / 2 + 7}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={7}
-                  fill="#8a847e"
-                  fontFamily="var(--font-geist-mono), monospace"
-                >
-                  {Math.round((room.width / gs) * (room.height / gs))} SF
-                </text>
-              </>
-            )}
-          </g>
-        ))}
+        {rooms.map((room) => {
+          // Net floor SF: subtract cutouts from polygon (or bbox) area.
+          // Shoelace for polygons; bbox for rectangles.
+          let areaPx: number;
+          if (Array.isArray(room.points) && room.points.length >= 3) {
+            let sum = 0;
+            for (let i = 0; i < room.points.length; i++) {
+              const a = room.points[i];
+              const b = room.points[(i + 1) % room.points.length];
+              sum += a.x * b.y - b.x * a.y;
+            }
+            areaPx = Math.abs(sum) / 2;
+          } else {
+            areaPx = room.width * room.height;
+          }
+          const cutoutsPx = (room.floor_openings ?? []).reduce(
+            (s, o) => s + Math.abs(o.width * o.height),
+            0,
+          );
+          const netSf = Math.max(0, (areaPx - cutoutsPx) / (gs * gs));
+          return (
+            <g key={room.id}>
+              <rect
+                x={room.x}
+                y={room.y}
+                width={room.width}
+                height={room.height}
+                fill={room.fill ?? "rgba(232,93,38,0.08)"}
+                stroke="#e85d26"
+                strokeWidth={Math.max(1, vbW / 200)}
+              />
+              {/* Floor cutouts — dashed white rectangles inside the room */}
+              {(room.floor_openings ?? []).map((op, i) => (
+                <rect
+                  key={op.id ?? `cut-${i}`}
+                  x={op.x}
+                  y={op.y}
+                  width={op.width}
+                  height={op.height}
+                  fill="#ffffff"
+                  stroke="#6b6560"
+                  strokeWidth={Math.max(0.5, vbW / 300)}
+                  strokeDasharray={`${Math.max(1, vbW / 120)} ${Math.max(1, vbW / 150)}`}
+                />
+              ))}
+              {room.name && (
+                <>
+                  <text
+                    x={room.x + room.width / 2}
+                    y={room.y + room.height / 2 - 5}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
+                    fill="#6b6560"
+                    fontFamily="var(--font-geist-mono), monospace"
+                  >
+                    {room.name}
+                  </text>
+                  <text
+                    x={room.x + room.width / 2}
+                    y={room.y + room.height / 2 + 7}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={7}
+                    fill="#8a847e"
+                    fontFamily="var(--font-geist-mono), monospace"
+                  >
+                    {Math.round(netSf)} SF
+                  </text>
+                </>
+              )}
+            </g>
+          );
+        })}
         {walls.map((w, i) => (
           <line
             key={`wall-${i}`}
@@ -1263,7 +1308,14 @@ function RoomRow({
   onUpdateRoom,
   onDeleteRoom,
 }: {
-  room: { id: string; room_name: string; width_ft: number | null; length_ft: number | null };
+  room: {
+    id: string;
+    room_name: string;
+    width_ft: number | null;
+    length_ft: number | null;
+    square_footage?: number | null;
+    floor_openings?: Array<{ width: number; height: number }> | null;
+  };
   onUpdateRoom: (data: Record<string, unknown>) => void;
   onDeleteRoom: () => void;
 }) {
@@ -1334,9 +1386,22 @@ function RoomRow({
         className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 placeholder:text-on-surface-variant/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
 
-      {/* Square footage */}
-      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
-        {room.width_ft && room.length_ft ? Math.round(room.width_ft * room.length_ft) : "—"}
+      {/* Square footage — prefers the backend-stored net SF (which accounts
+          for polygon shape + floor cutouts). Falls back to width × length
+          only if nothing has populated square_footage yet. */}
+      <span
+        className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center"
+        title={
+          (room.floor_openings?.length ?? 0) > 0
+            ? `Net after ${room.floor_openings!.length} cutout${room.floor_openings!.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      >
+        {typeof room.square_footage === "number" && room.square_footage > 0
+          ? Math.round(room.square_footage)
+          : room.width_ft && room.length_ft
+            ? Math.round(room.width_ft * room.length_ft)
+            : "—"}
       </span>
 
       {/* Delete */}
