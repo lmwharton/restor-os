@@ -2542,7 +2542,18 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     push({ ...state, doors: state.doors.map((d) => d.id === door.id ? { ...d, position: t } : d) });
                   }}
                 >
-                  <Rect x={-doorPx / 2 - 5} y={-doorPx - 5} width={doorPx + 10} height={doorPx * 2 + 10} fill="transparent" hitStrokeWidth={0} />
+                  {/* Invisible hit-area — tight to the door body with no lateral
+                      padding. An earlier version used `doorPx + 10` wide and
+                      `2·doorPx + 10` tall, which blanketed room corner-resize
+                      handles whenever a door sat near a wall endpoint (the
+                      t=0.05 clamp in findNearestWall allows door centers to
+                      be only ~0.5ft from a corner). The oversized rect lived
+                      in the Doors layer AFTER the Rooms layer, so it won
+                      hit-testing and stole taps meant for the corner circle.
+                      Tight rect keeps the door tappable without reaching
+                      past its own body. Height 44 covers both swing
+                      directions; width matches doorPx exactly. */}
+                  <Rect x={-doorPx / 2} y={-22} width={doorPx} height={44} fill="transparent" hitStrokeWidth={0} />
                   <Line points={[-doorPx / 2, 0, doorPx / 2, 0]} stroke="#ffffff" strokeWidth={6} />
                   <Line points={[hingeX, 0, hingeX, doorPx * 0.75 * leafDir]} stroke="#1a1a1a" strokeWidth={2.5} lineCap="round" />
                   <Arc
@@ -2582,7 +2593,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     push({ ...state, windows: state.windows.map((w) => w.id === win.id ? { ...w, position: t } : w) });
                   }}
                 >
-                  <Rect x={-winPx / 2 - 5} y={-22} width={winPx + 10} height={44} fill="transparent" hitStrokeWidth={0} />
+                  {/* Invisible hit-area — width matches window body exactly so
+                      a window sitting near a wall endpoint doesn't blanket
+                      the adjacent room's corner-resize handle. See door
+                      comment above for the full rationale. */}
+                  <Rect x={-winPx / 2} y={-22} width={winPx} height={44} fill="transparent" hitStrokeWidth={0} />
                   {isOpening ? (
                     <>
                       {/* Missing wall — white gap with dashed red outline */}
