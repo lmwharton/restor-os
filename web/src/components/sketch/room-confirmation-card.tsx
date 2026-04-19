@@ -122,8 +122,14 @@ export function RoomConfirmationCard({
 
   const handleRoomTypeChange = useCallback((type: RoomType | null) => {
     setRoomType(type);
-    // Material auto-fill disabled for now — will discuss with Lakshman
-  }, []);
+    // Fill materials with type defaults ONLY when the chip list is currently
+    // empty. Respects the tech's manual edits — if they've already added or
+    // removed chips, switching type won't silently wipe their work. Matches
+    // the backend's create_room auto-populate policy (fill-if-not-provided).
+    if (type && materialFlags.length === 0) {
+      setMaterialFlags(ROOM_TYPE_MATERIAL_DEFAULTS[type] ?? []);
+    }
+  }, [materialFlags.length]);
 
   const selectName = useCallback(
     (selectedName: string, propRoomId?: string) => {
