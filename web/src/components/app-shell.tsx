@@ -539,11 +539,17 @@ function MobileBottomNav() {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { data: user = null } = useMe() as { data: UserProfile | null | undefined };
   const pathname = usePathname();
-  // Full-bleed routes: hide mobile header + bottom nav to give the canvas the
-  // full viewport. Desktop top bar is already hidden for /jobs/* routes.
+  // Full-bleed routes: hide mobile header + bottom nav so the content owns
+  // the full viewport. Desktop top bar is already hidden for /jobs/* routes.
+  //
+  // Job detail + sub-routes (/jobs/<id>, /jobs/<id>/photos, etc.) are focused
+  // task views — the sub-header's back arrow is the only nav the user needs.
+  // /jobs (list) and /jobs/new (form) keep the full chrome.
   const isFloorPlan = pathname?.includes("/floor-plan");
-  const hideMobileNav = isFloorPlan;
-  const hideMobileHeader = isFloorPlan;
+  const isJobDetail =
+    !!pathname?.startsWith("/jobs/") && !pathname.startsWith("/jobs/new");
+  const hideMobileNav = isFloorPlan || isJobDetail;
+  const hideMobileHeader = isFloorPlan || isJobDetail;
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
