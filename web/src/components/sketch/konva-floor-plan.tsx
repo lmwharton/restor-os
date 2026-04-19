@@ -31,6 +31,7 @@ import { FloorPlanSidebar } from "./floor-plan-sidebar";
 import { RoomConfirmationCard, type RoomConfirmationData } from "./room-confirmation-card";
 import { WallContextMenu } from "./wall-context-menu";
 import { CutoutEditorSheet } from "./cutout-editor-sheet";
+import { ShapePickerModal, type ShapeTemplate } from "./shape-picker-modal";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -337,6 +338,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
      *  Otherwise it's a rectangle drawn via click-drag. */
     points?: Array<{ x: number; y: number }>;
   } | null>(null);
+
+  // Shape picker — opens as a first step when the user activates the Room tool.
+  // Tapping a shape drops it at default dimensions (centered on the viewport)
+  // and hands off to the existing pendingRoom → RoomConfirmationCard flow.
+  // Tapping Cancel closes the picker but keeps tool="room", so the classic
+  // click-and-drag rectangle drawing still works as a fallback.
+  const [shapePickerOpen, setShapePickerOpen] = useState(false);
 
   // Cutout editor state — opens on placement AND on subsequent taps. We track
   // the id (not the cutout object) so edits always read fresh state after
@@ -713,8 +721,16 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
 
     if (tool === "select") {
+      // Deselect on any tap that ISN'T a selectable element. Rooms/walls/doors/
+      // windows/cutouts all carry an `elementId` attr; vertex + resize handles
+      // stop event propagation via cancelBubble before this runs. So anything
+      // reaching here without an elementId is "background" — stage, grid rect,
+      // dimension labels, room name text — and a tap there should clear the
+      // current selection, matching the user's mental model of tap-outside-
+      // to-dismiss.
       const target = e.target;
-      if (target === stageRef.current || (target.getClassName() === "Rect" && target.attrs.name === "grid-bg")) {
+      const hasElementId = !!target.attrs?.elementId;
+      if (!hasElementId) {
         setSelectedId(null);
         setResizeActive(false);
       }
@@ -949,11 +965,19 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       }
 
       // Build updated room: translate bbox and, for polygons, the points array.
+      // Cutouts (floor_openings) store absolute canvas coords and render outside
+      // the room's Group, so they don't inherit the Konva drag transform —
+      // shift them here alongside the room or they strand at the old spot.
       const updatedRoom: RoomData = {
         ...room,
         x: room.x + dx,
         y: room.y + dy,
         points: isPolygon ? room.points!.map((p) => ({ x: p.x + dx, y: p.y + dy })) : room.points,
+        floor_openings: room.floor_openings?.map((o) => ({
+          ...o,
+          x: o.x + dx,
+          y: o.y + dy,
+        })),
       };
       const shiftedWalls = state.walls.map((w) =>
         w.roomId === id ? { ...w, x1: w.x1 + dx, y1: w.y1 + dy, x2: w.x2 + dx, y2: w.y2 + dy } : w
@@ -1249,10 +1273,86 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const isEmpty = state.rooms.length === 0 && state.walls.length === 0;
 
   const handleToolChange = useCallback((t: ToolType) => {
-    setTool(t);
+    // Toggle-off behavior: tapping the currently-active tool drops back to
+    // Select. Gives mobile users a one-tap "escape" without needing a
+    // keyboard, and matches how design tools (Figma, Sketch) behave. Select
+    // itself never toggles — it's the safe resting state.
+    const next: ToolType = tool === t && t !== "select" ? "select" : t;
+    setTool(next);
     setSelectedId(null);
     setDrawStart(null);
     setWallStart(null);
+    // Room tool opens the shape picker first (client-requested Sheets-style
+    // flow). Picker closes when transitioning to any non-room tool, including
+    // the toggle-off back to Select. Cancel in the picker keeps tool="room"
+    // so the user can still click-and-drag a rectangle as before.
+    setShapePickerOpen(next === "room");
+  }, [tool]);
+
+  /** Drop a shape template at the viewport center at default dimensions, then
+   *  hand off to the existing pendingRoom → RoomConfirmationCard flow. */
+  const handleShapePicked = useCallback((template: ShapeTemplate) => {
+    // Viewport center in world (canvas) coords. Accounts for pan + zoom.
+    const centerX = (-stagePos.x + stageSize.width / 2) / stageScale;
+    const centerY = (-stagePos.y + stageSize.height / 2) / stageScale;
+    const widthPx = template.widthFt * gs;
+    const heightPx = template.heightFt * gs;
+    const topLeftX = snapToGrid(centerX - widthPx / 2, gs);
+    const topLeftY = snapToGrid(centerY - heightPx / 2, gs);
+
+    if (template.pointsFt) {
+      // Polygon shape — build absolute points by offsetting the template's
+      // relative vertices into world coords, snapping each to the grid.
+      const points = template.pointsFt.map((p) => ({
+        x: snapToGrid(topLeftX + p.x * gs, gs),
+        y: snapToGrid(topLeftY + p.y * gs, gs),
+      }));
+      setPendingRoom({
+        x: topLeftX,
+        y: topLeftY,
+        width: widthPx,
+        height: heightPx,
+        points,
+      });
+    } else {
+      // Plain rectangle — no points; existing rect code path handles it.
+      setPendingRoom({
+        x: topLeftX,
+        y: topLeftY,
+        width: widthPx,
+        height: heightPx,
+      });
+    }
+
+    // Auto-pan so the whole shape is visible. The shape's bbox maps to screen
+    // coords (bboxScreen.x = topLeft * scale + stagePos); if the room is
+    // wider/taller than the viewport, or the viewport was offset when the
+    // picker was opened, the shape can clip. Compute a target stagePos that
+    // centers the shape and nudge toward it. Leaves current position alone
+    // when the shape already fits fully inside the viewport.
+    const MARGIN = 32;
+    const bboxScreenLeft = topLeftX * stageScale + stagePos.x;
+    const bboxScreenTop = topLeftY * stageScale + stagePos.y;
+    const bboxScreenRight = (topLeftX + widthPx) * stageScale + stagePos.x;
+    const bboxScreenBottom = (topLeftY + heightPx) * stageScale + stagePos.y;
+    let nextX = stagePos.x;
+    let nextY = stagePos.y;
+    if (bboxScreenLeft < MARGIN) nextX += MARGIN - bboxScreenLeft;
+    if (bboxScreenRight > stageSize.width - MARGIN) nextX -= bboxScreenRight - (stageSize.width - MARGIN);
+    if (bboxScreenTop < MARGIN) nextY += MARGIN - bboxScreenTop;
+    if (bboxScreenBottom > stageSize.height - MARGIN) nextY -= bboxScreenBottom - (stageSize.height - MARGIN);
+    if (nextX !== stagePos.x || nextY !== stagePos.y) {
+      setStagePos({ x: nextX, y: nextY });
+    }
+
+    setShapePickerOpen(false);
+  }, [stagePos, stageSize, stageScale, gs]);
+
+  const handleShapePickerCancel = useCallback(() => {
+    // Close the picker but KEEP tool="room" — user may want to fall back to
+    // the classic click-and-drag rectangle drawing. finalizePendingRoom /
+    // handleMouseDown are unchanged, so drag-draw continues to work.
+    setShapePickerOpen(false);
   }, []);
 
   /* ---------------------------------------------------------------- */
@@ -1344,9 +1444,15 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               // mode after backing out — matches the behavior on Confirm.
               setTool("select");
             }}
-            requireFloorLevel={noActiveFloor}
+            requireFloorLevel
           />
         )}
+
+        <ShapePickerModal
+          open={shapePickerOpen && !pendingRoom}
+          onPick={handleShapePicked}
+          onCancel={handleShapePickerCancel}
+        />
 
         {/* Cutout dimensions editor — opens immediately after placement and
             on any subsequent tap (Select tool). Find the cutout fresh from
@@ -1507,7 +1613,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           scaleY={stageScale}
           x={stagePos.x}
           y={stagePos.y}
-          draggable={tool === "select" && !selectedId}
+          // Stage panning: enabled for any tool whose primary interaction is a
+          // SINGLE TAP (place on wall, delete target, select empty). Disabled
+          // for tools that use tap-drag to draw (room, cutout) or multi-click
+          // sequences that would fight the pan gesture (wall, trace), and
+          // while any draw is mid-flight or an element is selected (so a
+          // drag moves the selection instead of panning).
+          draggable={
+            !drawStart &&
+            !wallStart &&
+            traceVertices.length === 0 &&
+            !(tool === "select" && !!selectedId) &&
+            tool !== "room" &&
+            tool !== "cutout" &&
+            tool !== "wall" &&
+            tool !== "trace"
+          }
           onDragMove={(e) => {
             // Keep stagePos in sync during drag so gridBounds re-memoizes on
             // each cell crossing (qx/qy). Without this, the grid lags the pan
@@ -1564,7 +1685,24 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 opacity={isDimmed ? 0.25 : 1}
                 draggable={tool === "select" && !readOnly}
                 onDragMove={handleDragMove}
-                onDragEnd={(e) => handleDragEnd("room", room.id, { x: e.target.x(), y: e.target.y() })}
+                onDragEnd={(e) => {
+                  const newX = e.target.x();
+                  const newY = e.target.y();
+                  // Polygon rooms: the Group prop is x=0,y=0 constantly. Konva
+                  // mutates those attrs during drag, but react-konva diffs on
+                  // React props — since the prop stayed 0, the attr is NEVER
+                  // synced back to 0 on the next render. Result: Group keeps
+                  // the drag translate AND the points are shifted by dx,
+                  // leaving the polygon/labels double-shifted while walls
+                  // (rendered outside the Group) land at the correct spot.
+                  // Reset the Group's position imperatively here so the next
+                  // render starts from (0, 0) as intended.
+                  if (isPolygon) {
+                    e.target.x(0);
+                    e.target.y(0);
+                  }
+                  handleDragEnd("room", room.id, { x: newX, y: newY });
+                }}
                 // Tap toggles selection: tapping an already-selected room
                 // deselects it (hides vertex handles, closes mobile panel).
                 onClick={() => {
@@ -1692,22 +1830,89 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     </>
                   );
                 })()}
-                {/* Dimension labels. Rect rooms: Group sits at (room.x, room.y),
-                    so local (width/2, -14) lands above the top edge correctly.
-                    Polygon rooms: Group is at (0, 0) with absolute points, so we
-                    need to offset by bbox origin to land above the shape. */}
-                <Text
-                  x={isPolygon ? room.x + room.width / 2 : room.width / 2}
-                  y={isPolygon ? room.y - 14 : -14}
-                  text={feetLabel(room.width)}
-                  fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" align="center" offsetX={feetLabel(room.width).length * 3}
-                />
-                <Text
-                  x={isPolygon ? room.x - 14 : -14}
-                  y={isPolygon ? room.y + room.height / 2 : room.height / 2}
-                  text={feetLabel(room.height)}
-                  fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" rotation={-90} offsetX={feetLabel(room.height).length * 3}
-                />
+                {/* Dimension labels.
+                    Rect rooms: Group sits at (room.x, room.y); (width/2, -14)
+                    lands above the top edge. Two labels (top + left) — the
+                    other two sides are implied.
+                    Polygon rooms: Group is at (0, 0) with absolute points. A
+                    bbox-based label would read "14 ft × 12 ft" on a U-shape
+                    and make it look rectangular. Instead we render one label
+                    PER edge, at the edge midpoint, offset outward along the
+                    perpendicular away from the centroid. */}
+                {!isPolygon && (
+                  <>
+                    <Text
+                      x={room.width / 2}
+                      y={-14}
+                      text={feetLabel(room.width)}
+                      fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" align="center" offsetX={feetLabel(room.width).length * 3}
+                    />
+                    <Text
+                      x={-14}
+                      y={room.height / 2}
+                      text={feetLabel(room.height)}
+                      fontSize={11} fontFamily="var(--font-geist-mono), monospace" fill="#6b6560" rotation={-90} offsetX={feetLabel(room.height).length * 3}
+                    />
+                  </>
+                )}
+                {/* Polygon edge dimension labels — hidden by default, revealed
+                    on selection. Keeps the canvas calm when multiple rooms
+                    share the viewport (especially on mobile where every extra
+                    chip overlaps the name/SF). On selection each edge gets a
+                    thin orange callout, blueprint-style. */}
+                {isPolygon && selectedId === room.id && (() => {
+                  const pts = room.points!;
+                  const OFFSET = 14;
+                  return pts.map((p1, i) => {
+                    const p2 = pts[(i + 1) % pts.length];
+                    const dx = p2.x - p1.x;
+                    const dy = p2.y - p1.y;
+                    const edgeLen = Math.hypot(dx, dy);
+                    if (edgeLen < 1) return null;
+                    const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+                    // Perpendicular unit normal. Centroid-based flipping breaks
+                    // on concave shapes (T/U/L) where "away from centroid" can
+                    // still be inside the polygon — a half-pixel probe with a
+                    // ray-cast point-in-polygon test is definitive either way.
+                    let nx = -dy / edgeLen;
+                    let ny = dx / edgeLen;
+                    const probe = { x: mid.x + nx * 0.5, y: mid.y + ny * 0.5 };
+                    if (pointInPolygon(probe, pts)) {
+                      nx = -nx; ny = -ny;
+                    }
+                    const label = feetLabel(edgeLen);
+                    // Tight chip proportions — mono char ≈ 6.2 px at fs 10.
+                    const chipW = label.length * 6.2 + 8;
+                    const chipH = 14;
+                    const cx = mid.x + nx * OFFSET;
+                    const cy = mid.y + ny * OFFSET;
+                    return (
+                      <Group key={`edge-${i}`}>
+                        <Rect
+                          x={cx - chipW / 2}
+                          y={cy - chipH / 2}
+                          width={chipW}
+                          height={chipH}
+                          fill="#ffffff"
+                          stroke="#e85d26"
+                          strokeWidth={0.6}
+                          opacity={0.97}
+                          cornerRadius={2}
+                        />
+                        <Text
+                          x={cx}
+                          y={cy - 5}
+                          text={label}
+                          fontSize={10}
+                          fontFamily="var(--font-geist-mono), monospace"
+                          fill="#e85d26"
+                          align="center"
+                          offsetX={label.length * 3.1}
+                        />
+                      </Group>
+                    );
+                  });
+                })()}
                 {selectedId === room.id && !isPolygon && (
                   <>
                     {[{ cx: 0, cy: 0 }, { cx: room.width, cy: 0 }, { cx: room.width, cy: room.height }, { cx: 0, cy: room.height }].map((h, i) => (
