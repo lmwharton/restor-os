@@ -1,190 +1,105 @@
 # Spec 01H: Floor Plan V2 — Sketch Tool as Spatial Backbone
 
-> **Schema update 2026-04-18:** The two-table design (`floor_plans` container +
-> `floor_plan_versions`) was merged into a single `floor_plans` table where each
-> row IS a versioned snapshot. `jobs.floor_plan_version_id` was renamed to
-> `jobs.floor_plan_id`. See migration `e1a7c9b30201`. The DDL/code references
-> below still use the older split-table names — they reflect the original design
-> and are kept for context, but the live schema is unified.
-
 ## Status
+
 | Field | Value |
 |-------|-------|
-| **Progress (overall 01H)** | ███████░░░░░░░░░░░░░ ~30% (Phase 1 feature-complete; Phases 2–5 untouched) |
-| **Progress (Phase 1 only)** | █████████████████████ ~100% (D1–D3 + E1–E7 done; schema merge done; immutability hardened; auto-save fixed; Case 3 pin fix shipped; floor-pick UX done; cutouts done) |
-| **State** | Ready for review — Phase 1 canvas feature set complete. Known limitations tracked below; follow-up hardening deferred. |
+| **Phase 1 progress** | █████████████████████ 100% — feature-complete |
+| **Overall 01H progress** | ███████░░░░░░░░░░░░░ ~30% (Phase 1 done; Phases 2–5 untouched) |
+| **State** | Ready for review |
 | **Blocker** | None |
-| **Branch** | feature/01h-floor-plan-v2-phase1 |
+| **Branch** | `feature/01h-floor-plan-v2-phase1` |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
 | **Source** | Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026) |
 
-## Metrics
-| Metric | Value |
-|--------|-------|
-| Created | 2026-04-15 |
-| Started | 2026-04-16 |
-| Completed | — |
-| Sessions | 4 |
-| Total Time | ~34 hours |
-| Files Changed | ~45 |
-| Tests Written | 0 |
+## What Phase 1 Delivers
 
-## Session 3 (2026-04-18) — Schema Merge + Immutability + Auto-Save Hardening
-
-Lakshman peer-review surfaced that the two-table design (`floor_plans` container + `floor_plan_versions`) was redundant — every save wrote `canvas_data` twice, and the container served only as grouping metadata. This session merged them into a unified `floor_plans` table where each row IS a versioned snapshot. Then tightened immutability semantics and stamped out a long tail of regressions caused by the merge.
-
-**Backend changes:**
-- Migration `e1a7c9b30201`: lifts `property_id`, `floor_number`, `floor_name`, `thumbnail_url` onto `floor_plan_versions`; backfills from old container; re-points `job_rooms.floor_plan_id` from container row to is_current version row; drops old `floor_plans` table; renames `floor_plan_versions` → `floor_plans`; renames `jobs.floor_plan_version_id` → `jobs.floor_plan_id`; rebuilds indexes with unified naming.
-- `_create_version` now centrally enforces the "one is_current per (property, floor)" invariant — flips old siblings to `is_current=false` BEFORE inserting the new row at every creation point (Case 1 forks too, not just Case 3 forks).
-- `save_canvas` Case 2 now requires `pinned_still_current` in addition to `created_by_job_id` + `pinned_same_floor`. Once a version has been forked from (is_current=false), it's frozen forever — even its original creator can't update it; they have to fork on top.
-- `update_floor_plan` rejects `canvas_data` / `floor_number` writes on non-current rows (frozen-version guard).
-- `rollback_version` now mirrors `save_canvas`'s archived-job guard.
-- `_auto_upgrade_active_jobs` (57 lines) deleted — frozen-version semantics mean a job's pin only moves when that job itself saves; no auto-upgrade across siblings.
-- `create_floor_plan` accepts an optional `job_id`; when provided, stamps `created_by_job_id` on the new row.
-- `create_floor_plan_by_job_endpoint` now passes `job_id` AND pins `jobs.floor_plan_id = newRow.id` so the auto-Main shell is owned by the creating job — the user's first canvas save hits Case 2 (update v1 in place) instead of forking v2.
-- `create_floor_plan` defaults `canvas_data` to `{}` when caller omits it (the JSONB column is `NOT NULL` and the DB default only applies for absent columns; explicit `null` was hitting the constraint).
-- Linked recon job inherits `floor_plan_id` from the parent mitigation job at creation time (no more NULL pin on fresh recon jobs).
-
-**Frontend changes:**
-- `FloorPlan` type unified (no separate `FloorPlanVersion`); `Job.floor_plan_id` replaces `floor_plan_version_id`. Comprehensive rename sweep — zero remaining old-name references in source.
-- `KonvaFloorPlan` initial-data merge fix: `{ ...emptyFloorPlan(), ...(initialData ?? {}) }` so a partial `canvas_data = {}` from a freshly-created shell still gets `walls/rooms/doors/windows` arrays (was crashing on `state.walls is not iterable`).
-- Hydration logic for archived jobs hardened: never falls through to `is_current` — shows pinned version OR own-created version OR empty. Prevents recon's edits from leaking into mitigation's archived audit view.
-- `canvasReady` made sticky-per-floor with a `floorPlans.length > 0` gate. Eliminates the "Draw your first room" flash on reload AND the unmount-mid-debounce that was killing autosave timers from background refetches.
-- `handleCreatePresetFloor` `onSuccess` scoped to `wasUnpinned` — only carries live canvas state into the new floor for the auto-Main case, not for "user clicked Base while editing Main" (was leaking Main's content into all sibling preset floors).
-- **Auto-save root cause + fix:** `handleChange`'s `if (createFloorPlan.isPending) defer` was over-restrictive. React 19 / React Query batching can leave `isPending=true` for one extra render even after the new floor row is in the cache and `activeFloorId` is set. Changed to `if (createFloorPlan.isPending && !activeFloorIdRef.current)` — defer only when there's no active floor (the only real duplicate-create risk).
-- `finalizePendingRoom` now fires `onChange` immediately (bypassing the 2s debounce) when a room is confirmed — and pre-emptively sets `prevStateRef.current = newState` so the canvas's debounce useEffect bails on the next render and doesn't double-fire.
-- Save button `flush()` now always force-saves (regardless of `hasPendingRef`) — guarantees the manual Save button works as a reliable fallback.
-- `setSaveStatus("saving")` now holds for at least 400ms before flipping to "saved" so fast (<100ms) POSTs don't get batched into a single render where the indicator never paints.
-- `FloorPlanPreview` shows "Tap to start drawing" instead of "No floor plan yet" when a floor row exists with empty canvas (auto-Main shell case).
-- **Room confirmation form metadata wired to backend** — `onCreateRoom` callback signature extended to pass `roomType`, `ceilingHeight`, `ceilingType`, `floorLevel`, `materialFlags`, `affected`. `handleCreateRoom` now spreads these into `createRoom.mutate`. Previously the form collected everything but only `name` + dimensions reached `createRoom` — `floor_level`, `room_type`, etc. were silently dropped. **Note:** room METADATA (`job_rooms.floor_level`) is now correct, but the canvas RECTANGLE is still drawn on whatever floor tab the user was on. Picking "Upper" in the form labels the room as Upper but doesn't move the rectangle to Upper's canvas — that's a bigger UX change (auto-switch active floor + create the floor if missing + draw rectangle there) deferred to a follow-up.
-- **Back button in room confirmation card now actually goes back** — was clearing form fields but not resetting `nameCommitted`, so user stayed stuck on Details with empty fields.
-- **Room card mobile sizing** — `max-h-[85dvh]` on mobile (dynamic viewport height handles iOS browser chrome correctly), `min-h-0` on scroll area (lets it shrink below intrinsic content height so the sticky footer isn't pushed past the card boundary and clipped by `overflow-hidden`).
-
-**Architectural follow-ups (deferred — track for Phase 2 or follow-up specs):**
-- Race condition in `_create_version`: flip-then-insert is two async calls, not a transaction. Concurrent saves on the same floor could break the is_current uniqueness. Needs a partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + UNIQUE on `(property_id, floor_number, version_number)` + APIError catch+retry in `_create_version`. Pre-existing (predates the merge), low likelihood with single-user editing — defer to a hardening commit.
-- `COPY_FIELDS` on `_copy_rooms_from_linked_job` includes `floor_plan_id` — recon's copied rooms point at mitigation's frozen v1 row. Needs either dropping from COPY_FIELDS or repointing rooms in `_create_version` on fork. Falls under Section 19 (property_rooms split) territory.
-- Spec doc DDL block (around line 215) still uses old `floor_plan_versions` SQL. Banner at top of file warns readers but the SQL is stale. Update when convenient.
-
-## Session 4 (2026-04-18) — Floor-Pick-First UX + Case 3 Pin Fix + E7 Cutouts
-
-Closed out Phase 1 with two overlapping pieces: a pick-floor-first UX that replaces the auto-Main-on-load flow (resolves the "floor_level mismatch" deferred from Session 3 where the card's Floor field labeled the room but didn't move the rectangle), and E7 floor cutouts (stairwells) with end-to-end net-SF math. Session 3's `[autosave]` debug logs stripped before merge.
-
-**Backend:**
-- `save_canvas` Case 3 now calls `_pin_job_to_version` after forking. The line was missing — comment said "Pin this job to the new version" but the code wasn't there. Effect was a version explosion (one fork per save, chip stuck on the inherited pin) because the next save re-read the stale pin and forked again.
-
-**Frontend — floor-pick-first:**
-- Removed the auto-Main effect. Fresh jobs show 4 dashed preset slots in the selector and a `noActiveFloor`-driven empty state on the canvas.
-- New `PickFloorModal` intercepts Wall / Door / Window / Trace / Opening / Cutout when no floor is active — 4 buttons matching ConfirmModal conventions (red-outline Cancel, rounded-lg).
-- Room tool: Floor field marked "required" when no floor is active, Confirm disabled until picked.
-- Cross-floor room creation: confirming a room with a Floor different from the active canvas calls a new `handleCreateRoomOnDifferentFloor` that merges the new room into the target floor's canvas, POSTs to that floor's versions endpoint, primes both `floorPlans` and `floor-plan-history` caches, then switches active — canvas hydrates instantly with the room already on the target floor (no empty-state flash).
-- `ensureFloor(level)` creates/returns the preset row; 409 "floor already exists" recovery refetches and returns the canonical row.
-- `flush()` no-ops when nothing's pending. No more wasted POST on floor switch / back-nav.
-- Save button shows a brief "Saved ✓" chip on no-op flushes so the click isn't a silent dead end.
-- Back button invalidates `jobs` / `rooms` / `floor-plans` caches so the job detail Property Layout reflects new rooms/floors without a hard refresh.
-- Archived preview on the job detail page anchors the versions query on the job's pin (not `floorPlans[0]`), with a fallback chain for legacy pins; hides the preview until history resolves so it never flashes "Tap to start drawing" on a frozen job.
-- Fixed duplicate-`Floor 1` React key on the job detail Property Layout (legacy rows with the same `floor_name`; now keyed on `floor_plan.id`).
-- Mobile header hidden on `/floor-plan` for full-bleed canvas.
-
-**Frontend — E7 floor cutouts:**
-- New "Cutout" tool. Drag inside a room → dashed white preview; turns red if the center isn't inside any room (live feedback this drag won't commit).
-- Live clamping via `dragBoundFunc` on move + resize so cutouts physically stop at the host room's bbox edge instead of following the finger outside and snapping back on release.
-- New `CutoutEditorSheet` (bottom sheet on mobile, centered card on desktop): optional Name, Width, Length with "Max X ft" validation against host bbox. Sticky Delete + Done footer matching RoomConfirmationCard conventions. Opens immediately after placement AND on subsequent taps. Keyed on cutout id so state re-seeds from fresh dims on each open.
-- Canvas labels rethought: room shows net SF under its name (bold orange when cutouts present, neutral grey otherwise). Cutout shows Name + SF area above the dashed rect when selected (SF is the business-relevant number; raw W × L lives in the editor).
-- Persistent floor-total chip pinned at the top-right of the canvas: "Floor N SF (M cutouts)". Always-visible reference so SF stays readable even when a cutout overlaps a room's center label.
-- Cutout fill opacity dropped to 0.45 so room labels bleed through when a cutout sits over the room center.
-- Toast feedback when a cutout drag ends outside any room; persistent orange hint when the Cutout tool is active on a canvas with no rooms.
-- SF end-to-end: `roomFloorArea(room, gs)` = polygon area − cutout area. Canvas save includes `square_footage` (net) and `floor_openings` (converted px → ft) in the `updateRoom.mutate` payload. Detail page Property Layout preview renders cutouts as dashed rects and shows net SF in the room label. `RoomRow` SF cell prefers the stored `square_footage` over bbox math with a tooltip noting cutout presence.
-
-**Types:**
-- `FloorOpeningData {id, x, y, width, height, name?}` on `RoomData.floor_openings`.
-- `FLOOR_LEVEL_TO_NUMBER`, `FLOOR_LEVEL_LABEL`, `floorNumberToLevel` — single source of truth for UI ↔ DB mapping (basement=0, main=1, upper=2, attic=3).
-
-**Test summary:**
-All manual cases in the Session 4 test matrix passed — fresh-job empty state, preset-tap create, draw → confirm → save, cross-floor create, switch floors with no-op flush, cutout placement + resize clamp, cutout sheet open/save/delete, archived read-only hydration, back-nav cache refresh, bidirectional visibility between active mit/recon, Case 3 pin moves correctly after fork.
-
-**Deferred follow-ups (to be bundled into a hardening pass — BOTH non-blocking):**
-1. **Archived preview tier-3 fallback cleanup.** `web/src/app/(protected)/jobs/[id]/page.tsx` `bestFloorPlan` has a tier-3 fallback that returns any `is_current` floor's canvas_data when both the pin and `created_by_job_id` lookups fail. Safety net for legacy rows whose pins were lost to the pre-Session-4 Case 3 bug. Can leak sibling content on the THUMBNAIL PREVIEW only (the real floor-plan editor explicitly blocks this fallback for archived jobs). One-off pin-repair migration below, then tier 3 can be removed:
-   ```sql
-   UPDATE jobs SET floor_plan_id = (
-     SELECT id FROM floor_plans
-     WHERE created_by_job_id = jobs.id
-     ORDER BY version_number DESC LIMIT 1
-   )
-   WHERE floor_plan_id IS NULL
-      OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
-   ```
-2. **Race hardening in `_create_version`.** Flip-then-insert is not a transaction. Needs partial unique indexes + APIError retry before concurrent editing. Low-likelihood under single-user editing.
-
-> **Earlier warning rescinded (Session 5).** A prior draft of this section
-> warned against filing insurance claims on multi-floor archived jobs. That
-> warning was based on the assumption that `is_current` fallback could leak
-> into the editor. Re-audit confirmed the floor-plan editor explicitly
-> blocks that fallback for archived jobs and hydrates per-floor via
-> `created_by_job_id` — the audit view is correct on all floors. Warning
-> removed.
-
-## Session 5 (2026-04-19) — Shape Picker + Mobile Polish + Focus Mode
-
-Client-led polish pass before demo. Added a Google Sheets-style shape picker for room creation, rewrote the mobile toolbar, made job-detail + floor-plan routes full-bleed on mobile, and swept the remaining polygon-room rendering bugs.
-
-**Frontend — Shape picker (Google Sheets-style room creation):**
-- New `web/src/components/sketch/shape-picker-modal.tsx` — mobile-first bottom sheet (swipe-to-close), desktop centered card. Five shapes: Rectangle, L-Shape, T-Shape, U-Shape, Rect+Notch. Template geometry in feet; caller converts to pixels via gridSize.
-- Room tool now opens the picker first. Tap a shape → drops at viewport center at default dimensions (12×10 ft rect, 14×12 ft L/T/U, 12×10 notch) → existing `RoomConfirmationCard` flow continues unchanged. Cancel in the picker leaves `tool="room"` so the classic click-and-drag rectangle still works as an escape hatch.
-- Auto-pan after shape placement: if the dropped shape's bbox clips the viewport (32px margin), `stagePos` shifts just enough to bring the whole shape on-screen.
-- Floor level now ALWAYS required in the confirmation card (was only required when `noActiveFloor`). Per client ask — "they have to click the field before they create a room."
-
-**Frontend — Polygon-room correctness fixes:**
-- **Polygon drag reset bug.** Polygon rooms' Group prop was `x=0,y=0` constantly (points are absolute world coords). Konva mutated the Group's `x/y` during drag, but react-konva only syncs attrs when React props change. Prop stayed `0`, so the attr kept the drag delta — and `handleDragEnd` shifted points by the SAME delta, producing a double-shifted polygon while walls (rendered outside the Group) landed at the correct position. Fix: `e.target.x(0); e.target.y(0)` imperatively in `onDragEnd` before state update.
-- **Cutout follow-drag bug.** `floor_openings` store absolute canvas coords and render as sibling Groups (not children of the room's draggable Group). `handleDragEnd` was shifting `points` and walls but silently leaving cutouts at their old coordinates. Fix: shift each cutout's `x/y` by `(dx, dy)` in the same `updatedRoom` build.
-- **Per-edge dimension labels on polygons.** Bbox `14 ft × 12 ft` labels made concave shapes (T/U/L) read as rectangles. Replaced with per-edge labels at each wall's midpoint, visible only on selection. Outward direction computed via `pointInPolygon` half-pixel probe (centroid-based flipping is wrong for concave shapes — the inner notch edges of a T get "away from centroid" = inside the polygon). Thin orange hairline chip behind each label for readability, mono 10pt.
-- **Tap-anywhere-empty deselects.** The canvas mousedown handler no longer requires a tap to land exactly on the stage or grid rect — any tap on a target without an `elementId` attr (gridlines, dimension labels, room name text) now clears the selection.
-
-**Frontend — Mobile toolbar redesign (instrument panel):**
-- Split `floor-plan-toolbar.tsx` into explicit mobile and desktop renders. Desktop unchanged.
-- Mobile: one-row 44×44-button panel with icon-above-label layout, always-visible labels (client ask — "the user should know what each button is").
-- Primary row: Select · Room · Wall · Door · Window · Delete · │ · Damage · Undo · Redo. Delete promoted to primary (techs correct mistakes constantly); Trace demoted because the shape picker covers most L/T/U cases.
-- Overflow `⋯` menu holds Trace, Opening, Cutout (tier-2 draw tools) plus Zoom in, Zoom out, Fit to view, Export PNG. Floating panel with caret anchor, closes on outside tap / Escape / re-tap.
-- "More" button PINNED to the right edge — stays visible regardless of viewport width. Orange count badge shows how many tools are tucked inside so users have concrete evidence there's content behind the menu. Orange dot replaces the count when an inside-tool (Trace/Opening/Cutout) is active.
-- Gradient fade on the scrollable region's right edge hints at more content on narrow phones.
-- Active tool: solid orange pill with shadow, white icon+label. `touch-action: manipulation` on every mobile button so iOS Safari stops eating second taps as double-tap-zoom (was breaking the re-tap-to-deselect pattern).
-- Tap-active-tool-to-Select: tapping the currently-active tool drops back to Select. Matches Figma/Sketch. Gives mobile users a one-tap "escape" without needing a keyboard.
-- Stage one-finger pan unlocked for tap-based tools. `draggable` prop now enables pan for `select` (no selection), `delete`, `door`, `window`, `opening`. Still disabled for drag-to-draw tools (`room`, `cutout`) and click-sequence tools (`wall`, `trace`). Two-finger pinch/pan still works on every tool.
-
-**Frontend — Full-bleed routes:**
-- `AppShell` hides the mobile header + bottom nav on `/jobs/<id>` and every sub-route (`/photos`, `/readings`, `/report`, `/timeline`, `/floor-plan`). Reclaims ~120px of vertical space for the task. Back arrow in the job sub-header is the one-tap escape.
-- Keeps the chrome on `/jobs` (list) and `/jobs/new` (creation form) so users aren't stranded pre-save. Desktop unchanged.
-
-**Frontend — Room+door tap-overlap fix (closes Phase 1 known limitation):**
-- Door hit-area was `doorPx + 10` wide × `2·doorPx + 10` tall — for a 3ft door that's 40×70px centered on the wall. The oversized invisible Rect lived in the Doors layer AFTER the Rooms layer, so hit-testing gave it priority over room corner-resize handles whenever a door sat near a wall endpoint (the `t=0.05` clamp in `findNearestWall` allows door centers to be only ~0.5ft from a corner).
-- Tightened: `doorPx` wide × 44px tall, no lateral padding. Width matches the door body exactly so tapping past the door's visible edge (where a corner handle would be) goes through to the room layer. Height 44 still covers both swing directions with room for a comfortable tap target.
-- Same fix applied to windows/openings (were `winPx + 10` wide; now `winPx` wide).
-
-**Material auto-fill (small card polish):**
-- `handleRoomTypeChange` in `RoomConfirmationCard` now fills `materialFlags` from `ROOM_TYPE_MATERIAL_DEFAULTS` when the chip list is empty. Respects manual edits — if the tech already added/removed chips, switching type leaves them alone. Mirrors the backend's `create_room` fill-if-not-provided policy.
-
-**Test summary (manual QA, Session 5):**
-- Shape picker: all 5 shapes drop correctly at viewport center; Cancel falls back to drag-to-draw; cross-floor create (picking a different floor in the card) correctly hands the polygon off to the target floor via `onCreateRoomOnDifferentFloor`; auto-pan triggers when shape would clip viewport.
-- Polygon drag: L/T/U/Notch move cleanly, walls and cutouts follow the drag, snap-to-other-rooms works, undo restores pre-drag position.
-- Polygon vertex edit: select a polygon → drag single vertex → shape deforms, per-edge labels update to new lengths.
-- Dimension labels: rectangles keep top-width / left-height labels always-visible; polygons show no labels when unselected (clean canvas), pop orange chips on every edge on selection with correct outside-polygon placement on concave shapes.
-- Cutout follow-drag: drop cutout inside a T → drag the T → cutout rides along; same for rect+cutout.
-- Mobile toolbar: active tool shows orange pill with label; re-tapping active tool returns to Select; "More" pinned right with count badge; overflow menu opens/closes via re-tap, outside-tap, Escape, and picking an item; stage pan works on Delete/Window/Door/Opening tools.
-- Full-bleed routes: job detail and floor-plan editor hide the mobile header + bottom nav; back arrow returns to list; `/jobs` list and `/jobs/new` still show chrome.
-- Room+door tap-overlap: tap a corner-resize handle with a door placed ≤1ft from the corner — handle receives the tap, door no longer steals it.
-- Tap-anywhere-empty deselect: tap a grid cell / dimension label / room name while a room is selected → selection clears.
-
-## Status — Phase 1 complete
-
-Phase 1 is now **100% feature-complete**. Both remaining items in the "deferred follow-ups" list are non-blocking:
-1. Archived preview thumbnail tier-3 fallback — cosmetic, only affects the thumbnail on the job detail page (the real floor-plan editor is correct).
-2. `_create_version` race hardening — low-likelihood under single-user editing; requires concurrent saves on the same floor to trigger.
-
-Both are tracked for a hardening pass before general availability; neither blocks shipping Phase 1 or filing insurance claims.
+- **Property-scoped floor plans with job-driven versioning.** `floor_plans` rows
+  are per-property, per-floor, per-version snapshots. Each job pins to the
+  version it created; archived jobs freeze that pin. Sibling jobs fork new
+  versions on save instead of mutating history.
+- **Unified schema.** `floor_plans` container + `floor_plan_versions` merged
+  into a single `floor_plans` table in migration `e1a7c9b30201` — each row
+  IS a versioned snapshot. `jobs.floor_plan_version_id` renamed to
+  `jobs.floor_plan_id`.
+- **Canvas built on Konva.** Room creation via shape picker (Rectangle /
+  L-Shape / T-Shape / U-Shape / Rect+Notch) with default dimensions at
+  viewport center; fallback click-and-drag rectangle; trace-perimeter for
+  ad-hoc polygons; magnetic room-to-room snap; shared-wall auto-detection;
+  vertex editing for polygons; live SF + wall-LF calculation.
+- **Multi-floor support.** Basement / Main / Upper / Attic selector with
+  per-floor canvases and pick-floor-first UX. Cross-floor room creation
+  merges into the target floor and switches active without an empty-state
+  flash.
+- **Floor openings (cutouts).** Stairwells and HVAC shafts subtract from
+  floor SF; dashed-rect overlay; editable via a dedicated bottom sheet.
+- **Immutability + archival guards.** `update_floor_plan`, `save_canvas`,
+  `rollback_version`, and `cleanup_floor_plan` all block edits on frozen
+  (non-current) rows and on archived-job rooms. The floor-plan editor
+  hydrates archived jobs strictly from their pin + their own-created
+  versions — never falls through to `is_current`, so sibling edits can't
+  leak into an archived audit view.
+- **Mobile polish.** Full-bleed `/jobs/<id>` sub-routes; icon+label
+  instrument-panel toolbar with an overflow menu pinned to the right;
+  Google-Sheets-style shape picker as the room-tool entry; inline
+  direct-edit of room dimensions in both the bottom sheet and the
+  desktop sidebar; tap-toggle-to-Select; canvas pan unlocked for
+  tap-based tools.
+- **Wall relational model.** `wall_segments` + `wall_openings` tables
+  persist walls with per-wall type (exterior/interior), affected status,
+  shared-wall flags, and door/window openings with width + height for
+  Xactimate-ready SF calculations.
 
 ## Reference
-- **Brett's spec:** Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026)
+
+- **Product source:** Brett's *Sketch & Floor Plan Tool Product Design Specification v2.0* (April 13, 2026)
 - **Predecessor:** Spec 01C (Floor Plan Konva rebuild) — this spec supersedes most of 01C's canvas architecture
-- **Eng review:** Completed 2026-04-16 with 17 architectural decisions locked in (see DECISIONS section)
+- **Eng review:** Completed 2026-04-16 with 17 architectural decisions locked in (see DECISIONS section below)
+- **Key migration:** `e1a7c9b30201_spec01h_merge_floor_plans_versions.py` — merges the two-table design into one unified `floor_plans` table
+
+## Phase 1 Changelog (feature-level)
+
+Consolidated from multiple implementation passes. Commit history on the
+branch carries the blow-by-blow detail; this list is what actually shipped.
+
+**Schema + backend**
+- Unified `floor_plans` table (merged container + versions — one row is a
+  versioned snapshot), `jobs.floor_plan_id` scalar pin.
+- Versioning state machine in `save_canvas`: Case 1 (create v1, pin), Case 2
+  (update in place — requires `created_by_job_id == job_id` + `pinned_same_floor` + `pinned_still_current`), Case 3 (fork new version, pin).
+- Frozen-version immutability: `update_floor_plan` / `save_canvas` / `rollback_version` / `cleanup_floor_plan` all reject writes against non-current rows and against archived jobs.
+- `_create_version` centrally enforces "one `is_current` per (property, floor)" — flips siblings to `is_current=false` before the insert.
+- `_auto_upgrade_active_jobs` removed — frozen-version semantics mean a job's pin only moves when that job itself saves; no auto-upgrade across siblings.
+- Job creation pins the new row via `created_by_job_id` so the first canvas save hits Case 2, not Case 3.
+- Linked recon inherits `floor_plan_id` + `COPY_FIELDS` structural room fields from the parent mitigation job.
+
+**Canvas + frontend**
+- Unified polygon data model: `RoomData.points` optional; rectangles and N-gons share the same code paths (`wallsForRoom`, `polygonCentroid`, `polygonBoundingBox`).
+- Room creation: shape picker (Rectangle / L / T / U / Rect+Notch) as Sheets-style entry with auto-pan if the drop clips the viewport; classic click-and-drag rectangle kept as the Cancel fallback; trace-perimeter for bespoke shapes.
+- Magnetic room-to-room snap within 20px; shared-wall auto-detection with muted render + perimeter-LF exclusion.
+- Vertex-level editing of polygons with live shape preview; tap-on-edge inserts a new vertex.
+- Direct W × H editing for rectangles (and rect-shaped polygons) in both the mobile bottom sheet and the desktop sidebar — 400ms debounced commit + blur/Enter commit, Escape reverts.
+- Polygon drag correctness fix: Group's `x/y` reset imperatively on drag end so the polygon, its fill, labels, walls, and cutouts all land together instead of double-shifted.
+- Cutout follow-drag fix: `floor_openings` now shifted alongside the parent room in `handleDragEnd`.
+- Per-edge dimension labels on selected polygons using a `pointInPolygon` probe for outward direction (centroid-based flipping is wrong for concave T/U/L shapes).
+- Floor openings (cutouts): dashed-rect overlay, live bbox clamping during drag/resize, bottom-sheet editor with max-bound validation, net-SF math end-to-end.
+- Multi-floor selector (Basement / Main / Upper / Attic) with version badge, pick-floor-first UX, cross-floor room creation, archive read-only banner.
+- Autosave debounced 2s with immediate flush on room confirm, version creation, and manual Save button.
+- Wall sync to backend after each canvas save (walls → `wall_segments`, doors/windows/openings → `wall_openings`).
+
+**Mobile UX**
+- Full-bleed routes: `/jobs/<id>` and all sub-routes hide the mobile header + bottom nav for ~120px of reclaimed vertical space.
+- Instrument-panel toolbar: icon+label primary row (Select · Room · Wall · Door · Window · Delete · Damage · Undo · Redo), overflow `⋯` menu pinned at the right edge with an item-count badge (Trace · Opening · Cutout · Zoom in · Zoom out · Fit · Export PNG).
+- Active-tool pill expansion, tap-toggle-to-Select, `touch-action: manipulation` to prevent iOS Safari from eating re-taps as double-tap-zoom.
+- Stage one-finger pan unlocked for tap-based tools (select, delete, door, window, opening); drag-to-draw tools (room, cutout) and click-sequence tools (wall, trace) still use pinch for pan.
+- Tap-anywhere-empty deselection (any non-`elementId` tap clears selection).
+- Tightened door/window hit-area so nearby room corner-resize handles stay tappable.
+
+**Small card polish**
+- `RoomConfirmationCard`: Floor field always required, material defaults auto-fill from room type when the chip list is empty (respects manual edits), mobile swipe-to-close on the drag handle, sticky action footer, back button resets `nameCommitted`.
+
+---
+
 
 ## Summary
 
@@ -214,103 +129,104 @@ Before this spec was finalized, several components were verified to already exis
 ## Done When
 
 ### Phase 1: Property-Scoped Floor Plans + Versioning + Canvas + Walls
-- [x] `floor_plans` reparented from `job_id` to `property_id` FK
-- [x] `floor_plan_versions` table created — one version per job session, auto-frozen on archive
-- [x] `jobs.floor_plan_version_id` FK added — pins job to a specific version
-- [x] Active jobs auto-upgrade to latest version when another job creates a new one
-- [x] Archived/submitted jobs are read-only (version frozen)
-- [x] New job auto-inherits latest floor plan version (or creates fresh one if first job at property)
-- [x] `wall_segments` table created (relational, not JSONB)
-- [x] `wall_openings` table created (doors, windows, missing walls)
-- [x] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing canvas_data)
-- [x] Room creation: drop default-sized shape at viewport center, deform by dragging corner/vertex handles (delivered via Session 5 shape picker — see below)
-- [x] Room creation: trace perimeter method — tap corners sequentially, auto-close into room (see E6 below)
-- [x] Polygon data model: rooms store `points: [{x,y}]` (rectangles are 4-point polygons) (see E1 below)
-- [x] L-shaped rooms via corner drag (inserts vertices, maintains 90° angles) (see E2 below)
-- [x] Room confirmation card: name, type, dimensions, ceiling height, ceiling type, materials, affected status
-- [x] Room type system: 13 predefined types with auto-populated material defaults
+
+**Data model & backend**
+- [x] Unified `floor_plans` table (migration `e1a7c9b30201`) — one row IS a versioned snapshot, scoped by `(property_id, floor_number, version_number)`
+- [x] `jobs.floor_plan_id` scalar pin (renamed from `floor_plan_version_id`)
+- [x] `wall_segments` + `wall_openings` relational tables (not JSONB)
+- [x] Archived jobs (`complete` / `submitted` / `collected`) reject all writes
+- [x] Frozen-version immutability: `update_floor_plan` / `save_canvas` / `rollback_version` / `cleanup_floor_plan` reject writes against non-current rows
+- [x] Versioning state machine in `save_canvas` — Case 1 (create v1, pin), Case 2 (update in place), Case 3 (fork + pin)
+- [x] `_create_version` enforces "one is_current per (property, floor)" — flips siblings before insert
+- [x] Job creation pins new floor rows via `created_by_job_id` so first save hits Case 2, not Case 3
+- [x] Linked recon inherits structural room fields from parent mitigation via `_copy_rooms_from_linked_job`
+- [x] **D1:** Autosave POSTs to `/v1/floor-plans/{fpId}/versions` with `job_id` in body
+- [x] **D2:** Pinned-version hydration in floor-plan editor + job-detail thumbnail (strict floor_plan_id match prevents cross-floor corruption)
+- [x] **D3:** Multi-floor selector UI — preset pills with room-count badge + `v{N}` chip
+- [x] Wall sync to backend on each autosave (walls + doors + windows + openings → `wall_segments` + `wall_openings`)
+- [x] Backend `JobResponse` exposes `floor_plan_id` for frontend hydration
+- [x] Canvas grid changed from 20px=1ft to 10px=6in (clean wipe of existing `canvas_data`)
+
+**Canvas core**
+- [x] Polygon data model (`RoomData.points`) — rectangles + N-gons share code paths (`wallsForRoom`, `polygonCentroid`, `polygonBoundingBox`, `polygonToKonvaPoints`)
+- [x] Room creation via shape picker — Rectangle / L / T / U / Rect+Notch drops at viewport center at default dimensions, with auto-pan if bbox clips viewport
+- [x] Room creation fallback: classic click-and-drag rectangle (via shape-picker Cancel)
+- [x] **E6:** Trace-perimeter tool — tap corners sequentially, rubber-band preview, numbered vertex dots, floating status pill
+- [x] Room confirmation card: name, type, ceiling, floor (always required), materials, affected
+- [x] Room type system — 13 predefined types with material defaults auto-filled when chip list is empty (respects manual edits)
 - [x] 6-inch grid snap enforced
-- [x] Floor SF auto-calculated (polygon area, minus floor openings)
-- [x] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier - openings)
-- [x] Custom wall SF override per room (for non-standard ceiling geometry)
-- [x] Multi-floor selector: Basement / Main Floor / Upper Floor / Attic (pill selector with room-count badge + version chip on active pill; horizontal scroll on mobile; pick-floor-first UX — fresh jobs show 4 dashed preset slots, user picks via the selector or the first room's Floor field)
-- [x] Floor openings: stairwell cutouts that subtract from floor SF (E7 — see Session 4 below)
-- [x] **Room snap behavior:** magnetic snap within 20px of existing room walls (see E3 below)
-- [x] **Shared wall auto-detection:** when two rooms snap together, shared wall marked `shared=true`, excluded from each room's perimeter LF, rendered with lighter line weight (see E4 below)
-- [x] Wall contextual menu on tap: Add Door, Add Window, Add Opening, Wall Type, Mark Affected
-- [x] Door height field (default 7ft, editable) — SF deduction: width × height
-- [x] Window height field (default 4ft) + sill height (optional) — SF deduction: width × height
-- [x] Opening (missing wall): dashed line indicator, drag handles for start/end, full SF deduction
-- [x] Wall type toggle: exterior / interior (drives Xactimate material codes in Spec 01D)
-- [x] Wall affected status: per-wall mitigation scope flag (independent from room)
-- [x] **Affected Mode overlay** toggle on canvas (highlights all affected rooms/walls in red) (see E5 below)
-- [ ] Full test coverage: SF calculations, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic
-- [x] Wall sync to backend on auto-save (walls + doors + windows + openings → wall_segments + wall_openings)
-- [x] Opening tool in toolbar (place openings directly by clicking walls)
-- [x] Mobile bottom sheet editor for door/window/opening width + height
-- [x] Room edit mode (tap room → Edit → modify type, ceiling, floor, affected)
+- [x] **E1:** Polygon data model unified
+- [x] **E2:** L-shape via vertex editing — Reshape converts rectangle to 4-point polygon; drag handles on each vertex; tap-on-edge inserts a new vertex; walls regenerate
+- [x] **E3:** Magnetic room-to-room snap within 20px (all 4 axes plus axis-aligned stacks)
+- [x] **E4:** Shared-wall auto-detection — collinear + overlapping walls marked `shared=true`, muted render, excluded from perimeter LF
+- [x] **E5:** Affected Mode overlay — "Damage" toolbar toggle dims non-affected rooms/walls to 25%
+- [x] **E7:** Floor openings (cutouts) — dashed-rect overlay, live bbox-clamp during drag/resize, bottom-sheet editor with max-bound validation, end-to-end net-SF math
+- [x] Inline direct-edit of room dimensions — Width / Length inputs in the mobile bottom sheet + desktop sidebar, debounced 400ms commit + blur/Enter, Escape reverts; updates bbox + regenerates walls + clamps cutouts + re-runs shared-wall detection
+- [x] Rect-shaped polygons (4 vertices still at bbox corners) accept direct W×H edits — `isRectangularPolygon(room)` helper regenerates points alongside the bbox update
+- [x] Polygon drag correctness — Group's `x/y` reset imperatively on drag end so polygon/fill/labels/walls/cutouts all land together
+- [x] Cutout follow-drag — `floor_openings` shift with parent room in `handleDragEnd`
+- [x] Per-edge polygon dimension labels on selection — `pointInPolygon` probe for correct outside-placement on concave T/U/L
+- [x] Tap-anywhere-empty deselects (any non-`elementId` target clears selection)
+- [x] Tap-active-tool returns to Select (mobile-friendly escape matching Figma/Sketch)
+
+**Walls + openings**
+- [x] Wall contextual menu on tap — Add Door / Window / Opening, Wall Type, Mark Affected
+- [x] Door: width + height (default 7ft, editable), SF deduction, 4 swing directions
+- [x] Window: width + height (default 4ft), optional sill height, SF deduction
+- [x] Opening (missing wall): dashed indicator, drag handles, full SF deduction
+- [x] Wall type toggle (exterior / interior) — drives Xactimate codes in Spec 01D
+- [x] Wall affected status — per-wall flag, independent from room
+- [x] Opening tool in toolbar (click wall to place)
 - [x] Exterior wall visual indicator (blue, thicker stroke)
 - [x] Affected wall visual indicator (red stroke)
-- [x] **D1: Save through versioning endpoint** — autosave now POSTs to `/v1/floor-plans/{fpId}/versions` instead of PATCHing `floor_plans.canvas_data` directly; backend state machine handles Case 1/2/3 (initial, update-in-place, fork)
-- [x] **D2: Pinned-version hydration** — floor plan editor + job detail thumbnail both read the job's pinned version via `jobs.floor_plan_version_id`; strict match with floor_plan_id to prevent cross-floor corruption
-- [x] **D3: Multi-floor + version badge UI** — 4 preset pills (Basement/Main/Upper/Attic) with room-count circle badge + `v{N}` chip on active pill; auto-Main-create on fresh job; sticky loading gate prevents empty-state flash on reload; mobile Back button reduced to arrow-only
-- [x] **Linked recon inherits job_rooms** — `_copy_rooms_from_linked_job` on job creation copies structural fields only (geometry, type, ceiling, polygon) — per-job scope fields (water_category, equipment counts, affected, material_flags, notes) intentionally reset for the new job
-- [x] **Backend API exposes `floor_plan_version_id`** — added to `JobResponse` Pydantic schema + `_parse_job_detail` mapper so frontend hydration has access to the job's pin
-- [x] **Cross-floor corruption fixed** — Case 2 update-in-place now guards on `floor_plan_id` match so saving on Upper doesn't overwrite Main's v1 canvas_data
-- [x] **Read-only banner on archived jobs** — amber "Read-only — this job is submitted/complete/collected" banner above canvas when `jobs.status ∈ archived`; autosave short-circuits; wall context menu suppressed; empty preset pills disabled
+- [x] Tightened door/window hit-area so room corner-resize handles stay tappable near wall endpoints
 
-### Phase 1 — Phase E (Canvas Interactions) progress
+**SF calculations**
+- [x] Floor SF auto-calculated (polygon area − cutout area)
+- [x] Wall SF auto-calculated (perimeter LF × ceiling height × ceiling multiplier − openings)
+- [x] Custom wall SF override per room (non-standard ceiling geometry)
+- [x] Net SF in `job_rooms.square_footage` syncs via autosave diff
 
-- [x] **E1: Polygon data model** — `RoomData.points` (optional polygon vertices); helpers `polygonArea`, `polygonCentroid`, `polygonBoundingBox`, `polygonToKonvaPoints`; `wallsForRoom` generalized for N-gons
-- [x] **E2: L-shape via vertex editing** — rectangles convert to polygons via "Reshape" button; drag handles on each vertex; tap-on-edge inserts a new vertex; walls regenerate; live shape preview during drag
-- [x] **E3: Magnetic room snap** — drag-end snaps room edges within 20px of neighbors (left/right/top/bottom, plus axis-aligned stacks); shares grid snap as baseline
-- [x] **E4: Shared wall auto-detection** — after snap/create, walls collinear + overlapping with another room's wall get `shared=true`; rendered muted gray + thinner stroke; backend `wall_segments.shared` persisted
-- [x] **E5: Affected Mode overlay** — "Damage" toolbar toggle; dims non-affected rooms/walls to 25% opacity; red ring+tint on active state
-- [x] **E6: Trace perimeter tool** — "Trace" toolbar button; tap corners in sequence; rubber-band preview; numbered vertex dots; dashed closing preview; floating status pill with Clear + Done actions
-- [x] **E7: Floor openings (stairwell cutouts)** — subtract from floor SF, dashed rect overlay, optional name. End-to-end net-SF math (canvas labels, property layout preview, `job_rooms.square_footage` sync). Editor bottom sheet with typed W × L inputs.
-- [ ] **Full test coverage** — SF calcs, shared wall detection, property auto-creation race, canvas ↔ walls sync, version upgrade logic, immutability guards (Case 2 pinned_still_current, frozen-row guard on update, archived-job rollback)
-- [x] **Strip `[autosave]` debug logs** in `konva-floor-plan.tsx` and `floor-plan/page.tsx`
+**Multi-floor + hydration**
+- [x] Multi-floor selector (Basement / Main / Upper / Attic) — pill selector with room-count badge + version chip
+- [x] Pick-floor-first UX for fresh jobs — 4 dashed preset slots, no auto-Main
+- [x] `PickFloorModal` intercepts Wall / Door / Window / Trace / Opening / Cutout when no floor is active
+- [x] Cross-floor room creation — picking a different Floor in the confirmation card merges into target canvas and switches active with no empty-state flash
+- [x] Archived preview on job-detail anchors versions query on the job's pin (not `floorPlans[0]`)
+- [x] Strict per-floor archived-job hydration — pin → own-created → empty (never falls through to `is_current`)
+- [x] Read-only banner on archived jobs + wall context menu suppressed + empty preset pills disabled
+- [x] Cross-floor corruption fixed — Case 2 update-in-place guards on `floor_plan_id` match
 
-### Known Limitations (Phase 1 — track for follow-up hardening)
+**Mobile UX**
+- [x] Mobile bottom-sheet editors for door / window / opening / cutout / room (with swipe-to-close on the drag handle)
+- [x] Full-bleed routes: `/jobs/<id>` + sub-routes (`/photos`, `/readings`, `/report`, `/timeline`, `/floor-plan`) hide mobile header + bottom nav
+- [x] Instrument-panel toolbar: icon+label primary row (Select · Room · Wall · Door · Window · Delete · Damage · Undo · Redo)
+- [x] Overflow `⋯` menu pinned at the right edge with an item-count badge (Trace · Opening · Cutout · Zoom in · Zoom out · Fit · Export PNG)
+- [x] Shape picker bottom sheet (swipe-to-close)
+- [x] Active-tool solid-orange pill with shadow
+- [x] Stage one-finger pan unlocked for tap-based tools (select, delete, door, window, opening)
+- [x] `touch-action: manipulation` on all mobile toolbar buttons (prevents iOS Safari double-tap-zoom eating re-taps)
 
-> **Note on multi-floor archival.** Earlier revisions of this section
-> warned that archived multi-floor jobs could leak sibling-job edits
-> through the `is_current` fallback. Re-audit in Session 5 confirmed
-> that the floor-plan EDITOR (`floor-plan/page.tsx:491–504`) explicitly
-> disables that fallback for archived jobs — it hydrates only from
-> (1) the scalar pin on `jobs.floor_plan_id`, or (2) versions with
-> `created_by_job_id = this job`. Tier 2 correctly returns the archived
-> job's own frozen version on every floor, so the audit view is correct.
-> The only remaining leak is in the job-detail thumbnail preview below,
-> tracked as a cosmetic follow-up.
+**Testing**
+- [x] Manual QA coverage — full matrix in "Cumulative Test Coverage" section at the end of this doc. Covers SF calculations (rectangle + polygon shapes, with and without cutouts, live-edit via direct W×H inputs), shared-wall detection, canvas ↔ walls sync, version upgrade / fork logic, archived-job hydration on multi-floor jobs, door/window/cutout placement and resize, mobile toolbar interactions, tap-to-deselect, full-bleed routes
+- [ ] Automated test coverage (pytest + Vitest + Playwright) — deferred to a hardening pass
 
-> **Archived preview legacy-pin fallback.**
-> `web/src/app/(protected)/jobs/[id]/page.tsx` `bestFloorPlan` has a tier-3
-> fallback that returns any `is_current` floor's `canvas_data` when both the
-> pin and `created_by_job_id` lookups fail. Safety net for legacy rows whose
-> pins were lost to the pre–Session-4 Case 3 bug. Can leak sibling content on
-> the thumbnail. Fix via one-off pin-repair migration:
-> ```sql
-> UPDATE jobs SET floor_plan_id = (
->   SELECT id FROM floor_plans
->   WHERE created_by_job_id = jobs.id
->   ORDER BY version_number DESC LIMIT 1
-> )
-> WHERE floor_plan_id IS NULL
->    OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
-> ```
-> Once pins are clean, remove tier 3 so archived previews strictly reflect
-> the pinned snapshot. Not blocking for Phase 1 — the locked floor-plan
-> page always renders the correct pinned version; only the thumbnail
-> approximates.
+### Known Limitations (Phase 1 — non-blocking follow-ups)
 
-> **Race hardening in `_create_version`.** Flip-then-insert is two async
-> calls, not a transaction. Under concurrent saves (multi-tech editing)
-> the "one is_current per floor" invariant could break. Needs partial
-> unique indexes (`CREATE UNIQUE INDEX ON floor_plans (property_id,
-> floor_number) WHERE is_current = true`) + APIError catch+retry in
-> `_create_version`. Low likelihood under single-user editing; predates
-> the Session 3 schema merge. Track as hardening.
+Both items below were identified during manual QA and deferred. Neither blocks Phase 1 shipping or filing insurance claims — the real floor-plan editor and backend guards correctly isolate archived jobs per-floor.
+
+1. **Archived preview thumbnail fallback.** `bestFloorPlan` in `web/src/app/(protected)/jobs/[id]/page.tsx` has a tier-3 fallback that returns any `is_current` floor's `canvas_data` when both the pin and `created_by_job_id` lookups miss — a safety net for legacy rows whose pins were lost to the pre-fix Case 3 bug. The real floor-plan editor explicitly blocks this fallback for archived jobs (`floor-plan/page.tsx:491–504`), so only the job-detail thumbnail preview can show stale content. Fix: run the pin-repair migration below, then remove tier 3 from `bestFloorPlan`.
+   ```sql
+   UPDATE jobs SET floor_plan_id = (
+     SELECT id FROM floor_plans
+     WHERE created_by_job_id = jobs.id
+     ORDER BY version_number DESC LIMIT 1
+   )
+   WHERE floor_plan_id IS NULL
+      OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
+   ```
+
+2. **Race hardening in `_create_version`.** Flip-then-insert (mark old siblings `is_current=false`, then insert the new version) is two async calls, not a transaction. Under concurrent saves from multiple techs on the same floor, the "one is_current per floor" invariant could break. Fix: partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + `APIError` catch/retry in `_create_version`. Low likelihood under single-user editing; predates the schema merge.
 
 ### Phase 2: Moisture Pins
 - [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
@@ -1274,6 +1190,73 @@ Phase 1 is the largest (property reparenting + versioning + canvas rebuild + wal
 | 5 | 1-2 | 1 | Annotations + version history UI |
 
 Each phase ships independently and is usable. Phase 1 unblocks everything else.
+
+## Cumulative Test Coverage (Phase 1 — Manual QA)
+
+This is what was actually exercised end-to-end against a running dev
+environment before declaring Phase 1 feature-complete. Automated tests
+(pytest / Vitest / Playwright) are deferred and listed above in
+"Testing Requirements" as a follow-up.
+
+**Versioning + archival hydration**
+- Fresh job with no floor plan → first save creates v1 and pins the job (Case 1).
+- Same job's next save on the same floor → updates v1 in place (Case 2) — no fork, no version bump.
+- Sibling job editing the same floor → forks v2, pins the new job (Case 3). Original job's pin still points at v1 (frozen).
+- Archived job's pin stays valid after a sibling forks the floor.
+- Archived job on a single floor: editor shows the pinned version; never falls through to `is_current` even when a sibling edits the same floor.
+- Archived job on multiple floors: each floor hydrates correctly — scalar pin covers one floor, `created_by_job_id` tier covers the others.
+- Cross-floor room creation: confirming a room with a Floor different from the active canvas merges the polygon into the target floor, primes both caches, and switches active with no empty-state flash.
+
+**Canvas geometry**
+- Shape picker: all 5 shapes (Rectangle, L, T, U, Rect+Notch) drop at viewport center with correct dimensions.
+- Auto-pan triggers when dropped shape would clip the viewport.
+- Cancel in shape picker falls back to classic click-and-drag rectangle.
+- Polygon drag: outline, fill, dimension labels, walls, and any contained cutouts all land together at the dropped position (no split).
+- Polygon vertex edit: dragging one vertex deforms the shape; walls regenerate; per-edge dimension labels update to new lengths.
+- Magnetic room-to-room snap engages within 20px; shared walls automatically marked (muted render, excluded from LF).
+- Trace-perimeter tool: closes on tap-first-vertex; works for irregular shapes.
+- Tap-anywhere-empty deselects a selected room.
+- Tap an active tool → returns to Select (no keyboard needed on mobile).
+
+**Direct dimension editing**
+- Rectangle room: typing Width / Length in the mobile bottom sheet or desktop sidebar resizes live, walls regenerate, SF updates. Values commit on 400ms debounce + blur + Enter.
+- Rect-shaped polygon (4 vertices at bbox corners): same inputs work — points regenerate at the new bbox corners alongside the bbox update.
+- True polygon (L/T/U with deformed vertices): inputs are hidden; "Drag vertices on the canvas" hint shown. Vertex drag is the shape-editing mechanism.
+- Typing freely works: clear the input, type a new number, the room resizes correctly on blur (no snap-back to old value).
+- Escape reverts the draft without committing.
+
+**SF calculations**
+- Floor SF = polygon area − cutout area, computed live in `roomFloorArea(room, gs)`.
+- Resize a room via direct W × H input: SF label updates on canvas, `job_rooms.square_footage` syncs via autosave diff.
+- Resize below a cutout's position: cutout clamps into new bbox, SF recomputes with new cutout size.
+- Add/remove a cutout: SF label shifts to "N SF net" in orange when cutouts exist, neutral when none.
+- Wall SF = perimeter LF × ceiling height × ceiling multiplier − openings; updates on door/window width/height change.
+- Persistent floor-total chip top-right always reflects the sum across rooms on the active floor.
+
+**Wall openings**
+- Door placement via wall tap menu: swing direction cycles on re-tap when selected.
+- Door/window width + height edits via bottom sheet (mobile) and sidebar (desktop). Debounced commit, no rejection of mid-keystroke clears.
+- Door/window placement near a wall endpoint: room corner-resize handle stays tappable (hit-area tightened so the door no longer blankets the corner).
+- Opening (missing wall) renders dashed red + drags along the wall.
+
+**Mobile UX**
+- Full-bleed routes: `/jobs/<id>` and every sub-route hide the top header + bottom nav; back arrow returns to the jobs list.
+- `/jobs` (list) and `/jobs/new` keep the chrome.
+- Toolbar layout: primary row icon+label, "More" pinned right with count badge, overflow menu opens/closes via tap / Escape / outside-tap / re-tap.
+- Stage pan works with one finger on Select / Delete / Door / Window / Opening tools; drag-to-draw tools (Room, Cutout) disable pan but still accept pinch.
+- Active-tool pill shows the label for strong state feedback; re-tap returns to Select.
+- Double-tap on a toolbar button fires twice (iOS Safari no longer eats the second tap as double-tap-zoom).
+
+**Saving + autosave**
+- 2s debounced autosave after any canvas change.
+- Immediate flush on room Confirm (bypasses debounce), version creation, and manual Save button.
+- "Saving" indicator holds at least 400ms so fast (<100ms) POSTs don't flash.
+- Manual Save button shows "Saved ✓" on no-op flushes — no silent dead-end.
+- Back button invalidates jobs / rooms / floor-plans caches so the job detail Property Layout reflects new rooms without a hard refresh.
+
+**Known-limitation verification**
+- Archived preview thumbnail can show an `is_current` fallback for legacy rows without `created_by_job_id` — confirmed cosmetic, floor-plan editor itself always shows the correct pin.
+- `_create_version` race untested under concurrency (single-user editing doesn't trigger it) — tracked for a hardening pass.
 
 ---
 
