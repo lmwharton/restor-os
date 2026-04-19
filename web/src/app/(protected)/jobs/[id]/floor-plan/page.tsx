@@ -145,6 +145,103 @@ async function syncWallsToBackend(
 }
 
 /* ------------------------------------------------------------------ */
+/*  Inline dimension inputs for rectangle rooms                         */
+/*                                                                     */
+/*  Holds the typing draft in local state so fast keystrokes don't     */
+/*  round-trip through parent re-renders. Commits to the parent on     */
+/*  blur or Enter — matches the door/window bottom sheet UX so the     */
+/*  room feels consistent with every other tappable element.           */
+/* ------------------------------------------------------------------ */
+
+function RoomDimensionInputs({
+  widthFt,
+  heightFt,
+  onResize,
+}: {
+  widthFt: number;
+  heightFt: number;
+  onResize: (widthFt: number, heightFt: number) => void;
+}) {
+  const [wStr, setWStr] = useState(String(widthFt));
+  const [hStr, setHStr] = useState(String(heightFt));
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Commit current drafts if both are valid. Used by the debounce timer
+  // (live auto-commit while typing) and by the blur/Enter handlers.
+  const commit = (nextW: string, nextH: string) => {
+    const w = parseFloat(nextW);
+    const h = parseFloat(nextH);
+    if (!Number.isFinite(w) || !Number.isFinite(h)) return;
+    if (w < 1 || h < 1) return;
+    if (w === widthFt && h === heightFt) return;
+    onResize(w, h);
+  };
+
+  // On iOS Safari, blur events are unreliable when the user dismisses the
+  // bottom sheet by swipe or backdrop tap — the sheet can unmount before
+  // the active input fires blur, and the edit is lost. A 400ms debounce
+  // on keystrokes means the edit commits while the user is still on the
+  // sheet, before any dismiss gesture gets a chance to race the blur.
+  const scheduleCommit = (nextW: string, nextH: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => commit(nextW, nextH), 400);
+  };
+
+  // Cancel pending commit on unmount so we never fire into a stale ref.
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+
+  const flushOnBlur = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    commit(wStr, hStr);
+  };
+
+  return (
+    <div className="flex gap-2">
+      <div className="flex-1">
+        <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Width (ft)</p>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={wStr}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            const next = e.target.value;
+            setWStr(next);
+            scheduleCommit(next, hStr);
+          }}
+          onBlur={flushOnBlur}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
+        />
+      </div>
+      <div className="flex-1">
+        <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Length (ft)</p>
+        <input
+          type="text"
+          inputMode="decimal"
+          value={hStr}
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => {
+            const next = e.target.value;
+            setHStr(next);
+            scheduleCommit(wStr, next);
+          }}
+          onBlur={flushOnBlur}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          }}
+          className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
+        />
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /*  Mobile bottom panel with swipe-to-close                            */
 /* ------------------------------------------------------------------ */
 
@@ -155,6 +252,7 @@ function MobileRoomPanel({
   onClose,
   onEditRoom,
   onEditShape,
+  onResize,
   wallSf,
   isPolygon,
 }: {
@@ -164,6 +262,10 @@ function MobileRoomPanel({
   onClose: () => void;
   onEditRoom?: () => void;
   onEditShape?: () => void;
+  /** Rectangle rooms only — updates room bbox dimensions and cascades to
+   *  walls/cutouts via the canvas handle. Omitted (hidden in UI) for polygon
+   *  rooms since bbox W × H is not meaningful geometry for L/T/U. */
+  onResize?: (widthFt: number, heightFt: number) => void;
   wallSf?: number | null;
   isPolygon?: boolean;
 }) {
@@ -230,10 +332,10 @@ function MobileRoomPanel({
         <div className="overflow-y-auto px-4 pb-6 space-y-3">
           {/* Room header with edit */}
           <div className="flex items-center justify-between">
-            <div>
+            <div className="min-w-0">
               <h3 className="text-[14px] font-semibold text-on-surface">{room.name}</h3>
               <span className="text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                {room.widthFt} &times; {room.heightFt} ft &middot; {Math.round(room.widthFt * room.heightFt)} SF
+                {Math.round(room.widthFt * room.heightFt)} SF
                 {wallSf != null && wallSf > 0 && (
                   <> &middot; Wall {wallSf} SF</>
                 )}
@@ -265,6 +367,19 @@ function MobileRoomPanel({
               )}
             </div>
           </div>
+
+          {/* Inline dimension inputs — rectangles only. Polygon rooms have
+              N edges and their bbox W × H is not actionable (editing 14 ft
+              on a U-shape is ambiguous: which edge?). For polygons the
+              "Edit shape" button is the right mechanism. */}
+          {!isPolygon && onResize && (
+            <RoomDimensionInputs
+              key={`${room.id}-${room.widthFt}-${room.heightFt}`}
+              widthFt={room.widthFt}
+              heightFt={room.heightFt}
+              onResize={onResize}
+            />
+          )}
 
           {/* Photos section */}
           <RoomPhotoSection
@@ -1189,6 +1304,9 @@ export default function FloorPlanPage({
               canvasRef.current?.convertRoomToPolygon(mobileSelectedRoom.id);
             }
             setMobileSelectedRoom(null);
+          }}
+          onResize={mobileSelectedRoom.isPolygon ? undefined : (w, h) => {
+            canvasRef.current?.resizeRoomTo(mobileSelectedRoom.id, w, h);
           }}
           isPolygon={mobileSelectedRoom.isPolygon}
           wallSf={jobRooms?.find(r => r.id === mobileSelectedRoom.propertyRoomId)?.wall_square_footage}

@@ -25,6 +25,7 @@ import {
   pointInPolygon,
   getRoomPoints,
   roomFloorArea,
+  isRectangularPolygon,
 } from "./floor-plan-tools";
 import { FloorPlanToolbar } from "./floor-plan-toolbar";
 import { FloorPlanSidebar } from "./floor-plan-sidebar";
@@ -44,6 +45,11 @@ export interface KonvaFloorPlanHandle {
    *  4 corners to `points`). Once converted, the room renders with vertex
    *  drag handles instead of corner resize handles. No-op if already a polygon. */
   convertRoomToPolygon: (roomId: string) => void;
+  /** Directly set a rectangle room's dimensions in feet. Regenerates walls,
+   *  clamps floor_openings into the new bbox, re-runs shared-wall detection.
+   *  No-op for polygon rooms (bbox W × H isn't meaningful geometry for L/T/U
+   *  — edit polygons via vertex drag instead). */
+  resizeRoomTo: (roomId: string, widthFt: number, heightFt: number) => void;
   /** Read the canvas's latest in-memory state without going through the debounce
    *  or onChange callback. Used during forced remounts (e.g. auto-Main create)
    *  to capture the user's pending edits before the unmount kills the timer. */
@@ -303,6 +309,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     const room = s.rooms.find((r) => r.id === selectedId);
     if (!room) { cb(null); return; }
     const g = s.gridSize;
+    // "isPolygon" here means "truly polygon" — a shape the user has
+    // genuinely deformed (L/T/U). A 4-vertex polygon still at its bbox
+    // corners is functionally a rectangle and should behave like one in
+    // the selection panel (inline W × H inputs, Reshape label, etc.).
+    const hasPoints = !!room.points && room.points.length >= 3;
     cb({
       selectedId,
       type: "room",
@@ -310,7 +321,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       widthFt: Math.round((room.width / g) * 10) / 10,
       heightFt: Math.round((room.height / g) * 10) / 10,
       propertyRoomId: room.propertyRoomId,
-      isPolygon: !!room.points && room.points.length >= 3,
+      isPolygon: hasPoints && !isRectangularPolygon(room),
     });
   }, [selectedId]);
 
@@ -512,7 +523,58 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         rooms: s.rooms.map((r) => (r.id === roomId ? updated : r)),
       });
     },
-  }), []);
+    resizeRoomTo(roomId: string, widthFt: number, heightFt: number) {
+      const s = latestStateRef.current;
+      const room = s.rooms.find((r) => r.id === roomId);
+      if (!room) return;
+      // Skip only TRUE polygons (L/T/U shapes with deformed vertices). A
+      // polygon whose 4 points are still at its bbox corners is functionally
+      // a rectangle and should accept direct W × H edits — we regenerate
+      // its points at the new bbox corners below.
+      const hasPoints = !!room.points && room.points.length >= 3;
+      const isRectLike = !hasPoints || isRectangularPolygon(room);
+      if (!isRectLike) return;
+      if (!Number.isFinite(widthFt) || !Number.isFinite(heightFt)) return;
+      if (widthFt < 1 || heightFt < 1) return;
+      const newW = Math.max(gs, Math.round(widthFt * gs));
+      const newH = Math.max(gs, Math.round(heightFt * gs));
+      if (newW === room.width && newH === room.height) return;
+
+      const updated: RoomData = { ...room, width: newW, height: newH };
+      // If the room has points (rect-shaped polygon), regenerate them at
+      // the new bbox corners so the Konva <Line> renders correctly — it
+      // draws from `points`, not bbox.
+      if (hasPoints) {
+        updated.points = [
+          { x: updated.x, y: updated.y },
+          { x: updated.x + newW, y: updated.y },
+          { x: updated.x + newW, y: updated.y + newH },
+          { x: updated.x, y: updated.y + newH },
+        ];
+      }
+      // Clamp cutouts to stay inside the new bbox. Trim width/height if the
+      // new bbox is smaller; keep origin unchanged where possible.
+      if (updated.floor_openings?.length) {
+        updated.floor_openings = updated.floor_openings.map((o) => {
+          const maxX = updated.x + updated.width - gs;
+          const maxY = updated.y + updated.height - gs;
+          const cx = Math.min(Math.max(o.x, updated.x), maxX);
+          const cy = Math.min(Math.max(o.y, updated.y), maxY);
+          const cw = Math.max(gs, Math.min(o.width, updated.x + updated.width - cx));
+          const ch = Math.max(gs, Math.min(o.height, updated.y + updated.height - cy));
+          return { ...o, x: cx, y: cy, width: cw, height: ch };
+        });
+      }
+      const otherWalls = s.walls.filter((w) => w.roomId !== roomId);
+      const newRoomWalls = wallsForRoom(updated);
+      const allWalls = detectSharedWalls([...otherWalls, ...newRoomWalls]);
+      pushRef.current({
+        ...s,
+        rooms: s.rooms.map((r) => (r.id === roomId ? updated : r)),
+        walls: allWalls,
+      });
+    },
+  }), [gs]);
 
   // Resize observer
   useEffect(() => {

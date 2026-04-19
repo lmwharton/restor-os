@@ -1,9 +1,111 @@
 "use client";
 
-import { Fragment } from "react";
-import type { ToolType, FloorPlanData } from "./floor-plan-tools";
+import { Fragment, useEffect, useRef, useState } from "react";
+import type { ToolType, FloorPlanData, RoomData, FloorOpeningData } from "./floor-plan-tools";
+import { wallsForRoom, detectSharedWalls, isRectangularPolygon } from "./floor-plan-tools";
 import { usePhotos } from "@/lib/hooks/use-jobs";
 import { RoomPhotoSection } from "@/components/room-photo-section";
+
+/* ------------------------------------------------------------------ */
+/*  NumericInput — local draft + commit on blur/Enter                   */
+/*                                                                     */
+/*  Controlled <input type="number"> that rejects invalid values on    */
+/*  every keystroke swallows the user's clear-then-type edits: when    */
+/*  the value briefly becomes "" (empty) or below min, the validator  */
+/*  bails and the controlled input snaps back to the old value. This   */
+/*  component holds the typing draft in local state and only commits   */
+/*  on blur / Enter — same pattern doors/windows use in the mobile     */
+/*  bottom-sheet editor. Re-syncs draft from the prop when the user    */
+/*  isn't actively typing (e.g., corner-drag updates the value         */
+/*  externally).                                                       */
+/* ------------------------------------------------------------------ */
+
+function NumericInput({
+  value,
+  onCommit,
+  min = 0.5,
+  max = 100,
+  suffix = "ft",
+  debounceMs = 400,
+}: {
+  value: number;
+  onCommit: (v: number) => void;
+  min?: number;
+  max?: number;
+  suffix?: string;
+  /** Milliseconds after the last keystroke before auto-commit. Also commits
+   *  immediately on blur / Enter. Set to 0 to disable auto-commit. */
+  debounceMs?: number;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  const focusedRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (!focusedRef.current) setDraft(String(value));
+  }, [value]);
+
+  // Clear any pending debounce timer on unmount so we don't commit into
+  // a stale ref after the panel closes.
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+
+  const tryCommit = (nextDraft: string) => {
+    const n = parseFloat(nextDraft);
+    if (!Number.isFinite(n) || n < min || n > max) return false;
+    if (n === value) return true;
+    onCommit(n);
+    return true;
+  };
+
+  const commitOnExit = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+    const n = parseFloat(draft);
+    if (!Number.isFinite(n) || n < min || n > max) {
+      setDraft(String(value));  // revert to last valid
+      return;
+    }
+    if (n !== value) onCommit(n);
+    // Normalize display ("10." → "10") regardless of commit.
+    setDraft(String(n));
+  };
+
+  return (
+    <div className="relative">
+      <input
+        type="text"
+        inputMode="decimal"
+        value={draft}
+        onFocus={(e) => { focusedRef.current = true; e.target.select(); }}
+        onBlur={() => { focusedRef.current = false; commitOnExit(); }}
+        onChange={(e) => {
+          const next = e.target.value;
+          setDraft(next);
+          // Live auto-commit: debounced so fast typing doesn't fire resize
+          // on every keystroke, but the user doesn't need to blur to see
+          // the change — match the "it just happens" feel of the old
+          // immediate-commit implementation without the anti-pattern of
+          // rejecting mid-keystroke clears.
+          if (debounceMs > 0) {
+            if (timerRef.current) clearTimeout(timerRef.current);
+            timerRef.current = setTimeout(() => tryCommit(next), debounceMs);
+          }
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+          if (e.key === "Escape") {
+            if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+            setDraft(String(value));
+            (e.target as HTMLInputElement).blur();
+          }
+        }}
+        className="w-full h-7 px-2 pr-5 rounded border border-[#eae6e1] text-[12px] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
+      />
+      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-[#8a847e] font-[family-name:var(--font-geist-mono)]">{suffix}</span>
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -36,34 +138,104 @@ function PropertiesPanel({ state, gridSize, selectedId, onUpdateState }: {
   const label = (text: string) => <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-[#8a847e] mb-0.5">{text}</p>;
   const value = (text: string, mono = true) => <p className={`text-[13px] ${mono ? "font-[family-name:var(--font-geist-mono)]" : "font-semibold"} text-[#1a1a1a]`}>{text}</p>;
 
+  // Door/window/opening inputs — tight range. Room dimension inputs call
+  // NumericInput directly below with a wider `max` (rooms can exceed 30 ft).
   const editInput = (val: number, onChange: (v: number) => void, suffix = "ft") => (
-    <div className="relative">
-      <input
-        type="number"
-        value={val}
-        onChange={(e) => onChange(Number(e.target.value) || 0)}
-        min={0.5}
-        max={30}
-        step={0.5}
-        onFocus={(e) => e.target.select()}
-        className="w-full h-7 px-2 pr-5 rounded border border-[#eae6e1] text-[12px] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
-      />
-      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-[#8a847e] font-[family-name:var(--font-geist-mono)]">{suffix}</span>
-    </div>
+    <NumericInput value={val} onCommit={onChange} min={0.5} max={30} suffix={suffix} />
   );
 
   if (selRoom) {
+    // "True polygon" = L/T/U shape where the user has deformed vertices
+    // away from the bbox. A 4-vertex polygon still at its bbox corners
+    // (e.g., a rectangle that was tapped through Reshape but never had a
+    // vertex dragged) is functionally a rectangle and accepts direct
+    // W × H edits — resize handler below regenerates its 4 points.
+    const hasPoints = !!selRoom.points && selRoom.points.length >= 3;
+    const isTruePolygon = hasPoints && !isRectangularPolygon(selRoom);
     const wFt = Math.round((selRoom.width / gs) * 10) / 10;
     const hFt = Math.round((selRoom.height / gs) * 10) / 10;
+
+    // Direct-edit handler for rectangles (and rect-shaped polygons).
+    // Updates bbox, regenerates the room's 4 walls, clamps any
+    // floor_openings into the new bbox, and re-runs shared-wall detection.
+    // Autosave then pushes the SF delta to job_rooms.square_footage via
+    // the canvas's onChange diff — no separate backend call needed here.
+    const handleResize = (opts: { widthFt?: number; heightFt?: number }) => {
+      if (!onUpdateState) return;
+      const newWft = opts.widthFt ?? wFt;
+      const newHft = opts.heightFt ?? hFt;
+      if (!Number.isFinite(newWft) || !Number.isFinite(newHft)) return;
+      if (newWft < 1 || newHft < 1) return;  // must be at least 1 ft
+      const newW = Math.max(gs, Math.round(newWft * gs));
+      const newH = Math.max(gs, Math.round(newHft * gs));
+      if (newW === selRoom.width && newH === selRoom.height) return;
+
+      const updated: RoomData = { ...selRoom, width: newW, height: newH };
+      // Rect-shaped polygon: regenerate points at new bbox corners so the
+      // Konva <Line> draws at the new size (polygon rooms render from
+      // `points`, not bbox).
+      if (hasPoints) {
+        updated.points = [
+          { x: updated.x, y: updated.y },
+          { x: updated.x + newW, y: updated.y },
+          { x: updated.x + newW, y: updated.y + newH },
+          { x: updated.x, y: updated.y + newH },
+        ];
+      }
+      // Clamp cutouts so they stay inside the new bbox. If a cutout sits
+      // past the new edge, trim it; if trimming makes it smaller than a
+      // grid cell, keep it at the minimum so the user still sees it and
+      // can reposition manually.
+      if (updated.floor_openings?.length) {
+        updated.floor_openings = updated.floor_openings.map((o: FloorOpeningData) => {
+          const maxX = updated.x + updated.width - gs;
+          const maxY = updated.y + updated.height - gs;
+          const cx = Math.min(Math.max(o.x, updated.x), maxX);
+          const cy = Math.min(Math.max(o.y, updated.y), maxY);
+          const cw = Math.max(gs, Math.min(o.width, updated.x + updated.width - cx));
+          const ch = Math.max(gs, Math.min(o.height, updated.y + updated.height - cy));
+          return { ...o, x: cx, y: cy, width: cw, height: ch };
+        });
+      }
+      const otherWalls = state.walls.filter((w) => w.roomId !== selRoom.id);
+      const newRoomWalls = wallsForRoom(updated);
+      const allWalls = detectSharedWalls([...otherWalls, ...newRoomWalls]);
+      onUpdateState({
+        ...state,
+        rooms: state.rooms.map((r) => (r.id === selRoom.id ? updated : r)),
+        walls: allWalls,
+      });
+    };
+
     return (
       <div className="mb-4">
         {heading}
         <div className="space-y-2.5">
           <div>{label("Room")}{value(selRoom.name, false)}</div>
-          <div className="grid grid-cols-2 gap-2">
-            <div>{label("Width")}{value(`${wFt} ft`)}</div>
-            <div>{label("Length")}{value(`${hFt} ft`)}</div>
-          </div>
+          {isTruePolygon ? (
+            <>
+              <div className="grid grid-cols-2 gap-2">
+                <div>{label("Width")}{value(`${wFt} ft`)}</div>
+                <div>{label("Length")}{value(`${hFt} ft`)}</div>
+              </div>
+              <p className="text-[10px] text-[#8a847e] italic">Drag vertices on the canvas to edit polygon shape.</p>
+            </>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                {label("Width")}
+                {onUpdateState
+                  ? <NumericInput value={wFt} onCommit={(v) => handleResize({ widthFt: v })} min={1} max={100} />
+                  : value(`${wFt} ft`)}
+              </div>
+              <div>
+                {label("Length")}
+                {onUpdateState
+                  ? <NumericInput value={hFt} onCommit={(v) => handleResize({ heightFt: v })} min={1} max={100} />
+                  : value(`${hFt} ft`)}
+              </div>
+            </div>
+          )}
           <div>{label("Area")}{value(`${Math.round(wFt * hFt * 10) / 10} sq ft`)}</div>
         </div>
       </div>

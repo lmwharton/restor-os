@@ -354,6 +354,28 @@ export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "d
 /*  Polygon helpers (E1 — unified rect + polygon room model)           */
 /* ------------------------------------------------------------------ */
 
+/** True when a room has `points` but those 4 vertices are still at the
+ *  bbox corners — i.e. it's been converted to a polygon (so vertex-drag
+ *  works) but the user hasn't actually deformed it into an L/T/U yet.
+ *  These rooms should behave like rectangles for direct W × H editing. */
+export function isRectangularPolygon(room: RoomData): boolean {
+  if (!room.points || room.points.length !== 4) return false;
+  const cornerKeys = new Set([
+    `${room.x},${room.y}`,
+    `${room.x + room.width},${room.y}`,
+    `${room.x + room.width},${room.y + room.height}`,
+    `${room.x},${room.y + room.height}`,
+  ]);
+  // Match by set (any permutation) — convertRoomToPolygon writes them in
+  // a specific order but future flows shouldn't have to care about order.
+  const pointKeys = new Set(room.points.map((p) => `${p.x},${p.y}`));
+  if (pointKeys.size !== 4) return false;
+  for (const key of cornerKeys) {
+    if (!pointKeys.has(key)) return false;
+  }
+  return true;
+}
+
 /** Returns the room's vertices. For polygon rooms this is the stored points
  *  array; for rectangle rooms (no `points` set), derives the four corners. */
 export function getRoomPoints(room: RoomData): Array<{ x: number; y: number }> {
