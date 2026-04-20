@@ -488,14 +488,13 @@ export default function FloorPlanPage({
       affected?: boolean;
     },
   ) => {
-    // Check if room already exists in Property Layout — update dimensions if so
+    // If the room already exists in Property Layout, skip create.
+    // Dimension sync is handled by the canvas save loop (handleChange)
+    // which runs on the same confirm tick — PATCHing here too used to
+    // race with that loop and produce duplicate PATCHes for the same
+    // room within ~1s.
     const existing = jobRooms?.find((r) => r.room_name === name);
-    if (existing) {
-      if (dimensions) {
-        updateRoom.mutate({ roomId: existing.id, width_ft: dimensions.width, length_ft: dimensions.height } as Record<string, unknown> & { roomId: string });
-      }
-      return;
-    }
+    if (existing) return;
     createRoom.mutate({
       room_name: name,
       length_ft: dimensions?.height ?? null,
@@ -510,7 +509,7 @@ export default function FloorPlanPage({
       ...(metadata?.materialFlags !== undefined && { material_flags: metadata.materialFlags }),
       ...(metadata?.affected !== undefined && { affected: metadata.affected }),
     } as Record<string, unknown>);
-  }, [jobRooms, createRoom, updateRoom]);
+  }, [jobRooms, createRoom]);
 
   const { data: allPhotos = [] } = usePhotos(jobId);
   const [mobileSelectedRoom, setMobileSelectedRoom] = useState<{ id: string; name: string; widthFt: number; heightFt: number; propertyRoomId: string; isPolygon?: boolean } | null>(null);
