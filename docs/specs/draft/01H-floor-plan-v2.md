@@ -228,6 +228,30 @@ Both items below were identified during manual QA and deferred. Neither blocks P
 
 2. **Race hardening in `_create_version`.** Flip-then-insert (mark old siblings `is_current=false`, then insert the new version) is two async calls, not a transaction. Under concurrent saves from multiple techs on the same floor, the "one is_current per floor" invariant could break. Fix: partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + `APIError` catch/retry in `_create_version`. Low likelihood under single-user editing; predates the schema merge.
 
+3. **Save-path HTTP call volume (nice-to-have optimization).** A single canvas edit currently fires 10–15 backend requests, dominated by the wall sync cycle (GET walls × N rooms + DELETE walls × M + POST walls × M for the edited room). The duplicate-PATCH and duplicate-refetch bugs that made it worse have been fixed (see phase2 commits `3efeba2`, `d2a640e`, `d670023`, `66eb243`, `051a096`, `1bab5d4`, `36ce8ad`, and the `["jobs"]` invalidation collapse), but the residual volume is structural — not a bug, just unoptimized.
+
+   **Full breakdown per save (after current fixes):**
+   - `POST /v1/floor-plans/:fpid/versions` — persist canvas (unavoidable)
+   - `GET /v1/floor-plans/:fpid/versions` — refetch version history for UI
+   - `GET /v1/jobs/:id` — refresh `floor_plan_id` after possible fork
+   - `PATCH /v1/jobs/:id/rooms/:id × K` — room dims/cutouts/SF for affected rooms
+   - `GET /v1/rooms/:roomId/walls × N` — idempotency check per room
+   - `DELETE /v1/rooms/:roomId/walls/:wallId × M` — clean-slate for the edited room
+   - `POST /v1/rooms/:roomId/walls × M` — recreate with new geometry
+   - `GET /v1/jobs/:id/rooms` — final invalidation refetch
+
+   **Optimization plan (in order of ROI):**
+
+   a. **Bulk wall replace endpoint (biggest win).** New endpoint `PUT /v1/rooms/:id/walls` that accepts the full wall array, does the diff server-side in one transaction, returns the final state. Replaces `1 GET + M DELETE + M POST` (up to ~15 calls per edit) with **1 PUT**. Backend work: new service method + router, idempotent diff-and-patch logic, transaction boundary. Estimated effort: 1–2 days. Target: wall sync cycle drops from O(N) requests to O(1).
+
+   b. **Use mutation responses instead of invalidation refetches.** Swap `queryClient.invalidateQueries` for `queryClient.setQueryData` after POST/PATCH mutations. Pre-requirement: backend responses must include enough data to populate the cache entry (e.g., POST `/versions` returns the new version AND the updated job snapshot if `floor_plan_id` changed). Eliminates the `GET /versions` and `GET /jobs/:id` refetches. Frontend is ~50 lines; backend is a response-schema enrichment. Estimated effort: 0.5 days per endpoint.
+
+   c. **Bulk room PATCH endpoint.** `PATCH /v1/jobs/:id/rooms` with an array of `{id, ...changes}`. Replaces K separate PATCHes with one. Lower ROI than (a) because K is typically 1–3 per save; only worth bundling if (a) is already done and this is low-hanging. Estimated effort: 0.5 days.
+
+   d. **Frontend wall cache (avoid the idempotency GET).** Subscribe to `["walls", roomId]` when a room mounts; after POST /versions, use `setQueryData` to update. The idempotency check then runs against the cache, not against the network. Pre-requirement: wall queries exist as first-class React Query entries (they don't today — wall sync uses `apiGet` directly). Lower priority.
+
+   **Target after (a) + (b):** a full room-edit save drops from ~14 calls to ~4 (`POST /versions`, `PUT /walls`, single PATCH per room, no refetches). Worth doing before user load scales.
+
 ### Phase 2: Moisture Pins
 - [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
 - [ ] `moisture_pin_readings` table created — time-series reading values per pin
