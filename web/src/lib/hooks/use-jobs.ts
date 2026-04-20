@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
 import type {
   JobDetail, JobCreate, Job,
-  Room, Photo, PhotoType, MoistureReading, Event,
+  Room, Photo, PhotoType, Event,
   FloorPlan, PaginatedResponse, ReconPhase,
   WallSegment, WallOpening,
 } from "../types";
@@ -216,69 +216,6 @@ export function useCreateShareLink(jobId: string) {
         `/v1/jobs/${jobId}/share`,
         data
       ),
-  });
-}
-
-// ─── Moisture Reading Queries + Mutations ─────────────────────────────
-
-export function useReadings(jobId: string, roomId: string) {
-  return useQuery<MoistureReading[]>({
-    queryKey: ["readings", jobId, roomId],
-    queryFn: async () => {
-      const data = await apiGet<MoistureReading[] | PaginatedResponse<MoistureReading>>(
-        `/v1/jobs/${jobId}/rooms/${roomId}/readings`
-      );
-      if (Array.isArray(data)) return data;
-      return data.items ?? [];
-    },
-    enabled: !!jobId && !!roomId,
-  });
-}
-
-export function useAllReadings(jobId: string) {
-  return useQuery<MoistureReading[]>({
-    queryKey: ["readings", jobId, "all"],
-    queryFn: async () => {
-      const data = await apiGet<MoistureReading[] | PaginatedResponse<MoistureReading>>(
-        `/v1/jobs/${jobId}/readings`
-      );
-      if (Array.isArray(data)) return data;
-      return data.items ?? [];
-    },
-    enabled: !!jobId,
-  });
-}
-
-export function useCreateReading(jobId: string, roomId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { reading_date: string; atmospheric_temp_f?: number; atmospheric_rh_pct?: number }) =>
-      apiPost<MoistureReading>(`/v1/jobs/${jobId}/rooms/${roomId}/readings`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["readings", jobId] });
-    },
-  });
-}
-
-export function useCreatePoint(jobId: string, readingId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { location_name: string; reading_value: number; sort_order?: number }) =>
-      apiPost(`/v1/jobs/${jobId}/readings/${readingId}/points`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["readings", jobId] });
-    },
-  });
-}
-
-export function useCreateDehu(jobId: string, readingId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { dehu_model?: string; rh_out_pct?: number; temp_out_f?: number }) =>
-      apiPost(`/v1/jobs/${jobId}/readings/${readingId}/dehus`, data),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["readings", jobId] });
-    },
   });
 }
 

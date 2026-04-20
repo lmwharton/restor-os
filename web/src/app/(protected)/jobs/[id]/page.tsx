@@ -5,7 +5,6 @@ import { useParams, useRouter } from "next/navigation";
 import {
   useJob,
   useRooms,
-  useAllReadings,
   usePhotos,
   useJobEvents,
   useDeleteJob,
@@ -204,14 +203,6 @@ function CameraIcon({ size = 22 }: { size?: number }) {
     <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2v11Z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
       <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
-    </svg>
-  );
-}
-
-function ChartIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -911,15 +902,6 @@ function IconCamera() {
   );
 }
 
-function IconReadings() {
-  return (
-    <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
-      <path d="M14 4h-4a2 2 0 00-2 2v12a2 2 0 002 2h4a2 2 0 002-2V6a2 2 0 00-2-2Z" stroke="currentColor" strokeWidth="1.5" />
-      <path d="M12 18v2M10 8h4M10 11h4M10 14h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 function IconNotes() {
   return (
     <svg width={18} height={18} viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-on-surface-variant shrink-0">
@@ -1533,76 +1515,6 @@ function TechNotesSection({
 }
 
 /* ------------------------------------------------------------------ */
-/*  GPP Bar Chart                                                      */
-/* ------------------------------------------------------------------ */
-
-function GppTrendChart({ readings, target }: { readings: { day: number; gpp: number }[]; target: number }) {
-  const maxGpp = Math.max(...readings.map((r) => r.gpp), target + 10);
-
-  return (
-    <div className="space-y-3">
-      <div className="flex items-end gap-3 h-[100px]">
-        {readings.map((r) => {
-          const pct = (r.gpp / maxGpp) * 100;
-          const isAboveTarget = r.gpp > target;
-          return (
-            <div key={r.day} className="flex-1 flex flex-col items-center gap-1">
-              <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold text-on-surface tabular-nums">
-                {(r.gpp ?? 0).toFixed(0)}
-              </span>
-              <div className="w-full flex items-end" style={{ height: 80 }}>
-                <div
-                  className="w-full rounded-t-md transition-all duration-500"
-                  style={{
-                    height: `${pct}%`,
-                    background: isAboveTarget
-                      ? "linear-gradient(180deg, #e85d26 0%, #cc4911 100%)"
-                      : "linear-gradient(180deg, #16a34a 0%, #15803d 100%)",
-                  }}
-                />
-              </div>
-              <span className="text-[10px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                Day {r.day}
-              </span>
-            </div>
-          );
-        })}
-        {/* Target line visual */}
-        <div className="flex-1 flex flex-col items-center gap-1">
-          <span className="text-[11px] font-[family-name:var(--font-geist-mono)] font-bold text-emerald-600 tabular-nums">
-            {target}
-          </span>
-          <div className="w-full flex items-end" style={{ height: 80 }}>
-            <div
-              className="w-full rounded-t-md border-2 border-dashed border-emerald-400 bg-emerald-50"
-              style={{ height: `${(target / maxGpp) * 100}%` }}
-            />
-          </div>
-          <span className="text-[10px] font-[family-name:var(--font-geist-mono)] text-emerald-600 font-semibold">
-            Target
-          </span>
-        </div>
-      </div>
-
-      <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant text-center">
-        GPP Trend
-      </p>
-
-      <div className="flex items-center gap-4 justify-center">
-        <span className="flex items-center gap-1.5 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          <span className="w-2 h-2 rounded-full bg-brand-accent" />
-          <span className="text-on-surface-variant">Latest: {readings[readings.length - 1]?.gpp.toFixed(0)} GPP</span>
-        </span>
-        <span className="flex items-center gap-1.5 text-[11px] font-[family-name:var(--font-geist-mono)]">
-          <span className="w-2 h-2 rounded-full bg-emerald-500" />
-          <span className="text-on-surface-variant">Target: {target} GPP</span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
 /*  Main Page                                                          */
 /* ------------------------------------------------------------------ */
 
@@ -1776,7 +1688,10 @@ export default function JobDetailPage() {
     }
   }, [shareModal]);
 
-  const { data: readings } = useAllReadings(jobId);
+  // Moisture (Phase 2 pins) is rendered on the floor plan in Moisture Mode.
+  // The job detail page will grow a compact "drying progress" rollup here
+  // once pin CRUD ships — for now, no moisture block on this page.
+  // TODO(01H Phase 2 UI): drying-progress rollup card (X of Y pins dry).
 
   const dayNumber = job?.loss_date ? daysSinceLoss(job.loss_date) : null;
 
@@ -1785,15 +1700,6 @@ export default function JobDetailPage() {
     () => photos?.filter((p) => !p.room_id) ?? [],
     [photos]
   );
-
-  // GPP data from readings
-  const gppData = useMemo(() => {
-    if (!readings || readings.length === 0) return [];
-    return [...readings]
-      .sort((a, b) => new Date(a.reading_date).getTime() - new Date(b.reading_date).getTime())
-      .filter((r) => r.atmospheric_gpp != null && typeof r.atmospheric_gpp === "number")
-      .map((r) => ({ day: r.day_number ?? 0, gpp: Number(r.atmospheric_gpp) }));
-  }, [readings]);
 
   // Job events for this job, sorted newest first
   const jobEvents = useMemo(() => {
@@ -2238,148 +2144,9 @@ export default function JobDetailPage() {
             <ReconPhasesSection phases={reconPhases ?? []} jobId={jobId} />
           )}
 
-          {/* Section 4: Readings (mitigation only) */}
-          {job.job_type === "mitigation" && (
-          <AccordionSection
-            icon={<IconReadings />}
-            title="Moisture Readings"
-            defaultOpen={!!(readings && readings.length > 0)}
-            preview={
-              readings && readings.length > 0
-                ? `${readings.length} reading${readings.length !== 1 ? "s" : ""} logged`
-                : "No readings yet"
-            }
-            action={
-              rooms && rooms.length > 0 ? (
-                <span
-                  role="link"
-                  tabIndex={0}
-                  onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                  onKeyDown={(e) => { if (e.key === "Enter") router.push(`/jobs/${jobId}/readings`); }}
-                  className="flex items-center gap-1.5 h-7 px-3 rounded-lg text-[12px] font-medium text-on-surface-variant hover:text-on-surface transition-colors cursor-pointer"
-                >
-                  <svg width={12} height={12} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                  Log Reading
-                </span>
-              ) : null
-            }
-          >
-            <div className="space-y-3">
-              {gppData.length > 0 && (
-                <GppTrendChart readings={gppData} target={45} />
-              )}
+          {/* Section 4: Moisture is rendered on the floor plan (Phase 2) — */}
+          {/* compact drying-progress rollup lands here in a follow-up commit. */}
 
-              {(!rooms || rooms.length === 0) ? (
-                <p className="text-[13px] text-on-surface-variant">
-                  Add rooms first to log moisture readings.
-                </p>
-              ) : (() => {
-                const currentDay = dayNumber ?? 1;
-                const hasReadingsForCurrentDay = readings?.some((r) => (r.day_number ?? 1) === currentDay);
-
-                // Get latest day's readings grouped by room
-                const latestDay = readings && readings.length > 0
-                  ? Math.max(...readings.map((r) => r.day_number ?? 1))
-                  : null;
-                const latestReadings = latestDay != null
-                  ? readings!.filter((r) => (r.day_number ?? 1) === latestDay)
-                  : [];
-                const latestDate = latestReadings.length > 0 ? latestReadings[0].reading_date : null;
-
-                return (
-                  <>
-                    {/* Latest day header */}
-                    {latestDay != null && (
-                      <div className="flex items-center justify-between">
-                        <p className="text-[12px] text-on-surface-variant/70 font-[family-name:var(--font-geist-mono)]">
-                          Day {latestDay}
-                          {latestDate && ` — ${new Date(latestDate + "T00:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}`}
-                        </p>
-                        {hasReadingsForCurrentDay && (
-                          <span className="flex items-center gap-1 text-[11px] text-emerald-600 font-medium">
-                            <svg width={12} height={12} viewBox="0 0 24 24" fill="none"><path d="M5 12l5 5L20 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" /></svg>
-                            Logged today
-                          </span>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Per-room read-only summaries */}
-                    {latestReadings.length > 0 ? (
-                      latestReadings.map((reading) => {
-                        const roomName = rooms.find((r) => r.id === reading.room_id)?.room_name ?? "Unknown Room";
-                        const dryStd = rooms.find((r) => r.id === reading.room_id)?.dry_standard ?? 16;
-                        const pointCount = reading.points?.length ?? 0;
-                        const dryCount = reading.points?.filter((p) => p.reading_value <= dryStd).length ?? 0;
-                        const wetCount = pointCount - dryCount;
-                        const dehu = reading.dehus?.[0];
-
-                        return (
-                          <div key={reading.id} className="rounded-lg bg-surface-container/50 p-3 space-y-1.5">
-                            <p className="text-[12px] font-semibold text-on-surface font-[family-name:var(--font-geist-mono)]">{roomName}</p>
-                            <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] font-[family-name:var(--font-geist-mono)]">
-                              <span className="text-on-surface-variant">
-                                {reading.atmospheric_temp_f != null ? `${reading.atmospheric_temp_f}°F` : "--"}
-                                {" / "}
-                                {reading.atmospheric_rh_pct != null ? `${reading.atmospheric_rh_pct}%` : "--"}
-                                {" / "}
-                                {reading.atmospheric_gpp != null ? `${reading.atmospheric_gpp} GPP` : "-- GPP"}
-                              </span>
-                              {pointCount > 0 && (
-                                <span className="text-on-surface-variant">
-                                  {pointCount} pt{pointCount !== 1 ? "s" : ""}
-                                  {wetCount > 0 && (
-                                    <span className="text-orange-500 ml-1">({wetCount} wet)</span>
-                                  )}
-                                  {wetCount === 0 && (
-                                    <span className="text-emerald-600 ml-1">(all dry)</span>
-                                  )}
-                                </span>
-                              )}
-                              {dehu && (
-                                <span className="text-on-surface-variant">
-                                  {dehu.dehu_model || "Dehu"}
-                                  {dehu.rh_out_pct != null ? ` ${dehu.rh_out_pct}%` : ""}
-                                  {dehu.temp_out_f != null ? ` / ${dehu.temp_out_f}°F` : ""}
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <p className="text-[12px] text-on-surface-variant/60 font-[family-name:var(--font-geist-mono)]">
-                        No readings logged yet
-                      </p>
-                    )}
-
-                    {/* CTA + View all link */}
-                    <div className="flex items-center justify-between pt-1">
-                      {!hasReadingsForCurrentDay && (
-                        <button
-                          type="button"
-                          onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                          className="h-8 px-4 bg-brand-accent text-on-primary font-semibold rounded-lg text-[12px] active:scale-[0.98] transition-all hover:shadow-lg hover:shadow-primary/20 cursor-pointer"
-                        >
-                          + Log Today&apos;s Reading
-                        </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => router.push(`/jobs/${jobId}/readings`)}
-                        className="text-[12px] font-medium text-brand-accent hover:underline cursor-pointer ml-auto"
-                      >
-                        View all readings →
-                      </button>
-                    </div>
-                  </>
-                );
-              })()}
-            </div>
-          </AccordionSection>
-          )}
 
           {/* Section 5: Tech Notes */}
           <TechNotesSection
@@ -2434,29 +2201,6 @@ export default function JobDetailPage() {
               To Complete This Job
             </h3>
             <div className="space-y-3">
-              {(!readings || readings.length === 0) && (
-                <div className="flex gap-2.5">
-                  <span className="w-2 h-2 rounded-full bg-error mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[13px] font-semibold text-brand-accent">
-                      No moisture readings logged
-                    </p>
-                    <p className="text-[11px] text-on-surface-variant mt-0.5">
-                      Needed for drying documentation
-                    </p>
-                  </div>
-                </div>
-              )}
-              {readings && readings.length > 0 && !rooms?.length && (
-                <div className="flex gap-2.5">
-                  <span className="w-2 h-2 rounded-full bg-amber-500 mt-1.5 shrink-0" />
-                  <div>
-                    <p className="text-[13px] font-medium text-on-surface">
-                      Add rooms to log per-room readings
-                    </p>
-                  </div>
-                </div>
-              )}
               {photos && photos.length > 0 && (
                 <div className="flex gap-2.5">
                   <span className="w-2 h-2 rounded-full bg-surface-container-highest mt-1.5 shrink-0" />
@@ -2562,15 +2306,6 @@ export default function JobDetailPage() {
             >
               <CameraIcon size={16} />
               <span className="text-[11px] font-semibold tracking-wide">Photo</span>
-            </button>
-            <div className="w-px h-5 bg-on-primary/20" />
-            <button
-              type="button"
-              onClick={() => router.push(`/jobs/${jobId}/readings`)}
-              className="flex-1 flex items-center justify-center gap-1.5 h-10 text-on-primary cursor-pointer active:bg-white/10 transition-colors"
-            >
-              <ChartIcon size={16} />
-              <span className="text-[11px] font-semibold tracking-wide">Reading</span>
             </button>
           </div>
         </div>

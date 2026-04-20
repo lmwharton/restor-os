@@ -322,41 +322,47 @@ export interface Photo {
   uploaded_at: string;
 }
 
-// ─── Moisture Readings ────────────────────────────────────────────────
-export interface MoisturePoint {
+// ─── Moisture Pins (Spec 01H Phase 2) ─────────────────────────────────
+
+export type MoistureMaterial =
+  | "drywall"
+  | "wood_subfloor"
+  | "carpet_pad"
+  | "concrete"
+  | "hardwood"
+  | "osb_plywood"
+  | "block_wall";
+
+export type PinColor = "red" | "amber" | "green";
+
+export interface MoisturePinReading {
   id: string;
-  reading_id: string;
-  location_name: string;
+  pin_id: string;
   reading_value: number;
+  reading_date: string;
+  recorded_by: string | null;
   meter_photo_url: string | null;
-  sort_order: number;
+  notes: string | null;
   created_at: string;
 }
 
-export interface DehuOutput {
-  id: string;
-  reading_id: string;
-  dehu_model: string | null;
-  rh_out_pct: number | null;
-  temp_out_f: number | null;
-  sort_order: number;
-  created_at: string;
-}
-
-export interface MoistureReading {
+export interface MoisturePin {
   id: string;
   job_id: string;
-  room_id: string;
-  company_id: string;
-  reading_date: string;
-  day_number: number | null;
-  atmospheric_temp_f: number | null;
-  atmospheric_rh_pct: number | null;
-  atmospheric_gpp: number | null;
-  points: MoisturePoint[];
-  dehus: DehuOutput[];
+  room_id: string | null;
+  canvas_x: number;
+  canvas_y: number;
+  location_name: string;
+  material: MoistureMaterial;
+  dry_standard: number;
+  created_by: string | null;
   created_at: string;
   updated_at: string;
+  // Decorated by the backend list endpoint
+  latest_reading: MoisturePinReading | null;
+  color: PinColor | null;
+  is_regressing: boolean;
+  reading_count: number;
 }
 
 // ─── Events ───────────────────────────────────────────────────────────
