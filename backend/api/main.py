@@ -11,7 +11,7 @@ from api.dashboard.router import router as dashboard_router
 from api.events.router import router as events_router
 from api.floor_plans.router import router as floor_plans_router
 from api.jobs.router import router as jobs_router
-from api.moisture.router import router as moisture_router
+from api.moisture_pins.router import router as moisture_pins_router
 from api.notifications.router import router as notifications_router
 from api.photos.router import router as photos_router
 from api.properties.router import router as properties_router
@@ -115,7 +115,7 @@ app.include_router(dashboard_router, prefix="/v1")
 app.include_router(events_router, prefix="/v1")
 app.include_router(floor_plans_router, prefix="/v1")
 app.include_router(jobs_router, prefix="/v1")
-app.include_router(moisture_router, prefix="/v1")
+app.include_router(moisture_pins_router, prefix="/v1")
 app.include_router(notifications_router, prefix="/v1")
 app.include_router(photos_router, prefix="/v1")
 app.include_router(properties_router, prefix="/v1")
