@@ -54,6 +54,12 @@ export interface KonvaFloorPlanHandle {
    *  or onChange callback. Used during forced remounts (e.g. auto-Main create)
    *  to capture the user's pending edits before the unmount kills the timer. */
   getCurrentState: () => FloorPlanData;
+  /** Backfill the backend room UUID onto a canvas room that was just created
+   *  (or matched to an existing backend row). Keeps the save loop matching by
+   *  propertyRoomId forever after — two canvas rooms with the same name will
+   *  no longer collapse onto the same backend row via name fallback. Bypasses
+   *  undo/redo because linking to a server-assigned UUID isn't a user action. */
+  setRoomPropertyId: (canvasRoomId: string, backendId: string) => void;
 }
 
 interface KonvaFloorPlanProps {
@@ -72,6 +78,10 @@ interface KonvaFloorPlanProps {
       materialFlags?: string[];
       affected?: boolean;
     },
+    // Canvas-side room ID of the room just pushed. Parent uses this to
+    // backfill propertyRoomId via canvasRef.setRoomPropertyId once the
+    // backend UUID is known — breaking the name-match fallback loop.
+    canvasRoomId?: string,
   ) => void;
   /** Semantic level of the active floor (basement/main/upper/attic) — used to
    *  detect when the confirmation card's Floor field targets a different
@@ -143,7 +153,15 @@ function useUndoRedo(initial: FloorPlanData) {
     });
   }, []);
 
-  return { state, push, undo, redo, canUndo: undoCount > 0, canRedo: redoCount > 0 };
+  // Mutate state without pushing to the undo stack. Used for bookkeeping
+  // writes (e.g., backfilling propertyRoomId after a server-assigned UUID
+  // arrives) where an undo would unlink the canvas↔backend mapping the
+  // user never explicitly set and can't sensibly "undo."
+  const patch = useCallback((updater: (prev: FloorPlanData) => FloorPlanData) => {
+    setState((prev) => updater(prev));
+  }, []);
+
+  return { state, push, patch, undo, redo, canUndo: undoCount > 0, canRedo: redoCount > 0 };
 }
 
 /* ------------------------------------------------------------------ */
@@ -273,7 +291,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   // {} from a freshly-created floor shell) still gets walls/rooms/doors/windows
   // arrays. Without this, state.walls is undefined and every iteration crashes.
   const data: FloorPlanData = { ...emptyFloorPlan(), ...(initialData ?? {}) };
-  const { state, push, undo, redo, canUndo, canRedo } = useUndoRedo(data);
+  const { state, push, patch, undo, redo, canUndo, canRedo } = useUndoRedo(data);
   const [tool, setTool] = useState<ToolType>("select");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [wallContextMenu, setWallContextMenu] = useState<{ wallId: string; x: number; y: number } | null>(null);
@@ -480,6 +498,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
   const pushRef = useRef(push);
   pushRef.current = push;
+  const patchRef = useRef(patch);
+  patchRef.current = patch;
 
   useImperativeHandle(ref, () => ({
     flush() {
@@ -572,6 +592,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         ...s,
         rooms: s.rooms.map((r) => (r.id === roomId ? updated : r)),
         walls: allWalls,
+      });
+    },
+    setRoomPropertyId(canvasRoomId: string, backendId: string) {
+      // Bypass the undo stack via patch() — this write is server-driven
+      // bookkeeping (the backend just assigned a UUID to a row the user
+      // didn't explicitly link), not a canvas action the user would
+      // sensibly want to undo.
+      patchRef.current((prev) => {
+        const existing = prev.rooms.find((r) => r.id === canvasRoomId);
+        if (!existing || existing.propertyRoomId === backendId) return prev;
+        return {
+          ...prev,
+          rooms: prev.rooms.map((r) =>
+            r.id === canvasRoomId ? { ...r, propertyRoomId: backendId } : r,
+          ),
+        };
       });
     },
   }), [gs]);
@@ -983,7 +1019,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         floorLevel: data.floorLevel,
         materialFlags: data.materialFlags,
         affected: data.affected,
-      });
+      }, newRoom.id);
     }
     // Force-save immediately — confirming a room is a discrete user action,
     // not a free-form canvas tweak. Cancel any pending debounce timer so it
