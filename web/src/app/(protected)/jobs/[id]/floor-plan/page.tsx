@@ -831,7 +831,11 @@ export default function FloorPlanPage({
           // fork (Case 3). Sibling jobs keep their own pins — no auto-upgrade.
           // Refetch this job so hydration reads the fresh pin; invalidate jobs
           // broadly so other open tabs pick up the new version in their lists.
-          queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+          // Single ["jobs"] invalidation — prefix-matches the detail query
+          // (["jobs", jobId]) and the filtered list queries (["jobs", filters]),
+          // so one call refetches both. Firing both keys used to trigger two
+          // back-to-back GET /v1/jobs/:id calls since React Query didn't dedupe
+          // the two invalidations in time.
           queryClient.invalidateQueries({ queryKey: ["jobs"] });
         } else {
           // No floor plan yet — create the floor plan shell first (metadata only),
@@ -862,7 +866,6 @@ export default function FloorPlanPage({
               canvas_data: canvasData,
             });
             queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
-            queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
             queryClient.invalidateQueries({ queryKey: ["jobs"] });
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
@@ -880,7 +883,6 @@ export default function FloorPlanPage({
                   canvas_data: canvasData,
                 });
                 queryClient.invalidateQueries({ queryKey: ["floor-plan-history", fp.id] });
-                queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
                 queryClient.invalidateQueries({ queryKey: ["jobs"] });
               }
             } else {
