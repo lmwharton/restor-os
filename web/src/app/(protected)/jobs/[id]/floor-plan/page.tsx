@@ -70,12 +70,20 @@ async function _syncWallsToBackendImpl(
 
   // Map canvas wall IDs → backend wall IDs (needed for door/window sync)
   const canvasToBackendWallId = new Map<string, string>();
+  // Track which backend rooms we've already synced in this pass. Two canvas
+  // rooms resolving to the same backend row (e.g., legacy canvas data where
+  // propertyRoomId was never backfilled) would otherwise each run a full
+  // delete-all + recreate cycle against the same backend walls, producing
+  // two sequential storms and momentarily wiping walls between them.
+  const syncedBackendRoomIds = new Set<string>();
 
   for (const room of canvasData.rooms) {
     const backendRoomId = room.propertyRoomId
       ?? jobRooms.find((r) => r.room_name === room.name)?.id;
 
     if (!backendRoomId) continue;
+    if (syncedBackendRoomIds.has(backendRoomId)) continue;
+    syncedBackendRoomIds.add(backendRoomId);
 
     const roomWalls = wallsByRoom.get(room.id) ?? [];
     if (roomWalls.length === 0) continue;
@@ -487,28 +495,43 @@ export default function FloorPlanPage({
       materialFlags?: string[];
       affected?: boolean;
     },
+    canvasRoomId?: string,
   ) => {
-    // If the room already exists in Property Layout, skip create.
-    // Dimension sync is handled by the canvas save loop (handleChange)
-    // which runs on the same confirm tick — PATCHing here too used to
-    // race with that loop and produce duplicate PATCHes for the same
-    // room within ~1s.
+    // If the room already exists in Property Layout, link the just-drawn
+    // canvas room to it and skip create. Without this backfill, the canvas
+    // room sits with propertyRoomId=undefined and the save loop falls back
+    // to name-match — which fails when two canvas rooms share a name (both
+    // collapse onto the same backend row, producing duplicate PATCHes and
+    // duplicate wall-sync cycles). Spec 01C H3/CF3 calls for ID matching;
+    // this closes the creation-path gap where the ID was never piped back.
     const existing = jobRooms?.find((r) => r.room_name === name);
-    if (existing) return;
-    createRoom.mutate({
-      room_name: name,
-      length_ft: dimensions?.height ?? null,
-      width_ft: dimensions?.width ?? null,
-      // Persist the form's metadata so floor_level / room_type / ceiling / etc.
-      // actually land in job_rooms — picking "Upper" in the form should mean
-      // the room belongs to the Upper floor, not whatever canvas it was drawn on.
-      ...(metadata?.roomType !== undefined && { room_type: metadata.roomType }),
-      ...(metadata?.ceilingHeight !== undefined && { height_ft: metadata.ceilingHeight }),
-      ...(metadata?.ceilingType !== undefined && { ceiling_type: metadata.ceilingType }),
-      ...(metadata?.floorLevel !== undefined && { floor_level: metadata.floorLevel }),
-      ...(metadata?.materialFlags !== undefined && { material_flags: metadata.materialFlags }),
-      ...(metadata?.affected !== undefined && { affected: metadata.affected }),
-    } as Record<string, unknown>);
+    if (existing) {
+      if (canvasRoomId) canvasRef.current?.setRoomPropertyId(canvasRoomId, existing.id);
+      return;
+    }
+    createRoom.mutate(
+      {
+        room_name: name,
+        length_ft: dimensions?.height ?? null,
+        width_ft: dimensions?.width ?? null,
+        // Persist the form's metadata so floor_level / room_type / ceiling / etc.
+        // actually land in job_rooms — picking "Upper" in the form should mean
+        // the room belongs to the Upper floor, not whatever canvas it was drawn on.
+        ...(metadata?.roomType !== undefined && { room_type: metadata.roomType }),
+        ...(metadata?.ceilingHeight !== undefined && { height_ft: metadata.ceilingHeight }),
+        ...(metadata?.ceilingType !== undefined && { ceiling_type: metadata.ceilingType }),
+        ...(metadata?.floorLevel !== undefined && { floor_level: metadata.floorLevel }),
+        ...(metadata?.materialFlags !== undefined && { material_flags: metadata.materialFlags }),
+        ...(metadata?.affected !== undefined && { affected: metadata.affected }),
+      } as Record<string, unknown>,
+      {
+        // Pipe the server-assigned UUID back into the canvas room. Next save
+        // matches by propertyRoomId (unambiguous) instead of name (ambiguous).
+        onSuccess: (created) => {
+          if (canvasRoomId) canvasRef.current?.setRoomPropertyId(canvasRoomId, created.id);
+        },
+      },
+    );
   }, [jobRooms, createRoom]);
 
   const { data: allPhotos = [] } = usePhotos(jobId);
@@ -883,13 +906,13 @@ export default function FloorPlanPage({
             }
             return Math.abs(s) / 2;
           };
-          // Collect room PATCHes and fire them in parallel without each
-          // invalidating the rooms query on its own. Drawing one room can
-          // update several rooms' dimensions (shared walls) — routing them
-          // through updateRoom.mutate() used to trigger one rooms-refetch
-          // per PATCH, so a 4-room edit spammed 4+ duplicate GET /rooms.
-          // Single rooms invalidation happens below after walls sync.
-          const roomUpdates: Array<Promise<unknown>> = [];
+          // Collect room PATCHes keyed by backend id so two canvas rooms
+          // resolving to the same backend row (via name-match fallback, or
+          // legacy canvas data pre-propertyRoomId backfill) collapse into
+          // a single PATCH — last-wins on body. Also prevents the save
+          // loop from running concurrent PATCHes with conflicting payloads
+          // against the same backend room within one save cycle.
+          const roomUpdatesByBackendId = new Map<string, Record<string, unknown>>();
           for (const drawnRoom of canvasData.rooms) {
             const match = drawnRoom.propertyRoomId
               ? jobRooms.find((r) => r.id === drawnRoom.propertyRoomId)
@@ -932,14 +955,15 @@ export default function FloorPlanPage({
                 if (dimsChanged) { body.width_ft = widthFt; body.length_ft = lengthFt; }
                 if (cutoutsChanged) { body.floor_openings = drawnCutouts; }
                 if (sfChanged) { body.square_footage = netSf; }
-                roomUpdates.push(
-                  apiPatch(`/v1/jobs/${jobId}/rooms/${match.id}`, body).catch((err) => {
-                    console.warn("Room patch failed", match.id, err);
-                  }),
-                );
+                roomUpdatesByBackendId.set(match.id, body);
               }
             }
           }
+          const roomUpdates = Array.from(roomUpdatesByBackendId, ([roomId, body]) =>
+            apiPatch(`/v1/jobs/${jobId}/rooms/${roomId}`, body).catch((err) => {
+              console.warn("Room patch failed", roomId, err);
+            }),
+          );
           await Promise.all(roomUpdates);
         }
 
