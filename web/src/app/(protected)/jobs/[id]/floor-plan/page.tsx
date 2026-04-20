@@ -592,6 +592,13 @@ export default function FloorPlanPage({
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
   const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
+  // Signature of the most recently saved canvas geometry (rooms/walls/doors/
+  // windows). Guards against save handler re-invocations with identical data
+  // — a cache-invalidation cascade after save can feed the same payload back
+  // in a second time and produce a redundant POST version + PATCH rooms +
+  // wall-sync round. Compared only against structural geometry, not against
+  // canvasMode/pins/etc., so non-geometry changes still fall through.
+  const lastSavedSigRef = useRef<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error" | "offline">("idle");
   const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -739,6 +746,19 @@ export default function FloorPlanPage({
 
       // Always backup to localStorage (survives browser close) — even during pending create
       backupToLocal(canvasData, activeFloorIdRef.current);
+
+      // Dedup against the most recently saved payload. Identical geometry
+      // means the save would be a functional no-op (same rooms, same walls,
+      // same openings) — short-circuit before POSTing the version, PATCHing
+      // rooms, or hitting the walls sync. Catches the rare re-invoke where
+      // handleChange gets called twice with the same data in quick succession.
+      const sig = JSON.stringify({
+        rooms: canvasData.rooms,
+        walls: canvasData.walls,
+        doors: canvasData.doors,
+        windows: canvasData.windows,
+      });
+      if (sig === lastSavedSigRef.current) return;
 
       // Defer ONLY when a floor creation is in flight AND we have no active
       // floor to save against. The original guard deferred on isPending alone,
@@ -930,7 +950,10 @@ export default function FloorPlanPage({
           .then(() => queryClient.invalidateQueries({ queryKey: ["rooms", jobId] }))
           .catch(() => {});
 
-        // Success — clear local backup, reset retries, show saved
+        // Success — clear local backup, reset retries, show saved.
+        // Record the saved signature so an immediate re-invoke with the
+        // same geometry can short-circuit at the top of handleChange.
+        lastSavedSigRef.current = sig;
         clearLocalBackup();
         retryCount.current = 0;
         if (retryTimer.current) { clearTimeout(retryTimer.current); retryTimer.current = null; }
