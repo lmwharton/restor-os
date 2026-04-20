@@ -34,11 +34,13 @@ class SharedJobResponse(BaseModel):
     job: dict
     rooms: list[dict]
     photos: list[dict]
-    moisture_readings: list[dict]
+    # moisture_readings removed in Spec 01H Phase 2 — pin-based moisture
+    # view returns via a separate endpoint (coming in Phase 2C).
     line_items: list[dict]
     company: dict
 
 
 class ShareResolveRequest(BaseModel):
     """Request body for POST /shared/resolve -- token in body, not URL path."""
+
     token: str = Field(..., min_length=1, max_length=128)

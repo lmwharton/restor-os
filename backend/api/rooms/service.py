@@ -270,29 +270,14 @@ async def list_rooms(
     rooms = result.data or []
     total = result.count if isinstance(result.count, int) else len(rooms)
 
-    # Fetch reading counts and latest dates for all rooms in one query
-    if rooms:
-        room_ids = [r["id"] for r in rooms]
-        readings = await (
-            client.table("moisture_readings")
-            .select("room_id, reading_date")
-            .in_("room_id", room_ids)
-            .execute()
-        )
-
-        # Aggregate per room
-        counts: dict[str, int] = {}
-        latest: dict[str, str] = {}
-        for rd in readings.data:
-            rid = rd["room_id"]
-            counts[rid] = counts.get(rid, 0) + 1
-            rd_date = rd.get("reading_date")
-            if rd_date and (rid not in latest or rd_date > latest[rid]):
-                latest[rid] = rd_date
-
-        for room in rooms:
-            room["reading_count"] = counts.get(room["id"], 0)
-            room["latest_reading_date"] = latest.get(room["id"])
+    # Legacy per-room-per-day moisture_readings table was dropped in Spec 01H
+    # Phase 2 (b8f2a1c3d4e5). Rooms no longer carry reading_count /
+    # latest_reading_date aggregates — those concepts move to the pin layer,
+    # which is queried separately via GET /moisture-pins. Return zeros to
+    # keep the response shape stable for any legacy consumers.
+    for room in rooms:
+        room["reading_count"] = 0
+        room["latest_reading_date"] = None
 
     return {"items": rooms, "total": total}
 
@@ -360,11 +345,7 @@ async def update_room(
     # provided, auto-populate defaults. When room_type is cleared (set to null)
     # we DON'T wipe materials — the user may want to keep their custom flags
     # even after removing the type label.
-    if (
-        "room_type" in updates
-        and updates["room_type"]
-        and "material_flags" not in updates
-    ):
+    if "room_type" in updates and updates["room_type"] and "material_flags" not in updates:
         updates["material_flags"] = _get_material_defaults(updates["room_type"])
 
     # Re-calculate square_footage if length or width changed
@@ -398,11 +379,9 @@ async def update_room(
 
     room = result.data[0]
 
-    # R16 (round 2): recompute cached wall_square_footage if any formula
-    # input changed at the room level. Closes the last drift gap that the
-    # per-wall/opening CRUD recalc (walls/service.py) doesn't cover —
-    # the stored SF is keyed to the row's current height/ceiling/override
-    # regardless of which endpoint mutated them.
+    # Phase 1 (round 2 R16): recompute cached wall_square_footage if any
+    # formula input changed at the room level. Closes the drift gap the
+    # per-wall/opening CRUD recalc (walls/service.py) doesn't cover.
     # Lazy import: walls.service imports calculate_wall_sf from this module,
     # so a top-level import would be circular.
     wall_sf_inputs = {"height_ft", "ceiling_type", "custom_wall_sf"}
@@ -412,17 +391,11 @@ async def update_room(
         if fresh_sf is not None:
             room["wall_square_footage"] = fresh_sf
 
-    # Fetch reading stats for this room
-    readings = await (
-        client.table("moisture_readings")
-        .select("reading_date")
-        .eq("room_id", str(room_id))
-        .execute()
-    )
-    room["reading_count"] = len(readings.data)
-    room["latest_reading_date"] = (
-        max(r["reading_date"] for r in readings.data) if readings.data else None
-    )
+    # Phase 2: legacy moisture_readings table dropped by the migration.
+    # Pin-based moisture lives in moisture_pins + moisture_pin_readings;
+    # aggregates fetched via GET /moisture-pins, not inlined on the room.
+    room["reading_count"] = 0
+    room["latest_reading_date"] = None
 
     await log_event(
         company_id,
@@ -468,7 +441,7 @@ async def delete_room(
     # Unlink photos that reference this room
     await client.table("photos").update({"room_id": None}).eq("room_id", str(room_id)).execute()
 
-    # Hard delete the room (CASCADE will handle moisture_readings)
+    # Hard delete the room (no legacy cascade dependencies after Spec 01H Phase 2)
     await client.table("job_rooms").delete().eq("id", str(room_id)).execute()
 
     await log_event(

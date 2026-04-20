@@ -73,13 +73,12 @@ async def create_share_link(
     except Exception as e:
         error_msg = str(e).lower()
         is_rpc_missing = "rpc_create_share_link" in error_msg and (
-            "not found" in error_msg or "does not exist" in error_msg
+            "not found" in error_msg
+            or "does not exist" in error_msg
             or "could not find" in error_msg
         )
         if is_rpc_missing:
-            logger.info(
-                "rpc_create_share_link not available, falling back to non-atomic path"
-            )
+            logger.info("rpc_create_share_link not available, falling back to non-atomic path")
             link = await _create_share_link_fallback(
                 client, job_id, company_id, user_id, body, token_hash, expires_at
             )
@@ -91,12 +90,17 @@ async def create_share_link(
     share_url = f"{base_url}/shared/{raw_token}"
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("share_link_created", extra={"extra_data": {
-        "job_id": str(job_id),
-        "scope": body.scope,
-        "expires_days": body.expires_days,
-        "duration_ms": duration_ms,
-    }})
+    logger.info(
+        "share_link_created",
+        extra={
+            "extra_data": {
+                "job_id": str(job_id),
+                "scope": body.scope,
+                "expires_days": body.expires_days,
+                "duration_ms": duration_ms,
+            }
+        },
+    )
 
     return {
         "share_url": share_url,
@@ -265,17 +269,10 @@ async def get_shared_job(token: str) -> dict:
     for photo in photos:
         photo["signed_url"] = url_map.get(photo.get("storage_url", ""), "")
 
-    # Fetch moisture readings (if scope allows)
-    moisture_readings: list[dict] = []
-    if scope in ("full", "restoration_only"):
-        readings_result = await (
-            admin.table("moisture_readings")
-            .select("*")
-            .eq("job_id", job_id)
-            .order("reading_date")
-            .execute()
-        )
-        moisture_readings = readings_result.data or []
+    # Moisture data: the legacy per-room-per-day readings table was dropped
+    # in Spec 01H Phase 2. The pin-based moisture view for the adjuster
+    # portal will land as part of Phase 2C (shared moisture floor plan +
+    # PDF). Until then, shared payload omits moisture readings entirely.
 
     # Fetch line items (if they exist)
     line_items: list[dict] = []
@@ -299,18 +296,22 @@ async def get_shared_job(token: str) -> dict:
     company = company_result.data or {}
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("share_link_resolved", extra={"extra_data": {
-        "job_id": job_id,
-        "scope": scope,
-        "photo_count": len(photos),
-        "duration_ms": duration_ms,
-    }})
+    logger.info(
+        "share_link_resolved",
+        extra={
+            "extra_data": {
+                "job_id": job_id,
+                "scope": scope,
+                "photo_count": len(photos),
+                "duration_ms": duration_ms,
+            }
+        },
+    )
 
     return {
         "job": job,
         "rooms": rooms,
         "photos": photos,
-        "moisture_readings": moisture_readings,
         "line_items": line_items,
         "company": company,
     }
