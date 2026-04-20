@@ -16,7 +16,7 @@ import {
   usePhotos,
 } from "@/lib/hooks/use-jobs";
 import { RoomPhotoSection } from "@/components/room-photo-section";
-import { apiGet, apiPost, apiDelete } from "@/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import type { FloorPlan, FloorLevel } from "@/lib/types";
 import { FLOOR_LEVEL_TO_NUMBER, FLOOR_LEVEL_LABEL, floorNumberToLevel } from "@/lib/types";
 import type { FloorPlanData, RoomData } from "@/components/sketch/floor-plan-tools";
@@ -864,6 +864,13 @@ export default function FloorPlanPage({
             }
             return Math.abs(s) / 2;
           };
+          // Collect room PATCHes and fire them in parallel without each
+          // invalidating the rooms query on its own. Drawing one room can
+          // update several rooms' dimensions (shared walls) — routing them
+          // through updateRoom.mutate() used to trigger one rooms-refetch
+          // per PATCH, so a 4-room edit spammed 4+ duplicate GET /rooms.
+          // Single rooms invalidation happens below after walls sync.
+          const roomUpdates: Array<Promise<unknown>> = [];
           for (const drawnRoom of canvasData.rooms) {
             const match = drawnRoom.propertyRoomId
               ? jobRooms.find((r) => r.id === drawnRoom.propertyRoomId)
@@ -902,17 +909,24 @@ export default function FloorPlanPage({
               const sfChanged = netSf !== currentSf;
 
               if (dimsChanged || cutoutsChanged || sfChanged) {
-                const payload: Record<string, unknown> & { roomId: string } = { roomId: match.id };
-                if (dimsChanged) { payload.width_ft = widthFt; payload.length_ft = lengthFt; }
-                if (cutoutsChanged) { payload.floor_openings = drawnCutouts; }
-                if (sfChanged) { payload.square_footage = netSf; }
-                updateRoom.mutate(payload);
+                const body: Record<string, unknown> = {};
+                if (dimsChanged) { body.width_ft = widthFt; body.length_ft = lengthFt; }
+                if (cutoutsChanged) { body.floor_openings = drawnCutouts; }
+                if (sfChanged) { body.square_footage = netSf; }
+                roomUpdates.push(
+                  apiPatch(`/v1/jobs/${jobId}/rooms/${match.id}`, body).catch((err) => {
+                    console.warn("Room patch failed", match.id, err);
+                  }),
+                );
               }
             }
           }
+          await Promise.all(roomUpdates);
         }
 
-        // Sync walls to backend (non-blocking — runs after save succeeds)
+        // Sync walls to backend (non-blocking — runs after save succeeds).
+        // Single rooms invalidation covers the batched room PATCHes above
+        // plus any wall changes, so the list re-fetches exactly once.
         syncWallsToBackend(canvasData, jobRooms)
           .then(() => queryClient.invalidateQueries({ queryKey: ["rooms", jobId] }))
           .catch(() => {});
@@ -946,7 +960,7 @@ export default function FloorPlanPage({
         }
       }
     },
-    [floorPlans, jobId, queryClient, jobRooms, updateRoom, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
+    [floorPlans, jobId, queryClient, jobRooms, createFloorPlan.isPending, backupToLocal, clearLocalBackup]
   );
 
   // Stable ref for handleChange — avoids stale closures in setTimeout callbacks
