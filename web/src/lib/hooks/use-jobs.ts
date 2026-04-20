@@ -478,7 +478,10 @@ export function useWalls(roomId: string) {
   });
 }
 
-export function useCreateWall(roomId: string) {
+// Wall/opening hooks take jobId so they can narrow rooms-query invalidation
+// to the current job instead of blasting the bare ["rooms"] key, which used
+// to refetch rooms across every job the user had loaded.
+export function useCreateWall(jobId: string, roomId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
@@ -488,36 +491,36 @@ export function useCreateWall(roomId: string) {
     }) => apiPost<WallSegment>(`/v1/rooms/${roomId}/walls`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
 
-export function useUpdateWall(roomId: string) {
+export function useUpdateWall(jobId: string, roomId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ wallId, ...data }: { wallId: string } & Partial<WallSegment>) =>
       apiPatch<WallSegment>(`/v1/rooms/${roomId}/walls/${wallId}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
 
-export function useDeleteWall(roomId: string) {
+export function useDeleteWall(jobId: string, roomId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (wallId: string) =>
       apiDelete(`/v1/rooms/${roomId}/walls/${wallId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
 
-export function useCreateOpening(roomId: string, wallId: string) {
+export function useCreateOpening(jobId: string, roomId: string, wallId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: {
@@ -527,31 +530,31 @@ export function useCreateOpening(roomId: string, wallId: string) {
     }) => apiPost<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
 
-export function useUpdateOpening(roomId: string, wallId: string) {
+export function useUpdateOpening(jobId: string, roomId: string, wallId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ openingId, ...data }: { openingId: string } & Partial<WallOpening>) =>
       apiPatch<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
 
-export function useDeleteOpening(roomId: string, wallId: string) {
+export function useDeleteOpening(jobId: string, roomId: string, wallId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (openingId: string) =>
       apiDelete(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["walls", roomId] });
-      qc.invalidateQueries({ queryKey: ["rooms"] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
     },
   });
 }
