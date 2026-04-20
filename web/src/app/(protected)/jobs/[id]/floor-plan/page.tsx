@@ -25,6 +25,8 @@ import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan"
 import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
 import { FloorSelector } from "@/components/sketch/floor-selector";
 import { PickFloorModal } from "@/components/sketch/pick-floor-modal";
+import { CanvasModeSwitcher } from "@/components/sketch/canvas-mode-switcher";
+import { type CanvasMode } from "@/components/sketch/moisture-mode";
 import type { WallSegment } from "@/lib/types";
 import { isJobArchived as isJobArchivedStatus } from "@/lib/job-status";
 
@@ -996,6 +998,10 @@ export default function FloorPlanPage({
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
+  // Canvas mode — Sketch (default, drawing) vs Moisture (pin placement + readings).
+  // Phase 3 will add Equipment, phase 4 Photos. Driven entirely by CANVAS_MODES
+  // config in components/sketch/moisture-mode.ts.
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>("sketch");
   const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
   // Signature of the most recently saved canvas geometry (rooms/walls/doors/
   // windows). Guards against save handler re-invocations with identical data
@@ -2010,12 +2016,27 @@ export default function FloorPlanPage({
             }
           }}
           disabled={saveStatus === "saving"}
-          className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 ${
+          // min-w-[62px] reserves room for "Saving..." / "Saved ✓" / "Offline"
+          // so the Mode switcher to the right doesn't jog horizontally across
+          // save transitions. 62px comfortably fits every status string at 11px.
+          className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 min-w-[62px] text-center ${
             saveStatus === "offline" ? "bg-on-surface-variant/70 text-white" : "bg-brand-accent text-on-primary hover:opacity-90"
           }`}
         >
           {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved ✓" : saveStatus === "offline" ? "Offline" : saveStatus === "error" ? "Retry" : "Save"}
         </button>
+
+        {/* Canvas mode switcher — Sketch ↔ Moisture. Cyan accent when Moisture
+            is active; icon-only on mobile, icon + label on sm+. Sits between
+            Save and the floor selector so mode + floor share the same header
+            row without adding new chrome. */}
+        <div className="ml-2 shrink-0">
+          <CanvasModeSwitcher
+            mode={canvasMode}
+            onChange={setCanvasMode}
+            disabled={saveStatus === "saving" || isJobArchived}
+          />
+        </div>
 
         {/* Floor selector — 4 preset slots (Basement/Main/Upper/Attic) with version chip on active */}
         <div className="ml-auto min-w-0">
@@ -2094,7 +2115,16 @@ export default function FloorPlanPage({
             handleChange(data);
           }}
           readOnly={isJobArchived}
-          rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name, affected: r.affected }))}
+          rooms={jobRooms?.map((r) => ({
+            id: r.id,
+            room_name: r.room_name,
+            affected: r.affected,
+            // material_flags feeds the "Suggested materials" group in the
+            // moisture placement sheet — a bedroom's ["carpet","drywall"] will
+            // float carpet_pad + drywall to the top of the material dropdown.
+            // Coerce null → undefined so the prop type stays optional[].
+            material_flags: r.material_flags ?? undefined,
+          }))}
           onCreateRoom={handleCreateRoom}
           activeFloorLevel={activeFloorLevel}
           onCreateRoomOnDifferentFloor={handleCreateRoomOnDifferentFloor}
@@ -2103,6 +2133,7 @@ export default function FloorPlanPage({
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
           onEditRoom={handleDesktopEditRoom}
+          canvasMode={canvasMode}
         />}
       </div>
 

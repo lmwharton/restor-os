@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { TOOLS, type ToolType } from "./floor-plan-tools";
+import { CANVAS_MODES, type CanvasMode } from "./moisture-mode";
 import type Konva from "konva";
 
 /* ------------------------------------------------------------------ */
@@ -76,6 +77,14 @@ function ToolIcon({ type, size = 18 }: { type: string; size?: number }) {
           <path d="M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2m2 0v13a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V6h12z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       );
+    case "pin":
+      // Droplet + small center dot — reads as "moisture measurement spot."
+      return (
+        <svg width={s} height={s} viewBox="0 0 24 24" fill="none">
+          <path d="M12 2.5s6 6.5 6 11.5a6 6 0 1 1-12 0c0-5 6-11.5 6-11.5z" stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+          <circle cx="12" cy="14" r="1.6" fill="currentColor" />
+        </svg>
+      );
     default:
       return null;
   }
@@ -99,6 +108,10 @@ interface FloorPlanToolbarProps {
   stageRef: React.RefObject<Konva.Stage | null>;
   affectedOverlay: boolean;
   onToggleAffectedOverlay: () => void;
+  /** Canvas mode — filters the tool palette via CANVAS_MODES[mode].tools and
+   *  switches the active-tool accent color (orange for Sketch, cyan for
+   *  Moisture). Defaults to "sketch" so legacy callers keep working. */
+  canvasMode?: CanvasMode;
 }
 
 /* ------------------------------------------------------------------ */
@@ -144,25 +157,33 @@ function DesktopToolbar({
   tool, onToolChange, canUndo, canRedo, onUndo, onRedo,
   stageScale, onZoomIn, onZoomOut, onFit, stageRef,
   affectedOverlay, onToggleAffectedOverlay,
+  canvasMode = "sketch",
 }: FloorPlanToolbarProps) {
+  const modeCfg = CANVAS_MODES[canvasMode];
+  // Filter the master TOOLS list to only the ones the active mode permits —
+  // preserves the declaration order of TOOLS so the palette reads the same
+  // each time (no reshuffling). Also preserves order defined in mode config.
+  const allowedTools = TOOLS.filter((t) => modeCfg.tools.includes(t.id));
   return (
     <div className="hidden sm:flex items-center gap-1 px-3 py-2 border-b border-[#eae6e1] bg-[#faf8f5] flex-wrap">
-      {TOOLS.map((t) => (
-        <button
-          key={t.id}
-          type="button"
-          onClick={() => onToolChange(t.id)}
-          aria-label={t.label}
-          className={`${deskBtnBase} transition-all ${
-            tool === t.id
-              ? "bg-[#e85d26]/12 text-[#e85d26]"
-              : "text-[#6b6560] hover:bg-[#eae6e1]"
-          }`}
-        >
-          <ToolIcon type={t.icon} />
-          <span className="mt-0.5">{t.label}</span>
-        </button>
-      ))}
+      {allowedTools.map((t) => {
+        const active = tool === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onToolChange(t.id)}
+            aria-label={t.label}
+            className={`${deskBtnBase} transition-all ${
+              active ? "text-white" : "text-[#6b6560] hover:bg-[#eae6e1]"
+            }`}
+            style={active ? { background: modeCfg.accent } : undefined}
+          >
+            <ToolIcon type={t.icon} />
+            <span className="mt-0.5">{t.label}</span>
+          </button>
+        );
+      })}
       <div className="w-px h-8 bg-[#eae6e1] mx-1" />
       <button
         type="button"
@@ -226,7 +247,11 @@ function DesktopToolbar({
 // Delete is frequent enough to deserve a primary slot — techs correct stray
 // rooms/walls constantly. Trace / Opening / Cutout are the truly occasional
 // tools and can live behind the overflow.
-const PRIMARY_TOOL_IDS: ToolType[] = ["select", "room", "wall", "door", "window", "delete"];
+// Pin is listed first so Moisture Mode's palette leads with the primary
+// drop action. Phase 1 Sketch Mode doesn't allow pin (filtered out by
+// CANVAS_MODES.sketch.tools), so adding it here is safe — invisible when
+// the mode doesn't permit it.
+const PRIMARY_TOOL_IDS: ToolType[] = ["pin", "select", "room", "wall", "door", "window", "delete"];
 const OVERFLOW_TOOL_IDS: ToolType[] = ["trace", "opening", "cutout"];
 
 // Match the desktop layout: icon above a tiny label, every button. Labels
@@ -246,11 +271,16 @@ function MobileToolButton({
   label,
   active,
   onClick,
+  activeColor = "#e85d26",
 }: {
   icon: React.ReactNode;
   label: string;
   active: boolean;
   onClick: () => void;
+  /** Background color when this tool is the active one. Sketch Mode uses the
+   *  brand orange; Moisture Mode passes cyan so the active tool signals the
+   *  user's current context without looking like a Sketch-Mode selection. */
+  activeColor?: string;
 }) {
   return (
     <button
@@ -259,10 +289,9 @@ function MobileToolButton({
       aria-label={label}
       aria-pressed={active}
       className={`${mobileBtnBase} ${
-        active
-          ? "bg-[#e85d26] text-white shadow-[0_1px_2px_rgba(232,93,38,0.25),0_2px_8px_rgba(232,93,38,0.18)]"
-          : "text-[#6b6560] active:bg-[#e8e2d9]"
+        active ? "text-white" : "text-[#6b6560] active:bg-[#e8e2d9]"
       }`}
+      style={active ? { background: activeColor } : undefined}
     >
       {icon}
       <span className={mobileBtnLabel}>{label}</span>
@@ -305,24 +334,32 @@ function MobileToolbar({
   tool, onToolChange, canUndo, canRedo, onUndo, onRedo,
   onZoomIn, onZoomOut, onFit, stageRef,
   affectedOverlay, onToggleAffectedOverlay,
+  canvasMode = "sketch",
 }: FloorPlanToolbarProps) {
   const [overflowOpen, setOverflowOpen] = useState(false);
   const overflowBtnRef = useRef<HTMLButtonElement>(null);
+  const modeCfg = CANVAS_MODES[canvasMode];
 
-  const primaryTools = TOOLS.filter((t) => PRIMARY_TOOL_IDS.includes(t.id))
-    .sort((a, b) => PRIMARY_TOOL_IDS.indexOf(a.id) - PRIMARY_TOOL_IDS.indexOf(b.id));
+  // Only primary tools that this mode ALSO allows are shown in the main row.
+  // Moisture Mode's allowed set is small (select + delete) so the row is short
+  // and uncluttered — matches the v2 design's "shorter row, more breathing".
+  const primaryTools = TOOLS.filter(
+    (t) => PRIMARY_TOOL_IDS.includes(t.id) && modeCfg.tools.includes(t.id),
+  ).sort((a, b) => PRIMARY_TOOL_IDS.indexOf(a.id) - PRIMARY_TOOL_IDS.indexOf(b.id));
+
+  // Overflow also filters by mode — so Trace/Opening/Cutout disappear from
+  // "More" when in Moisture Mode (they're sketch-only drawing tools).
+  const overflowTools = OVERFLOW_TOOL_IDS.filter((id) => modeCfg.tools.includes(id));
 
   // Orange indicator on the overflow trigger if the active tool is inside the
   // menu — prevents "where am I" confusion when the user picks Trace/Cutout
   // and the main bar no longer shows a pressed state.
-  const overflowHoldsActive = OVERFLOW_TOOL_IDS.includes(tool);
+  const overflowHoldsActive = overflowTools.includes(tool);
 
   // The "More" trigger is ALWAYS visible, pinned to the right of the toolbar.
-  // Without this the user has to horizontally scroll to even notice it exists,
-  // and since Zoom / Fit / Export / Trace / Opening / Cutout all live inside,
-  // they may never discover the feature at all. Counter hints at how many
-  // items are behind the menu.
-  const overflowCount = OVERFLOW_TOOL_IDS.length + 4; // + Zoom+, Zoom-, Fit, Export
+  // Counter hints at how many items are behind the menu. + 4 is the view
+  // controls (Zoom+, Zoom-, Fit, Export) which are always in overflow.
+  const overflowCount = overflowTools.length + 4;
 
   return (
     <div className="sm:hidden relative border-b border-[#eae6e1] bg-[#faf8f5]">
@@ -339,6 +376,7 @@ function MobileToolbar({
                 label={t.label}
                 active={tool === t.id}
                 onClick={() => onToolChange(t.id)}
+                activeColor={modeCfg.accent}
               />
             ))}
 
@@ -421,7 +459,8 @@ function MobileToolbar({
           {!overflowHoldsActive && !overflowOpen && (
             <span
               aria-hidden
-              className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full bg-[#e85d26] text-white text-[9px] font-semibold leading-[15px] text-center shadow-[0_0_0_2px_#faf8f5] tabular-nums"
+              className="absolute -top-0.5 -right-0.5 min-w-[15px] h-[15px] px-1 rounded-full text-white text-[9px] font-semibold leading-[15px] text-center shadow-[0_0_0_2px_#faf8f5] tabular-nums"
+              style={{ background: modeCfg.accent }}
             >
               {overflowCount}
             </span>
@@ -429,7 +468,8 @@ function MobileToolbar({
           {overflowHoldsActive && (
             <span
               aria-hidden
-              className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full bg-[#e85d26] shadow-[0_0_0_2px_#faf8f5]"
+              className="absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full shadow-[0_0_0_2px_#faf8f5]"
+              style={{ background: modeCfg.accent }}
             />
           )}
         </button>
@@ -445,6 +485,8 @@ function MobileToolbar({
         open={overflowOpen}
         onClose={() => setOverflowOpen(false)}
         anchorRef={overflowBtnRef}
+        toolIds={overflowTools}
+        activeColor={modeCfg.accent}
       />
 
       <style jsx>{`
@@ -469,6 +511,12 @@ interface MobileOverflowMenuProps {
   open: boolean;
   onClose: () => void;
   anchorRef: React.RefObject<HTMLButtonElement | null>;
+  /** Overflow draw tool ids allowed in the active mode. Empty → the Draw
+   *  section is omitted (moisture mode currently has no overflow drawing). */
+  toolIds: ToolType[];
+  /** Accent color for the active-item highlight — matches the mode's accent
+   *  (orange in Sketch, cyan in Moisture). */
+  activeColor: string;
 }
 
 function MobileOverflowMenu({
@@ -481,6 +529,8 @@ function MobileOverflowMenu({
   open,
   onClose,
   anchorRef,
+  toolIds,
+  activeColor,
 }: MobileOverflowMenuProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -507,7 +557,7 @@ function MobileOverflowMenu({
 
   if (!open) return null;
 
-  const overflowTools = TOOLS.filter((t) => OVERFLOW_TOOL_IDS.includes(t.id));
+  const overflowTools = TOOLS.filter((t) => toolIds.includes(t.id));
 
   return (
     <div
@@ -522,37 +572,39 @@ function MobileOverflowMenu({
       />
 
       <div className="relative bg-white">
-        <div className="px-1.5 py-1.5">
-          <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-[#a29c95] px-2 pt-1 pb-1.5">
-            Draw
-          </p>
-          <div className="flex flex-col">
-            {overflowTools.map((t) => {
-              const active = tool === t.id;
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    onToolChange(t.id);
-                    onClose();
-                  }}
-                  className={`flex items-center gap-2.5 px-2 h-9 rounded-md text-[12px] font-medium cursor-pointer transition-colors ${
-                    active
-                      ? "bg-[#e85d26]/10 text-[#e85d26]"
-                      : "text-[#3a3632] active:bg-[#f5f1eb]"
-                  }`}
-                >
-                  <ToolIcon type={t.icon} size={16} />
-                  <span>{t.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="h-px bg-[#eae6e1]" />
+        {overflowTools.length > 0 && (
+          <>
+            <div className="px-1.5 py-1.5">
+              <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-[#a29c95] px-2 pt-1 pb-1.5">
+                Draw
+              </p>
+              <div className="flex flex-col">
+                {overflowTools.map((t) => {
+                  const active = tool === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        onToolChange(t.id);
+                        onClose();
+                      }}
+                      className={`flex items-center gap-2.5 px-2 h-9 rounded-md text-[12px] font-medium cursor-pointer transition-colors ${
+                        active ? "text-white" : "text-[#3a3632] active:bg-[#f5f1eb]"
+                      }`}
+                      style={active ? { background: activeColor } : undefined}
+                    >
+                      <ToolIcon type={t.icon} size={16} />
+                      <span>{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="h-px bg-[#eae6e1]" />
+          </>
+        )}
 
         <div className="px-1.5 py-1.5">
           <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.12em] text-[#a29c95] px-2 pt-1 pb-1.5">
