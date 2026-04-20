@@ -33,7 +33,27 @@ const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-pla
 /*  Wall sync: canvas walls → backend wall_segments                    */
 /* ------------------------------------------------------------------ */
 
+// Module-level mutex: prevents concurrent syncs from interleaving
+// their delete-all + recreate cycles, which used to create duplicate
+// wall rows in the backend. Only one wall-sync runs at a time;
+// queued ones short-circuit and trust the in-flight one to converge.
+let _wallSyncInFlight = false;
+
 async function syncWallsToBackend(
+  canvasData: FloorPlanData,
+  jobRooms: Array<{ id: string; room_name: string }> | undefined,
+) {
+  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) return;
+  if (_wallSyncInFlight) return;
+  _wallSyncInFlight = true;
+  try {
+    await _syncWallsToBackendImpl(canvasData, jobRooms);
+  } finally {
+    _wallSyncInFlight = false;
+  }
+}
+
+async function _syncWallsToBackendImpl(
   canvasData: FloorPlanData,
   jobRooms: Array<{ id: string; room_name: string }> | undefined,
 ) {
@@ -66,6 +86,47 @@ async function syncWallsToBackend(
         `/v1/rooms/${backendRoomId}/walls`
       );
       const existingWalls = Array.isArray(existing) ? existing : existing.items ?? [];
+
+      // Round to 2 decimal places to match backend DECIMAL(8,2). Without
+      // this, canvas floats like 120.3333 drift from backend's 120.33 and
+      // every save re-triggers a full delete+recreate.
+      const r = (v: number | string) => Math.round(Number(v) * 100) / 100;
+      const normalize = (walls: Array<{
+        x1: number | string; y1: number | string; x2: number | string; y2: number | string;
+        wall_type?: string; wallType?: string;
+        affected?: boolean; shared?: boolean;
+      }>) =>
+        walls
+          .map((w) => ({
+            x1: r(w.x1),
+            y1: r(w.y1),
+            x2: r(w.x2),
+            y2: r(w.y2),
+            wall_type: (w.wall_type ?? w.wallType ?? "interior") as string,
+            affected: !!w.affected,
+            shared: !!w.shared,
+          }))
+          .sort((a, b) => a.x1 - b.x1 || a.y1 - b.y1 || a.x2 - b.x2 || a.y2 - b.y2);
+      const canvasSig = JSON.stringify(normalize(roomWalls));
+      const backendSig = JSON.stringify(normalize(existingWalls));
+      if (canvasSig === backendSig && existingWalls.length === roomWalls.length) {
+        // Populate the wall id map so door/window sync later still
+        // resolves. Sort both sides the same way so index i maps to i.
+        const canvasSorted = [...roomWalls].sort((a, b) =>
+          a.x1 - b.x1 || a.y1 - b.y1 || a.x2 - b.x2 || a.y2 - b.y2,
+        );
+        const backendSorted = [...existingWalls].sort((a, b) =>
+          Number(a.x1) - Number(b.x1) ||
+          Number(a.y1) - Number(b.y1) ||
+          Number(a.x2) - Number(b.x2) ||
+          Number(a.y2) - Number(b.y2),
+        );
+        canvasSorted.forEach((w, i) => {
+          const backendW = backendSorted[i];
+          if (backendW) canvasToBackendWallId.set(w.id, backendW.id);
+        });
+        continue;
+      }
 
       // Delete existing walls (clean slate — cascades openings)
       for (const w of existingWalls) {
