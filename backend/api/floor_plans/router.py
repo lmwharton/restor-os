@@ -266,29 +266,23 @@ async def update_floor_plan_by_job_endpoint(
 ):
     """Update a floor plan via job — resolves property_id from job."""
     token = _get_token(request)
+    # W3: every job MUST have a property_id — property is the parent entity
+    # for all floor-plan data. The previous fallback read property_id from
+    # the floor plan row being validated (circular: the row declared its
+    # own owner). Reject instead — legacy jobs without property_id must
+    # first POST /jobs/{id}/floor-plans which auto-creates + links.
     property_id = job.get("property_id")
     if not property_id:
-        # Floor plan exists but job has no property — look up via floor plan
-        from api.shared.database import get_authenticated_client
+        from api.shared.exceptions import AppException
 
-        client = await get_authenticated_client(token)
-        fp = await (
-            client.table("floor_plans")
-            .select("property_id")
-            .eq("id", str(floor_plan_id))
-            .single()
-            .execute()
+        raise AppException(
+            status_code=400,
+            detail=(
+                "Job has no property linked. Create a floor plan first via "
+                "POST /jobs/{id}/floor-plans to auto-link the property."
+            ),
+            error_code="JOB_NO_PROPERTY",
         )
-        if fp.data:
-            property_id = fp.data["property_id"]
-        else:
-            from api.shared.exceptions import AppException
-
-            raise AppException(
-                status_code=404,
-                detail="Floor plan not found",
-                error_code="FLOOR_PLAN_NOT_FOUND",
-            )
     return await update_floor_plan(
         token=token,
         floor_plan_id=floor_plan_id,
@@ -308,28 +302,17 @@ async def delete_floor_plan_by_job_endpoint(
 ):
     """Delete a floor plan via job — resolves property_id from job."""
     token = _get_token(request)
+    # W3: mirror the PATCH endpoint. A job without property_id shouldn't
+    # be deleting floor plans via the self-declared-owner fallback.
     property_id = job.get("property_id")
     if not property_id:
-        from api.shared.database import get_authenticated_client
+        from api.shared.exceptions import AppException
 
-        client = await get_authenticated_client(token)
-        fp = await (
-            client.table("floor_plans")
-            .select("property_id")
-            .eq("id", str(floor_plan_id))
-            .single()
-            .execute()
+        raise AppException(
+            status_code=400,
+            detail="Job has no property linked. Cannot delete floor plan via this job.",
+            error_code="JOB_NO_PROPERTY",
         )
-        if fp.data:
-            property_id = fp.data["property_id"]
-        else:
-            from api.shared.exceptions import AppException
-
-            raise AppException(
-                status_code=404,
-                detail="Floor plan not found",
-                error_code="FLOOR_PLAN_NOT_FOUND",
-            )
     await delete_floor_plan(
         token=token,
         floor_plan_id=floor_plan_id,

@@ -36,6 +36,34 @@ def _serialize_decimals(data: dict) -> dict:
     return out
 
 
+async def _validate_shared_with_room(
+    client,
+    shared_with_room_id: UUID | None,
+    company_id: UUID,
+) -> None:
+    """W2: confirm `shared_with_room_id` belongs to the same company before
+    writing it to wall_segments. The FK only checks existence; without this
+    same-company check, an INSERT with a foreign room_id would succeed
+    (RLS blocks the read-back but the write itself confirms the target
+    exists — a side-channel on tenant data)."""
+    if shared_with_room_id is None:
+        return
+    result = await (
+        client.table("job_rooms")
+        .select("id")
+        .eq("id", str(shared_with_room_id))
+        .eq("company_id", str(company_id))
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise AppException(
+            status_code=400,
+            detail="shared_with_room_id does not belong to this company",
+            error_code="INVALID_SHARED_ROOM",
+        )
+
+
 # ---------------------------------------------------------------------------
 # Wall Segments CRUD
 # ---------------------------------------------------------------------------
@@ -51,6 +79,7 @@ async def create_wall(
     """Create a wall segment for a room."""
     client = await get_authenticated_client(token)
     await ensure_job_mutable_for_room(client, room_id, company_id)
+    await _validate_shared_with_room(client, body.shared_with_room_id, company_id)
 
     row = _serialize_decimals(
         {
@@ -137,6 +166,7 @@ async def update_wall(
     """Update a wall segment."""
     client = await get_authenticated_client(token)
     await ensure_job_mutable_for_room(client, room_id, company_id)
+    await _validate_shared_with_room(client, body.shared_with_room_id, company_id)
 
     # Verify wall exists
     existing = await (

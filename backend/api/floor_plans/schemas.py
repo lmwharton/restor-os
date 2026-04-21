@@ -1,13 +1,36 @@
+import json
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+# W6: cap canvas_data payload size to prevent 10MB+ JSON blobs from
+# reaching the DB. 500KB is plenty for realistic sketches (tens of
+# thousands of walls + openings) and keeps storage + logging sane.
+_MAX_CANVAS_DATA_BYTES = 500_000
+
+
+def _validate_canvas_data_size(v: dict | None) -> dict | None:
+    if v is None:
+        return v
+    size = len(json.dumps(v, separators=(",", ":")))
+    if size > _MAX_CANVAS_DATA_BYTES:
+        raise ValueError(
+            f"canvas_data too large: {size} bytes (max {_MAX_CANVAS_DATA_BYTES})"
+        )
+    return v
 
 
 class FloorPlanCreate(BaseModel):
     floor_number: int = Field(default=1, ge=0, le=10, description="0=basement, 1-10=above ground")
     floor_name: str = Field(default="Floor 1", max_length=50)
     canvas_data: dict | None = None
+
+    @field_validator("canvas_data")
+    @classmethod
+    def _cap_canvas_size(cls, v: dict | None) -> dict | None:
+        return _validate_canvas_data_size(v)
 
 
 class FloorPlanUpdate(BaseModel):
@@ -56,6 +79,11 @@ class FloorPlanSaveRequest(BaseModel):
     canvas_data: dict = Field(..., description="Canvas state to save")
     change_summary: str | None = Field(default=None, max_length=500)
 
+    @field_validator("canvas_data")
+    @classmethod
+    def _cap_canvas_size(cls, v: dict) -> dict:
+        return _validate_canvas_data_size(v)
+
 
 # --- Sketch Cleanup (deterministic, no AI) ---
 
@@ -72,6 +100,11 @@ class SketchCleanupRequest(BaseModel):
 
     job_id: UUID
     canvas_data: dict | None = None
+
+    @field_validator("canvas_data")
+    @classmethod
+    def _cap_canvas_size(cls, v: dict | None) -> dict | None:
+        return _validate_canvas_data_size(v)
 
 
 class SketchCleanupResponse(BaseModel):

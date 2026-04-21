@@ -558,6 +558,10 @@ async def _copy_rooms_from_linked_job(
         "sort_order",
     ]
 
+    # W7: only return 0 for "source has no rooms" (legitimate). Fetch or
+    # copy failures re-raise as AppException so the caller can distinguish
+    # "nothing to copy" from "copy crashed." Previously both paths returned
+    # 0 and the caller treated a broken recon-link as a silent no-op.
     try:
         source_rooms = await (
             client.table("job_rooms")
@@ -566,9 +570,15 @@ async def _copy_rooms_from_linked_job(
             .eq("company_id", str(company_id))
             .execute()
         )
-    except Exception as e:
-        logger.warning("Failed to fetch rooms from linked job %s: %s", source_job_id, e)
-        return 0
+    except APIError as e:
+        logger.error(
+            "Failed to fetch rooms from linked job %s: %s", source_job_id, e
+        )
+        raise AppException(
+            status_code=500,
+            detail=f"Failed to fetch source rooms: {e.message}",
+            error_code="LINKED_ROOMS_FETCH_FAILED",
+        )
 
     if not source_rooms.data:
         return 0
@@ -581,12 +591,16 @@ async def _copy_rooms_from_linked_job(
     try:
         await client.table("job_rooms").insert(new_rows).execute()
         return len(new_rows)
-    except Exception as e:
+    except APIError as e:
         logger.error(
             "Failed to copy %d rooms from %s to %s: %s",
             len(new_rows), source_job_id, new_job_id, e,
         )
-        return 0
+        raise AppException(
+            status_code=500,
+            detail=f"Failed to copy rooms from linked job: {e.message}",
+            error_code="LINKED_ROOMS_COPY_FAILED",
+        )
 
 
 async def create_linked_recon(

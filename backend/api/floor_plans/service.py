@@ -493,16 +493,17 @@ async def update_floor_plan(
     if not updates:
         return existing.data
 
-    # Frozen-version guard: only is_current rows accept canvas_data / floor_number
-    # changes. Non-current rows are immutable history. thumbnail_url and floor_name
-    # remain editable on any row (thumbnail is a re-rendered derivative; floor_name
-    # is a label, not content).
-    if not existing.data.get("is_current") and (
-        "canvas_data" in updates or "floor_number" in updates
-    ):
+    # W5: frozen-version guard — non-current rows are IMMUTABLE history.
+    # Previously this only blocked canvas_data/floor_number and left
+    # floor_name + thumbnail_url editable; a rename of v1 after v2 was
+    # forked would break audit comparisons (the label diff wouldn't be
+    # captured at v1's creation). Frozen means frozen across all fields.
+    # If a thumbnail needs regenerating, do it via a dedicated endpoint
+    # that logs the regeneration as its own event.
+    if not existing.data.get("is_current") and updates:
         raise AppException(
             status_code=403,
-            detail="Cannot modify canvas_data or floor_number on a frozen (non-current) version",
+            detail="Cannot modify a frozen (non-current) version",
             error_code="VERSION_FROZEN",
         )
 
@@ -565,18 +566,26 @@ async def delete_floor_plan(
     company_id: UUID,
     user_id: UUID,
 ) -> None:
-    """Hard delete an ENTIRE floor (all version rows for that floor_number).
+    """Hard delete a single floor plan version row.
 
-    Post-merge: the passed `floor_plan_id` is a single version row, but the
-    caller's intent is to remove the whole floor from the property. We resolve
-    the floor_number from that row, then delete every version for it.
-    Linked job_rooms get `floor_plan_id=NULL`.
+    W4 fix: this endpoint targets one row by id (per the URL shape
+    /properties/{id}/floor-plans/{fp_id}) and deletes only that row.
+    Previously it wiped every version for the whole floor — a caller
+    expecting "roll back one bad version" lost all of history. To
+    delete a whole floor, use DELETE /properties/{id} to cascade via
+    the property FK, or delete each version one by one.
+
+    Guardrails:
+    - 409 VERSIONS_EXIST if other versions exist on the same floor —
+      the caller has to be explicit about which one they want gone.
+    - Linked job_rooms get floor_plan_id=NULL via the ON DELETE SET
+      NULL FK (no manual unlink needed).
     """
     client = await get_authenticated_client(token)
 
     existing = await (
         client.table("floor_plans")
-        .select("id, floor_number")
+        .select("id, floor_number, is_current")
         .eq("id", str(floor_plan_id))
         .eq("property_id", str(property_id))
         .eq("company_id", str(company_id))
@@ -591,31 +600,45 @@ async def delete_floor_plan(
         )
     floor_number = existing.data["floor_number"]
 
-    # Collect ids of all versions for this floor to unlink job_rooms + delete.
-    versions_result = await (
+    # W4: if other versions exist on this floor, refuse the delete. Forces
+    # the caller to either delete the whole property (cascade) or pick one
+    # row at a time — no accidental history wipe.
+    siblings = await (
         client.table("floor_plans")
-        .select("id")
+        .select("id", count="exact")
         .eq("property_id", str(property_id))
         .eq("floor_number", floor_number)
+        .neq("id", str(floor_plan_id))
         .execute()
     )
-    version_ids = [v["id"] for v in (versions_result.data or [])]
+    sibling_count = siblings.count if isinstance(siblings.count, int) else len(siblings.data or [])
+    if sibling_count > 0:
+        raise AppException(
+            status_code=409,
+            detail=(
+                f"Cannot delete this floor plan: {sibling_count} other version(s) "
+                "exist on the same floor. Delete the whole property to cascade, "
+                "or remove other versions first."
+            ),
+            error_code="VERSIONS_EXIST",
+        )
 
-    if version_ids:
-        # Unlink rooms that reference any of those floor-plan rows
-        await (
-            client.table("job_rooms")
-            .update({"floor_plan_id": None})
-            .in_("floor_plan_id", version_ids)
-            .execute()
-        )
-        # Hard delete all versions for this floor
-        await (
-            client.table("floor_plans")
-            .delete()
-            .in_("id", version_ids)
-            .execute()
-        )
+    # Unlink rooms that reference this specific row (FK would SET NULL
+    # on delete anyway, but doing it explicitly keeps the intent clear).
+    await (
+        client.table("job_rooms")
+        .update({"floor_plan_id": None})
+        .eq("floor_plan_id", str(floor_plan_id))
+        .execute()
+    )
+
+    # Hard delete just this one row.
+    await (
+        client.table("floor_plans")
+        .delete()
+        .eq("id", str(floor_plan_id))
+        .execute()
+    )
 
     await log_event(
         company_id,
@@ -672,10 +695,15 @@ async def save_canvas(
     target_property_id = target_floor_result.data["property_id"]
     target_floor_number = target_floor_result.data["floor_number"]
 
-    # Fetch the job to get its current pinned version
+    # Fetch the job to get its current pinned version + property_id.
+    # property_id is used to enforce W1: the passed floor_plan_id must live
+    # on the job's own property. Without this check, a same-company tech
+    # could pin their job to another property's floor plan by passing a
+    # foreign floor_plan_id — RLS allows it but the invariant "a job's
+    # floor plan lives on its property" is structurally broken.
     job_result = await (
         client.table("jobs")
-        .select("id, floor_plan_id, status")
+        .select("id, floor_plan_id, status, property_id")
         .eq("id", str(job_id))
         .eq("company_id", str(company_id))
         .is_("deleted_at", "null")
@@ -693,6 +721,17 @@ async def save_canvas(
             status_code=403,
             detail="Cannot edit floor plan for an archived job",
             error_code="JOB_ARCHIVED",
+        )
+
+    # W1: property cross-check. Legacy rows with property_id=NULL skip this
+    # — create_floor_plan_by_job_endpoint auto-creates the property on first
+    # save. For every job that has a property_id, require target match.
+    job_property_id = job.get("property_id")
+    if job_property_id is not None and str(job_property_id) != str(target_property_id):
+        raise AppException(
+            status_code=400,
+            detail="Floor plan does not belong to this job's property",
+            error_code="PROPERTY_MISMATCH",
         )
 
     pinned_version_id = job.get("floor_plan_id")
