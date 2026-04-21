@@ -161,45 +161,112 @@ CREATE INDEX idx_jobs_floor_plan ON jobs(floor_plan_id) WHERE floor_plan_id IS N
 """
 
 
+
+
 DOWNGRADE_SQL = """
--- Restore the two-table structure: split floor_plans back into a container
--- + a floor_plan_versions table. Note: this is a best-effort rollback —
--- if multiple versions exist per floor, the container takes the metadata
--- from the first (oldest) version for that (property_id, floor_number)
--- grouping, and every version row keeps pointing at that container.
+-- Reverses the container/versions merge: splits the unified `floor_plans`
+-- table back into `floor_plans` (container) + `floor_plan_versions`
+-- (versioned snapshots), and restores the original RLS policies + trigger
+-- on the recreated container.
+--
+-- Step ordering is deliberate: every step that references a column must
+-- run BEFORE the step that drops that column. The previous version of
+-- this body dropped container columns in step 6 then used them in step 7,
+-- which aborted the transaction mid-migration. The reordering below
+-- (update job_rooms in D7 BEFORE dropping columns in D8) fixes that.
+--
+-- Best-effort semantics: if multiple versions exist per floor, the
+-- recreated container picks metadata from the is_current=true row for
+-- that (property_id, floor_number). Version history rows keep pointing
+-- at that one container via their re-added floor_plan_id FK.
 
--- Step 1: Rename the unified table back to floor_plan_versions.
-ALTER TABLE floor_plans RENAME TO floor_plan_versions;
+-- =========================================================================
+-- D1: Drop the unified-table indexes, FKs, and constraint rename added
+-- in upgrade step 8. This frees the naming so the container can be
+-- recreated below.
+-- =========================================================================
 
--- Step 2: Drop indexes + fk constraints that referred to the unified name.
 DROP INDEX IF EXISTS idx_floor_plans_property;
 DROP INDEX IF EXISTS idx_floor_plans_property_floor;
 DROP INDEX IF EXISTS idx_floor_plans_is_current;
 DROP INDEX IF EXISTS idx_floor_plans_created_by_job;
 DROP INDEX IF EXISTS idx_jobs_floor_plan;
 
-ALTER TABLE floor_plan_versions DROP CONSTRAINT IF EXISTS floor_plans_property_id_fkey;
-ALTER TABLE job_rooms DROP CONSTRAINT IF EXISTS job_rooms_floor_plan_id_fkey;
-ALTER TABLE jobs RENAME CONSTRAINT jobs_floor_plan_id_fkey TO jobs_floor_plan_version_id_fkey;
+ALTER TABLE floor_plans DROP CONSTRAINT IF EXISTS floor_plans_property_id_fkey;
+ALTER TABLE job_rooms   DROP CONSTRAINT IF EXISTS job_rooms_floor_plan_id_fkey;
+ALTER TABLE jobs        RENAME CONSTRAINT jobs_floor_plan_id_fkey TO jobs_floor_plan_version_id_fkey;
 
--- Step 3: Recreate the old floor_plans container.
+-- =========================================================================
+-- D2: Restore jobs.floor_plan_id → floor_plan_version_id.
+-- =========================================================================
+
+ALTER TABLE jobs RENAME COLUMN floor_plan_id TO floor_plan_version_id;
+CREATE INDEX idx_jobs_floor_plan_version ON jobs(floor_plan_version_id)
+    WHERE floor_plan_version_id IS NOT NULL;
+
+-- =========================================================================
+-- D3: Rename the unified table back to floor_plan_versions. The versions_*
+-- RLS policies created in 1113c0e7729d survive the rename as-is (they were
+-- never renamed in upgrade), so the versions table keeps its original
+-- security posture.
+-- =========================================================================
+
+ALTER TABLE floor_plans RENAME TO floor_plan_versions;
+
+-- Drop the NOT NULL constraints on the container columns we added in
+-- upgrade step 6. They'll be dropped outright in D8, but relaxing them
+-- here avoids a NOT NULL violation if any row is in a weird state.
+ALTER TABLE floor_plan_versions
+    ALTER COLUMN property_id   DROP NOT NULL,
+    ALTER COLUMN floor_number  DROP NOT NULL,
+    ALTER COLUMN floor_name    DROP NOT NULL;
+
+-- =========================================================================
+-- D4: Recreate the original floor_plans container table (property-scoped).
+-- Same shape as migration 1113c0e7729d's post-state.
+-- =========================================================================
+
 CREATE TABLE floor_plans (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     property_id     UUID NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
     company_id      UUID NOT NULL REFERENCES companies(id) ON DELETE CASCADE,
-    floor_number    INTEGER NOT NULL,
-    floor_name      TEXT NOT NULL,
-    canvas_data     JSONB NOT NULL DEFAULT '{}'::jsonb,
+    floor_number    INTEGER NOT NULL DEFAULT 1 CHECK (floor_number >= 0 AND floor_number <= 10),
+    floor_name      TEXT NOT NULL DEFAULT 'Floor 1',
+    canvas_data     JSONB,
     thumbnail_url   TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE(property_id, floor_number)
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE UNIQUE INDEX idx_floor_plans_property_floor ON floor_plans(property_id, floor_number);
 CREATE INDEX idx_floor_plans_property ON floor_plans(property_id);
 
--- Step 4: Backfill one floor_plans row per (property_id, floor_number).
-INSERT INTO floor_plans (id, property_id, company_id, floor_number, floor_name, canvas_data, thumbnail_url, created_at, updated_at)
+-- RLS policies — original ca59c5bf87c9 naming.
+ALTER TABLE floor_plans ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "floor_plans_select" ON floor_plans
+    FOR SELECT USING (company_id = get_my_company_id());
+CREATE POLICY "floor_plans_insert" ON floor_plans
+    FOR INSERT WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "floor_plans_update" ON floor_plans
+    FOR UPDATE USING (company_id = get_my_company_id())
+    WITH CHECK (company_id = get_my_company_id());
+CREATE POLICY "floor_plans_delete" ON floor_plans
+    FOR DELETE USING (company_id = get_my_company_id());
+
+-- Trigger — original ca59c5bf87c9 naming.
+CREATE TRIGGER trg_floor_plans_updated_at
+    BEFORE UPDATE ON floor_plans
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+-- =========================================================================
+-- D5: Backfill one floor_plans (container) row per (property_id, floor_number)
+-- from the is_current=true rows in floor_plan_versions. When multiple versions
+-- exist for a floor, the is_current row's metadata wins.
+-- =========================================================================
+
+INSERT INTO floor_plans (id, property_id, company_id, floor_number, floor_name,
+                          canvas_data, thumbnail_url, created_at, updated_at)
 SELECT
     gen_random_uuid(),
     v.property_id,
@@ -212,51 +279,68 @@ SELECT
     MAX(v.updated_at)
   FROM floor_plan_versions v
  WHERE v.is_current = true
- GROUP BY v.property_id, v.company_id, v.floor_number, v.floor_name, v.canvas_data, v.thumbnail_url;
+ GROUP BY v.property_id, v.company_id, v.floor_number, v.floor_name,
+          v.canvas_data, v.thumbnail_url;
 
--- Step 5: Restore floor_plan_id column on floor_plan_versions and backfill.
+-- =========================================================================
+-- D6: Restore floor_plan_id column on floor_plan_versions; backfill each
+-- version row to the matching container row.
+-- =========================================================================
+
 ALTER TABLE floor_plan_versions ADD COLUMN floor_plan_id UUID;
 
 UPDATE floor_plan_versions v
    SET floor_plan_id = fp.id
   FROM floor_plans fp
- WHERE v.property_id = fp.property_id
+ WHERE v.property_id  = fp.property_id
    AND v.floor_number = fp.floor_number;
 
 ALTER TABLE floor_plan_versions ALTER COLUMN floor_plan_id SET NOT NULL;
+
 ALTER TABLE floor_plan_versions
     ADD CONSTRAINT floor_plan_versions_floor_plan_id_fkey
     FOREIGN KEY (floor_plan_id) REFERENCES floor_plans(id) ON DELETE CASCADE;
 
--- Step 6: Strip the container columns off floor_plan_versions.
+-- =========================================================================
+-- D7: Re-point job_rooms.floor_plan_id from a version row to the matching
+-- container row. MUST happen BEFORE D8 drops the columns this join uses.
+-- (The previous downgrade body did this AFTER D8 and crashed.)
+-- =========================================================================
+
+UPDATE job_rooms jr
+   SET floor_plan_id = (
+       SELECT fp.id
+         FROM floor_plan_versions v
+         JOIN floor_plans fp ON v.property_id  = fp.property_id
+                             AND v.floor_number = fp.floor_number
+        WHERE v.id = jr.floor_plan_id
+        LIMIT 1
+   )
+ WHERE jr.floor_plan_id IS NOT NULL;
+
+-- =========================================================================
+-- D8: Drop the container columns off floor_plan_versions — they're
+-- redundant now that the split container exists again.
+-- =========================================================================
+
 ALTER TABLE floor_plan_versions
     DROP COLUMN property_id,
     DROP COLUMN floor_number,
     DROP COLUMN floor_name,
     DROP COLUMN thumbnail_url;
 
--- Step 7: Restore job_rooms.floor_plan_id FK pointing at the container.
-UPDATE job_rooms jr
-   SET floor_plan_id = (
-       SELECT fp.id FROM floor_plans fp
-        JOIN floor_plan_versions v ON v.property_id = fp.property_id
-                                  AND v.floor_number = fp.floor_number
-        WHERE v.id = jr.floor_plan_id
-        LIMIT 1
-   )
- WHERE jr.floor_plan_id IS NOT NULL;
+-- =========================================================================
+-- D9: Restore the job_rooms.floor_plan_id FK against the new container
+-- (container id was set in D7), and the old floor_plan_versions indexes.
+-- =========================================================================
 
 ALTER TABLE job_rooms
     ADD CONSTRAINT job_rooms_floor_plan_id_fkey
     FOREIGN KEY (floor_plan_id) REFERENCES floor_plans(id) ON DELETE SET NULL;
 
--- Step 8: Restore the indexes on floor_plan_versions.
 CREATE INDEX idx_versions_floor_plan ON floor_plan_versions(floor_plan_id, version_number);
-CREATE INDEX idx_versions_current    ON floor_plan_versions(floor_plan_id) WHERE is_current = true;
-
--- Step 9: Rename jobs.floor_plan_id back to floor_plan_version_id.
-ALTER TABLE jobs RENAME COLUMN floor_plan_id TO floor_plan_version_id;
-CREATE INDEX idx_jobs_floor_plan_version ON jobs(floor_plan_version_id) WHERE floor_plan_version_id IS NOT NULL;
+CREATE INDEX idx_versions_current    ON floor_plan_versions(floor_plan_id)
+    WHERE is_current = true;
 """
 
 
