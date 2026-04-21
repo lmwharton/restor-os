@@ -408,6 +408,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const lastPinchDist = useRef<number | null>(null);
   const lastPinchCenter = useRef<{ x: number; y: number } | null>(null);
 
+  // W9: last-valid cutout position/handle per drag. Bbox-only clamping lets
+  // cutouts drift into the concavity of L/T/U rooms. We check pointInPolygon
+  // every dragBoundFunc frame; when a proposed position has any cutout corner
+  // outside the host polygon, we return the last known-valid position instead
+  // of following the cursor into the dead zone. Keyed by cutout id (body drag)
+  // and by `${cutoutId}:${handleKey}` (corner-resize drag).
+  const lastValidCutoutPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
+  // W10+: last-valid room position during drag. Prevents rect rooms from
+  // being dropped on top of each other. Every dragBoundFunc frame we check
+  // the proposed bbox against every other room's bbox; overlap → return
+  // last valid position, so the dragged room physically refuses to enter
+  // occupied space.
+  const lastValidRoomPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
   // Refs for zoom to avoid stale closures in rapid scroll events
   const stageScaleRef = useRef(stageScale);
   stageScaleRef.current = stageScale;
@@ -1783,6 +1798,50 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 opacity={isDimmed ? 0.25 : 1}
                 draggable={tool === "select" && !readOnly}
                 onDragMove={handleDragMove}
+                // Live no-overlap guard for rect rooms: each frame, compute
+                // the dragged bbox at the proposed position and reject if it
+                // overlaps any other room's bbox. Returns the last known-
+                // good position so the room visually "stops" at the edge of
+                // an occupied space instead of stacking on top of another
+                // room. Polygons use the Konva group-at-origin trick and
+                // their overlap semantics are more complex — scoped out.
+                dragBoundFunc={isPolygon ? undefined : (pos) => {
+                  const localX = (pos.x - stagePos.x) / stageScale;
+                  const localY = (pos.y - stagePos.y) / stageScale;
+                  const proposedLeft = localX;
+                  const proposedRight = localX + room.width;
+                  const proposedTop = localY;
+                  const proposedBottom = localY + room.height;
+                  let overlaps = false;
+                  for (const other of state.rooms) {
+                    if (other.id === room.id) continue;
+                    const oIsPoly = !!other.points && other.points.length >= 3;
+                    // Use polygon bbox for polygon rooms; rect bbox for rect rooms.
+                    let oLeft: number, oRight: number, oTop: number, oBottom: number;
+                    if (oIsPoly) {
+                      const bb = polygonBoundingBox(getRoomPoints(other));
+                      oLeft = bb.x; oRight = bb.x + bb.width;
+                      oTop = bb.y; oBottom = bb.y + bb.height;
+                    } else {
+                      oLeft = other.x; oRight = other.x + other.width;
+                      oTop = other.y; oBottom = other.y + other.height;
+                    }
+                    // Strict overlap (positive area) — edge-to-edge touching OK.
+                    const dx = Math.min(proposedRight, oRight) - Math.max(proposedLeft, oLeft);
+                    const dy = Math.min(proposedBottom, oBottom) - Math.max(proposedTop, oTop);
+                    if (dx > 0 && dy > 0) { overlaps = true; break; }
+                  }
+                  const lastValid = lastValidRoomPosRef.current.get(room.id)
+                    ?? { x: room.x, y: room.y };
+                  const next = overlaps ? lastValid : { x: localX, y: localY };
+                  if (!overlaps) {
+                    lastValidRoomPosRef.current.set(room.id, next);
+                  }
+                  return {
+                    x: next.x * stageScale + stagePos.x,
+                    y: next.y * stageScale + stagePos.y,
+                  };
+                }}
                 onDragEnd={(e) => {
                   const newX = e.target.x();
                   const newY = e.target.y();
@@ -1795,9 +1854,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                   // (rendered outside the Group) land at the correct spot.
                   // Reset the Group's position imperatively here so the next
                   // render starts from (0, 0) as intended.
+                  //
+                  // W10: same desync happens on the RECT branch when the
+                  // magnetic snap cancels the drag delta to zero (dx=dy=0
+                  // because the snap pulled the room back to its committed
+                  // position). handleDragEnd's push() gets called with
+                  // identical geometry, React-konva's prop diff skips the
+                  // sync (props unchanged), and the Group keeps the raw
+                  // drag offset attr. Room visually floats off committed
+                  // state. Unconditional reset for both branches fixes it.
                   if (isPolygon) {
                     e.target.x(0);
                     e.target.y(0);
+                  } else {
+                    e.target.x(room.x);
+                    e.target.y(room.y);
                   }
                   handleDragEnd("room", room.id, { x: newX, y: newY });
                 }}
@@ -2230,16 +2301,36 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                       // Live clamp during drag — keeps the cutout visually
                       // inside the host room as the finger moves, instead
                       // of letting it follow the cursor outside and
-                      // snapping back on release (jarring). Converts Konva's
-                      // absolute stage coords ↔ logical canvas coords.
+                      // snapping back on release (jarring).
+                      //
+                      // W9: bbox clamp is not enough for L/T/U rooms — the
+                      // bbox covers the concavity (dead space outside the
+                      // polygon). Extra polygon check: if ANY of the four
+                      // cutout corners at the proposed position falls
+                      // outside the host polygon, keep the cutout at its
+                      // last known-valid position instead of drifting into
+                      // the dead zone.
                       dragBoundFunc={(pos) => {
                         const localX = (pos.x - stagePos.x) / stageScale;
                         const localY = (pos.y - stagePos.y) / stageScale;
                         const clampedX = Math.max(bbox.x, Math.min(localX, bbox.x + bbox.width - op.width));
                         const clampedY = Math.max(bbox.y, Math.min(localY, bbox.y + bbox.height - op.height));
+                        const corners = [
+                          { x: clampedX, y: clampedY },
+                          { x: clampedX + op.width, y: clampedY },
+                          { x: clampedX, y: clampedY + op.height },
+                          { x: clampedX + op.width, y: clampedY + op.height },
+                        ];
+                        const allInside = corners.every((c) => pointInPolygon(c, hostPoints));
+                        const lastValid = lastValidCutoutPosRef.current.get(op.id)
+                          ?? { x: op.x, y: op.y };
+                        const next = allInside ? { x: clampedX, y: clampedY } : lastValid;
+                        if (allInside) {
+                          lastValidCutoutPosRef.current.set(op.id, next);
+                        }
                         return {
-                          x: clampedX * stageScale + stagePos.x,
-                          y: clampedY * stageScale + stagePos.y,
+                          x: next.x * stageScale + stagePos.x,
+                          y: next.y * stageScale + stagePos.y,
                         };
                       }}
                       onDragEnd={(e) => {
@@ -2349,14 +2440,41 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                             // Live clamp the handle itself so it can't be
                             // dragged past the host room's bbox. Prevents
                             // the "cutout grew outside the room" bug.
+                            //
+                            // W9: bbox clamp misses the L/T/U concavity —
+                            // compute the RESULTING cutout rect for the
+                            // proposed handle position and reject if any
+                            // of its four corners escapes the polygon.
+                            // Keeps the handle at its last valid position
+                            // while the cursor is in the dead zone.
                             dragBoundFunc={(pos) => {
                               const localX = (pos.x - stagePos.x) / stageScale;
                               const localY = (pos.y - stagePos.y) / stageScale;
                               const clampedX = Math.max(bbox.x, Math.min(localX, bbox.x + bbox.width));
                               const clampedY = Math.max(bbox.y, Math.min(localY, bbox.y + bbox.height));
+                              // Predict the rect the resize would produce.
+                              let rx = op.x, ry = op.y, rw = op.width, rh = op.height;
+                              if (h.key === "tl") { rw -= (clampedX - rx); rh -= (clampedY - ry); rx = clampedX; ry = clampedY; }
+                              if (h.key === "tr") { rh -= (clampedY - ry); ry = clampedY; rw = clampedX - rx; }
+                              if (h.key === "br") { rw = clampedX - rx; rh = clampedY - ry; }
+                              if (h.key === "bl") { rw -= (clampedX - rx); rx = clampedX; rh = clampedY - ry; }
+                              const corners = [
+                                { x: rx, y: ry },
+                                { x: rx + rw, y: ry },
+                                { x: rx, y: ry + rh },
+                                { x: rx + rw, y: ry + rh },
+                              ];
+                              const allInside = rw > 0 && rh > 0 && corners.every((c) => pointInPolygon(c, hostPoints));
+                              const handleKey = `${op.id}:${h.key}`;
+                              const lastValid = lastValidCutoutPosRef.current.get(handleKey)
+                                ?? { x: h.cx, y: h.cy };
+                              const next = allInside ? { x: clampedX, y: clampedY } : lastValid;
+                              if (allInside) {
+                                lastValidCutoutPosRef.current.set(handleKey, next);
+                              }
                               return {
-                                x: clampedX * stageScale + stagePos.x,
-                                y: clampedY * stageScale + stagePos.y,
+                                x: next.x * stageScale + stagePos.x,
+                                y: next.y * stageScale + stagePos.y,
                               };
                             }}
                             onDragEnd={(e) => {

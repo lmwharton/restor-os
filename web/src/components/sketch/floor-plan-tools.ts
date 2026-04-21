@@ -230,14 +230,15 @@ export function magneticRoomSnap(
     const otherTop = other.y;
     const otherBottom = other.y + other.height;
 
-    // X-axis snap only when Y ranges overlap (rooms are vertically beside each other)
+    // X-axis snap only when Y ranges overlap (rooms are vertically beside each other).
+    // Only edge-to-edge candidates (left-to-right, right-to-left) — the
+    // align-edges candidates would stick rooms sharing an X coordinate on
+    // top of each other, guaranteeing overlap when yOverlap is true.
     const yOverlap = draggedBottom > otherTop && draggedTop < otherBottom;
     if (yOverlap && !snappedX) {
       const candidates: Array<[number, number]> = [
         [Math.abs(draggedLeft - otherRight), otherRight],
         [Math.abs(draggedRight - otherLeft), otherLeft - width],
-        [Math.abs(draggedLeft - otherLeft), otherLeft],
-        [Math.abs(draggedRight - otherRight), otherRight - width],
       ];
       const best = candidates.reduce((min, c) => (c[0] < min[0] ? c : min));
       if (best[0] < T) {
@@ -246,20 +247,44 @@ export function magneticRoomSnap(
       }
     }
 
-    // Y-axis snap only when X ranges overlap
+    // Y-axis snap only when X ranges overlap. Same edge-to-edge-only rule.
     const xOverlap = draggedRight > otherLeft && draggedLeft < otherRight;
     if (xOverlap && !snappedY) {
       const candidates: Array<[number, number]> = [
         [Math.abs(draggedTop - otherBottom), otherBottom],
         [Math.abs(draggedBottom - otherTop), otherTop - height],
-        [Math.abs(draggedTop - otherTop), otherTop],
-        [Math.abs(draggedBottom - otherBottom), otherBottom - height],
       ];
       const best = candidates.reduce((min, c) => (c[0] < min[0] ? c : min));
       if (best[0] < T) {
         snapY = best[1];
         snappedY = true;
       }
+    }
+  }
+
+  // Safety net: if the computed snap still overlaps any other room (e.g.
+  // the dragged room is near a corner where two neighbors share edges),
+  // drop the magnetic adjustment and return the un-snapped position so
+  // the user's drag isn't forcibly pushed into an overlap.
+  const finalLeft = snapX;
+  const finalRight = snapX + width;
+  const finalTop = snapY;
+  const finalBottom = snapY + height;
+  for (const other of others) {
+    const otherLeft = other.x;
+    const otherRight = other.x + other.width;
+    const otherTop = other.y;
+    const otherBottom = other.y + other.height;
+    const overlapX = finalRight > otherLeft && finalLeft < otherRight;
+    const overlapY = finalBottom > otherTop && finalTop < otherBottom;
+    // Strictly overlapping area (not just touching): require positive overlap
+    // in BOTH axes. Edge-to-edge contact has overlap=0 on one axis and is OK.
+    const areaOverlap = (
+      Math.min(finalRight, otherRight) - Math.max(finalLeft, otherLeft) > 0 &&
+      Math.min(finalBottom, otherBottom) - Math.max(finalTop, otherTop) > 0
+    );
+    if (overlapX && overlapY && areaOverlap) {
+      return { x: proposedX, y: proposedY, snappedX: false, snappedY: false };
     }
   }
 

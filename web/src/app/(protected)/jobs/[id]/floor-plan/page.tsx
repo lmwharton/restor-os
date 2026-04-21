@@ -235,6 +235,23 @@ function RoomDimensionInputs({
   const [wStr, setWStr] = useState(String(widthFt));
   const [hStr, setHStr] = useState(String(heightFt));
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // W8: refs mirror latest drafts + latest props so the unmount cleanup can
+  // flush a pending valid edit that didn't get 400ms to land before the
+  // sheet was swiped away.
+  const wStrRef = useRef(wStr);
+  const hStrRef = useRef(hStr);
+  const widthFtRef = useRef(widthFt);
+  const heightFtRef = useRef(heightFt);
+  const onResizeRef = useRef(onResize);
+  wStrRef.current = wStr;
+  hStrRef.current = hStr;
+  widthFtRef.current = widthFt;
+  heightFtRef.current = heightFt;
+  onResizeRef.current = onResize;
+  // Track focus so server-refetch re-syncs don't trample a live edit.
+  const [isFocused, setIsFocused] = useState(false);
+  const isFocusedRef = useRef(isFocused);
+  isFocusedRef.current = isFocused;
 
   // Commit current drafts if both are valid. Used by the debounce timer
   // (live auto-commit while typing) and by the blur/Enter handlers.
@@ -243,8 +260,8 @@ function RoomDimensionInputs({
     const h = parseFloat(nextH);
     if (!Number.isFinite(w) || !Number.isFinite(h)) return;
     if (w < 1 || h < 1) return;
-    if (w === widthFt && h === heightFt) return;
-    onResize(w, h);
+    if (w === widthFtRef.current && h === heightFtRef.current) return;
+    onResizeRef.current(w, h);
   };
 
   // On iOS Safari, blur events are unreliable when the user dismisses the
@@ -257,12 +274,36 @@ function RoomDimensionInputs({
     timerRef.current = setTimeout(() => commit(nextW, nextH), 400);
   };
 
-  // Cancel pending commit on unmount so we never fire into a stale ref.
+  // W8: on unmount, cancel the timer AND flush any valid pending draft
+  // that differs from the committed dims. Previously the cleanup only
+  // cancelled — user types "99", swipes away before 400ms, edit dropped.
   useEffect(() => () => {
-    if (timerRef.current) clearTimeout(timerRef.current);
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+      const w = parseFloat(wStrRef.current);
+      const h = parseFloat(hStrRef.current);
+      if (
+        Number.isFinite(w) && Number.isFinite(h) &&
+        w >= 1 && h >= 1 &&
+        (w !== widthFtRef.current || h !== heightFtRef.current)
+      ) {
+        onResizeRef.current(w, h);
+      }
+    }
   }, []);
 
+  // W8: when server refetch returns new dims, re-sync the drafts — but
+  // ONLY when the user isn't currently editing. Prevents the remount-key
+  // workaround that was blowing away active edits on every save response.
+  useEffect(() => {
+    if (isFocusedRef.current) return;
+    setWStr(String(widthFt));
+    setHStr(String(heightFt));
+  }, [widthFt, heightFt]);
+
   const flushOnBlur = () => {
+    setIsFocused(false);
     if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
     commit(wStr, hStr);
   };
@@ -275,7 +316,7 @@ function RoomDimensionInputs({
           type="text"
           inputMode="decimal"
           value={wStr}
-          onFocus={(e) => e.target.select()}
+          onFocus={(e) => { setIsFocused(true); e.target.select(); }}
           onChange={(e) => {
             const next = e.target.value;
             setWStr(next);
@@ -294,7 +335,7 @@ function RoomDimensionInputs({
           type="text"
           inputMode="decimal"
           value={hStr}
-          onFocus={(e) => e.target.select()}
+          onFocus={(e) => { setIsFocused(true); e.target.select(); }}
           onChange={(e) => {
             const next = e.target.value;
             setHStr(next);
@@ -444,7 +485,11 @@ function MobileRoomPanel({
               "Edit shape" button is the right mechanism. */}
           {!isPolygon && onResize && (
             <RoomDimensionInputs
-              key={`${room.id}-${room.widthFt}-${room.heightFt}`}
+              // W8: key only on room.id — was `${room.id}-${widthFt}-${heightFt}`
+              // which remounted on every server refetch and blew away drafts.
+              // Re-sync on prop change now lives inside the component, gated on
+              // focus so it doesn't trample live edits.
+              key={room.id}
               widthFt={room.widthFt}
               heightFt={room.heightFt}
               onResize={onResize}
@@ -604,13 +649,36 @@ export default function FloorPlanPage({
   }, [jobRooms]);
 
   const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => {
-    if (!info) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
-    const propertyRoom = info.propertyRoomId
-      ? jobRooms?.find(r => r.id === info.propertyRoomId)
-      : jobRooms?.find(r => r.room_name === info.name);
-    if (!propertyRoom) { setMobileSelectedRoom(null); selectedRoomRef.current = null; return; }
-    selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: propertyRoom.id };
-    setMobileSelectedRoom({ id: info.selectedId, name: info.name, widthFt: info.widthFt, heightFt: info.heightFt, propertyRoomId: propertyRoom.id, isPolygon: info.isPolygon });
+    if (!info) {
+      setMobileSelectedRoom(null);
+      selectedRoomRef.current = null;
+      return;
+    }
+    // Trust the canvas's propertyRoomId when present — it's the authoritative
+    // backend id. Only fall back to name-matching jobRooms for legacy canvas
+    // rooms that pre-date the propertyRoomId backfill. jobRooms may still be
+    // loading (undefined) when the user taps — we must NOT block selection
+    // on that lookup if the canvas already has the id we need.
+    let resolvedPropertyRoomId = info.propertyRoomId;
+    if (!resolvedPropertyRoomId) {
+      const match = jobRooms?.find((r) => r.room_name === info.name);
+      resolvedPropertyRoomId = match?.id;
+    }
+    if (!resolvedPropertyRoomId) {
+      // Genuinely unresolved — no canvas id and no name match.
+      setMobileSelectedRoom(null);
+      selectedRoomRef.current = null;
+      return;
+    }
+    selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: resolvedPropertyRoomId };
+    setMobileSelectedRoom({
+      id: info.selectedId,
+      name: info.name,
+      widthFt: info.widthFt,
+      heightFt: info.heightFt,
+      propertyRoomId: resolvedPropertyRoomId,
+      isPolygon: info.isPolygon,
+    });
   }, [jobRooms]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
@@ -828,6 +896,12 @@ export default function FloorPlanPage({
             canvas_data: canvasData,
           });
           queryClient.invalidateQueries({ queryKey: ["floor-plan-history", currentFloor.id] });
+          // W11: also invalidate the per-job floor-plans list. On Case-3
+          // fork the backend creates a new row + flips is_current, but the
+          // list feeding FloorSelector chips stays stale until staleTime
+          // expires. roomCount badge shows yesterday's count. Add explicit
+          // invalidation so the selector reflects the new version row.
+          queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
           // Backend may update jobs.floor_plan_id on first save (Case 1) or
           // fork (Case 3). Sibling jobs keep their own pins — no auto-upgrade.
           // Refetch this job so hydration reads the fresh pin; invalidate jobs
@@ -867,6 +941,7 @@ export default function FloorPlanPage({
               canvas_data: canvasData,
             });
             queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
+            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
             queryClient.invalidateQueries({ queryKey: ["jobs"] });
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
@@ -884,6 +959,7 @@ export default function FloorPlanPage({
                   canvas_data: canvasData,
                 });
                 queryClient.invalidateQueries({ queryKey: ["floor-plan-history", fp.id] });
+                queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
                 queryClient.invalidateQueries({ queryKey: ["jobs"] });
               }
             } else {
