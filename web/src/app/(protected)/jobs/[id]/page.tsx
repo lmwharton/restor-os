@@ -43,6 +43,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
+import { isJobArchived } from "@/lib/job-status";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -1613,8 +1614,7 @@ export default function JobDetailPage() {
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
   const { data: floorPlans, isLoading: floorPlansLoading } = useFloorPlans(jobId);
-  const isArchived =
-    job?.status === "complete" || job?.status === "submitted" || job?.status === "collected";
+  const isArchived = isJobArchived(job?.status);
   // Archived jobs prefer anchoring on their own pin so the resolved floor
   // matches the frozen view. When the pin is missing (legacy row without
   // floor_plan_id set), fall back to the first is_current row — list_versions

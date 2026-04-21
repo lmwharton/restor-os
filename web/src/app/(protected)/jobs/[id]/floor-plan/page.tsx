@@ -26,6 +26,7 @@ import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sk
 import { FloorSelector } from "@/components/sketch/floor-selector";
 import { PickFloorModal } from "@/components/sketch/pick-floor-modal";
 import type { WallSegment } from "@/lib/types";
+import { isJobArchived as isJobArchivedStatus } from "@/lib/job-status";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
 
@@ -474,9 +475,9 @@ export default function FloorPlanPage({
   const queryClient = useQueryClient();
 
   const { data: job } = useJob(jobId);
-  // Jobs in these statuses are read-only — backend returns 403 on any save attempt,
+  // Jobs in this status are read-only — backend returns 403 on any save attempt,
   // and the job's pinned version is frozen against auto-upgrade from sibling jobs.
-  const isJobArchived = job?.status === "complete" || job?.status === "submitted" || job?.status === "collected";
+  const isJobArchived = isJobArchivedStatus(job?.status);
   const { data: floorPlans, isLoading } = useFloorPlans(jobId);
   const createFloorPlan = useCreateFloorPlan(jobId);
   const deleteFloorPlan = useDeleteFloorPlan(jobId);
