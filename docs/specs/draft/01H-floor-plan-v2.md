@@ -198,6 +198,28 @@ Lakshman's round-5 review of the round-5 batch itself surfaced one HIGH (M1) + t
 
 ---
 
+## Phase 2 Changelog (feature-level, in progress)
+
+Consolidated across implementation passes. Branch: `feature/01h-floor-plan-v2-phase2`. Commit history carries per-pass detail.
+
+**Schema + backend**
+- Migration `b8f2a1c3d4e5` drops legacy `moisture_readings` / `moisture_points` / `dehu_outputs`; creates `moisture_pins` + `moisture_pin_readings` with RLS and `UNIQUE(pin_id, reading_date)`.
+- `backend/api/moisture_pins/` module — Pydantic schemas, service (color compute, regression compute, polygon validation, CRUD), router (8 endpoints at `/v1/jobs/{id}/moisture-pins`).
+- Legacy `backend/api/moisture/` deleted; `rooms/service.py` + `sharing/` stopped querying the dropped tables (had been 500-ing `/rooms`).
+- 22 pytest tests covering pin color boundaries + regression detection.
+
+**Canvas + frontend**
+- Canvas Mode abstraction (`moisture-mode.ts`, `canvas-mode-switcher.tsx`); toolbar mode-aware filtering; sketch layers dim to 0.30 in Moisture Mode.
+- Moisture pin Konva layer: colored circle (red/amber/green) with reading text inside, regression badge, draggable within room polygon with fail-closed snap-back.
+- Placement sheet (`moisture-placement-sheet.tsx`): Surface + Position chips, Material dropdown with room-material suggestions, `dry_standard` pre-filled from material dict and editable, initial reading input.
+- Reading sheet (`moisture-reading-sheet.tsx`): tap-to-log today's reading with overwrite `ConfirmModal`; chronological history list (newest first) with per-row `↑ up` chevron on day-over-day increases; inline SVG sparkline with dashed dry-standard line and per-reading colored dots; "Dry on Day N" green pill when the pin first reaches dry standard; amber banner when latest reading exceeds previous.
+- Pin Tool added to sidebar instruction map (`floor-plan-sidebar.tsx`).
+- Delete-tool UX: pins mid-`DELETE` render at 35% opacity and stop listening; per-pin `pendingDeleteIds` set prevents double-tap from stacking a second 404-ing DELETE.
+- Client-side coercion of `reading_value` to `Number` in the reading-sheet memos — the backend serializes DB `NUMERIC` as a string, so naked `>`/`<` on reading values would silently lexicographic-compare (`"7.00" > "19.00" === true`) and fire false regressions.
+- Wall-sync hardening carried over from bonus Phase 1 work: `_wallSyncInFlight` mutex + idempotent short-circuit.
+
+---
+
 
 ## Summary
 
@@ -353,17 +375,17 @@ Both items below were identified during manual QA and deferred. Neither blocks P
    **Target after (a) + (b):** a full room-edit save drops from ~14 calls to ~4 (`POST /versions`, `PUT /walls`, single PATCH per room, no refetches). Worth doing before user load scales.
 
 ### Phase 2: Moisture Pins
-- [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
-- [ ] `moisture_pin_readings` table created — time-series reading values per pin
-- [ ] Pin drop on canvas tap with placement card: location descriptor, material type, reading value
-- [ ] Pin color: red (>10 percentage points above dry standard), amber (within 10 points), green (at/below)
-- [ ] Tap existing pin → enter new daily reading (pin shows latest color)
-- [ ] Pin history panel: chronological readings with sparkline trend chart
-- [ ] Regression detection: amber warning icon if reading increases day-over-day at the same pin
+- [x] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
+- [x] `moisture_pin_readings` table created — time-series reading values per pin
+- [x] Pin drop on canvas tap with placement card: location descriptor, material type, reading value
+- [x] Pin color: red (>10 percentage points above dry standard), amber (within 10 points), green (at/below)
+- [x] Tap existing pin → enter new daily reading (pin shows latest color)
+- [x] Pin history panel: chronological readings with sparkline trend chart
+- [x] Regression detection: amber warning icon if reading increases day-over-day at the same pin
 - [ ] Room dry status: not dry until every pin in room is green
-- [ ] Dry standard lookup by material type (hardcoded constants, editable per-pin)
+- [x] Dry standard lookup by material type (hardcoded constants, editable per-pin)
 - [ ] Moisture floor plan PDF export: single-page carrier document with pin locations + color-coded snapshot + summary table
-- [ ] Full test coverage: pin color boundaries, regression detection, dry standard lookup, PDF export snapshot
+- [ ] Full test coverage: pin color boundaries (backend ✓), regression detection (backend ✓), dry standard lookup (backend ✓), PDF export snapshot (pending); Vitest suite for reading-sheet derived-data memos (pending)
 
 ### Phase 3: Equipment Pins
 - [ ] `equipment_placements` table — one record per individual unit
