@@ -35,6 +35,7 @@ import { CutoutEditorSheet } from "./cutout-editor-sheet";
 import { ShapePickerModal, type ShapeTemplate } from "./shape-picker-modal";
 import { CANVAS_MODES, DIM_SKETCH_OPACITY, type CanvasMode } from "./moisture-mode";
 import { MoisturePlacementSheet, type PlacementSheetData } from "./moisture-placement-sheet";
+import { MoistureReadingSheet } from "./moisture-reading-sheet";
 import { useCreateMoisturePin, useMoisturePins, useUpdateMoisturePin, useDeleteMoisturePin } from "@/lib/hooks/use-moisture-pins";
 
 /* ------------------------------------------------------------------ */
@@ -475,6 +476,17 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         canvas_y: number;
       }
   >(null);
+  // Pin whose reading sheet is currently open (Block 3A). Null when no
+  // sheet is mounted. Stores just the id so the sheet always picks up
+  // the freshest pin row from the query cache after mutations invalidate.
+  const [readingPinId, setReadingPinId] = useState<string | null>(null);
+  // Pins currently mid-delete. Added when the user taps a pin with the
+  // Delete tool, removed in mutation onSettled. While a pin is in this
+  // set it renders dimmed + ignores further taps, so an impatient double-
+  // tap can't fire a second DELETE (which would 404 after the first).
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   // Inline nudge shown briefly when a tap in Moisture Mode lands outside
   // any room polygon. Auto-clears after 1.6s — no user dismiss needed.
   const [nudgeVisible, setNudgeVisible] = useState(false);
@@ -947,9 +959,30 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     (pinId: string) => {
       if (canvasMode !== "moisture" || readOnly) return;
       if (tool === "delete") {
-        deletePin.mutate(pinId);
+        // Guard against double-tap: the mutation is async, the pin stays
+        // in the cache until success + invalidate. Second tap would hit
+        // a 404 and confuse the user. Track pending ids and no-op on repeat.
+        setPendingDeleteIds((prev) => {
+          if (prev.has(pinId)) return prev;
+          const next = new Set(prev);
+          next.add(pinId);
+          return next;
+        });
+        deletePin.mutate(pinId, {
+          onSettled: () => {
+            setPendingDeleteIds((prev) => {
+              if (!prev.has(pinId)) return prev;
+              const next = new Set(prev);
+              next.delete(pinId);
+              return next;
+            });
+          },
+        });
+        return;
       }
-      // tool === "pin" → Block 3 will open the reading sheet here.
+      if (tool === "pin") {
+        setReadingPinId(pinId);
+      }
     },
     [canvasMode, readOnly, tool, deletePin],
   );
@@ -993,6 +1026,16 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
     };
   }, []);
+
+  // Drop a stale readingPinId if the pin it points at no longer exists
+  // in the query cache (e.g., deleted from another tab). Keeps the sheet
+  // from silently pointing at a non-existent row.
+  useEffect(() => {
+    if (!readingPinId) return;
+    if (!moisturePins.some((p) => p.id === readingPinId)) {
+      setReadingPinId(null);
+    }
+  }, [readingPinId, moisturePins]);
 
   const getPos = useCallback(() => {
     const stage = stageRef.current;
@@ -1189,7 +1232,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
   }, [tool, readOnly, getPos, gs, drawStart, wallStart, traceVertices.length, state.walls]);
 
-  const handleMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+  const handleMouseUp = useCallback((_e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     // Reset pinch tracking
     lastPinchDist.current = null;
     lastPinchCenter.current = null;
@@ -1901,6 +1944,25 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             onClose={() => setPlacement(null)}
           />
         )}
+
+        {/* Moisture reading sheet — opens when the tech taps an existing
+            pin in Moisture Mode with the Pin tool. Pin row is pulled fresh
+            from the query cache so post-mutation colors stay current.
+            If the target pin vanishes (e.g., deleted elsewhere) the sheet
+            renders nothing; the orphan id is cleaned up by the effect
+            below to avoid setState-during-render. */}
+        {readingPinId && jobId && (() => {
+          const pin = moisturePins.find((p) => p.id === readingPinId);
+          if (!pin) return null;
+          return (
+            <MoistureReadingSheet
+              open
+              jobId={jobId}
+              pin={pin}
+              onClose={() => setReadingPinId(null)}
+            />
+          );
+        })()}
 
         {/* Inline nudge — shown when a Moisture Mode tap lands outside any
             room polygon. Floats over the viewport center, auto-fades after
@@ -3541,11 +3603,17 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 const valueText = pin.latest_reading
                   ? String(Math.round(Number(pin.latest_reading.reading_value)))
                   : "—";
+                // Pins mid-delete dim to ~35% and stop listening so another
+                // tap can't stack a second DELETE on a pin that's already
+                // going away. Drag is also disabled during the window.
+                const isDeleting = pendingDeleteIds.has(pin.id);
                 return (
                   <Group
                     key={pin.id}
                     x={Number(pin.canvas_x)}
                     y={Number(pin.canvas_y)}
+                    opacity={isDeleting ? 0.35 : 1}
+                    listening={!isDeleting}
                     // Name + elementId both set on the Group itself so
                     // handleMouseUp's "empty canvas" nudge check sees the
                     // pin as a real element, not background. Konva reports
@@ -3557,7 +3625,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     // the pin's position by a few pixels without deleting
                     // and re-dropping. handlePinDragEnd validates the new
                     // position stays inside the pin's room polygon.
-                    draggable={!readOnly}
+                    draggable={!readOnly && !isDeleting}
                     onDragEnd={(e) => handlePinDragEnd(pin.id, pin.room_id, e)}
                     onClick={() => handlePinTap(pin.id)}
                     onTap={() => handlePinTap(pin.id)}
