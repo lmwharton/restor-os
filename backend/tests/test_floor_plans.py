@@ -1724,3 +1724,451 @@ class TestCleanupSketchUnit:
         result = cleanup_sketch(canvas)
         # Zero-length wall should still be in the list (standardize keeps it)
         assert len(result["walls"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# C2: _create_version concurrent-edit handling
+# ---------------------------------------------------------------------------
+
+
+class TestCreateVersionConcurrentEdit:
+    """_create_version must surface unique-violation (Postgres 23505) as
+    409 CONCURRENT_EDIT so the retry in save_canvas can fork cleanly.
+
+    After C4, _create_version delegates to the `save_floor_plan_version`
+    RPC which does flip + insert + pin atomically. The 23505 path now
+    originates from the RPC's INSERT (same partial unique indexes) — we
+    still convert it to 409 at the service layer.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rpc_unique_violation_raises_409_concurrent_edit(self):
+        from api.floor_plans.service import _create_version
+        from api.shared.exceptions import AppException
+
+        client = AsyncSupabaseMock()
+        # The RPC raises 23505 when the partial unique index fires.
+        client.rpc.return_value.execute.side_effect = APIError(
+            {"message": "duplicate key value violates unique constraint", "code": "23505", "details": ""}
+        )
+
+        with pytest.raises(AppException) as exc_info:
+            await _create_version(
+                client=client,
+                property_id=uuid4(),
+                floor_number=1,
+                floor_name="Floor 1",
+                company_id=uuid4(),
+                job_id=uuid4(),
+                user_id=uuid4(),
+                canvas_data={"walls": []},
+                change_summary="test",
+            )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.error_code == "CONCURRENT_EDIT"
+
+    @pytest.mark.asyncio
+    async def test_rpc_non_unique_apierror_raises_500_db_error(self):
+        """Sanity: other APIError codes from the RPC (connection failures,
+        permission errors, etc.) still surface as 500 DB_ERROR — we only
+        special-case 23505."""
+        from api.floor_plans.service import _create_version
+        from api.shared.exceptions import AppException
+
+        client = AsyncSupabaseMock()
+        client.rpc.return_value.execute.side_effect = APIError(
+            {"message": "connection refused", "code": "08006", "details": ""}
+        )
+
+        with pytest.raises(AppException) as exc_info:
+            await _create_version(
+                client=client,
+                property_id=uuid4(),
+                floor_number=1,
+                floor_name="Floor 1",
+                company_id=uuid4(),
+                job_id=uuid4(),
+                user_id=uuid4(),
+                canvas_data={"walls": []},
+                change_summary="test",
+            )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "DB_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# C4: atomic RPC for flip + insert + pin
+# ---------------------------------------------------------------------------
+
+
+class TestCreateVersionRPCAtomicity:
+    """_create_version delegates to save_floor_plan_version RPC so flip +
+    insert + pin run as one transaction. Previously these were three
+    separate client calls — a failure between insert and pin left the job
+    pinned to the frozen old row, causing the next save to fork another
+    version and orphan the one just created.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rpc_success_returns_new_row(self):
+        """Happy path: RPC returns the new version row; _create_version
+        returns it unchanged. Validates the call shape and return unwrap."""
+        from api.floor_plans.service import _create_version
+
+        client = AsyncSupabaseMock()
+        new_row = {
+            "id": str(uuid4()),
+            "property_id": str(uuid4()),
+            "floor_number": 1,
+            "floor_name": "Floor 1",
+            "version_number": 2,
+            "canvas_data": {"walls": []},
+            "is_current": True,
+        }
+        # supabase-py returns JSONB scalar directly as dict
+        client.rpc.return_value.execute.return_value.data = new_row
+
+        result = await _create_version(
+            client=client,
+            property_id=uuid4(),
+            floor_number=1,
+            floor_name="Floor 1",
+            company_id=uuid4(),
+            job_id=uuid4(),
+            user_id=uuid4(),
+            canvas_data={"walls": []},
+            change_summary="test",
+        )
+        assert result == new_row
+        # RPC was called once with the known function name
+        client.rpc.assert_called_once()
+        called_args = client.rpc.call_args
+        assert called_args[0][0] == "save_floor_plan_version"
+        # All 8 params present
+        params = called_args[0][1]
+        assert set(params.keys()) == {
+            "p_property_id", "p_floor_number", "p_floor_name",
+            "p_company_id", "p_job_id", "p_user_id",
+            "p_canvas_data", "p_change_summary",
+        }
+
+    @pytest.mark.asyncio
+    async def test_rpc_list_wrapped_response_unwrapped(self):
+        """Some supabase-py versions wrap scalar JSONB in a list; the
+        service must normalize."""
+        from api.floor_plans.service import _create_version
+
+        client = AsyncSupabaseMock()
+        new_row = {"id": str(uuid4()), "version_number": 1}
+        client.rpc.return_value.execute.return_value.data = [new_row]
+
+        result = await _create_version(
+            client=client,
+            property_id=uuid4(),
+            floor_number=1,
+            floor_name=None,
+            company_id=uuid4(),
+            job_id=uuid4(),
+            user_id=uuid4(),
+            canvas_data={"walls": []},
+            change_summary="",
+        )
+        assert result == new_row
+
+    @pytest.mark.asyncio
+    async def test_rpc_empty_response_raises_500(self):
+        """RPC returning null/empty means the function failed silently —
+        surface as 500 rather than return None and confuse callers."""
+        from api.floor_plans.service import _create_version
+        from api.shared.exceptions import AppException
+
+        client = AsyncSupabaseMock()
+        client.rpc.return_value.execute.return_value.data = None
+
+        with pytest.raises(AppException) as exc_info:
+            await _create_version(
+                client=client,
+                property_id=uuid4(),
+                floor_number=1,
+                floor_name=None,
+                company_id=uuid4(),
+                job_id=uuid4(),
+                user_id=uuid4(),
+                canvas_data={"walls": []},
+                change_summary="",
+            )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "DB_ERROR"
+
+
+# ---------------------------------------------------------------------------
+# C3: Case 2 is_current TOCTOU — UPDATE filters on is_current, falls through
+# ---------------------------------------------------------------------------
+
+
+class TestCase2IsCurrentTOCTOU:
+    """Case 2's `pinned_still_current` check reads is_current in memory,
+    then UPDATEs the row — between those two steps a sibling job's Case 3
+    fork can flip is_current=false. The fix: filter the UPDATE on
+    .eq("is_current", True). If Postgres matches zero rows, fall through
+    to Case 3 (fork a new version) instead of silently writing to what
+    is now frozen history.
+    """
+
+    @pytest.mark.asyncio
+    async def test_case2_update_matches_zero_rows_falls_through_to_case3(self):
+        """UPDATE matches 0 rows (row was frozen mid-flight) → Case 3 fork runs.
+
+        save_canvas runs several queries in sequence. We intercept them with a
+        fake supabase client that returns scripted responses per query shape,
+        plus a no-op UPDATE that simulates the `.eq("is_current", True)` filter
+        matching zero rows (TOCTOU race — is_current flipped between read and
+        write). The assertion is that _create_version was invoked, proving the
+        fallthrough happened.
+        """
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        job_id = uuid4()
+        company_id = uuid4()
+        user_id = uuid4()
+        floor_plan_id = uuid4()
+        property_id = uuid4()
+        pinned_version_id = str(uuid4())
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        anchor_row = {
+            "id": str(floor_plan_id),
+            "property_id": str(property_id),
+            "floor_number": 1,
+        }
+        job_row = {
+            "id": str(job_id),
+            "floor_plan_id": pinned_version_id,
+            "status": "mitigation",
+        }
+        pinned_row = {
+            "id": pinned_version_id,
+            "property_id": str(property_id),
+            "floor_number": 1,
+            "version_number": 1,
+            "is_current": True,
+            "created_by_job_id": str(job_id),
+            "change_summary": None,
+        }
+
+        # Chainable query builder that decides its response from the table +
+        # applied filters. Same instance returned by every chain method so
+        # we can inspect what was asked of us.
+        class QB:
+            def __init__(self, table_name: str):
+                self.table_name = table_name
+                self.filters: dict[str, object] = {}
+                self.update_args: dict | None = None
+
+            # select / single / order / limit / insert are all no-ops that
+            # return self, keeping the chain going.
+            def select(self, *args, **kwargs): return self
+            def single(self): return self
+            def order(self, *args, **kwargs): return self
+            def limit(self, *args, **kwargs): return self
+            def is_(self, col, val): self.filters[col] = val; return self
+            def eq(self, col, val): self.filters[col] = val; return self
+
+            def update(self, row): self.update_args = row; return self
+            def insert(self, row): return self
+
+            async def execute(self):
+                if self.table_name == "jobs":
+                    return _result(job_row)
+                if self.table_name == "floor_plans":
+                    # UPDATE call — simulate zero rows matched because the
+                    # is_current=True filter failed (TOCTOU).
+                    if self.update_args is not None:
+                        return _result([])
+                    # SELECT — two shapes: the target-floor lookup and the
+                    # pinned-version lookup. Distinguish by which id filter
+                    # was passed.
+                    wanted_id = self.filters.get("id")
+                    if wanted_id == str(floor_plan_id):
+                        return _result(anchor_row)
+                    if wanted_id == pinned_version_id:
+                        return _result(pinned_row)
+                return _result(None)
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        fake_client = FakeClient()
+
+        forked_row = {
+            "id": str(uuid4()),
+            "version_number": 2,
+            "is_current": True,
+        }
+        mock_create_version = AsyncMock(return_value=forked_row)
+
+        # After C4, _create_version delegates to the save_floor_plan_version
+        # RPC which does flip + insert + pin atomically — no separate pin
+        # function to patch.
+        with (
+            patch.object(fp_service, "_create_version", mock_create_version),
+            patch.object(
+                fp_service, "get_authenticated_client",
+                AsyncMock(return_value=fake_client),
+            ),
+            patch.object(fp_service, "log_event", AsyncMock(return_value=None)),
+        ):
+            result = await fp_service.save_canvas(
+                token="test-token",
+                floor_plan_id=floor_plan_id,
+                job_id=job_id,
+                company_id=company_id,
+                user_id=user_id,
+                canvas_data={"walls": []},
+                change_summary="test",
+            )
+
+        # Fall-through happened: _create_version was invoked (Case 3)
+        mock_create_version.assert_awaited_once()
+        # Returned row is the forked one, not a stale Case 2 update target
+        assert result == forked_row
+
+
+# ---------------------------------------------------------------------------
+# C6: linked recon rooms no longer inherit mitigation's floor_plan_id
+# ---------------------------------------------------------------------------
+
+
+class TestCopyRoomsFromLinkedJob:
+    """_copy_rooms_from_linked_job::COPY_FIELDS must NOT include
+    "floor_plan_id". Post-container/versions merge, that id points at a
+    specific version row; if copied, recon's rooms would reference
+    mitigation's frozen v1 while recon's own job pin moves to v2 — the
+    ROOM ↔ FLOOR-PLAN linkage desyncs from the JOB ↔ FLOOR-PLAN pin
+    forever. Fix: strip the field so recon's rooms start NULL and relink
+    through the normal save flow.
+    """
+
+    def test_copy_fields_excludes_floor_plan_id(self):
+        """Static guardrail: inspect the function source and confirm
+        'floor_plan_id' is absent from the COPY_FIELDS list. This also
+        fires if a future edit accidentally re-includes it."""
+        import inspect
+        import re
+
+        from api.jobs.service import _copy_rooms_from_linked_job
+
+        src = inspect.getsource(_copy_rooms_from_linked_job)
+        # Match the `COPY_FIELDS = [ ... ]` list literal body only
+        m = re.search(r"COPY_FIELDS\s*=\s*\[(.*?)\]", src, re.DOTALL)
+        assert m, "COPY_FIELDS list not found in _copy_rooms_from_linked_job"
+        fields_block = m.group(1)
+        assert "floor_plan_id" not in fields_block, (
+            "COPY_FIELDS must not include 'floor_plan_id' — recon rooms would "
+            "inherit mitigation's version pin and desync on first save"
+        )
+
+    @pytest.mark.asyncio
+    async def test_copied_rows_have_no_floor_plan_id_key(self):
+        """Behavioral check: the rows inserted into job_rooms for the new
+        recon job do not carry a floor_plan_id field (comes through as
+        not-present, which Postgres treats as NULL via default)."""
+        from unittest.mock import AsyncMock, MagicMock
+
+        from api.jobs.service import _copy_rooms_from_linked_job
+
+        source_rooms = [
+            {
+                "room_name": "Kitchen",
+                "length_ft": 12,
+                "width_ft": 10,
+                "height_ft": 8,
+                "square_footage": 120,
+                "room_type": "kitchen",
+                "ceiling_type": "flat",
+                "floor_level": "main",
+                "room_polygon": None,
+                "floor_openings": None,
+                "custom_wall_sf": None,
+                "sort_order": 0,
+            },
+        ]
+
+        # Fake supabase client: fetch returns source rooms, insert captures
+        # the rows we were about to write.
+        inserted_rows: list = []
+
+        class QB:
+            def __init__(self):
+                self._mode = None
+
+            def select(self, *args, **kwargs): return self
+            def eq(self, *args, **kwargs): return self
+
+            def insert(self, rows):
+                inserted_rows.extend(rows)
+                self._mode = "insert"
+                return self
+
+            async def execute(self):
+                result = MagicMock()
+                if self._mode == "insert":
+                    result.data = inserted_rows
+                else:
+                    result.data = source_rooms
+                return result
+
+        class FakeClient:
+            def table(self, name): return QB()
+
+        count = await _copy_rooms_from_linked_job(
+            client=FakeClient(),
+            source_job_id=uuid4(),
+            new_job_id=uuid4(),
+            company_id=uuid4(),
+        )
+        assert count == 1
+        assert inserted_rows, "no rows were inserted"
+        for row in inserted_rows:
+            assert "floor_plan_id" not in row, (
+                f"copied row unexpectedly carries floor_plan_id: {row!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# P2.1: cleanup_floor_plan requires job_id — archive guard has no bypass
+# ---------------------------------------------------------------------------
+
+
+class TestSketchCleanupRequiresJobId:
+    """SketchCleanupRequest.job_id is required (not Optional) so the archive
+    gate always runs on cleanup. This closes the partial C1 bypass where a
+    request without job_id would skip ensure_job_mutable and rely only on
+    the is_current guard — leaving a collected job's current version open
+    to mutation."""
+
+    def test_schema_requires_job_id(self):
+        """Pydantic rejects a cleanup request without job_id."""
+        from pydantic import ValidationError
+
+        from api.floor_plans.schemas import SketchCleanupRequest
+
+        with pytest.raises(ValidationError) as exc_info:
+            SketchCleanupRequest(canvas_data={"walls": []})
+        errs = exc_info.value.errors()
+        assert any(e.get("loc") == ("job_id",) and e.get("type") == "missing" for e in errs), (
+            f"expected a 'missing' error on job_id; got {errs}"
+        )
+
+    def test_schema_accepts_valid_request(self):
+        from api.floor_plans.schemas import SketchCleanupRequest
+
+        req = SketchCleanupRequest(job_id=uuid4(), canvas_data={"walls": []})
+        assert req.job_id is not None
+        assert req.canvas_data == {"walls": []}
