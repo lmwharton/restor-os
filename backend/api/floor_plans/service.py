@@ -14,12 +14,11 @@ from shapely.geometry import MultiLineString
 from shapely.ops import polygonize, unary_union
 
 from api.floor_plans.schemas import FloorPlanCreate, FloorPlanUpdate
+from api.shared.constants import ARCHIVED_JOB_STATUSES
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
-
-# Job statuses that are considered "archived" — these jobs don't auto-upgrade versions
-_ARCHIVED_STATUSES = {"complete", "submitted", "collected"}
+from api.shared.guards import ensure_job_mutable
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +688,7 @@ async def save_canvas(
     job = job_result.data
 
     # Archived jobs cannot save
-    if job.get("status") in _ARCHIVED_STATUSES:
+    if job.get("status") in ARCHIVED_JOB_STATUSES:
         raise AppException(
             status_code=403,
             detail="Cannot edit floor plan for an archived job",
@@ -699,6 +698,7 @@ async def save_canvas(
     pinned_version_id = job.get("floor_plan_id")
 
     # Case 1: No pinned version — create version 1
+    # RPC inside _create_version handles the pin atomically (C4).
     if not pinned_version_id:
         version = await _create_version(
             client=client,
@@ -711,7 +711,6 @@ async def save_canvas(
             canvas_data=canvas_data,
             change_summary=change_summary or "Initial floor plan version",
         )
-        await _pin_job_to_version(client, job_id, version["id"])
 
         await log_event(
             company_id,
@@ -762,7 +761,14 @@ async def save_canvas(
         and pinned_same_floor
         and pinned_still_current
     ):
-        await (
+        # C3 fix: the memory-level `pinned_still_current` read above is
+        # TOCTOU-racy — between that read and this UPDATE, a sibling job's
+        # Case 3 fork can flip is_current=false on this row, turning it into
+        # frozen history. Filtering the UPDATE on .eq("is_current", True)
+        # lets Postgres enforce the check atomically. If zero rows match,
+        # the pin is no longer current: fall through to Case 3 and fork a
+        # new version on top of whoever just became current.
+        update_result = await (
             client.table("floor_plans")
             .update(
                 {
@@ -771,31 +777,37 @@ async def save_canvas(
                 }
             )
             .eq("id", pinned_version["id"])
+            .eq("is_current", True)
             .execute()
         )
-        # Re-fetch to return updated data
-        updated = await (
-            client.table("floor_plans")
-            .select("*")
-            .eq("id", pinned_version["id"])
-            .single()
-            .execute()
-        )
+        if update_result.data:
+            # Re-fetch to return updated data
+            updated = await (
+                client.table("floor_plans")
+                .select("*")
+                .eq("id", pinned_version["id"])
+                .single()
+                .execute()
+            )
 
-        await log_event(
-            company_id,
-            "floor_plan_version_updated",
-            job_id=job_id,
-            user_id=user_id,
-            event_data={
-                "floor_plan_id": pinned_version["id"],
-                "version_number": pinned_version["version_number"],
-            },
-        )
-        return updated.data
+            await log_event(
+                company_id,
+                "floor_plan_version_updated",
+                job_id=job_id,
+                user_id=user_id,
+                event_data={
+                    "floor_plan_id": pinned_version["id"],
+                    "version_number": pinned_version["version_number"],
+                },
+            )
+            return updated.data
+        # else: row was frozen mid-flight — fall through to Case 3 (fork)
 
-    # Case 3: Another job's version (or a different floor) — fork new version.
-    # _create_version handles the is_current flip on old siblings for us.
+    # Case 3: Another job's version (or a different floor), or Case 2's
+    # target was frozen mid-flight — fork new version.
+    # The RPC inside _create_version handles flip + insert + pin atomically (C4).
+    # Sibling jobs are NOT auto-upgraded — per frozen-version semantics, every
+    # job stays on the version it last saved.
     version = await _create_version(
         client=client,
         property_id=UUID(target_property_id),
@@ -807,13 +819,6 @@ async def save_canvas(
         canvas_data=canvas_data,
         change_summary=change_summary or "Floor plan edited by new job",
     )
-
-    # Pin THIS job to the new version it just created. Sibling jobs are NOT
-    # auto-upgraded — per frozen-version semantics, every job stays on the
-    # version it last saved. Without this pin update, the same job's next
-    # save would re-read its stale pin, fall into Case 3 again, and fork
-    # another version — producing the "version explosion" observed in staging.
-    await _pin_job_to_version(client, job_id, version["id"])
 
     await log_event(
         company_id,
@@ -939,7 +944,7 @@ async def rollback_version(
     )
     if not job_result.data:
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
-    if job_result.data.get("status") in _ARCHIVED_STATUSES:
+    if job_result.data.get("status") in ARCHIVED_JOB_STATUSES:
         raise AppException(
             status_code=403,
             detail="Cannot rollback floor plan for an archived job",
@@ -993,10 +998,7 @@ async def rollback_version(
         canvas_data=target.data["canvas_data"],
         change_summary=f"Rolled back to version {version_number}",
     )
-
-    # Pin the job to this rolled-back version. Sibling jobs NOT auto-upgraded
-    # (frozen-version semantics — see save_canvas for rationale).
-    await _pin_job_to_version(client, job_id, version["id"])
+    # RPC inside _create_version pinned this job to the new version atomically (C4).
 
     await log_event(
         company_id,
@@ -1028,82 +1030,60 @@ async def _create_version(
     canvas_data: dict,
     change_summary: str,
 ) -> dict:
-    """Create a new floor plan version for a (property, floor).
+    """Create a new floor plan version AND pin the creating job to it.
 
-    Post-merge: a new version = a new row in the unified floor_plans table.
-    Looks up the next version_number from existing rows for this floor. If
-    the caller doesn't provide floor_name, inherits from the latest row.
+    C4 fix: delegates to the `save_floor_plan_version` plpgsql RPC so the
+    flip + insert + pin sequence runs as one transaction. Previously these
+    were three separate client calls; any failure between insert and pin
+    left the job pointing at the old (frozen) row, and the next save on
+    that job would fork another version, orphaning the one we just wrote.
+    The RPC rolls back all three writes atomically on any error.
 
-    Also: every call here becomes the new "latest" on this floor. We flip
-    is_current=false on all older rows first, THEN insert the new row with
-    is_current=true. Enforces the invariant "at most one current row per
-    (property, floor)" at every creation point — not just Case 3 forks.
+    C2 fix preserved: the RPC raises Postgres 23505 if the partial unique
+    index on (property, floor) WHERE is_current=true is violated by a
+    concurrent writer. We convert to 409 CONCURRENT_EDIT so the client
+    retries; the retry re-enters save_canvas, sees the winner's row as
+    current, and takes Case 3 (fork) cleanly on top of it.
     """
-    # Find existing rows for this floor — used for version_number + floor_name inheritance
-    siblings = await (
-        client.table("floor_plans")
-        .select("version_number, floor_name")
-        .eq("property_id", str(property_id))
-        .eq("floor_number", floor_number)
-        .order("version_number", desc=True)
-        .limit(1)
-        .execute()
-    )
-    next_number = 1
-    inherited_name = floor_name
-    if siblings.data:
-        next_number = siblings.data[0]["version_number"] + 1
-        if inherited_name is None:
-            inherited_name = siblings.data[0].get("floor_name")
-
-    # Flip any existing is_current=true rows on this floor to false BEFORE
-    # inserting the new one — keeps the "one current per floor" invariant.
-    # Note: this DOES NOT move any job's pin (jobs.floor_plan_id). Pins only
-    # move when that job itself saves; we're only managing the "which row
-    # is the latest snapshot" pointer.
-    if siblings.data:
-        await (
-            client.table("floor_plans")
-            .update({"is_current": False})
-            .eq("property_id", str(property_id))
-            .eq("floor_number", floor_number)
-            .eq("is_current", True)
-            .execute()
-        )
-
-    row = {
-        "property_id": str(property_id),
-        "company_id": str(company_id),
-        "floor_number": floor_number,
-        "floor_name": inherited_name or f"Floor {floor_number}",
-        "version_number": next_number,
-        "canvas_data": canvas_data,
-        "created_by_job_id": str(job_id),
-        "created_by_user_id": str(user_id),
-        "change_summary": change_summary,
-        "is_current": True,
-    }
-
     try:
-        result = await client.table("floor_plans").insert(row).execute()
+        result = await client.rpc(
+            "save_floor_plan_version",
+            {
+                "p_property_id":   str(property_id),
+                "p_floor_number":  floor_number,
+                "p_floor_name":    floor_name,
+                "p_company_id":    str(company_id),
+                "p_job_id":        str(job_id),
+                "p_user_id":       str(user_id),
+                "p_canvas_data":   canvas_data,
+                "p_change_summary": change_summary,
+            },
+        ).execute()
     except APIError as e:
+        if getattr(e, "code", None) == "23505":
+            raise AppException(
+                status_code=409,
+                detail="Concurrent edit on this floor, please retry",
+                error_code="CONCURRENT_EDIT",
+            )
         raise AppException(
             status_code=500,
             detail=f"Failed to create version: {e.message}",
             error_code="DB_ERROR",
         )
 
-    return result.data[0]
-
-
-async def _pin_job_to_version(client, job_id: UUID, version_id: str) -> None:
-    """Set a job's floor_plan_id to the given version row."""
-    await (
-        client.table("jobs")
-        .update({"floor_plan_id": version_id})
-        .eq("id", str(job_id))
-        .execute()
-    )
+    data = result.data
+    # supabase-py returns JSONB scalar directly as dict, or list-wrapped
+    # depending on version; normalize.
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not data:
+        raise AppException(
+            status_code=500,
+            detail="RPC returned empty result",
+            error_code="DB_ERROR",
+        )
+    return data
 
 
 # ---------------------------------------------------------------------------
@@ -1114,10 +1094,10 @@ async def _pin_job_to_version(client, job_id: UUID, version_id: str) -> None:
 async def cleanup_floor_plan(
     token: str,
     floor_plan_id: UUID,
+    job_id: UUID,
     company_id: UUID,
     user_id: UUID,
     client_canvas_data: dict | None = None,
-    job_id: UUID | None = None,
 ) -> dict:
     """Run deterministic cleanup on a floor plan sketch.
 
@@ -1128,6 +1108,12 @@ async def cleanup_floor_plan(
     Returns SketchCleanupResponse with cleaned canvas_data, changes_made, event_id.
     """
     client = await get_authenticated_client(token)
+
+    # Archive-job gate (C1) — always runs. Cleanup mutates canvas_data on
+    # the is_current row, so a `collected` job's version must stay frozen.
+    # job_id is required in SketchCleanupRequest; Pydantic 422's any caller
+    # that omits it, so this guard has no conditional bypass.
+    await ensure_job_mutable(client, job_id, company_id)
 
     # Fetch floor plan (verify ownership)
     result = await (

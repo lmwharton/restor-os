@@ -11,9 +11,13 @@ class FloorPlanCreate(BaseModel):
 
 
 class FloorPlanUpdate(BaseModel):
+    """Metadata-only updates. Content changes (canvas_data) must go through
+    POST /floor-plans/{id}/versions (save_canvas) so the versioning state
+    machine and the archive-job gate are the single write surface for content.
+    """
+
     floor_number: int | None = Field(default=None, ge=0, le=10)
     floor_name: str | None = Field(default=None, max_length=50)
-    canvas_data: dict | None = None
     thumbnail_url: str | None = None
 
 
@@ -58,8 +62,15 @@ class FloorPlanSaveRequest(BaseModel):
 
 class SketchCleanupRequest(BaseModel):
     """Optional client-supplied canvas_data for cleaning unsaved edits.
-    If omitted, server fetches from the saved floor plan record."""
+    If omitted, server fetches from the saved floor plan record.
 
+    `job_id` is required: cleanup writes back to canvas_data on the
+    is_current row, so running it against a collected job's pinned version
+    would break the "frozen once collected" contract. Requiring job_id
+    lets the server always enforce the archive-job gate (C1) with no
+    conditional bypass path."""
+
+    job_id: UUID
     canvas_data: dict | None = None
 
 

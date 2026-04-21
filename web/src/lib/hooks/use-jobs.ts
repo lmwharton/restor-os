@@ -424,10 +424,10 @@ export function useDeleteFloorPlan(jobId: string) {
 
 export function useCleanupSketch(floorPlanId: string) {
   return useMutation({
-    mutationFn: (canvasData: Record<string, unknown>) =>
+    mutationFn: ({ jobId, canvasData }: { jobId: string; canvasData: Record<string, unknown> }) =>
       apiPost<{ canvas_data: Record<string, unknown> }>(
         `/v1/floor-plans/${floorPlanId}/cleanup`,
-        { canvas_data: canvasData }
+        { job_id: jobId, canvas_data: canvasData }
       ),
   });
 }

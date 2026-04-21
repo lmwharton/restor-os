@@ -439,8 +439,8 @@ async def rollback_version_endpoint(
     response_model=SketchCleanupResponse,
 )
 async def cleanup_endpoint(
+    body: SketchCleanupRequest,
     request: Request,
-    body: SketchCleanupRequest = SketchCleanupRequest(),
     fp: dict = Depends(get_valid_floor_plan),
     ctx: AuthContext = Depends(get_auth_context),
 ):
@@ -452,6 +452,7 @@ async def cleanup_endpoint(
     return await cleanup_floor_plan(
         token=token,
         floor_plan_id=fp["id"],
+        job_id=body.job_id,
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         client_canvas_data=body.canvas_data,
