@@ -160,6 +160,9 @@ export function CutoutEditorSheet({
               {wOver && (
                 <p className="text-[10px] text-red-600 mt-1">Max {maxWidthFt} ft (fits in room)</p>
               )}
+              {!wValid && widthStr !== "" && !wOver && (
+                <p className="text-[10px] text-red-600 mt-1">Must be greater than 0</p>
+              )}
             </div>
             <div>
               <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant mb-1">Length</p>
@@ -181,6 +184,9 @@ export function CutoutEditorSheet({
               </div>
               {lOver && (
                 <p className="text-[10px] text-red-600 mt-1">Max {maxLengthFt} ft (fits in room)</p>
+              )}
+              {!lValid && lengthStr !== "" && !lOver && (
+                <p className="text-[10px] text-red-600 mt-1">Must be greater than 0</p>
               )}
             </div>
           </div>

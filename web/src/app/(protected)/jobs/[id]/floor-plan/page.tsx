@@ -308,6 +308,14 @@ function RoomDimensionInputs({
     commit(wStr, hStr);
   };
 
+  // R17 (round 2) — live invalid state so the user sees WHY the dimension
+  // didn't apply. Matches commit()'s guard: `w < 1 || h < 1` is invalid.
+  // Empty string is neutral (user mid-edit / cleared field).
+  const wNum = parseFloat(wStr);
+  const hNum = parseFloat(hStr);
+  const wInvalid = wStr !== "" && (!Number.isFinite(wNum) || wNum < 1);
+  const hInvalid = hStr !== "" && (!Number.isFinite(hNum) || hNum < 1);
+
   return (
     <div className="flex gap-2">
       <div className="flex-1">
@@ -326,8 +334,13 @@ function RoomDimensionInputs({
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
-          className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
+          className={`w-full h-9 px-3 rounded-lg border text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent ${
+            wInvalid ? "border-red-400" : "border-outline-variant"
+          }`}
         />
+        {wInvalid && (
+          <p className="mt-1 text-[10px] text-red-600">Must be at least 1</p>
+        )}
       </div>
       <div className="flex-1">
         <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Length (ft)</p>
@@ -345,8 +358,13 @@ function RoomDimensionInputs({
           onKeyDown={(e) => {
             if (e.key === "Enter") (e.target as HTMLInputElement).blur();
           }}
-          className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
+          className={`w-full h-9 px-3 rounded-lg border text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent ${
+            hInvalid ? "border-red-400" : "border-outline-variant"
+          }`}
         />
+        {hInvalid && (
+          <p className="mt-1 text-[10px] text-red-600">Must be at least 1</p>
+        )}
       </div>
     </div>
   );
@@ -648,38 +666,73 @@ export default function FloorPlanPage({
     });
   }, [jobRooms]);
 
+  // Buffer for a tap that arrived before jobRooms finished loading. On mobile
+  // especially, the user taps faster than the rooms query resolves. Without
+  // this buffer, the very first tap after page load would silently fail to
+  // open the modal because the name-match fallback ran against an undefined
+  // jobRooms. When jobRooms arrives, the useEffect below re-runs resolution.
+  const [pendingSelection, setPendingSelection] = useState<
+    { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null
+  >(null);
+
+  const resolveSelection = useCallback(
+    (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean }) => {
+      let resolvedPropertyRoomId = info.propertyRoomId;
+      if (!resolvedPropertyRoomId) {
+        const match = jobRooms?.find((r) => r.room_name === info.name);
+        resolvedPropertyRoomId = match?.id;
+      }
+      if (!resolvedPropertyRoomId) return null;
+      return {
+        id: info.selectedId,
+        name: info.name,
+        widthFt: info.widthFt,
+        heightFt: info.heightFt,
+        propertyRoomId: resolvedPropertyRoomId,
+        isPolygon: info.isPolygon,
+      };
+    },
+    [jobRooms],
+  );
+
   const handleSelectionChange = useCallback((info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => {
     if (!info) {
       setMobileSelectedRoom(null);
+      setPendingSelection(null);
       selectedRoomRef.current = null;
       return;
     }
-    // Trust the canvas's propertyRoomId when present — it's the authoritative
-    // backend id. Only fall back to name-matching jobRooms for legacy canvas
-    // rooms that pre-date the propertyRoomId backfill. jobRooms may still be
-    // loading (undefined) when the user taps — we must NOT block selection
-    // on that lookup if the canvas already has the id we need.
-    let resolvedPropertyRoomId = info.propertyRoomId;
-    if (!resolvedPropertyRoomId) {
-      const match = jobRooms?.find((r) => r.room_name === info.name);
-      resolvedPropertyRoomId = match?.id;
-    }
-    if (!resolvedPropertyRoomId) {
-      // Genuinely unresolved — no canvas id and no name match.
-      setMobileSelectedRoom(null);
-      selectedRoomRef.current = null;
+    const resolved = resolveSelection(info);
+    if (resolved) {
+      selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: resolved.propertyRoomId };
+      setMobileSelectedRoom(resolved);
+      setPendingSelection(null);
       return;
     }
-    selectedRoomRef.current = { id: info.selectedId, name: info.name, propertyRoomId: resolvedPropertyRoomId };
-    setMobileSelectedRoom({
-      id: info.selectedId,
-      name: info.name,
-      widthFt: info.widthFt,
-      heightFt: info.heightFt,
-      propertyRoomId: resolvedPropertyRoomId,
-      isPolygon: info.isPolygon,
-    });
-  }, [jobRooms]);
+    // Couldn't resolve yet. If jobRooms is still loading, buffer the tap
+    // and retry when the query arrives — common path on fast mobile taps
+    // right after page load. The flush effect below picks it up. Without
+    // this buffer, the first tap after mount silently dropped the modal.
+    if (jobRooms === undefined) {
+      setPendingSelection(info);
+      return;
+    }
+    // jobRooms is loaded but the match still failed — genuine data gap.
+    setMobileSelectedRoom(null);
+    selectedRoomRef.current = null;
+  }, [jobRooms, resolveSelection]);
+
+  // Flush the pending tap once jobRooms resolves.
+  useEffect(() => {
+    if (!pendingSelection) return;
+    if (jobRooms === undefined) return;  // still loading
+    const resolved = resolveSelection(pendingSelection);
+    if (resolved) {
+      selectedRoomRef.current = { id: pendingSelection.selectedId, name: pendingSelection.name, propertyRoomId: resolved.propertyRoomId };
+      setMobileSelectedRoom(resolved);
+    }
+    setPendingSelection(null);
+  }, [jobRooms, pendingSelection, resolveSelection]);
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
@@ -891,11 +944,35 @@ export default function FloorPlanPage({
         if (currentFloor) {
           // Save through the versioning state machine. Backend decides: create v1,
           // update in place, or fork a new version based on job ownership.
-          await apiPost(`/v1/floor-plans/${currentFloor.id}/versions`, {
+          //
+          // Round-2 follow-on #3: capture the POST response. On a Case-3 fork
+          // (sibling job already edited this floor), savedVersion.id !==
+          // currentFloor.id and the "active floor" in memory would stay pointed
+          // at the now-frozen row. Next autosave would fork AGAIN, and the
+          // FloorSelector roomCount chip would lag. Mirrors R12's cross-floor
+          // save fix — apply the same reconciliation here.
+          const savedVersion = await apiPost<FloorPlan>(`/v1/floor-plans/${currentFloor.id}/versions`, {
             job_id: jobId,
             canvas_data: canvasData,
           });
-          queryClient.invalidateQueries({ queryKey: ["floor-plan-history", currentFloor.id] });
+          if (savedVersion.id !== currentFloor.id) {
+            // Backend forked. Swap cache + active-floor to the live row so
+            // subsequent writes land on the new current version.
+            queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+              if (!old) return old;
+              const withoutOld = old.filter(
+                (fp) => fp.id !== currentFloor.id && fp.id !== savedVersion.id,
+              );
+              return [...withoutOld, savedVersion].sort(
+                (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
+              );
+            });
+            setActiveFloorId(savedVersion.id);
+            // The old floor_plan_id is now frozen history — purge its
+            // per-row caches so readers don't serve stale.
+            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", currentFloor.id] });
+          }
+          queryClient.invalidateQueries({ queryKey: ["floor-plan-history", savedVersion.id] });
           // W11: also invalidate the per-job floor-plans list. On Case-3
           // fork the backend creates a new row + flips is_current, but the
           // list feeding FloorSelector chips stays stale until staleTime
@@ -936,11 +1013,27 @@ export default function FloorPlanPage({
             if (lastCanvasRef.current && lastCanvasRef.current.floorId === null) {
               lastCanvasRef.current = { floorId: created.id, data: lastCanvasRef.current.data };
             }
-            await apiPost(`/v1/floor-plans/${created.id}/versions`, {
+            // Round-2 follow-on #3: capture return; on the (rare) fork path
+            // from a just-created row (shouldn't happen for v1, but defend
+            // in case a sibling raced the create), swap active to the fork.
+            const firstSaved = await apiPost<FloorPlan>(`/v1/floor-plans/${created.id}/versions`, {
               job_id: jobId,
               canvas_data: canvasData,
             });
-            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
+            if (firstSaved.id !== created.id) {
+              queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
+                if (!old) return [firstSaved];
+                const withoutOld = old.filter(
+                  (fp) => fp.id !== created.id && fp.id !== firstSaved.id,
+                );
+                return [...withoutOld, firstSaved].sort(
+                  (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
+                );
+              });
+              setActiveFloorId(firstSaved.id);
+              queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
+            }
+            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", firstSaved.id] });
             queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
             queryClient.invalidateQueries({ queryKey: ["jobs"] });
           } catch (err: unknown) {
@@ -1235,36 +1328,55 @@ export default function FloorPlanPage({
         canvas_data: mergedCanvas,
       });
 
+      // R12 (round 2): reconcile caches using savedVersion.id as truth, not
+      // targetFloor.id. On a Case 3 fork (backend sees the pinned target is
+      // frozen → forks a new row), savedVersion.id !== targetFloor.id, and
+      // anything we keyed on targetFloor.id now points at frozen history.
+      // Symptoms pre-fix: FloorSelector roomCount chip stale, the active
+      // floor id points at a frozen row so the next autosave forks again.
+      //
       // Prime both caches synchronously BEFORE switching floors so the
       // canvas hydrates from the merged data on first mount (no empty-state
       // flash while the background refetch runs):
-      //   1. floorPlans list → update the target row's canvas_data so
-      //      activeFloor.canvas_data already has the new room.
-      //   2. floor-plan-history → seed with the returned version so
-      //      `versions.find(is_current)` returns it immediately.
+      //   1. floorPlans list → replace the stale targetFloor row with
+      //      savedVersion (merged canvas) — handles both Case-2 same-id
+      //      update and Case-3 fork-with-new-id.
+      //   2. floor-plan-history (keyed by floor_number family, not row id)
+      //      — keep seeding against savedVersion.id so versions.find(is_current)
+      //      returns the truth on first paint. We also seed under the old
+      //      targetFloor.id key in case other queries still reference it.
+      const savedVersionWithCanvas = {
+        ...savedVersion,
+        canvas_data: mergedCanvas as unknown as Record<string, unknown>,
+      };
       queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
         if (!old) return old;
-        return old.map((fp) =>
-          fp.id === targetFloor.id
-            ? { ...fp, canvas_data: mergedCanvas as unknown as Record<string, unknown> }
-            : fp,
+        const withoutOld = old.filter(
+          (fp) => fp.id !== targetFloor.id && fp.id !== savedVersion.id,
+        );
+        return [...withoutOld, savedVersionWithCanvas].sort(
+          (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
         );
       });
-      queryClient.setQueryData<FloorPlan[]>(["floor-plan-history", targetFloor.id], (old) => {
+      queryClient.setQueryData<FloorPlan[]>(["floor-plan-history", savedVersion.id], (old) => {
         const next = (old ?? []).map((v) => v.id === savedVersion.id ? savedVersion : v);
         if (!next.some((v) => v.id === savedVersion.id)) next.unshift(savedVersion);
         return next;
       });
-      queryClient.invalidateQueries({ queryKey: ["floor-plan-history", targetFloor.id] });
+      queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+      queryClient.invalidateQueries({ queryKey: ["floor-plan-history", savedVersion.id] });
+      if (savedVersion.id !== targetFloor.id) {
+        // Purge the now-frozen-history cache key so readers don't serve stale.
+        queryClient.invalidateQueries({ queryKey: ["floor-plan-history", targetFloor.id] });
+      }
       queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
       setSaveStatus("saved");
       if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
       saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
 
-      // Switch active canvas to the target floor so the user sees their room
-      // land where they picked. Caches are primed above, so hydration shows
-      // the merged canvas immediately with no empty-state flash.
-      setActiveFloorId(targetFloor.id);
+      // Switch active canvas to the saved version (not targetFloor) so the
+      // selector points at the is_current row even when the backend forked.
+      setActiveFloorId(savedVersion.id);
 
       // Create the job_rooms row with metadata (floor_level locked to target).
       const widthFt = Math.round((pendingBounds.width / gridSize) * 10) / 10;

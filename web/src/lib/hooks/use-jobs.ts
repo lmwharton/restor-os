@@ -399,7 +399,12 @@ export function useCreateFloorPlan(jobId: string) {
 export function useUpdateFloorPlan(jobId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; canvas_data?: Record<string, unknown>; floor_name?: string }) =>
+    // R15a (round 2): `canvas_data` was dropped from FloorPlanUpdate in round-1 C1
+    // — content writes go through POST /floor-plans/{id}/versions (useSaveCanvas)
+    // exclusively. If a caller passed canvas_data here, the backend silently
+    // dropped it; the old hook signature lied about accepted fields. Accept only
+    // metadata fields now (floor_name and thumbnail_url are the mutable ones).
+    mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; floor_name?: string; thumbnail_url?: string }) =>
       apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`, data),
     onSuccess: (updatedFloorPlan) => {
       // Optimistic cache update — use the PATCH response directly instead of re-fetching.
@@ -451,13 +456,20 @@ export function useFloorPlanHistory(floorPlanId: string) {
   });
 }
 
-export function useSaveCanvas(floorPlanId: string) {
+export function useSaveCanvas(floorPlanId: string, jobId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { job_id: string; canvas_data: Record<string, unknown>; change_summary?: string }) =>
       apiPost<FloorPlan>(`/v1/floor-plans/${floorPlanId}/versions`, data),
+    // R15b (round 2): also invalidate the per-job floor-plans list and the job
+    // row so the FloorSelector roomCount chip and any job-scoped panels catch
+    // up immediately on a Case 3 fork. Previously callers manually invalidated
+    // these after every call; a future consumer would have forgotten and the
+    // cache would silently go stale.
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["floor-plan-history", floorPlanId] });
+      qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+      qc.invalidateQueries({ queryKey: ["jobs", jobId] });
     },
   });
 }

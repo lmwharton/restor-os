@@ -235,40 +235,62 @@ function MobileOpeningEditor({ type, isOpening, width, height, onWidthChange, on
               <span className="text-[9px] px-1.5 py-0.5 rounded bg-red-100 text-red-600 font-[family-name:var(--font-geist-mono)]">Missing Wall</span>
             )}
           </div>
-          <div className="flex gap-3 mb-3">
-            <div className="flex-1">
-              <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Width (ft)</p>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={widthStr}
-                placeholder={String(width)}
-                onFocus={(e) => e.target.select()}
-                onChange={(e) => {
-                  setWidthStr(e.target.value);
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v) && v > 0) onWidthChange(v);
-                }}
-                className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
-              />
-            </div>
-            <div className="flex-1">
-              <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Height (ft)</p>
-              <input
-                type="text"
-                inputMode="decimal"
-                value={heightStr}
-                placeholder={String(height)}
-                onFocus={(e) => e.target.select()}
-                onChange={(e) => {
-                  setHeightStr(e.target.value);
-                  const v = parseFloat(e.target.value);
-                  if (!isNaN(v) && v > 0) onHeightChange(v);
-                }}
-                className="w-full h-9 px-3 rounded-lg border border-outline-variant text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
-              />
-            </div>
-          </div>
+          {/* R17 (round 2): show inline error when the typed value is not a
+              positive number, instead of silently rejecting it. The prior
+              behavior made the field appear to freeze (numbers typed but
+              shape didn't resize) with no explanation. */}
+          {(() => {
+            const wNum = parseFloat(widthStr);
+            const hNum = parseFloat(heightStr);
+            const wInvalid = widthStr !== "" && (!Number.isFinite(wNum) || wNum <= 0);
+            const hInvalid = heightStr !== "" && (!Number.isFinite(hNum) || hNum <= 0);
+            return (
+              <div className="flex gap-3 mb-3">
+                <div className="flex-1">
+                  <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Width (ft)</p>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={widthStr}
+                    placeholder={String(width)}
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => {
+                      setWidthStr(e.target.value);
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v > 0) onWidthChange(v);
+                    }}
+                    className={`w-full h-9 px-3 rounded-lg border text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent ${
+                      wInvalid ? "border-red-400" : "border-outline-variant"
+                    }`}
+                  />
+                  {wInvalid && (
+                    <p className="mt-1 text-[10px] text-red-600">Must be greater than 0</p>
+                  )}
+                </div>
+                <div className="flex-1">
+                  <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant mb-1">Height (ft)</p>
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={heightStr}
+                    placeholder={String(height)}
+                    onFocus={(e) => e.target.select()}
+                    onChange={(e) => {
+                      setHeightStr(e.target.value);
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v > 0) onHeightChange(v);
+                    }}
+                    className={`w-full h-9 px-3 rounded-lg border text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent ${
+                      hInvalid ? "border-red-400" : "border-outline-variant"
+                    }`}
+                  />
+                  {hInvalid && (
+                    <p className="mt-1 text-[10px] text-red-600">Must be greater than 0</p>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
           <button
             type="button"
             onClick={onClose}

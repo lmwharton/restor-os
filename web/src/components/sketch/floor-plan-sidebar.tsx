@@ -71,38 +71,62 @@ function NumericInput({
     setDraft(String(n));
   };
 
+  // R17 (round 2) — live validation feedback. Previously this input silently
+  // reverted on blur when the value was out of range, so a user who typed
+  // "-5" would see their input vanish with no explanation. Show red border
+  // + explicit error text while the draft is out of range. Empty string is
+  // treated as neutral (user mid-edit / cleared field).
+  const parsedDraft = parseFloat(draft);
+  const draftInvalid = draft !== "" && (
+    !Number.isFinite(parsedDraft) || parsedDraft < min || parsedDraft > max
+  );
+  const errorMessage = draftInvalid
+    ? (Number.isFinite(parsedDraft) && parsedDraft < min
+        ? `Must be at least ${min}`
+        : Number.isFinite(parsedDraft) && parsedDraft > max
+          ? `Must be no more than ${max}`
+          : "Enter a valid number")
+    : null;
+
   return (
-    <div className="relative">
-      <input
-        type="text"
-        inputMode="decimal"
-        value={draft}
-        onFocus={(e) => { focusedRef.current = true; e.target.select(); }}
-        onBlur={() => { focusedRef.current = false; commitOnExit(); }}
-        onChange={(e) => {
-          const next = e.target.value;
-          setDraft(next);
-          // Live auto-commit: debounced so fast typing doesn't fire resize
-          // on every keystroke, but the user doesn't need to blur to see
-          // the change — match the "it just happens" feel of the old
-          // immediate-commit implementation without the anti-pattern of
-          // rejecting mid-keystroke clears.
-          if (debounceMs > 0) {
-            if (timerRef.current) clearTimeout(timerRef.current);
-            timerRef.current = setTimeout(() => tryCommit(next), debounceMs);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          if (e.key === "Escape") {
-            if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
-            setDraft(String(value));
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-full h-7 px-2 pr-5 rounded border border-[#eae6e1] text-[12px] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent"
-      />
-      <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-[#8a847e] font-[family-name:var(--font-geist-mono)]">{suffix}</span>
+    <div>
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={draft}
+          onFocus={(e) => { focusedRef.current = true; e.target.select(); }}
+          onBlur={() => { focusedRef.current = false; commitOnExit(); }}
+          onChange={(e) => {
+            const next = e.target.value;
+            setDraft(next);
+            // Live auto-commit: debounced so fast typing doesn't fire resize
+            // on every keystroke, but the user doesn't need to blur to see
+            // the change — match the "it just happens" feel of the old
+            // immediate-commit implementation without the anti-pattern of
+            // rejecting mid-keystroke clears.
+            if (debounceMs > 0) {
+              if (timerRef.current) clearTimeout(timerRef.current);
+              timerRef.current = setTimeout(() => tryCommit(next), debounceMs);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            if (e.key === "Escape") {
+              if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null; }
+              setDraft(String(value));
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          className={`w-full h-7 px-2 pr-5 rounded border text-[12px] text-[#1a1a1a] font-[family-name:var(--font-geist-mono)] outline-none focus:border-brand-accent ${
+            draftInvalid ? "border-red-400" : "border-[#eae6e1]"
+          }`}
+        />
+        <span className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[9px] text-[#8a847e] font-[family-name:var(--font-geist-mono)]">{suffix}</span>
+      </div>
+      {errorMessage && (
+        <p className="mt-1 text-[10px] text-red-600">{errorMessage}</p>
+      )}
     </div>
   );
 }
