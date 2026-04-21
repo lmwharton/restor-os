@@ -1122,6 +1122,98 @@ Spec 01 set the bar: 489 backend tests + 29 frontend tests. This spec targets si
 - `test_rls_tenant_isolation_walls` — cross-company wall access blocked
 - `test_rls_tenant_isolation_versions` — cross-company version access blocked
 
+**Phase 1 — PR10 review hardening (C1, C2):**
+
+C1 — archive-job guard covers every write path (walls, rooms, floor plan PATCH, cleanup):
+- `test_collected_job_blocks_wall_create` — POST /rooms/{id}/walls on collected job → 403 JOB_ARCHIVED
+- `test_collected_job_blocks_wall_update_delete` — PATCH + DELETE wall on collected job → 403
+- `test_collected_job_blocks_opening_crud` — opening POST/PATCH/DELETE on collected job → 403
+- `test_collected_job_blocks_room_crud` — room POST/PATCH/DELETE on collected job → 403
+- `test_submitted_and_complete_stay_mutable` — walls + rooms still editable on `submitted` / `complete` (archive gate narrowed to `collected` only)
+- `test_floor_plan_update_drops_canvas_data` — PATCH /properties/{id}/floor-plans/{id} with `canvas_data` in body is silently dropped (schema no longer accepts it; all content writes route through POST /versions)
+- `test_cleanup_floor_plan_with_collected_job_id_rejects` — cleanup with `job_id` of a collected job → 403
+
+C2 — concurrent-edit 409 path + partial unique indexes (migration `a1f2b9c4e5d6`):
+- `test_create_version_concurrent_edit_returns_409` — INSERT raising APIError code=23505 → 409 CONCURRENT_EDIT (implemented)
+- `test_create_version_non_unique_apierror_returns_500` — other APIError codes (connection errors etc.) still surface as 500 DB_ERROR, proving we didn't over-catch (implemented)
+- `test_unique_index_rejects_duplicate_is_current` — integration: two rows with same (property_id, floor_number) and is_current=true fail at DB layer
+- `test_unique_index_rejects_duplicate_version_number` — integration: two rows with same (property_id, floor_number, version_number) fail at DB layer
+
+C3 — Case 2 is_current TOCTOU guard:
+- `test_case2_update_matches_zero_rows_falls_through_to_case3` — when the Case 2 UPDATE filters `.eq("is_current", True)` and matches zero rows (row was frozen mid-flight by a sibling fork), save_canvas falls through to Case 3 and `_create_version` is invoked instead of silently mutating the frozen row (implemented)
+- `test_case2_update_matches_row_returns_in_place` — happy path: when is_current is still true at write time, Case 2 still updates in place (no regression on the common autosave path)
+
+C4 — atomic `save_floor_plan_version` RPC (flip + insert + pin in one transaction):
+- `test_rpc_success_returns_new_row` — _create_version calls the RPC with all 8 params and returns the JSONB row unchanged (implemented)
+- `test_rpc_list_wrapped_response_unwrapped` — supabase-py list-wrapping of scalar JSONB is normalized to a plain dict (implemented)
+- `test_rpc_empty_response_raises_500` — RPC returning null/empty surfaces as 500 DB_ERROR instead of silently returning None (implemented)
+- `test_rpc_unique_violation_raises_409_concurrent_edit` — RPC raising APIError code=23505 (partial unique index violation from a concurrent save) surfaces as 409 CONCURRENT_EDIT (implemented, carries the C2 behavior through the new RPC path)
+- `test_rpc_non_unique_apierror_raises_500_db_error` — other RPC failures (connection, permission) still surface as 500 DB_ERROR — we only special-case 23505 (implemented)
+- `test_rpc_rolls_back_on_pin_failure` — integration: simulate a pin-step failure inside the RPC; assert the insert also rolled back (no orphan version row)
+
+C6 — linked recon does NOT inherit mitigation's floor_plan_id:
+- `test_linked_recon_rooms_start_with_null_floor_plan_id` — after creating a recon linked to a mitigation, the recon's copied rooms have `floor_plan_id IS NULL`. Recon's first save creates a new version and links via the normal flow; no dangling references to mitigation's v1.
+- `test_copy_fields_excludes_floor_plan_id` — static check that `floor_plan_id` is not in the `_copy_rooms_from_linked_job::COPY_FIELDS` list (guardrail against future accidental re-inclusion).
+
+P2.1 — cleanup_floor_plan archive guard is unconditional:
+- `test_schema_requires_job_id` — `SketchCleanupRequest` Pydantic-validates that `job_id` is present (422 if omitted) (implemented)
+- `test_schema_accepts_valid_request` — happy path: schema accepts a request with both `job_id` and `canvas_data` (implemented)
+
+P2.2 — `save_floor_plan_version` RPC rejects NULL params:
+- `test_rpc_rejects_null_job_id` — integration: calling the RPC with `p_job_id=NULL` raises Postgres error `22023` (null_value_not_allowed) with a clear message
+- `test_rpc_rejects_null_company_id` — integration: same for `p_company_id=NULL`
+- `test_rpc_rejects_null_property_id` — integration: same for `p_property_id=NULL`
+
+**Phase 1 — PR10 warning hardening (W1–W11):**
+
+W1 — save_canvas verifies floor_plan_id belongs to job's property:
+- `test_rejects_floor_plan_from_foreign_property` — foreign `floor_plan_id` → 400 `PROPERTY_MISMATCH` (implemented)
+- `test_allows_save_when_property_ids_match` — happy path still works (implemented)
+- `test_allows_save_when_job_property_id_is_null` — legacy jobs without property_id bypass the check (implemented)
+
+W2 — wall `shared_with_room_id` must be same-company:
+- `test_validator_rejects_foreign_company_room` — cross-tenant shared room → 400 `INVALID_SHARED_ROOM` (implemented)
+- `test_validator_accepts_same_company_room` — happy path (implemented)
+- `test_validator_noops_on_none` — null case skips the query entirely (implemented)
+
+W3 — PATCH/DELETE via job require `property_id`:
+- `test_patch_rejects_job_with_null_property_id` — 400 `JOB_NO_PROPERTY` (implemented)
+- `test_delete_rejects_job_with_null_property_id` — same (implemented)
+
+W4 — `delete_floor_plan` is single-row:
+- `test_refuses_when_other_versions_exist` — delete one of many → 409 `VERSIONS_EXIST` (implemented)
+- `test_deletes_when_no_siblings_exist` — single-version floor can be deleted (implemented)
+
+W5 — `update_floor_plan` rejects any edit on frozen rows:
+- `test_rejects_floor_name_rename_on_frozen_row` — 403 `VERSION_FROZEN` (implemented)
+- `test_rejects_thumbnail_update_on_frozen_row` — same (implemented)
+
+W6 — canvas_data 500 KB cap:
+- `test_save_rejects_oversized_canvas` — 600 KB payload → Pydantic 422 (implemented)
+- `test_save_accepts_reasonable_canvas` — realistic 100-wall sketch accepted (implemented)
+- `test_cleanup_rejects_oversized_canvas` — same cap on cleanup (implemented)
+- `test_cleanup_accepts_none_canvas` — None still OK (implemented)
+
+W7 — `_copy_rooms_from_linked_job` distinguishes empty source from crash:
+- `test_fetch_failure_raises_500` — APIError on fetch → 500 `LINKED_ROOMS_FETCH_FAILED` (implemented)
+- `test_copy_failure_raises_500` — APIError on insert → 500 `LINKED_ROOMS_COPY_FAILED` (implemented)
+- `test_empty_source_returns_zero` — legit "no rooms to copy" → returns 0 (implemented)
+
+W8 — RoomDimensionInputs no longer loses drafts (frontend, manual verify):
+- Swipe-dismiss mid-typing → edit survives via unmount flush
+- Server refetch → no remount; drafts preserved when input is focused
+
+W9 — cutouts refuse L/T/U concavity (frontend, manual verify):
+- Body drag rejects positions where any corner fails `pointInPolygon(hostPoints)`
+- Corner-handle drag predicts the resulting rect and rejects if any corner escapes
+
+W10 — rect room drag doesn't float off on zero-delta snap (frontend, manual verify):
+- Unconditional `e.target.x(room.x); e.target.y(room.y)` reset keeps Konva attr in sync with committed state
+- Bonus: magnetic snap now edge-to-edge only + post-snap overlap check; rect rooms cannot be dropped on top of each other (dragBoundFunc guard)
+
+W11 — `["floor-plans", jobId]` invalidated on save:
+- Manual verify: add/remove a room on a fork path; FloorSelector roomCount chip updates within a second (not after staleTime expires)
+
 **Phase 2:**
 - `test_pin_color_boundaries` — green/amber/red at dry_standard boundaries
 - `test_pin_color_at_exact_threshold` — reading = dry_standard returns green
@@ -1280,7 +1372,71 @@ environment before declaring Phase 1 feature-complete. Automated tests
 
 **Known-limitation verification**
 - Archived preview thumbnail can show an `is_current` fallback for legacy rows without `created_by_job_id` — confirmed cosmetic, floor-plan editor itself always shows the correct pin.
-- `_create_version` race untested under concurrency (single-user editing doesn't trigger it) — tracked for a hardening pass.
+- ~~`_create_version` race untested under concurrency~~ — addressed in C2: partial unique indexes on (property_id, floor_number) WHERE is_current=true and on (property_id, floor_number, version_number), plus APIError code=23505 → 409 CONCURRENT_EDIT retry path. Unit-tested in `TestCreateVersionConcurrentEdit`.
+
+**PR10 critical fixes (post-review hardening)**
+
+C1 — archive-job guard:
+- Narrowed archive set from `{complete, submitted, collected}` → `{collected}` only. Mitigation techs keep editing after status = `complete`; adjuster resubmits after `submitted` still allowed. Verified in browser: flipping a mitigation job to `submitted` kept the floor plan editable; flipping to `collected` switched to read-only and the backend rejected wall + room edits with 403 JOB_ARCHIVED.
+- Wall + opening CRUD routes (`POST/PATCH/DELETE /rooms/{id}/walls[...]`) now call `ensure_job_mutable_for_room` before mutating — previously skipped the archive check entirely.
+- Room CRUD (`POST/PATCH/DELETE /jobs/{id}/rooms[...]`) calls `ensure_job_mutable`.
+- `FloorPlanUpdate` schema no longer accepts `canvas_data` — the PATCH bypass path is closed; all canvas writes go through `POST /floor-plans/{id}/versions` (save_canvas).
+- `cleanup_floor_plan` accepts optional `job_id` and runs `ensure_job_mutable` when present.
+- Frontend `isJobArchived` helper (`web/src/lib/job-status.ts`) mirrors the backend constant so UI read-only state tracks the same status set.
+
+C2 — `_create_version` race (partial unique indexes + 409 retry):
+- Migration `a1f2b9c4e5d6_spec01h_floor_plans_unique_indexes.py` adds `idx_floor_plans_current_unique` (partial on `is_current=true`) and `idx_floor_plans_version_unique`. DB now rejects the losing writer of a concurrent save with Postgres error 23505.
+- `_create_version` catches `APIError.code == "23505"` and raises `AppException(409, "CONCURRENT_EDIT")` so the client retries. Retry re-enters save_canvas, sees its pinned row is no longer `is_current`, and takes Case 3 (fork) cleanly.
+- Not end-to-end race-tested against live Postgres (would require parallel client harness). Unit-tested at service layer: `TestCreateVersionConcurrentEdit::test_unique_violation_raises_409_concurrent_edit` and `::test_non_unique_apierror_still_raises_500_db_error` both pass.
+
+C3 — Case 2 `is_current` TOCTOU (atomic UPDATE filter + fallthrough):
+- Case 2's in-memory `pinned_still_current` check was racy: between that read and the UPDATE, a sibling job's Case 3 fork could flip `is_current=false` on the target row, silently writing into frozen history. The Case 2 UPDATE now includes `.eq("is_current", True)` so Postgres enforces the check atomically.
+- When the UPDATE matches zero rows (another writer won the race), the function falls through to Case 3 and forks a new version on top of whoever just became current. No data written to the frozen row.
+- Unit-tested at service layer: `TestCase2IsCurrentTOCTOU::test_case2_update_matches_zero_rows_falls_through_to_case3` uses a scripted fake client to simulate the TOCTOU race and asserts `_create_version` is invoked on fallthrough.
+
+C4 — atomic `save_floor_plan_version` RPC:
+- Migration `b2c3d4e5f6a7_spec01h_save_floor_plan_version_rpc.py` creates a SECURITY DEFINER plpgsql function that runs flip + insert + pin as one transaction. Tenant isolation enforced explicitly inside the function (`company_id` check on the jobs row) since SECURITY DEFINER bypasses RLS.
+- `_create_version` rewritten to call `client.rpc("save_floor_plan_version", ...)`; the three old separate writes (flip + insert + jobs update) are gone at the application layer. Any failure inside the RPC rolls back all three atomically — no more orphan versions on transient network errors.
+- All three redundant `_pin_job_to_version` call sites removed from `save_canvas` (Case 1, Case 3) and `rollback_version`. The helper function itself is also removed — RPC owns the pin now.
+- C2's 23505 → 409 CONCURRENT_EDIT handling preserved: partial unique indexes on floor_plans still fire inside the RPC if a concurrent writer wins the race; caller converts to 409 and the retry takes Case 3 cleanly.
+- Unit-tested at service layer: `TestCreateVersionRPCAtomicity` (3 tests) + `TestCreateVersionConcurrentEdit` rewritten against the RPC path (2 tests). All passing.
+
+C5 — `e1a7c9b30201` downgrade now runnable (SQL reordered + RLS/trigger restored):
+- Original downgrade body dropped `floor_plan_versions.property_id` and `.floor_number` in its step 6, then referenced those same columns in an UPDATE on step 7 — `alembic downgrade -1` crashed with `column does not exist` halfway through, leaving the DB half-migrated.
+- Rewritten downgrade (9 steps, D1–D9) runs the `UPDATE job_rooms` repointing (D7) BEFORE the container-column drops (D8). All column references resolve correctly.
+- Recreated container table now re-enables `ALTER TABLE floor_plans ENABLE ROW LEVEL SECURITY`, recreates the four `floor_plans_{select,insert,update,delete}` policies (original `ca59c5bf87c9` naming), and re-installs the `trg_floor_plans_updated_at` trigger. Rollback no longer regresses tenant isolation or timestamp maintenance.
+- Verified structurally: `UPDATE job_rooms` appears at position ~6719 in the SQL, `DROP COLUMN property_id` at ~7362 → drops run after all reads. All 4 policies + trigger + RLS enable directive present. Parse check passes.
+- Not executed end-to-end against a dev DB (dev is sitting on phase2's moisture migration, which doesn't exist on this branch — structural correctness verified via SQL inspection + Python AST check). The migration runs at real deploy or snapshot-restore time.
+
+C6 — recon rooms no longer inherit mitigation's floor_plan_id:
+- `_copy_rooms_from_linked_job::COPY_FIELDS` (in `backend/api/jobs/service.py`) previously included `"floor_plan_id"`, so every recon room started pinned to mitigation's v1. When recon's first save_canvas forked v2, the JOB pin moved but the ROOM pins didn't — recon's rooms referenced a frozen version their own job didn't own.
+- Fix: remove `"floor_plan_id"` from `COPY_FIELDS`. Recon rooms start with `floor_plan_id IS NULL`. Recon's first save triggers the normal versioning flow (now atomic via C4's RPC) which links the rooms to the correct version.
+- Secondary benefit: eliminates the `ON DELETE SET NULL` footgun where deleting mitigation's v1 would silently null out recon's rooms.
+- Guardrail: the comment inside `COPY_FIELDS` explicitly names the exclusion and the reason, so future edits don't accidentally re-include it.
+
+P2.1 — cleanup archive guard is unconditional (closes partial C1 bypass):
+- `SketchCleanupRequest.job_id` changed from `UUID | None` → `UUID` (required). Pydantic now 422s any call without a job_id. Router's empty default `SketchCleanupRequest()` was removed — the body is now a required param.
+- `cleanup_floor_plan` service dropped the `if job_id is not None:` conditional — always calls `ensure_job_mutable` before mutating canvas_data.
+- Frontend `useCleanupSketch` hook updated to take `{ jobId, canvasData }` so future callers get the correct signature (no consumers today).
+- Unit-tested: `TestSketchCleanupRequiresJobId` (2 tests) both passing.
+
+P2.2 — RPC explicit NULL param guards:
+- `save_floor_plan_version` now raises `RAISE EXCEPTION USING ERRCODE = '22023'` (null_value_not_allowed) when `p_job_id`, `p_company_id`, or `p_property_id` are NULL. Previously a NULL param would silently hit the tenant check's `NOT FOUND` path and surface as a generic "Job not found" — confusing for debugging malformed callers.
+- Migration file edited in place (still unapplied: dev is on phase2's revision). No new migration needed.
+
+**PR10 warnings (W1–W11)**
+
+- **W1** — `save_canvas` selects `property_id` on the job row; rejects 400 `PROPERTY_MISMATCH` if the passed `floor_plan_id` lives on a foreign property. 3 unit tests.
+- **W2** — `walls/service.py::_validate_shared_with_room` enforces same-company on `shared_with_room_id` before INSERT. 3 unit tests.
+- **W3** — PATCH and DELETE `/jobs/{id}/floor-plans/{fp_id}` reject with 400 `JOB_NO_PROPERTY` when `job.property_id IS NULL`. No more self-referential "read property_id from the row being validated" fallback. 2 unit tests.
+- **W4** — `delete_floor_plan` is now single-row. Refuses with 409 `VERSIONS_EXIST` when other versions remain on the floor; whole-floor deletes go through property-level cascade. 2 unit tests.
+- **W5** — `update_floor_plan` rejects every field (not just `canvas_data`/`floor_number`) on a non-current row. Keeps version audit trail intact. 2 unit tests.
+- **W6** — canvas_data payloads capped at 500 KB via Pydantic validator on `FloorPlanCreate`, `FloorPlanSaveRequest`, `SketchCleanupRequest`. 4 unit tests.
+- **W7** — `_copy_rooms_from_linked_job` re-raises `APIError` as 500 `LINKED_ROOMS_FETCH_FAILED` / `LINKED_ROOMS_COPY_FAILED` instead of silently returning 0. Callers can tell empty source from broken copy. 3 unit tests.
+- **W8** — `RoomDimensionInputs` flushes pending valid drafts on unmount; remount key reduced to `room.id` only; server refetch re-syncs via focus-gated `useEffect`. Frontend iOS race, verified manually.
+- **W9** — cutout drag + corner-resize rejects proposed positions where any cutout corner fails `pointInPolygon(hostPoints)`. L/T/U rooms no longer let cutouts drift into the concavity. Frontend, verified manually.
+- **W10** — rect room drag unconditionally resets Konva attr to `room.x/room.y` after drag so zero-delta snaps don't leave the Group floating off state. Plus: `magneticRoomSnap` edge-to-edge only + post-snap overlap check + room dragBoundFunc — rect rooms physically cannot be dropped on top of each other. Frontend, verified manually.
+- **W11** — save paths now invalidate `["floor-plans", jobId]` alongside `floor-plan-history` + `jobs`. FloorSelector roomCount chip updates immediately on fork instead of waiting for staleTime. Frontend, verified manually.
 
 ---
 
