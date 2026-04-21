@@ -14,6 +14,7 @@ from api.rooms.service import calculate_wall_sf
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+from api.shared.guards import ensure_job_mutable_for_room
 from api.walls.schemas import (
     WallOpeningCreate,
     WallOpeningUpdate,
@@ -49,6 +50,7 @@ async def create_wall(
 ) -> dict:
     """Create a wall segment for a room."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     row = _serialize_decimals(
         {
@@ -134,6 +136,7 @@ async def update_wall(
 ) -> dict:
     """Update a wall segment."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     # Verify wall exists
     existing = await (
@@ -211,6 +214,7 @@ async def delete_wall(
 ) -> None:
     """Delete a wall segment. CASCADE handles openings."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     existing = await (
         client.table("wall_segments")
@@ -255,6 +259,7 @@ async def create_opening(
 ) -> dict:
     """Create an opening (door/window/missing_wall) on a wall."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     row = _serialize_decimals(
         {
@@ -307,6 +312,7 @@ async def update_opening(
 ) -> dict:
     """Update a wall opening."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     existing = await (
         client.table("wall_openings")
@@ -373,6 +379,7 @@ async def delete_opening(
 ) -> None:
     """Delete a wall opening."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable_for_room(client, room_id, company_id)
 
     existing = await (
         client.table("wall_openings")

@@ -193,16 +193,24 @@ async def get_valid_room_standalone(
 
     Unlike get_valid_room, this does NOT require job_id in the URL path.
     Used by wall endpoints where the route is /rooms/{room_id}/walls.
-    Returns the room row dict.
+
+    Embeds the parent job (id, company_id, deleted_at) via inner join so
+    the room's ownership is validated transitively through jobs.company_id
+    — matches get_valid_room's shape. The archive/status check itself is
+    deferred to the service layer (via guards.ensure_job_mutable_for_room)
+    because GET reads on archived-job rooms must remain allowed for audit.
+    Returns the flat room dict (embedded jobs key stripped).
     """
     token = _get_token(request)
     client = await get_authenticated_client(token)
 
     result = await (
         client.table("job_rooms")
-        .select("*")
+        .select("*, jobs!inner(id, company_id, status, deleted_at)")
         .eq("id", str(room_id))
         .eq("company_id", str(ctx.company_id))
+        .eq("jobs.company_id", str(ctx.company_id))
+        .is_("jobs.deleted_at", "null")
         .single()
         .execute()
     )
@@ -212,7 +220,8 @@ async def get_valid_room_standalone(
             detail="Room not found",
             error_code="ROOM_NOT_FOUND",
         )
-    return result.data
+    room = {k: v for k, v in result.data.items() if k != "jobs"}
+    return room
 
 
 async def get_valid_wall(

@@ -16,6 +16,7 @@ from api.shared.constants import CEILING_MULTIPLIERS, ROOM_TYPE_MATERIAL_DEFAULT
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+from api.shared.guards import ensure_job_mutable
 
 VALID_WATER_CATEGORIES = {"1", "2", "3"}
 VALID_WATER_CLASSES = {"1", "2", "3", "4"}
@@ -161,6 +162,7 @@ async def create_room(
     _validate_water_fields(body.water_category, body.water_class)
 
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
     # If floor_plan_id is provided, verify it exists and belongs to this company
     if body.floor_plan_id:
@@ -302,6 +304,7 @@ async def update_room(
 ) -> dict:
     """Update a room. Re-calculates square_footage if dimensions change."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
     # Get existing room
     existing = await (
@@ -424,6 +427,7 @@ async def delete_room(
 ) -> None:
     """Hard delete a room. Photos get room_id=NULL, CASCADE handles moisture readings."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
     # Verify room exists
     existing = await (
