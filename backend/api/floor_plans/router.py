@@ -20,9 +20,11 @@ Sketch cleanup:
 - POST /floor-plans/{floor_plan_id}/edit — AI edit (Spec 02 stub)
 """
 
+import logging
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Path, Request
+from postgrest.exceptions import APIError
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
@@ -55,6 +57,11 @@ from api.shared.dependencies import (
     get_valid_job,
     get_valid_property,
 )
+from api.shared.database import get_authenticated_client
+from api.shared.exceptions import AppException
+from api.shared.guards import raise_if_archived
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["floor-plans"])
 
@@ -185,36 +192,70 @@ async def create_floor_plan_by_job_endpoint(
     `floor_plan_id` to it so the job's first content save updates v1 in place
     (Case 2 in save_canvas) instead of forking v2.
     """
+    # R6 (round 2): archive-job guard — collected jobs cannot create floor
+    # plans. get_valid_job only rejects soft-deleted rows; the archived set
+    # must be checked explicitly. Matches the guard already wired into
+    # walls, rooms, cleanup, and update_floor_plan's content path in C1.
+    raise_if_archived(job)
+
     token = _get_token(request)
     property_id = job.get("property_id")
-
-    from api.shared.database import get_authenticated_client
-
     client = await get_authenticated_client(token)
 
-    # Auto-create property if job doesn't have one (backward compat)
+    # R9 (round 2): atomic auto-link via the ensure_job_property RPC
+    # (migration e9f0a1b2c3d4). The previous read→INSERT→UPDATE sequence
+    # raced under concurrent first-saves (mobile double-tap, two tabs),
+    # producing orphan properties and mis-pinned jobs. The RPC takes
+    # SELECT ... FOR UPDATE on the jobs row so concurrent callers
+    # serialize, idempotently returns an already-set property_id on retry,
+    # and deduplicates to an existing same-address property when one
+    # exists on the caller's company.
     if not property_id:
-        prop_result = await (
-            client.table("properties")
-            .insert(
-                {
-                    "company_id": str(ctx.company_id),
-                    "address_line1": job.get("address_line1", ""),
-                    "city": job.get("city", ""),
-                    "state": job.get("state", ""),
-                    "zip": job.get("zip", ""),
-                }
+        # Round-2 follow-on #5: the `ensure_job_property` RPC's FOR UPDATE
+        # serializes concurrent callers on the SAME job. But two DIFFERENT
+        # jobs at the same address can both race past their respective
+        # FOR UPDATE locks and both try to INSERT — the partial unique
+        # address index (R9) rejects the loser with 23505. On retry the
+        # loser's SELECT finds the winner's row and reuses it (fast path).
+        # Without this retry the loser surfaces as a bare 500; with it, the
+        # caller's request just takes a few ms longer.
+        async def _invoke_ensure():
+            r = await client.rpc(
+                "ensure_job_property",
+                {"p_job_id": str(job["id"])},
+            ).execute()
+            val = r.data
+            if isinstance(val, list):
+                val = val[0] if val else None
+            return val
+
+        try:
+            property_id = await _invoke_ensure()
+        except APIError as e:
+            if getattr(e, "code", None) == "23505":
+                # Same-address race lost — retry once. The winner's row is
+                # now visible; the helper's SELECT will return it.
+                try:
+                    property_id = await _invoke_ensure()
+                except APIError as retry_err:
+                    # Two-back-to-back 23505s means concurrent writers are
+                    # in a pathological loop. Surface as 409 so client retries.
+                    if getattr(retry_err, "code", None) == "23505":
+                        raise AppException(
+                            status_code=409,
+                            detail="Concurrent property create — retry",
+                            error_code="CONCURRENT_EDIT",
+                        )
+                    raise
+            else:
+                raise
+        if not property_id:
+            raise AppException(
+                status_code=500,
+                detail="ensure_job_property returned no property id",
+                error_code="DB_ERROR",
             )
-            .execute()
-        )
-        property_id = prop_result.data[0]["id"]
-        # Link job to the new property
-        await (
-            client.table("jobs")
-            .update({"property_id": property_id})
-            .eq("id", str(job["id"]))
-            .execute()
-        )
+        # Imports already available at module level; no more inline imports below.
 
     floor_plan = await create_floor_plan(
         token=token,
@@ -230,16 +271,15 @@ async def create_floor_plan_by_job_endpoint(
     # Non-fatal if it fails: the floor plan exists with created_by_job_id stamped,
     # so a follow-up save would still hit Case 2 once the pin lands. We log + return
     # so the caller doesn't 500 on a pin failure.
-    import logging
-
-    from postgrest.exceptions import APIError
-
-    logger = logging.getLogger(__name__)
+    # Round-2 follow-on #7: scope the pin UPDATE by company_id too — matches the
+    # belt-and-suspenders pattern of service.py's update_floor_plan path and
+    # removes the silent trust of the embedded get_valid_job dep.
     try:
         await (
             client.table("jobs")
             .update({"floor_plan_id": floor_plan["id"]})
             .eq("id", str(job["id"]))
+            .eq("company_id", str(ctx.company_id))
             .execute()
         )
     except APIError as e:
@@ -265,6 +305,10 @@ async def update_floor_plan_by_job_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Update a floor plan via job — resolves property_id from job."""
+    # R6 (round 2): archive-job guard — mirrors the POST endpoint. A
+    # collected job must not rename its floor plan (or any other field).
+    raise_if_archived(job)
+
     token = _get_token(request)
     # W3: every job MUST have a property_id — property is the parent entity
     # for all floor-plan data. The previous fallback read property_id from
@@ -273,8 +317,6 @@ async def update_floor_plan_by_job_endpoint(
     # first POST /jobs/{id}/floor-plans which auto-creates + links.
     property_id = job.get("property_id")
     if not property_id:
-        from api.shared.exceptions import AppException
-
         raise AppException(
             status_code=400,
             detail=(
@@ -301,13 +343,15 @@ async def delete_floor_plan_by_job_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ):
     """Delete a floor plan via job — resolves property_id from job."""
+    # R6 (round 2): archive-job guard — a collected job cannot delete its
+    # floor plan. Mirrors the POST and PATCH companions above.
+    raise_if_archived(job)
+
     token = _get_token(request)
     # W3: mirror the PATCH endpoint. A job without property_id shouldn't
     # be deleting floor plans via the self-declared-owner fallback.
     property_id = job.get("property_id")
     if not property_id:
-        from api.shared.exceptions import AppException
-
         raise AppException(
             status_code=400,
             detail="Job has no property linked. Cannot delete floor plan via this job.",

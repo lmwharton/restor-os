@@ -1,25 +1,36 @@
-import json
 from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
+from api.shared.validators import validate_json_size
 
-# W6: cap canvas_data payload size to prevent 10MB+ JSON blobs from
-# reaching the DB. 500KB is plenty for realistic sketches (tens of
-# thousands of walls + openings) and keeps storage + logging sane.
+
+# Two-layer canvas_data size cap. The request boundary (Pydantic validator)
+# enforces what the CLIENT is allowed to send; the save path separately
+# enforces what lands in the DB row — which includes the R19 relational
+# snapshot that the service enriches after validation.
+#
+# - W6 (round 1): cap incoming canvas_data at 500KB to prevent 10MB+ JSON
+#   blobs from ever reaching server-side code. 500KB is plenty for a real
+#   floor plan (tens of thousands of walls + openings).
+# - R19 follow-on F7 (round 2): save_canvas enriches canvas_data with a
+#   server-side ``_relational_snapshot`` before insert. On a complex floor
+#   plan the snapshot adds ~5-20KB; worst case ~100KB. Without a
+#   post-enrichment cap, a 497KB incoming canvas + snapshot would silently
+#   exceed the 500KB contract. MAX_STORED_CANVAS_DATA_BYTES is the DB-row
+#   ceiling applied after enrichment. If the enriched payload exceeds it,
+#   save raises 413 CANVAS_TOO_LARGE so "canvas_data ≤ 500KB incoming /
+#   ≤ 600KB stored" stays an honest invariant.
+# R11 (round 2) moved the helper into api/shared/validators.py so the
+# same size-cap rule can be applied to rooms/schemas.py JSONB fields.
 _MAX_CANVAS_DATA_BYTES = 500_000
+MAX_INCOMING_CANVAS_DATA_BYTES = _MAX_CANVAS_DATA_BYTES  # alias for clarity
+MAX_STORED_CANVAS_DATA_BYTES = 600_000
 
 
 def _validate_canvas_data_size(v: dict | None) -> dict | None:
-    if v is None:
-        return v
-    size = len(json.dumps(v, separators=(",", ":")))
-    if size > _MAX_CANVAS_DATA_BYTES:
-        raise ValueError(
-            f"canvas_data too large: {size} bytes (max {_MAX_CANVAS_DATA_BYTES})"
-        )
-    return v
+    return validate_json_size(v, max_bytes=_MAX_CANVAS_DATA_BYTES, field_name="canvas_data")
 
 
 class FloorPlanCreate(BaseModel):

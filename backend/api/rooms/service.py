@@ -5,6 +5,7 @@ Hard deletes (no deleted_at column on job_rooms).
 On delete, photos get room_id=NULL (CASCADE handles moisture readings + wall_segments).
 """
 
+import logging
 import math
 from decimal import Decimal
 from uuid import UUID
@@ -17,6 +18,8 @@ from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
 from api.shared.guards import ensure_job_mutable
+
+logger = logging.getLogger(__name__)
 
 VALID_WATER_CATEGORIES = {"1", "2", "3"}
 VALID_WATER_CLASSES = {"1", "2", "3", "4"}
@@ -394,6 +397,20 @@ async def update_room(
         )
 
     room = result.data[0]
+
+    # R16 (round 2): recompute cached wall_square_footage if any formula
+    # input changed at the room level. Closes the last drift gap that the
+    # per-wall/opening CRUD recalc (walls/service.py) doesn't cover —
+    # the stored SF is keyed to the row's current height/ceiling/override
+    # regardless of which endpoint mutated them.
+    # Lazy import: walls.service imports calculate_wall_sf from this module,
+    # so a top-level import would be circular.
+    wall_sf_inputs = {"height_ft", "ceiling_type", "custom_wall_sf"}
+    if wall_sf_inputs.intersection(updates):
+        from api.walls.service import _recalculate_room_wall_sf
+        fresh_sf = await _recalculate_room_wall_sf(client, room_id, company_id)
+        if fresh_sf is not None:
+            room["wall_square_footage"] = fresh_sf
 
     # Fetch reading stats for this room
     readings = await (

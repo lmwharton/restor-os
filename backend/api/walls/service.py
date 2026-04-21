@@ -452,10 +452,16 @@ async def _recalculate_room_wall_sf(
     client,
     room_id: UUID,
     company_id: UUID,
-) -> None:
+) -> float | None:
     """Recalculate and store wall_square_footage on the parent room.
 
-    Called after every wall/opening mutation to keep the cached value in sync.
+    Called after every wall/opening mutation (and, via R16, after any
+    ``update_room`` change that touches height_ft / ceiling_type /
+    custom_wall_sf — the three room-level inputs that feed the formula).
+
+    Returns the freshly computed value so callers that already hold the
+    room response dict can stamp the new number without an extra round-trip.
+    Returns ``None`` if the room wasn't found (caller decides how to react).
     """
     # Fetch room for height + ceiling type + custom override
     room_result = await (
@@ -512,3 +518,4 @@ async def _recalculate_room_wall_sf(
         .eq("company_id", str(company_id))
         .execute()
     )
+    return wall_sf

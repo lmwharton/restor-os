@@ -18,7 +18,7 @@ from api.shared.constants import ARCHIVED_JOB_STATUSES
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
-from api.shared.guards import ensure_job_mutable
+from api.shared.guards import assert_job_on_floor_plan_property, ensure_job_mutable
 
 logger = logging.getLogger(__name__)
 
@@ -369,6 +369,19 @@ async def create_floor_plan(
     try:
         result = await client.table("floor_plans").insert(row).execute()
     except APIError as e:
+        # R7 (round 2): the partial unique index `idx_floor_plans_current_unique`
+        # on (property_id, floor_number) WHERE is_current=true fires when two
+        # concurrent creates both pass the existence check above and race to
+        # INSERT. The loser hits Postgres 23505 — surface it as a retryable
+        # 409 CONCURRENT_EDIT, matching _create_version's symmetric handler.
+        # Otherwise the client sees a bare 500 DB_ERROR for what is actually
+        # a retriable race (two tabs / double-tap / sibling job).
+        if getattr(e, "code", None) == "23505":
+            raise AppException(
+                status_code=409,
+                detail="Another writer created this floor plan concurrently — retry",
+                error_code="CONCURRENT_EDIT",
+            )
         raise AppException(
             status_code=500,
             detail=f"Failed to create floor plan: {e.message}",
@@ -527,14 +540,38 @@ async def update_floor_plan(
             )
 
     try:
+        # R4 (round 2): filter on is_current=true atomically. Without this,
+        # a sibling Case 3 fork between L503 and here can flip is_current=false
+        # on the target row, and the UPDATE silently mutates frozen history.
+        # Zero rows matched ⇒ the row was frozen mid-flight; treat as VERSION_FROZEN.
         result = await (
             client.table("floor_plans")
             .update(updates)
             .eq("id", str(floor_plan_id))
             .eq("company_id", str(company_id))
+            .eq("is_current", True)
             .execute()
         )
+        if not result.data:
+            raise AppException(
+                status_code=403,
+                detail="Floor plan was forked by another edit — retry against the current version",
+                error_code="VERSION_FROZEN",
+            )
     except APIError as e:
+        err_code = getattr(e, "code", None)
+        # Round-2 follow-on #4: the R4 belt-and-suspenders trigger raises
+        # 55006 on any attempt to mutate a frozen row. The app-layer
+        # `.eq("is_current", True)` filter above normally catches the race
+        # first, but if the trigger fires (e.g., race between the filter
+        # match and the write) surface it as VERSION_FROZEN so the client
+        # sees a coherent retry signal instead of an opaque 500.
+        if err_code == "55006":
+            raise AppException(
+                status_code=403,
+                detail="Floor plan version is frozen — retry against the current version",
+                error_code="VERSION_FROZEN",
+            )
         logger.error(
             "Floor plan update failed: %s (code=%s, details=%s)",
             e.message,
@@ -723,15 +760,42 @@ async def save_canvas(
             error_code="JOB_ARCHIVED",
         )
 
-    # W1: property cross-check. Legacy rows with property_id=NULL skip this
-    # — create_floor_plan_by_job_endpoint auto-creates the property on first
-    # save. For every job that has a property_id, require target match.
-    job_property_id = job.get("property_id")
-    if job_property_id is not None and str(job_property_id) != str(target_property_id):
+    # W1 / R5: property cross-check via shared helper. Legacy rows with
+    # property_id=NULL skip this (handled by create_floor_plan_by_job_endpoint's
+    # auto-link path and by R8's tightening of save_canvas itself).
+    assert_job_on_floor_plan_property(job, target_property_id)
+
+    # R19 (round 2): capture a server-side snapshot of relational floor-plan
+    # state (wall_segments, wall_openings, job_rooms.room_polygon,
+    # job_rooms.floor_openings) so rollback_version can restore full fidelity.
+    # The snapshot is stored inside canvas_data under `_relational_snapshot`
+    # — additive, no schema change. Read the authoritative DB state here so
+    # we capture what's really persisted (not whatever the frontend blob
+    # claims). Room IDs come from canvas_data.rooms[].propertyRoomId.
+    canvas_data = await _enrich_canvas_with_relational_snapshot(
+        client, canvas_data, company_id,
+    )
+
+    # F7 (round-2 follow-on): post-enrichment size check. The W6 validator
+    # enforces the incoming cap (500KB) at the router; enrichment adds the
+    # snapshot server-side. Reject here if the enriched payload exceeds the
+    # DB-row ceiling so "stored canvas_data ≤ MAX_STORED_CANVAS_DATA_BYTES"
+    # stays an honest invariant. Pathological case (near-500KB incoming +
+    # very complex floor plan) is rare; we surface it as 413 so the client
+    # can split the save rather than silently oversize the row.
+    import json as _json
+    from api.floor_plans.schemas import MAX_STORED_CANVAS_DATA_BYTES
+
+    _enriched_size = len(_json.dumps(canvas_data, separators=(",", ":")))
+    if _enriched_size > MAX_STORED_CANVAS_DATA_BYTES:
         raise AppException(
-            status_code=400,
-            detail="Floor plan does not belong to this job's property",
-            error_code="PROPERTY_MISMATCH",
+            status_code=413,
+            detail=(
+                f"canvas_data after relational-snapshot enrichment is "
+                f"{_enriched_size} bytes (max {MAX_STORED_CANVAS_DATA_BYTES}). "
+                f"Reduce room / wall / opening count or simplify the canvas."
+            ),
+            error_code="CANVAS_TOO_LARGE",
         )
 
     pinned_version_id = job.get("floor_plan_id")
@@ -971,10 +1035,11 @@ async def rollback_version(
 
     # Reject rollback from archived jobs — same rule as save_canvas. Without this,
     # an archived job could mint a new version + repin itself, breaking the
-    # "frozen once archived" contract.
+    # "frozen once archived" contract. property_id is selected so R5's
+    # assert_job_on_floor_plan_property check runs with no extra round-trip.
     job_result = await (
         client.table("jobs")
-        .select("status")
+        .select("status, property_id")
         .eq("id", str(job_id))
         .eq("company_id", str(company_id))
         .is_("deleted_at", "null")
@@ -1006,6 +1071,12 @@ async def rollback_version(
     target_property_id = anchor.data["property_id"]
     target_floor_number = anchor.data["floor_number"]
 
+    # R5 (round 2): the job's property must own the floor plan being rolled
+    # back. Without this, a same-company user with a job on property A could
+    # rollback any floor plan on property B they can read. Mirrors the W1
+    # check in save_canvas and the RPC-level guard from R3.
+    assert_job_on_floor_plan_property(job_result.data, target_property_id)
+
     # Fetch the target version to rollback to
     target = await (
         client.table("floor_plans")
@@ -1024,20 +1095,88 @@ async def rollback_version(
             error_code="VERSION_NOT_FOUND",
         )
 
-    # Create new version from the target's canvas_data. _create_version
-    # handles the is_current flip on old siblings.
-    version = await _create_version(
-        client=client,
-        property_id=UUID(target_property_id),
-        floor_number=target_floor_number,
-        floor_name=None,
-        company_id=company_id,
-        job_id=job_id,
-        user_id=user_id,
-        canvas_data=target.data["canvas_data"],
-        change_summary=f"Rolled back to version {version_number}",
-    )
-    # RPC inside _create_version pinned this job to the new version atomically (C4).
+    # F1 (round-2 follow-on): atomic rollback via a single plpgsql wrapper.
+    # The wrapper RPC runs save_floor_plan_version + restore_floor_plan_relational_snapshot
+    # inside ONE plpgsql function → ONE implicit transaction. If the restore
+    # raises, Postgres rolls back the save too — no partial state.
+    #
+    # Previously this was two separate .rpc() calls at the Python layer;
+    # a failure in restore left the new version row + job repin committed
+    # while walls/openings still held pre-rollback state. That regressed
+    # the C4 atomicity intent one layer up.
+    try:
+        rpc_result = await client.rpc(
+            "rollback_floor_plan_version_atomic",
+            {
+                "p_target_floor_plan_id": str(target.data["id"]),
+                "p_job_id": str(job_id),
+                "p_user_id": str(user_id),
+                "p_change_summary": f"Rolled back to version {version_number}",
+            },
+        ).execute()
+    except APIError as e:
+        err_code = getattr(e, "code", None)
+        if err_code == "42501":
+            raise AppException(
+                status_code=403,
+                detail="Cannot rollback: job is archived, has no property, "
+                       "or the target version is on a different property.",
+                error_code="ROLLBACK_FORBIDDEN",
+            )
+        if err_code == "P0002":
+            raise AppException(
+                status_code=404,
+                detail="Rollback target or job not accessible.",
+                error_code="ROLLBACK_NOT_FOUND",
+            )
+        if err_code == "23505":
+            raise AppException(
+                status_code=409,
+                detail="Concurrent edit on this floor, please retry",
+                error_code="CONCURRENT_EDIT",
+            )
+        logger.error(
+            "Atomic rollback RPC failed: target=%s job=%s error=%s code=%s",
+            target.data["id"], job_id, e.message, err_code,
+        )
+        raise AppException(
+            status_code=500,
+            detail=f"Rollback failed: {e.message}",
+            error_code="ROLLBACK_FAILED",
+        )
+
+    payload = rpc_result.data
+    if isinstance(payload, list):
+        payload = payload[0] if payload else None
+    if not payload or "version" not in payload:
+        raise AppException(
+            status_code=500,
+            detail="Rollback RPC returned empty result",
+            error_code="DB_ERROR",
+        )
+    version = payload["version"]
+    restore_summary = payload.get("restore")
+
+    # Surface legacy-version rollbacks (no _relational_snapshot on the
+    # target) as a warning so operators can see which jobs had canvas-only
+    # rollbacks vs. full-fidelity restores.
+    if isinstance(restore_summary, dict) and not restore_summary.get("restored"):
+        logger.warning(
+            "Rollback relational-restore skipped (legacy snapshot): "
+            "floor_plan_id=%s target_version=%s reason=%s",
+            version["id"], version_number, restore_summary.get("reason"),
+        )
+
+    # F3: surface any rooms the restore couldn't reach (deleted / foreign)
+    # so data-integrity issues are visible rather than silent.
+    if isinstance(restore_summary, dict):
+        skipped = restore_summary.get("skipped_rooms") or []
+        if skipped:
+            logger.warning(
+                "Rollback skipped rooms (deleted or outside tenant scope): "
+                "floor_plan_id=%s target_version=%s skipped_room_ids=%s",
+                version["id"], version_number, skipped,
+            )
 
     await log_event(
         company_id,
@@ -1048,6 +1187,7 @@ async def rollback_version(
             "floor_plan_id": version["id"],
             "rolled_back_to": version_number,
             "new_version": version["version_number"],
+            "relational_restore": restore_summary,
         },
     )
     return version
@@ -1056,6 +1196,150 @@ async def rollback_version(
 # ---------------------------------------------------------------------------
 # Versioning helpers (private)
 # ---------------------------------------------------------------------------
+
+
+# R19 (round 2) snapshot format version. Bumped when the on-disk shape of
+# canvas_data._relational_snapshot changes in an incompatible way so the
+# restore RPC can refuse to apply a mismatched version.
+_RELATIONAL_SNAPSHOT_VERSION = 1
+
+
+async def _enrich_canvas_with_relational_snapshot(
+    client,
+    canvas_data: dict,
+    company_id: UUID,
+) -> dict:
+    """Attach ``_relational_snapshot`` to canvas_data capturing the current
+    server-side state of wall_segments, wall_openings, and the JSONB fields
+    on job_rooms (``room_polygon``, ``floor_openings``).
+
+    Rooms in scope come from ``canvas_data["rooms"][*]["propertyRoomId"]`` —
+    the frontend already stamps those with the backend ``job_rooms.id``. If
+    a room has no ``propertyRoomId`` (e.g., drawn but never saved against
+    the backend), it is skipped; the snapshot captures only rows that
+    actually exist on the server.
+
+    Returns a new dict — does not mutate the caller's canvas_data.
+    """
+    # F4 (round-2 follow-on): refuse to silently coerce a non-dict. The only
+    # caller path is save_canvas, which receives canvas_data typed as dict
+    # through FloorPlanSaveRequest (Pydantic-validated at the router). A
+    # non-dict reaching here is a programmer error, not user input — fail
+    # loudly so it surfaces in logs instead of quietly writing an empty
+    # version and losing the user's edit.
+    if not isinstance(canvas_data, dict):
+        raise AppException(
+            status_code=500,
+            detail=(
+                f"canvas_data must be a dict at this layer, got "
+                f"{type(canvas_data).__name__}"
+            ),
+            error_code="INVALID_CANVAS_DATA",
+        )
+    # Defensive copy so the caller's dict isn't mutated.
+    enriched = dict(canvas_data)
+
+    rooms = enriched.get("rooms") or []
+    room_ids: list[str] = []
+    for r in rooms:
+        if not isinstance(r, dict):
+            continue
+        pid = r.get("propertyRoomId") or r.get("property_room_id")
+        if pid:
+            room_ids.append(str(pid))
+
+    if not room_ids:
+        # Nothing to snapshot — record an empty snapshot so restore can
+        # distinguish "explicitly empty" from "legacy / missing".
+        enriched["_relational_snapshot"] = {
+            "version": _RELATIONAL_SNAPSHOT_VERSION,
+            "rooms": [],
+        }
+        return enriched
+
+    # Room-level JSONB columns.
+    rooms_result = await (
+        client.table("job_rooms")
+        .select("id, room_polygon, floor_openings")
+        .in_("id", room_ids)
+        .eq("company_id", str(company_id))
+        .execute()
+    )
+    room_rows = rooms_result.data or []
+    room_by_id: dict[str, dict] = {str(r["id"]): r for r in room_rows}
+
+    # Walls for those rooms.
+    walls_result = await (
+        client.table("wall_segments")
+        .select(
+            "id, room_id, x1, y1, x2, y2, wall_type, wall_height_ft, "
+            "affected, shared, shared_with_room_id, sort_order",
+        )
+        .in_("room_id", room_ids)
+        .eq("company_id", str(company_id))
+        .execute()
+    )
+    walls = walls_result.data or []
+    wall_ids = [str(w["id"]) for w in walls]
+
+    # Openings for those walls (nested inside their parent wall's snapshot).
+    openings_by_wall: dict[str, list[dict]] = {}
+    if wall_ids:
+        openings_result = await (
+            client.table("wall_openings")
+            .select(
+                "wall_id, opening_type, position, width_ft, height_ft, "
+                "sill_height_ft, swing",
+            )
+            .in_("wall_id", wall_ids)
+            .eq("company_id", str(company_id))
+            .execute()
+        )
+        for op_row in openings_result.data or []:
+            openings_by_wall.setdefault(str(op_row["wall_id"]), []).append({
+                "opening_type": op_row.get("opening_type"),
+                "position": op_row.get("position"),
+                "width_ft": op_row.get("width_ft"),
+                "height_ft": op_row.get("height_ft"),
+                "sill_height_ft": op_row.get("sill_height_ft"),
+                "swing": op_row.get("swing"),
+            })
+
+    # Build per-room snapshot entries.
+    walls_by_room: dict[str, list[dict]] = {}
+    for w in walls:
+        room_id = str(w["room_id"])
+        walls_by_room.setdefault(room_id, []).append({
+            "x1": w.get("x1"),
+            "y1": w.get("y1"),
+            "x2": w.get("x2"),
+            "y2": w.get("y2"),
+            "wall_type": w.get("wall_type"),
+            "wall_height_ft": w.get("wall_height_ft"),
+            "affected": w.get("affected"),
+            "shared": w.get("shared"),
+            "shared_with_room_id": w.get("shared_with_room_id"),
+            "sort_order": w.get("sort_order"),
+            "_openings": openings_by_wall.get(str(w["id"]), []),
+        })
+
+    snapshot_rooms: list[dict] = []
+    for rid in room_ids:
+        room = room_by_id.get(rid)
+        if not room:
+            continue
+        snapshot_rooms.append({
+            "id": rid,
+            "room_polygon": room.get("room_polygon"),
+            "floor_openings": room.get("floor_openings"),
+            "walls": walls_by_room.get(rid, []),
+        })
+
+    enriched["_relational_snapshot"] = {
+        "version": _RELATIONAL_SNAPSHOT_VERSION,
+        "rooms": snapshot_rooms,
+    }
+    return enriched
 
 
 async def _create_version(
@@ -1099,11 +1383,44 @@ async def _create_version(
             },
         ).execute()
     except APIError as e:
-        if getattr(e, "code", None) == "23505":
+        err_code = getattr(e, "code", None)
+        if err_code == "23505":
+            # C2 — concurrent writer won the partial-unique-index race.
             raise AppException(
                 status_code=409,
                 detail="Concurrent edit on this floor, please retry",
                 error_code="CONCURRENT_EDIT",
+            )
+        if err_code == "55006":
+            # Round-2 follow-on #4 — d8e9f0a1b2c3 frozen-mutation trigger
+            # (SQLSTATE updated from 42501 to 55006 by a7b8c9d0e1f2 so it no
+            # longer collides with the R3 tenant check below). Fires when
+            # any UPDATE targets a row whose is_current was already false.
+            # Clients should retry against the current version.
+            raise AppException(
+                status_code=403,
+                detail="Floor plan version is frozen — retry against the current version",
+                error_code="VERSION_FROZEN",
+            )
+        if err_code == "42501":
+            # R3 — RPC's JWT-derived company check rejected the caller.
+            # Fires when the client-supplied p_company_id doesn't match the
+            # company resolved from the JWT (cross-tenant attempt) or when
+            # the JWT has no company at all.
+            raise AppException(
+                status_code=403,
+                detail="Company mismatch for this floor plan",
+                error_code="COMPANY_MISMATCH",
+            )
+        if err_code == "P0002":
+            # R3 — property/job ownership check failed. Either the property
+            # doesn't belong to the caller's company, or the job doesn't
+            # live on that property. We don't 404 on bare "not found"
+            # because we don't want to leak existence across tenants.
+            raise AppException(
+                status_code=400,
+                detail="Floor plan does not belong to this job's property",
+                error_code="PROPERTY_MISMATCH",
             )
         raise AppException(
             status_code=500,
@@ -1151,8 +1468,9 @@ async def cleanup_floor_plan(
     # Archive-job gate (C1) — always runs. Cleanup mutates canvas_data on
     # the is_current row, so a `collected` job's version must stay frozen.
     # job_id is required in SketchCleanupRequest; Pydantic 422's any caller
-    # that omits it, so this guard has no conditional bypass.
-    await ensure_job_mutable(client, job_id, company_id)
+    # that omits it, so this guard has no conditional bypass. The returned
+    # row carries property_id for the R5 cross-property check below.
+    job = await ensure_job_mutable(client, job_id, company_id)
 
     # Fetch floor plan (verify ownership)
     result = await (
@@ -1169,6 +1487,13 @@ async def cleanup_floor_plan(
             detail="Floor plan not found",
             error_code="FLOOR_PLAN_NOT_FOUND",
         )
+
+    # R5 (round 2): the job's property must own this floor plan. Without
+    # this, a same-company user whose job is on property A could trigger
+    # cleanup (a canvas mutation) on any floor plan on property B they
+    # can read. Mirrors the W1 check in save_canvas and the RPC-level
+    # guard from R3.
+    assert_job_on_floor_plan_property(job, result.data.get("property_id"))
 
     # Frozen-version guard — matches the rule in `update_floor_plan` and
     # `save_canvas` Case 2. Cleanup writes the cleaned canvas back to the
@@ -1216,14 +1541,45 @@ async def cleanup_floor_plan(
     if not changes_made:
         changes_made.append("Sketch already clean -- no changes needed")
 
-    # Save cleaned canvas_data back to DB
-    await (
-        client.table("floor_plans")
-        .update({"canvas_data": cleaned})
-        .eq("id", str(floor_plan_id))
-        .eq("company_id", str(company_id))
-        .execute()
-    )
+    # R4 (round 2): filter on is_current=true atomically so a sibling Case 3
+    # fork between L1199 and this UPDATE can't flip the row to frozen and let
+    # us write the cleaned canvas into a historical snapshot. Zero rows
+    # matched ⇒ the target was forked mid-flight — raise VERSION_FROZEN so the
+    # client re-reads the current version and retries cleanup against it.
+    #
+    # Round-2 follow-on #4: also wrap in try/except so the frozen-mutation
+    # trigger's 55006 (raised if the write slips past the app-level filter
+    # in a rare race) surfaces as VERSION_FROZEN too, not an opaque 500.
+    try:
+        cleaned_update = await (
+            client.table("floor_plans")
+            .update({"canvas_data": cleaned})
+            .eq("id", str(floor_plan_id))
+            .eq("company_id", str(company_id))
+            .eq("is_current", True)
+            .execute()
+        )
+    except APIError as e:
+        if getattr(e, "code", None) == "55006":
+            raise AppException(
+                status_code=403,
+                detail="Floor plan version is frozen — retry against the current version",
+                error_code="VERSION_FROZEN",
+            )
+        logger.error(
+            "Cleanup UPDATE failed: %s (code=%s)", e.message, getattr(e, "code", None),
+        )
+        raise AppException(
+            status_code=500,
+            detail=f"Cleanup write failed: {e.message}",
+            error_code="DB_ERROR",
+        )
+    if not cleaned_update.data:
+        raise AppException(
+            status_code=403,
+            detail="Floor plan was forked by another edit during cleanup — retry against the current version",
+            error_code="VERSION_FROZEN",
+        )
 
     # Log event
     await log_event(
