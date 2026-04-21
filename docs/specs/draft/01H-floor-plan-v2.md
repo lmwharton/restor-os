@@ -101,6 +101,36 @@ branch carries the blow-by-blow detail; this list is what actually shipped.
 **Small card polish**
 - `RoomConfirmationCard`: Floor field always required, material defaults auto-fill from room type when the chip list is empty (respects manual edits), mobile swipe-to-close on the drag handle, sticky action footer, back button resets `nameCommitted`.
 
+**PR10 Round 2 — review hardening (R1–R19, 2026-04-22)**
+
+9 new Alembic migrations (`c7f8a9b0d1e2 → d8e9f0a1b2c3 → e9f0a1b2c3d4 → f0a1b2c3d4e5 → a1b2c3d4e5f7 → b2c3d4e5f8a9 → c3d4e5f8a9b0 → d4e5f8a9b0c1 → e5f8a9b0c1d2`). 105 new pytest cases. Zero regressions.
+
+Schema + backend hardening:
+- **R1** — downgrade trigger typo in `e1a7c9b30201` fixed (`set_updated_at` → `update_updated_at`); guardrail pytest scans every migration for orphaned trigger-function references.
+- **R3** — `save_floor_plan_version` RPC hardened: JWT-derived tenant check via `get_my_company_id()` (never trust caller-supplied `p_company_id`), property + job-on-property ownership checks, pinned `search_path`. Error-code mapping: `42501` → 403 `COMPANY_MISMATCH`, `P0002` → 400 `PROPERTY_MISMATCH`.
+- **R4** — atomic `is_current` filter on `update_floor_plan` + `cleanup_floor_plan` UPDATEs (zero-row ⇒ `VERSION_FROZEN`). Belt-and-suspenders `floor_plans_prevent_frozen_mutation` BEFORE-UPDATE trigger rejects any write to a frozen row.
+- **R5** — shared `assert_job_on_floor_plan_property` helper in `shared/guards.py`; wired to `save_canvas`, `rollback_version`, `cleanup_floor_plan` (one source of truth for "a job's floor plan lives on its property").
+- **R6** — `raise_if_archived(job)` at the top of all 3 by-job floor-plan endpoints (`POST/PATCH/DELETE /jobs/{id}/floor-plans`). `get_valid_job` only blocked soft-deleted rows; collected jobs slipped through.
+- **R7** — `create_floor_plan` INSERT now catches Postgres 23505 → 409 `CONCURRENT_EDIT`, matching `_create_version`. Racy two-tab create no longer surfaces as a bare 500.
+- **R8** — `assert_job_on_floor_plan_property` raises 400 `JOB_NO_PROPERTY` on null `job.property_id` (prior legacy-skip branch recreated W1's bypass in 3 sites once the helper was shared).
+- **R9** — `ensure_job_property(p_job_id)` SECURITY DEFINER RPC replaces `create_floor_plan_by_job_endpoint`'s read-insert-update dance. `SELECT ... FOR UPDATE` on the jobs row serializes concurrent first-saves; same-address property reuse eliminates orphan rows. Partial unique index `idx_properties_address_active` on `(company_id, lower(btrim(address_line1)), lower(btrim(city)), state, btrim(zip)) WHERE deleted_at IS NULL` adds defense-in-depth.
+- **R10** — `walls_insert` / `walls_update` / `openings_insert` / `openings_update` RLS policies rewritten with `EXISTS` parent-ownership checks. Closes tenant-id side-channel on direct Supabase writes.
+- **R11** — shared `validate_json_size` + `validate_string_list` in `api/shared/validators.py`. Rooms schemas: `room_polygon` ≤ 10 KB, `floor_openings` ≤ 50 KB, `room_sketch_data` ≤ 50 KB (bonus), `material_flags` ≤ 20 items × 64 chars, `notes` ≤ 5000 chars — on both `RoomCreate` and `RoomUpdate`.
+- **R13** — drop redundant non-unique `idx_floor_plans_is_current` (shadowed by `idx_floor_plans_current_unique`).
+- **R14** — rename `versions_{select,insert,update,delete}` policies to `floor_plans_{…}` on the post-merge table, re-runnable via `EXISTS` guard.
+- **R16** — `update_room` now wires `_recalculate_room_wall_sf` when any wall-SF formula input changes (`height_ft`, `ceiling_type`, `custom_wall_sf`). Closes the last drift surface; the 6 existing wall/opening CRUD call sites already cover the reviewer's named scenario. Helper returns the fresh value for response stamping.
+- **R17** — `CHECK (col IS NULL OR col >= 0)` on `job_rooms.custom_wall_sf` and `job_rooms.wall_square_footage` (exact constraint names per reviewer's snippet).
+- **R18** — `COMMENT ON COLUMN wall_openings.swing` documents the hinge + swing quadrant mapping (`0=hinge-left-swing-up`, `1=hinge-left-swing-down`, `2=hinge-right-swing-down`, `3=hinge-right-swing-up`), sourced from `FloorOpeningData` in `floor-plan-tools.ts`.
+- **R19** — full-fidelity rollback via snapshot + restore. `save_canvas` enriches `canvas_data` with `_relational_snapshot` (server-side capture of `wall_segments`, `wall_openings`, `job_rooms.room_polygon` / `floor_openings`). New SECURITY DEFINER `restore_floor_plan_relational_snapshot(p_new_floor_plan_id)` RPC atomically DELETEs + re-INSERTs inside a plpgsql transaction. Legacy versions (saved before R19) return `restored=false` and log a warning — canvas-only rollback for pre-R19 data.
+
+Frontend:
+- **R12** — `handleCreateRoomOnDifferentFloor` reconciles `["floor-plans", jobId]` cache using `savedVersion.id` as truth (not `targetFloor.id`). On Case 3 fork, `setActiveFloorId(savedVersion.id)` instead of the now-frozen row; stale `["floor-plan-history", targetFloor.id]` key is explicitly invalidated.
+- **R15** — `useUpdateFloorPlan` drops the misleading `canvas_data` arg (backend stopped accepting it in C1). `useSaveCanvas(floorPlanId, jobId)` now takes `jobId` and invalidates `["floor-plans", jobId]` + `["jobs", jobId]` internally so the W11 cache invariant can't drift.
+- **R17 UX** — inline `"Must be greater than 0"` / `"Must be at least 1"` error messaging on 4 numeric-input components (`cutout-editor-sheet`, `floor-plan-sidebar` `NumericInput`, `konva-floor-plan` mobile sheet, `page.tsx` `RoomDimensionInputs`). Replaces the prior silent-reject UX where a typed `-10` disappeared without feedback.
+- **Room-tap fix** — `MobileRoomPanel` opens reliably on mobile even when `useRooms(jobId)` hasn't resolved at tap time. `handleSelectionChange` buffers the pending selection and flushes when `jobRooms` arrives.
+
+Round-2 product-intent decision (not a code change): **R2 deferred**. Reviewer asked to drop the `parent_pin` block in `create_job`; under Crewmatic's linked-job model (mitigation and recon share property-anchored data — floor plan, rooms, walls — until recon edits and forks) the `parent_pin` is the mechanism that makes sharing work. Reviewer's fix would leave recon techs with a blank canvas on every linked recon, defeating the feature. `job_rooms.floor_plan_id` is vestigial (no backend join uses it) so the "split join" concern the reviewer flagged is theoretical. Acknowledged on PR with product rationale.
+
 ---
 
 
@@ -229,7 +259,9 @@ Both items below were identified during manual QA and deferred. Neither blocks P
       OR NOT EXISTS (SELECT 1 FROM floor_plans WHERE id = jobs.floor_plan_id);
    ```
 
-2. **Race hardening in `_create_version`.** Flip-then-insert (mark old siblings `is_current=false`, then insert the new version) is two async calls, not a transaction. Under concurrent saves from multiple techs on the same floor, the "one is_current per floor" invariant could break. Fix: partial unique index `CREATE UNIQUE INDEX ON floor_plans (property_id, floor_number) WHERE is_current = true` + `APIError` catch/retry in `_create_version`. Low likelihood under single-user editing; predates the schema merge.
+2. **~~Race hardening in `_create_version`~~ — resolved.** C2 (migration `a1f2b9c4e5d6`) added the partial unique index. C4 (migration `b2c3d4e5f6a7`) moved flip+insert+pin into a single plpgsql RPC. R3 (round 2, migration `c7f8a9b0d1e2`) hardened that RPC with JWT-derived tenant checks + search_path. R4 (round 2, migration `d8e9f0a1b2c3`) added a BEFORE UPDATE trigger on `floor_plans` for DB-level frozen-row immutability.
+
+4. **R19 legacy-version rollback — canvas-only.** Versions saved before round 2's `_relational_snapshot` helper landed don't carry the snapshot key in `canvas_data`. Rolling back to one of those versions restores the canvas blob but returns `restored=false` from the restore RPC — the relational `wall_segments` / `wall_openings` / `job_rooms.room_polygon` / `floor_openings` stay at their post-rollback state. The service layer logs a warning at WARNING level when this happens. Forward rollbacks (versions saved after R19) are full-fidelity. This is non-blocking — legacy data is still readable/renderable; the spec's "full fidelity" promise applies from R19 onward.
 
 3. **Save-path HTTP call volume (nice-to-have optimization).** A single canvas edit currently fires 10–15 backend requests, dominated by the wall sync cycle (GET walls × N rooms + DELETE walls × M + POST walls × M for the edited room). The duplicate-PATCH and duplicate-refetch bugs that made it worse have been fixed (see phase2 commits `3efeba2`, `d2a640e`, `d670023`, `66eb243`, `051a096`, `1bab5d4`, `36ce8ad`, and the `["jobs"]` invalidation collapse), but the residual volume is structural — not a bug, just unoptimized.
 
@@ -1217,6 +1249,139 @@ W10 — rect room drag doesn't float off on zero-delta snap (frontend, manual ve
 W11 — `["floor-plans", jobId]` invalidated on save:
 - Manual verify: add/remove a room on a fork path; FloorSelector roomCount chip updates within a second (not after staleTime expires)
 
+**Phase 1 — PR10 round 2 hardening (R1–R19):**
+
+R1 — migration trigger-function names:
+- `test_every_trigger_calls_update_updated_at` — static scan of every Alembic migration; every `EXECUTE FUNCTION <name>()` must resolve to an installed function. Catches round 2's one-char typo class in CI (implemented)
+- `test_no_stale_set_updated_at_function_call` — explicit regression guard against the exact `set_updated_at()` typo the reviewer flagged (implemented)
+
+R2 — deferred per product model (see round-2 changelog). No test — keeping `parent_pin` is the desired behavior.
+
+R3 — `save_floor_plan_version` RPC tenant hardening:
+- `test_rpc_42501_maps_to_403_company_mismatch` — RPC raises `42501` on JWT/caller company mismatch → service returns 403 `COMPANY_MISMATCH` (implemented)
+- `test_rpc_p0002_maps_to_400_property_mismatch` — property/job ownership failure `P0002` → service returns 400 `PROPERTY_MISMATCH` (implemented)
+- `test_migration_hardens_tenant_checks` — static migration-text scan asserts `get_my_company_id()`, property ownership SELECT, `job.property_id = p_property_id` check, and `SET search_path` all present (implemented)
+
+R4 — atomic `is_current` filter on update/cleanup + DB trigger:
+- `test_update_zero_rows_matched_raises_version_frozen` — `update_floor_plan`: `.eq("is_current", True)` filter matches zero rows → raise `VERSION_FROZEN` (implemented)
+- `test_update_writes_when_row_still_current` — happy path: update lands when is_current still true (implemented)
+- `test_cleanup_zero_rows_matched_raises_version_frozen` — `cleanup_floor_plan`: same TOCTOU fix (implemented)
+- `test_cleanup_writes_when_row_still_current` — happy path (implemented)
+- `test_migration_installs_prevent_frozen_mutation_trigger` — static: BEFORE UPDATE trigger body checks `OLD.is_current IS FALSE`, raises SQLSTATE 42501 (implemented)
+
+R5 — shared `assert_job_on_floor_plan_property` helper:
+- `test_rejects_cross_property_job` — rollback_version: job on property A rolling back a floor plan on property B → 400 `PROPERTY_MISMATCH` (implemented)
+- `test_allows_same_property_job` — rollback happy path (implemented)
+- `test_cleanup_rejects_cross_property_job` — same check on cleanup (implemented)
+
+R6 — archive-job guard on 3 by-job floor-plan endpoints:
+- `test_collected_status_raises_job_archived` — helper behavior: `raise_if_archived({"status": "collected"})` → 403 (implemented)
+- `test_active_status_returns_none` — helper returns cleanly for live jobs (implemented)
+- `test_deleted_at_raises_job_not_found` — soft-deleted row short-circuits to 404 (implemented)
+- `test_create_floor_plan_by_job_calls_raise_if_archived` — static guard: create-by-job endpoint invokes the helper (implemented)
+- `test_update_floor_plan_by_job_calls_raise_if_archived` — PATCH endpoint (implemented)
+- `test_delete_floor_plan_by_job_calls_raise_if_archived` — DELETE endpoint (implemented)
+
+R7 — 23505 race on `create_floor_plan`:
+- `test_insert_23505_raises_409_concurrent_edit` — INSERT raising APIError code=23505 → 409 `CONCURRENT_EDIT` (implemented)
+- `test_insert_non_23505_still_raises_500_db_error` — other APIErrors still surface as 500 DB_ERROR (implemented)
+
+R8 — JOB_NO_PROPERTY rejection replaces the legacy skip:
+- `test_rejects_save_when_job_property_id_is_null` — `save_canvas` with `job.property_id IS NULL` → 400 `JOB_NO_PROPERTY` (previously `test_allows_save_when_job_property_id_is_null`; flipped to match R8) (implemented)
+- `test_rejects_job_with_null_property` (rollback_version) — same (implemented)
+- `test_rejects_job_with_null_property` (cleanup_floor_plan) — same (implemented)
+
+R9 — `ensure_job_property` RPC + address unique index:
+- `test_migration_defines_rpc_with_required_hardening` — SECURITY DEFINER + JWT company + FOR UPDATE on jobs + same-address property reuse + search_path + grants (implemented)
+- `test_migration_installs_partial_unique_address_index` — `idx_properties_address_active` with normalized address expression (implemented)
+- `test_migration_downgrade_drops_rpc_and_index` — rollback symmetry (implemented)
+- `test_calls_ensure_job_property_rpc` — router refactor: `create_floor_plan_by_job_endpoint` calls the RPC (implemented)
+- `test_old_non_atomic_block_is_gone` — regression guard that the pre-R9 read-insert-update sequence does not reappear (implemented)
+
+R10 — wall/opening parent-ownership RLS:
+- `test_migration_rewrites_walls_insert_with_parent_exists` — walls_insert policy joins `job_rooms` with matching company (implemented)
+- `test_migration_rewrites_walls_update_with_parent_exists` — walls_update has both `USING` + `WITH CHECK` with EXISTS (implemented)
+- `test_migration_rewrites_openings_insert_with_parent_exists` — openings_insert joins `wall_segments` (implemented)
+- `test_migration_rewrites_openings_update_with_parent_exists` — openings_update (implemented)
+- `test_migration_downgrade_restores_pre_r10_policies` — rollback recreates the old child-only policies so downgrade never leaves the table with no INSERT policy (implemented)
+
+R11 — rooms schema per-field size caps:
+- `test_room_polygon_rejected_over_10kb_on_create` — Pydantic 422 (implemented)
+- `test_room_polygon_accepted_at_realistic_size` — 16-vertex L-shape passes (implemented)
+- `test_floor_openings_rejected_over_50kb_on_update` — PATCH path too (implemented)
+- `test_material_flags_rejected_over_20_items` — list cap (implemented)
+- `test_material_flags_rejected_per_item_too_long` — per-item string cap (implemented)
+- `test_material_flags_accepted_at_realistic_values` — real tag list passes (implemented)
+- `test_notes_rejected_over_5000_chars` — `Field(max_length=5000)` (implemented)
+- `test_notes_accepted_at_reasonable_length` — realistic note passes (implemented)
+- `test_room_sketch_data_rejected_over_50kb` — bonus cap on the legacy per-room blob (implemented)
+
+R12 — cross-floor save fork handling (frontend, manual verify):
+- Tab A + Tab B on linked jobs at same property. Tab B edits a target floor; Tab A does cross-floor save to that floor. Expected: Tab A's selector moves to the saved fork id, next edit persists, no frozen-row errors. Pre-fix: next edit either fails or forks again.
+
+R13 — redundant partial index dropped:
+- `test_upgrade_drops_redundant_index` — `DROP INDEX IF EXISTS idx_floor_plans_is_current` present in migration (implemented)
+- `test_downgrade_recreates_the_index` — rollback symmetry — same columns + predicate (implemented)
+- `test_revision_chains_after_r10` — alembic chain hygiene (implemented)
+
+R14 — renamed versions_* policies to floor_plans_*:
+- `test_upgrade_renames_all_four_policies` — select + insert + update + delete all renamed (implemented)
+- `test_upgrade_guards_with_exists_check` — `IF EXISTS` guards for idempotency (implemented)
+- `test_downgrade_reverses_all_four_renames` — rollback symmetry (implemented)
+
+R15 — `use-jobs.ts` hook signatures:
+- `test_use_update_floor_plan_no_longer_accepts_canvas_data` — stripped stale field from generic type (implemented, comments filtered)
+- `test_use_update_floor_plan_still_accepts_metadata_fields` — floor_name + thumbnail_url retained (implemented)
+- `test_use_save_canvas_takes_job_id` — signature `(floorPlanId, jobId)` (implemented)
+- `test_use_save_canvas_invalidates_floor_plans_list` — onSuccess invalidates per-job cache (implemented)
+- `test_use_save_canvas_invalidates_jobs` — job row also invalidated (implemented)
+- `test_use_save_canvas_still_invalidates_history` — regression: existing history invalidation preserved (implemented)
+
+R16 — wall_square_footage recalc on room-level mutations:
+- `test_update_room_calls_recalc_on_wall_sf_input_change` — static: update_room names `{height_ft, ceiling_type, custom_wall_sf}` and invokes `_recalculate_room_wall_sf` (implemented)
+- `test_update_room_stamps_fresh_sf_on_response` — response dict gets the fresh value without an extra fetch (implemented)
+- `test_function_signature_returns_float_or_none` — helper refactor: return type allows caller-side stamping (implemented)
+- Manual verify: edit a room's ceiling height via the edit modal → mobile modal's "Wall XXX SF" subtitle updates on reload.
+
+R17 — non-negative CHECK + UX inline errors:
+- `test_upgrade_adds_custom_wall_sf_constraint` — exact name + predicate from reviewer's snippet (implemented)
+- `test_upgrade_adds_wall_square_footage_constraint` — same (implemented)
+- `test_downgrade_drops_both_constraints` — rollback (implemented)
+- `test_revision_chains_after_r14` — alembic chain hygiene (implemented)
+- `test_cutout_editor_shows_error_when_invalid` — cutout editor sheet inline error (implemented)
+- `test_cutout_editor_error_gated_on_not_valid` — message only when invalid + non-empty + not over-max (implemented)
+- `test_numeric_input_derives_draft_invalid_state` — shared NumericInput tracks invalidity live (implemented)
+- `test_numeric_input_shows_error_message` — renders red error text (implemented)
+- `test_numeric_input_applies_red_border_when_invalid` — visual + text feedback synced (implemented)
+- `test_konva_mobile_sheet_shows_error_for_width` — mobile Width input (implemented)
+- `test_konva_mobile_sheet_shows_error_for_height` — mobile Height input (implemented)
+- `test_konva_mobile_sheet_has_error_messages` — both error texts present (implemented)
+- `test_room_dimension_inputs_tracks_invalid_state` — RoomDimensionInputs in MobileRoomPanel (implemented)
+- `test_room_dimension_inputs_applies_red_border` — same (implemented)
+- `test_room_dimension_inputs_shows_error_text` — "Must be at least 1" messaging (implemented)
+- Manual verify: type `-10` into any of Width / Length / Height inputs — red border + inline error appears, room doesn't resize; typing a valid value clears both.
+
+R18 — swing column documentation:
+- `test_upgrade_attaches_comment_to_swing_column` — `COMMENT ON COLUMN wall_openings.swing` present (implemented)
+- `test_comment_enumerates_all_four_values` — all 4 mapping entries match `FloorOpeningData.swing` (implemented)
+- `test_comment_points_at_frontend_source` — doc pointer to `floor-plan-tools.ts` preserved (implemented)
+- `test_downgrade_clears_the_comment` — rollback resets comment to NULL (implemented)
+
+R19 — full-fidelity rollback via snapshot + restore:
+- `test_upgrade_defines_rpc` — `restore_floor_plan_relational_snapshot` function body present (implemented)
+- `test_rpc_is_security_definer_with_locked_search_path` — standard hygiene (implemented)
+- `test_rpc_derives_company_from_jwt` — R3 pattern: `get_my_company_id()` + `42501` on no-auth (implemented)
+- `test_rpc_restores_all_four_relational_sources` — DELETE + INSERT wall_segments, INSERT wall_openings, UPDATE `room_polygon` + `floor_openings` (implemented)
+- `test_rpc_handles_legacy_versions_without_snapshot` — pre-R19 data returns `restored=false`, not a 500 (implemented)
+- `test_rpc_rejects_unsupported_snapshot_version` — future-proofing: refuse unknown version (implemented)
+- `test_downgrade_drops_function` — rollback symmetry (implemented)
+- `test_save_canvas_enriches_before_create_version` — static: save_canvas calls the snapshot helper (implemented)
+- `test_enricher_adds_snapshot_key` — behavioral: helper sets `_relational_snapshot` on the returned canvas_data (implemented)
+- `test_enricher_does_not_mutate_input` — defensive copy of caller's canvas_data (implemented)
+- `test_rollback_invokes_restore_rpc` — static: rollback_version calls the restore RPC (implemented)
+- `test_rollback_maps_restore_failure_to_500` — RPC APIError surfaces as `ROLLBACK_RESTORE_FAILED` so caller knows state is inconsistent (implemented)
+- Manual verify: edit a room (add a door), save, edit again (change door width), save → roll back to first version → door width reverts. Pre-R19: canvas showed v1 but `wall_openings` still held v2 width.
+
 **Phase 2:**
 - `test_pin_color_boundaries` — green/amber/red at dry_standard boundaries
 - `test_pin_color_at_exact_threshold` — reading = dry_standard returns green
@@ -1441,6 +1606,37 @@ P2.2 — RPC explicit NULL param guards:
 - **W10** — rect room drag unconditionally resets Konva attr to `room.x/room.y` after drag so zero-delta snaps don't leave the Group floating off state. Plus: `magneticRoomSnap` edge-to-edge only + post-snap overlap check + room dragBoundFunc — rect rooms physically cannot be dropped on top of each other. Frontend, verified manually.
 - **W11** — save paths now invalidate `["floor-plans", jobId]` alongside `floor-plan-history` + `jobs`. FloorSelector roomCount chip updates immediately on fork instead of waiting for staleTime. Frontend, verified manually.
 
+**PR10 round 2 (R1–R19)**
+
+Migrations + backend:
+- **R1** — `e1a7c9b30201` downgrade typo fixed (`set_updated_at` → `update_updated_at`). 2 static guardrail tests.
+- **R3** — `save_floor_plan_version` RPC hardened: JWT-derived tenant check, property + job-on-property ownership, pinned `search_path`. Error-code mapping to 403/400 on the service layer. 3 tests.
+- **R4** — atomic `is_current` filter on `update_floor_plan` + `cleanup_floor_plan` UPDATEs; DB trigger for frozen-row immutability. 5 tests.
+- **R5** — shared `assert_job_on_floor_plan_property` in `shared/guards.py` applied to save_canvas, rollback, cleanup. 3 tests.
+- **R6** — `raise_if_archived(job)` on all 3 by-job floor-plan endpoints. 6 tests.
+- **R7** — `create_floor_plan` INSERT catches 23505 → 409 `CONCURRENT_EDIT`. 2 tests.
+- **R8** — helper rejects `job.property_id IS NULL` with `JOB_NO_PROPERTY`. 3 tests (one flipped from W1's old skip behavior).
+- **R9** — `ensure_job_property` RPC with `SELECT … FOR UPDATE` + partial unique address index. Router refactored to single RPC call. 5 tests.
+- **R10** — `walls_*` / `openings_*` RLS policies rewritten with `EXISTS` parent-ownership checks on INSERT + UPDATE. 5 tests.
+- **R11** — shared `validators.py` caps `room_polygon` (10 KB), `floor_openings` (50 KB), `room_sketch_data` (50 KB), `material_flags` (20 items × 64 chars), `notes` (5000 chars). 9 tests on `RoomCreate` + `RoomUpdate`.
+- **R13** — `idx_floor_plans_is_current` dropped (redundant with `idx_floor_plans_current_unique`). 3 tests.
+- **R14** — `versions_*` policies renamed to `floor_plans_*`. 4 tests.
+- **R16** — `update_room` wires `_recalculate_room_wall_sf` on SF-formula input changes (`height_ft` / `ceiling_type` / `custom_wall_sf`). Helper now returns the fresh value for response stamping. 3 tests.
+- **R17** — `CHECK (>= 0)` on `custom_wall_sf` and `wall_square_footage` (exact names from reviewer). 4 tests.
+- **R18** — `COMMENT ON COLUMN wall_openings.swing` with hinge + swing quadrant mapping + pointer to frontend source. 4 tests.
+- **R19** — full-fidelity rollback: Python snapshot helper in `save_canvas` + SECURITY DEFINER `restore_floor_plan_relational_snapshot` RPC does DELETE + INSERT walls/openings + UPDATE JSONB columns atomically. 12 tests (7 migration + 3 snapshot helper + 2 rollback wiring).
+
+Frontend:
+- **R12** — `handleCreateRoomOnDifferentFloor` reconciles on `savedVersion.id` for Case 3 forks. TypeScript only; manual verification requires concurrent two-tab setup (documented).
+- **R15** — `useUpdateFloorPlan` drops `canvas_data`; `useSaveCanvas(floorPlanId, jobId)` invalidates per-job cache. 6 static tests.
+- **R17 UX** — inline `"Must be greater than 0"` / `"Must be at least 1"` error messaging on 4 numeric-input components (cutout editor sheet, desktop sidebar NumericInput, mobile drawing sheet, mobile tap-room sheet). 10 static tests.
+- **Room-tap fix** — `MobileRoomPanel` opens reliably on mobile when `useRooms` hasn't resolved at tap time (buffer + flush on query arrival).
+
+Product-intent decision:
+- **R2** — deferred. Reviewer asked to drop `parent_pin`; under Crewmatic's linked-job model (property-anchored data shared mitigation↔recon until recon edits and forks), that code is the mechanism making sharing work. No code change; PR reply drafted.
+
+**Round-2 totals:** 9 new Alembic migrations, 105 new pytest cases — all green. No regressions against the existing round-1 suite (C1–C6, W1–W11, P2.1, P2.2). Pre-existing `TestClient`-based tests (`TestCreateFloorPlan`, `TestUpdateFloorPlan`, `TestSketchCleanup`, etc.) continue to fail due to an auth-middleware async-mock bug on main — unrelated to round-2 changes.
+
 ---
 
-*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16.*
+*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16. Round 2 hardening: 2026-04-22.*
