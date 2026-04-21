@@ -542,8 +542,16 @@ async def _copy_rooms_from_linked_job(
     # Intentionally excludes: water_category, water_class, dry_standard,
     # equipment_air_movers, equipment_dehus, affected, material_flags, notes,
     # room_sketch_data — those are mitigation's scope, not reconstruction's.
+    #
+    # C6 fix: `floor_plan_id` is also excluded. Post-container/versions merge,
+    # that id points at a specific version row. If we copied it here, recon's
+    # rooms would start life pinned to mitigation's frozen v1 — then recon's
+    # first save_canvas would fork v2 and move the JOB's pin to v2, while the
+    # rooms keep pointing at v1. The ROOM↔FLOOR-PLAN linkage would be desynced
+    # from the JOB↔FLOOR-PLAN pin forever. Leaving it NULL lets recon's first
+    # save use the normal versioning flow to link its rooms to the right row.
     COPY_FIELDS = [
-        "room_name", "floor_plan_id",
+        "room_name",
         "length_ft", "width_ft", "height_ft", "square_footage",
         "room_type", "ceiling_type", "floor_level",
         "room_polygon", "floor_openings", "custom_wall_sf",
