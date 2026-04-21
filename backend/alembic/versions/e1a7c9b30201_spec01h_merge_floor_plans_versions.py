@@ -257,7 +257,7 @@ CREATE POLICY "floor_plans_delete" ON floor_plans
 -- Trigger — original ca59c5bf87c9 naming.
 CREATE TRIGGER trg_floor_plans_updated_at
     BEFORE UPDATE ON floor_plans
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
 
 -- =========================================================================
 -- D5: Backfill one floor_plans (container) row per (property_id, floor_number)
