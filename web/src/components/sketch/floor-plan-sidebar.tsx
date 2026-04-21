@@ -413,12 +413,19 @@ function ToolInstructions({ tool }: { tool: ToolType }) {
         <p className="text-[11px] text-[#8a847e] mt-3">Tip: use Select tool + Delete key instead for precision.</p>
       </div>
     ),
+    pin: (
+      <div className="space-y-2 text-[12px] text-[#6b6560] leading-relaxed">
+        <p><span className="font-semibold text-[#1a1a1a]">Tap inside a room</span> to drop a moisture pin.</p>
+        <p><span className="font-semibold text-[#1a1a1a]">Tap an existing pin</span> to log today&rsquo;s reading.</p>
+        <p className="text-[11px] text-[#8a847e] mt-3">Pins color by reading vs. dry standard: red &gt;10 pts above, amber within 10, green at or below.</p>
+      </div>
+    ),
   };
 
   const toolNames: Record<ToolType, string> = {
     room: "Room Tool", trace: "Trace Tool", wall: "Wall Tool", door: "Door Tool",
     window: "Window Tool", opening: "Opening Tool", cutout: "Cutout Tool",
-    select: "Select Tool", delete: "Delete Tool",
+    select: "Select Tool", delete: "Delete Tool", pin: "Pin Tool",
   };
 
   return (
