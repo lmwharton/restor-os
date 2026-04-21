@@ -1797,6 +1797,121 @@ class TestCreateVersionConcurrentEdit:
 
 
 # ---------------------------------------------------------------------------
+# R3 (round 2): save_floor_plan_version RPC tenant hardening
+# ---------------------------------------------------------------------------
+
+
+class TestCreateVersionRPCTenantHardening:
+    """The hardened RPC (migration ``c7f8a9b0d1e2``) derives the caller's
+    company from the JWT via ``get_my_company_id()`` and rejects any call
+    where the JWT-resolved company doesn't match ``p_company_id`` (42501)
+    or where the property/job ownership chain is broken (P0002). The
+    service layer must translate these into meaningful HTTP responses
+    rather than a bare 500 DB_ERROR.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rpc_42501_maps_to_403_company_mismatch(self):
+        """Caller passed a ``p_company_id`` that doesn't match the JWT's
+        resolved company. RPC raises 42501; service translates to 403
+        COMPANY_MISMATCH so the client sees an unambiguous auth error."""
+        from api.floor_plans.service import _create_version
+        from api.shared.exceptions import AppException
+
+        client = AsyncSupabaseMock()
+        client.rpc.return_value.execute.side_effect = APIError(
+            {
+                "message": "p_company_id does not match the authenticated caller company",
+                "code": "42501",
+                "details": "",
+            }
+        )
+
+        with pytest.raises(AppException) as exc_info:
+            await _create_version(
+                client=client,
+                property_id=uuid4(),
+                floor_number=1,
+                floor_name="Floor 1",
+                company_id=uuid4(),
+                job_id=uuid4(),
+                user_id=uuid4(),
+                canvas_data={"walls": []},
+                change_summary="test",
+            )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "COMPANY_MISMATCH"
+
+    @pytest.mark.asyncio
+    async def test_rpc_p0002_maps_to_400_property_mismatch(self):
+        """RPC's property-or-job ownership check failed (property not in
+        caller's company, or job not on the named property). Service maps
+        the P0002 to 400 PROPERTY_MISMATCH — we avoid a 404 to prevent
+        tenant-existence leaks."""
+        from api.floor_plans.service import _create_version
+        from api.shared.exceptions import AppException
+
+        client = AsyncSupabaseMock()
+        client.rpc.return_value.execute.side_effect = APIError(
+            {
+                "message": "Job not found or does not belong to this property",
+                "code": "P0002",
+                "details": "",
+            }
+        )
+
+        with pytest.raises(AppException) as exc_info:
+            await _create_version(
+                client=client,
+                property_id=uuid4(),
+                floor_number=1,
+                floor_name="Floor 1",
+                company_id=uuid4(),
+                job_id=uuid4(),
+                user_id=uuid4(),
+                canvas_data={"walls": []},
+                change_summary="test",
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "PROPERTY_MISMATCH"
+
+    def test_migration_hardens_tenant_checks(self):
+        """Static migration-file guardrail. The ``c7f8a9b0d1e2`` migration
+        MUST derive the company from the JWT (``get_my_company_id()``),
+        MUST verify property ownership, MUST verify the job lives on the
+        named property, and MUST lock ``search_path`` — or a future editor
+        could silently re-open the R3 hole.
+        """
+        from pathlib import Path
+
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "c7f8a9b0d1e2_spec01h_rpc_tenant_hardening.py"
+        )
+        assert migration.exists(), f"R3 migration missing at {migration}"
+        text = migration.read_text(encoding="utf-8")
+
+        required = {
+            "jwt-derived company": "get_my_company_id()",
+            "42501 on company mismatch": "'42501'",
+            "property ownership check": "FROM properties",
+            "property company filter":
+                "company_id = v_caller_company",
+            "job-on-property check":
+                "AND property_id = p_property_id",
+            "search_path pinned":
+                "SET search_path",
+        }
+        missing = [label for label, needle in required.items() if needle not in text]
+        assert not missing, (
+            "R3 migration is missing required tenant hardening elements: "
+            + ", ".join(missing)
+        )
+
+
+# ---------------------------------------------------------------------------
 # C4: atomic RPC for flip + insert + pin
 # ---------------------------------------------------------------------------
 
@@ -1951,6 +2066,11 @@ class TestCase2IsCurrentTOCTOU:
             "id": str(job_id),
             "floor_plan_id": pinned_version_id,
             "status": "mitigation",
+            # R8 tightened save_canvas to reject NULL property_id with
+            # JOB_NO_PROPERTY; this test needs the property to match the
+            # anchor so the check passes and the TOCTOU fallthrough is
+            # actually exercised.
+            "property_id": str(property_id),
         }
         pinned_row = {
             "id": pinned_version_id,
@@ -2321,14 +2441,22 @@ class TestSaveCanvasPropertyMismatch:
         assert result == forked_row
 
     @pytest.mark.asyncio
-    async def test_allows_save_when_job_property_id_is_null(self):
-        """Legacy jobs with property_id=NULL bypass the check — the
-        create-floor-plan-by-job flow auto-creates the property on first
-        save. Without this bypass, pre-property-linkage jobs couldn't save
-        their first floor plan."""
+    async def test_rejects_save_when_job_property_id_is_null(self):
+        """R8 (round 2): the former "legacy accommodation" that let a NULL
+        ``job.property_id`` bypass the property check is gone. In the
+        current product, every job is created with an address that
+        deterministically resolves a property, so a NULL here is a data
+        integrity signal — fail loudly with JOB_NO_PROPERTY instead of
+        silently permitting a cross-property save.
+
+        Prior behavior (kept as reference): the test at this line used to
+        assert the save succeeded with ``property_id=None``; we flipped it
+        to match the tightened helper. ``POST /jobs/{id}/floor-plans``
+        remains the recovery path (auto-creates + links a property)."""
         from unittest.mock import AsyncMock
 
         import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
 
         job_id = uuid4()
         company_id = uuid4()
@@ -2361,32 +2489,29 @@ class TestSaveCanvasPropertyMismatch:
                         "id": str(job_id),
                         "floor_plan_id": None,
                         "status": "mitigation",
-                        "property_id": None,  # legacy row
+                        "property_id": None,  # regression: must be rejected
                     })
                 return _result(None)
 
         class FakeClient:
             def table(self, name): return QB(name)
 
-        forked_row = {"id": str(uuid4()), "version_number": 1, "is_current": True}
-        with (
-            patch.object(fp_service, "_create_version", AsyncMock(return_value=forked_row)),
-            patch.object(fp_service, "log_event", AsyncMock(return_value=None)),
-            patch.object(
-                fp_service, "get_authenticated_client",
-                AsyncMock(return_value=FakeClient()),
-            ),
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
         ):
-            result = await fp_service.save_canvas(
-                token="test",
-                floor_plan_id=floor_plan_id,
-                job_id=job_id,
-                company_id=company_id,
-                user_id=user_id,
-                canvas_data={"walls": []},
-                change_summary=None,
-            )
-        assert result == forked_row
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.save_canvas(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    job_id=job_id,
+                    company_id=company_id,
+                    user_id=user_id,
+                    canvas_data={"walls": []},
+                    change_summary=None,
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "JOB_NO_PROPERTY"
 
 
 # ---------------------------------------------------------------------------
@@ -2773,6 +2898,2242 @@ class TestUpdateFloorPlanFrozenGuard:
                 )
         assert exc_info.value.status_code == 403
         assert exc_info.value.error_code == "VERSION_FROZEN"
+
+
+# ---------------------------------------------------------------------------
+# R4 (round 2): TOCTOU on update_floor_plan + cleanup_floor_plan — UPDATE
+# must filter on is_current=true atomically. Round-1 C3 fixed this in
+# save_canvas Case 2; the reviewer found the identical pattern unguarded
+# in these two callers.
+# ---------------------------------------------------------------------------
+
+
+class _UpdateTOCTOUClient:
+    """Fake supabase client that:
+    - returns ``is_current=true`` on the initial SELECT (so the in-memory
+      guard at L503 / L1199 does not trip)
+    - returns ``data=[]`` on the subsequent UPDATE (simulating the TOCTOU
+      race where a sibling fork flipped is_current=false between read and
+      write, so the ``.eq("is_current", True)`` filter matches zero rows).
+
+    Accepts a shared ``property_id`` so R5's property cross-check at
+    ``cleanup_floor_plan`` passes with its mocked job dict. Used by both
+    update_floor_plan and cleanup_floor_plan tests.
+    """
+
+    def __init__(
+        self,
+        *,
+        floor_plan_id,
+        property_id=None,
+        is_current_on_read=True,
+        update_rows_matched=0,
+    ):
+        self._floor_plan_id = str(floor_plan_id)
+        self._property_id = str(property_id or uuid4())
+        self._is_current_on_read = is_current_on_read
+        self._update_rows_matched = update_rows_matched
+
+    @property
+    def property_id(self):
+        return self._property_id
+
+    def table(self, _name):
+        outer = self
+
+        class QB:
+            def __init__(self):
+                self._mode = None  # "select" | "update"
+
+            def select(self, *_a, **_kw):
+                self._mode = "select"
+                return self
+
+            def update(self, _payload):
+                self._mode = "update"
+                return self
+
+            def eq(self, *_a, **_kw): return self
+            def neq(self, *_a, **_kw): return self
+            def single(self): return self
+
+            async def execute(self):
+                r = MagicMock()
+                if self._mode == "update":
+                    r.data = [{"id": outer._floor_plan_id, "floor_name": "X", "is_current": True}] \
+                        * outer._update_rows_matched
+                else:  # select
+                    r.data = {
+                        "id": outer._floor_plan_id,
+                        "property_id": outer._property_id,
+                        "company_id": str(uuid4()),
+                        "floor_number": 1,
+                        "floor_name": "Floor 1",
+                        "thumbnail_url": None,
+                        "canvas_data": {"walls": [{"x1": 0, "y1": 0, "x2": 10, "y2": 0}]},
+                        "is_current": outer._is_current_on_read,
+                    }
+                return r
+
+        return QB()
+
+
+class TestUpdateFloorPlanTOCTOU:
+    """update_floor_plan's UPDATE at L530 must filter on is_current=true so a
+    sibling Case 3 fork that flips the target to frozen mid-flight causes the
+    UPDATE to match zero rows, which we translate into VERSION_FROZEN rather
+    than silently mutating a historical snapshot.
+    """
+
+    @pytest.mark.asyncio
+    async def test_update_zero_rows_matched_raises_version_frozen(self):
+        """Read returns is_current=true (skips in-memory guard). UPDATE
+        returns data=[] (race won by sibling fork). Must raise VERSION_FROZEN.
+        """
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanUpdate
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            is_current_on_read=True,
+            update_rows_matched=0,
+        )
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.update_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    property_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    body=FloorPlanUpdate(floor_name="New Name"),
+                )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "VERSION_FROZEN"
+
+    @pytest.mark.asyncio
+    async def test_update_writes_when_row_still_current(self):
+        """Happy-path regression. UPDATE matches 1 row → returns the row,
+        no VERSION_FROZEN. Confirms the atomic filter change did not break
+        the common autosave path.
+        """
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanUpdate
+
+        floor_plan_id = uuid4()
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            is_current_on_read=True,
+            update_rows_matched=1,
+        )
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ):
+            with patch.object(fp_service, "log_event", AsyncMock()):
+                result = await fp_service.update_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    property_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    body=FloorPlanUpdate(floor_name="New Name"),
+                )
+        assert result["id"] == str(floor_plan_id)
+
+
+class TestRestoreRelationalSnapshotMigration:
+    """R19 (round 2): restore_floor_plan_relational_snapshot RPC.
+
+    Verifies the migration has the production-grade shape:
+      - SECURITY DEFINER + JWT-derived company (same pattern as R3).
+      - DELETE + INSERT inside one function call for transactional atomicity.
+      - Restores all four relational sources: wall_segments, wall_openings,
+        job_rooms.room_polygon, job_rooms.floor_openings.
+      - Handles legacy versions without _relational_snapshot gracefully
+        (returns restored=false, not a 500).
+      - Pinned search_path for SECURITY DEFINER hygiene.
+    """
+
+    MIGRATION_FILE = "e5f8a9b0c1d2_spec01h_restore_floor_plan_snapshot_rpc.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R19 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_upgrade_defines_rpc(self):
+        text = self._text()
+        assert "CREATE OR REPLACE FUNCTION restore_floor_plan_relational_snapshot" in text
+
+    def test_rpc_is_security_definer_with_locked_search_path(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "SECURITY DEFINER" in upgrade
+        assert "SET search_path = pg_catalog, public" in upgrade
+
+    def test_rpc_derives_company_from_jwt(self):
+        """Must call get_my_company_id() — never trust a caller-supplied
+        company id. Same R3 pattern across every 01H SECURITY DEFINER RPC."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "get_my_company_id()" in upgrade
+        assert "'42501'" in upgrade  # raised on no-auth-company
+
+    def test_rpc_restores_all_four_relational_sources(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # wall_segments: delete + insert
+        assert "DELETE FROM wall_segments" in upgrade
+        assert "INSERT INTO wall_segments" in upgrade
+        # wall_openings: insert under new parent (delete cascades via FK)
+        assert "INSERT INTO wall_openings" in upgrade
+        # job_rooms JSONB fields
+        assert "room_polygon" in upgrade
+        assert "floor_openings" in upgrade
+
+    def test_rpc_handles_legacy_versions_without_snapshot(self):
+        """Versions saved before R19 have no _relational_snapshot key.
+        The RPC must return restored=false (not 500) so the service layer
+        can warn and keep canvas-only rollback for legacy data."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "'no_snapshot'" in upgrade
+        assert "'restored'" in upgrade
+
+    def test_rpc_rejects_unsupported_snapshot_version(self):
+        """Future-proofing: if the snapshot format changes, the RPC must
+        refuse to apply a version it doesn't understand rather than
+        corrupt the data."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "v_snapshot_version" in upgrade
+        assert "Unsupported snapshot version" in upgrade
+
+    def test_downgrade_drops_function(self):
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        assert "DROP FUNCTION IF EXISTS restore_floor_plan_relational_snapshot" in downgrade
+
+
+class TestSaveCanvasEmbedsRelationalSnapshot:
+    """R19 snapshot side: save_canvas calls _enrich_canvas_with_relational_snapshot
+    before _create_version so every new floor_plans row carries the snapshot
+    needed for future full-fidelity rollback. The helper itself reads the
+    CURRENT server-side relational state — the frontend blob is not
+    authoritative for this purpose."""
+
+    def test_save_canvas_enriches_before_create_version(self):
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        assert "_enrich_canvas_with_relational_snapshot" in src, (
+            "save_canvas must build the relational snapshot BEFORE calling "
+            "_create_version so the snapshot ships in canvas_data."
+        )
+
+    @pytest.mark.asyncio
+    async def test_enricher_adds_snapshot_key(self):
+        """Behavioral: helper returns canvas_data with _relational_snapshot."""
+        from unittest.mock import MagicMock
+
+        from api.floor_plans.service import _enrich_canvas_with_relational_snapshot
+
+        room_id = str(uuid4())
+
+        class QB:
+            def __init__(self, table): self.table = table
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            def in_(self, *_a, **_kw): return self
+            async def execute(self):
+                r = MagicMock()
+                if self.table == "job_rooms":
+                    r.data = [{"id": room_id, "room_polygon": None, "floor_openings": []}]
+                elif self.table == "wall_segments":
+                    r.data = [{
+                        "id": str(uuid4()), "room_id": room_id,
+                        "x1": 0, "y1": 0, "x2": 100, "y2": 0,
+                        "wall_type": "interior", "wall_height_ft": None,
+                        "affected": False, "shared": False,
+                        "shared_with_room_id": None, "sort_order": 0,
+                    }]
+                else:
+                    r.data = []
+                return r
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        canvas_in = {"rooms": [{"id": "frontend-id", "propertyRoomId": room_id}]}
+        canvas_out = await _enrich_canvas_with_relational_snapshot(
+            FakeClient(), canvas_in, uuid4(),
+        )
+        assert "_relational_snapshot" in canvas_out
+        snap = canvas_out["_relational_snapshot"]
+        assert snap["version"] == 1
+        assert len(snap["rooms"]) == 1
+        assert snap["rooms"][0]["id"] == room_id
+        assert len(snap["rooms"][0]["walls"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_enricher_does_not_mutate_input(self):
+        """Defensive: the helper returns a new dict — mutating the caller's
+        canvas_data would confuse any code path that reuses the object."""
+        from unittest.mock import MagicMock
+
+        from api.floor_plans.service import _enrich_canvas_with_relational_snapshot
+
+        class EmptyQB:
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            def in_(self, *_a, **_kw): return self
+            async def execute(self):
+                r = MagicMock(); r.data = []
+                return r
+
+        class FakeClient:
+            def table(self, _name): return EmptyQB()
+
+        canvas_in = {"rooms": []}
+        await _enrich_canvas_with_relational_snapshot(
+            FakeClient(), canvas_in, uuid4(),
+        )
+        assert "_relational_snapshot" not in canvas_in, (
+            "helper must not mutate caller's dict"
+        )
+
+
+# TestRollbackCallsRestoreRpc (original R19 tests) were superseded by
+# TestRollbackVersionUsesAtomicWrapper — see round-2 follow-on F1. The old
+# two-RPC-call shape no longer exists; rollback_version invokes the atomic
+# wrapper and the wrapper invokes both save + restore inside one plpgsql
+# transaction. All the assertions that used to live here are now covered
+# by the new class above.
+
+
+class TestComputeWallSfForRoomSecurity:
+    """Round-2 follow-on #2: _compute_wall_sf_for_room must derive company
+    from the JWT via get_my_company_id(), not accept it as a caller-supplied
+    parameter. SECURITY DEFINER grants bypass RLS, so caller-supplied tenant
+    is a cross-tenant write vector — same anti-pattern R3 closed on
+    save_floor_plan_version.
+    """
+
+    MIGRATION_FILE = "a7b8c9d0e1f2_spec01h_rpc_security_followup.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        ).read_text(encoding="utf-8")
+
+    def test_compute_helper_takes_only_room_id(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # New signature is 1-arg; the 2-arg version is dropped first.
+        assert "DROP FUNCTION IF EXISTS _compute_wall_sf_for_room(UUID, UUID)" in upgrade
+        assert "CREATE OR REPLACE FUNCTION _compute_wall_sf_for_room(\n    p_room_id UUID\n)" in upgrade
+
+    def test_compute_helper_derives_company_from_jwt(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        helper = upgrade.split("CREATE OR REPLACE FUNCTION _compute_wall_sf_for_room", 1)[1]
+        assert "v_caller_company := get_my_company_id()" in helper
+        assert "'42501'" in helper  # raise on no-auth
+
+    def test_restore_rpc_calls_1arg_helper(self):
+        """restore_floor_plan_relational_snapshot must pass only room_id."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        restore = upgrade.split(
+            "CREATE OR REPLACE FUNCTION restore_floor_plan_relational_snapshot", 1
+        )[1]
+        assert "_compute_wall_sf_for_room(v_room_id)" in restore
+        # Regression guard: must not pass the 2-arg form.
+        assert "_compute_wall_sf_for_room(v_room_id, v_caller_company)" not in restore
+
+
+class TestFrozenTriggerDistinctSqlstate:
+    """Round-2 follow-on #4: the R4 frozen-mutation trigger previously
+    raised 42501 (same SQLSTATE as R3's tenant-mismatch check). Python
+    catch blocks couldn't tell them apart. a7b8c9d0e1f2 changes the
+    trigger to raise 55006 (object_in_use, class 55) so VERSION_FROZEN
+    and COMPANY_MISMATCH live on distinct codes.
+    """
+
+    MIGRATION_FILE = "a7b8c9d0e1f2_spec01h_rpc_security_followup.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        ).read_text(encoding="utf-8")
+
+    def test_trigger_uses_55006_sqlstate(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        trigger_block = upgrade.split(
+            "CREATE OR REPLACE FUNCTION floor_plans_prevent_frozen_mutation", 1
+        )[1]
+        assert "'55006'" in trigger_block
+
+    def test_downgrade_restores_42501(self):
+        """Rollback returns the trigger to its pre-follow-on 42501 so a
+        mid-migration downgrade doesn't leave the system in a mixed state."""
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        trigger_block = downgrade.split(
+            "CREATE OR REPLACE FUNCTION floor_plans_prevent_frozen_mutation", 1
+        )[1]
+        assert "'42501'" in trigger_block
+
+
+class TestServiceMapsVersionFrozen55006:
+    """Service-layer catches must translate 55006 → VERSION_FROZEN (403)
+    across every path that can hit the frozen-mutation trigger. _create_version
+    and update_floor_plan and cleanup_floor_plan all need the branch."""
+
+    def test_create_version_maps_55006_to_version_frozen(self):
+        import inspect
+
+        from api.floor_plans.service import _create_version
+
+        src = inspect.getsource(_create_version)
+        assert '"55006"' in src
+        assert "VERSION_FROZEN" in src
+
+    def test_update_floor_plan_maps_55006_to_version_frozen(self):
+        import inspect
+
+        from api.floor_plans.service import update_floor_plan
+
+        src = inspect.getsource(update_floor_plan)
+        assert '"55006"' in src
+        assert "VERSION_FROZEN" in src
+
+    def test_cleanup_floor_plan_wraps_update_and_maps_55006(self):
+        import inspect
+
+        from api.floor_plans.service import cleanup_floor_plan
+
+        src = inspect.getsource(cleanup_floor_plan)
+        # cleanup's UPDATE is now inside a try/except APIError block.
+        assert "except APIError" in src
+        assert '"55006"' in src
+        assert "VERSION_FROZEN" in src
+
+
+class TestEnsureJobProperty23505Retry:
+    """Round-2 follow-on #5: the router's ensure_job_property call now
+    retries once on 23505 (partial unique address index violation from
+    two different jobs at the same address racing past their FOR UPDATE
+    locks). On retry the SELECT finds the winner's row and reuses it.
+    Back-to-back 23505s surface as 409 CONCURRENT_EDIT so the client
+    can retry the request."""
+
+    @staticmethod
+    def _endpoint_body() -> str:
+        import re
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        m = re.search(
+            r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        assert m, "create_floor_plan_by_job_endpoint not found"
+        return m.group(0)
+
+    def test_router_retries_on_23505(self):
+        body = self._endpoint_body()
+        assert '"23505"' in body
+        assert "_invoke_ensure" in body
+        assert "CONCURRENT_EDIT" in body
+
+
+class TestRouterImportsHoisted:
+    """Round-2 follow-on #8: inline imports inside endpoint bodies are
+    cleaned up — logger, APIError, get_authenticated_client, AppException
+    all live at module top like the rest of the file."""
+
+    @staticmethod
+    def _text() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+
+    def test_module_imports_are_at_top(self):
+        text = self._text()
+        # Every top-level import shows up before the first `async def`.
+        header, _, body = text.partition("\nasync def ")
+        for marker in (
+            "import logging",
+            "from postgrest.exceptions import APIError",
+            "from api.shared.database import get_authenticated_client",
+            "from api.shared.exceptions import AppException",
+        ):
+            assert marker in header, f"missing top-level import: {marker}"
+
+    def test_no_inline_imports_in_endpoint_bodies(self):
+        """Regression: once hoisted, duplicate inline imports should not
+        creep back into endpoint function bodies."""
+        text = self._text()
+        _header, _, body = text.partition("\nasync def ")
+        # Only check inside endpoint bodies for these specific duplicates.
+        for marker in (
+            "    from postgrest.exceptions import APIError",
+            "    from api.shared.database import get_authenticated_client",
+            "    from api.shared.exceptions import AppException",
+        ):
+            assert marker not in body, f"inline import reappeared: {marker}"
+
+
+class TestPinUpdateScopedByCompanyId:
+    """Round-2 follow-on #7: create_floor_plan_by_job_endpoint's pin UPDATE
+    now scopes by company_id for consistency with other write paths."""
+
+    def test_pin_update_adds_company_id_filter(self):
+        import re
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        m = re.search(
+            r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        assert m, "create_floor_plan_by_job_endpoint not found"
+        body = m.group(0)
+        # The jobs.floor_plan_id UPDATE chain must include .eq("company_id", ...).
+        pin_block = body.split('.update({"floor_plan_id": floor_plan["id"]})', 1)[1]
+        assert '.eq("company_id"' in pin_block
+
+
+class TestSaveCanvasCase3AutosaveReconciliation:
+    """Round-2 follow-on #3: the normal autosave path at floor-plan/page.tsx
+    now captures the POST response and reconciles activeFloorId + caches
+    when the backend forks (Case 3). Mirrors R12's cross-floor save fix —
+    without this, the FloorSelector points at a frozen row after fork and
+    the next autosave forks again."""
+
+    @staticmethod
+    def _text() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "app"
+            / "(protected)" / "jobs" / "[id]" / "floor-plan" / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+    def test_autosave_captures_version_response(self):
+        text = self._text()
+        # Find the normal-autosave block (currentFloor branch).
+        assert "const savedVersion = await apiPost<FloorPlan>" in text
+
+    def test_autosave_reconciles_on_fork(self):
+        text = self._text()
+        # Fork detection + setActiveFloorId to the saved id + stale history invalidation.
+        assert "savedVersion.id !== currentFloor.id" in text
+        assert "setActiveFloorId(savedVersion.id)" in text
+
+    def test_first_floor_create_also_captures_and_reconciles(self):
+        text = self._text()
+        # Second call site at the first-floor-create path.
+        assert "const firstSaved = await apiPost<FloorPlan>" in text
+        assert "firstSaved.id !== created.id" in text
+
+
+class TestSaveCanvasPostEnrichmentSizeCap:
+    """F7 (round-2 follow-on): the W6 incoming cap (500 KB) runs at the
+    router boundary, before ``_enrich_canvas_with_relational_snapshot`` adds
+    the server-side ``_relational_snapshot``. Without a post-enrichment
+    check, a 497 KB incoming canvas + snapshot could silently land ~510 KB
+    in the DB, making the W6 contract a lie. save_canvas now re-validates
+    the enriched payload against a wider stored cap (600 KB) and raises
+    413 CANVAS_TOO_LARGE when exceeded. The two-layer cap is documented in
+    ``floor_plans/schemas.py``.
+    """
+
+    def test_schemas_export_both_caps(self):
+        """Both the incoming-cap and stored-cap constants are exposed so
+        save_canvas and any future reader can reason about them explicitly."""
+        from api.floor_plans.schemas import (
+            MAX_INCOMING_CANVAS_DATA_BYTES,
+            MAX_STORED_CANVAS_DATA_BYTES,
+        )
+
+        assert MAX_INCOMING_CANVAS_DATA_BYTES == 500_000
+        assert MAX_STORED_CANVAS_DATA_BYTES == 600_000
+        assert MAX_STORED_CANVAS_DATA_BYTES > MAX_INCOMING_CANVAS_DATA_BYTES, (
+            "stored cap must be > incoming cap to absorb snapshot overhead"
+        )
+
+    def test_save_canvas_enforces_stored_cap_after_enrichment(self):
+        """Static guard: save_canvas references MAX_STORED_CANVAS_DATA_BYTES
+        and raises CANVAS_TOO_LARGE. This catches future edits that drop the
+        post-enrichment check and let oversized rows land silently."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        assert "MAX_STORED_CANVAS_DATA_BYTES" in src
+        assert "CANVAS_TOO_LARGE" in src
+        assert "status_code=413" in src
+
+    @pytest.mark.asyncio
+    async def test_oversize_enriched_canvas_raises_413(self):
+        """Behavioral: if enrichment pushes the payload past the stored cap,
+        save_canvas raises before any RPC call. Fake client returns anchor +
+        job rows, and enrichment is patched to produce a >600KB blob."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        company_id = uuid4()
+        job_id = uuid4()
+        property_id = uuid4()
+
+        def _result(data):
+            r = MagicMock(); r.data = data; return r
+
+        class QB:
+            def __init__(self, table): self.table = table
+            def select(self, *_a, **_kw): return self
+            def single(self): return self
+            def eq(self, *_a, **_kw): return self
+            def is_(self, *_a, **_kw): return self
+            async def execute(self):
+                if self.table == "floor_plans":
+                    return _result({
+                        "property_id": str(property_id),
+                        "floor_number": 1,
+                    })
+                if self.table == "jobs":
+                    return _result({
+                        "id": str(job_id),
+                        "floor_plan_id": None,
+                        "status": "mitigation",
+                        "property_id": str(property_id),
+                    })
+                return _result(None)
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        # Patch enrichment to return a huge blob. 700KB of padding guarantees
+        # we're above the 600KB stored cap.
+        huge = {"rooms": [], "_relational_snapshot": {
+            "version": 1,
+            "rooms": [],
+            "padding": "x" * 700_000,
+        }}
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ), patch.object(
+            fp_service, "_enrich_canvas_with_relational_snapshot",
+            AsyncMock(return_value=huge),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.save_canvas(
+                    token="test",
+                    floor_plan_id=uuid4(),
+                    job_id=job_id,
+                    company_id=company_id,
+                    user_id=uuid4(),
+                    canvas_data={"rooms": []},
+                    change_summary=None,
+                )
+        assert exc_info.value.status_code == 413
+        assert exc_info.value.error_code == "CANVAS_TOO_LARGE"
+
+
+class TestAtomicRollbackWrapperMigration:
+    """Round-2 follow-on (F1+F2+F3): atomic rollback wrapper RPC.
+
+    Critical-review flagged that rollback_version's two-RPC composition
+    (save_floor_plan_version + restore_floor_plan_relational_snapshot)
+    was non-atomic — if the restore failed, the new version row + repin
+    were already committed. This migration folds both into one plpgsql
+    function so Postgres's implicit transaction gives us true atomicity.
+
+    Same migration also:
+      - F2: recomputes wall_square_footage per room inside restore (so
+        R16's "backend authoritative" invariant holds across rollback).
+      - F3: surfaces skipped-room IDs in the restore return payload.
+    """
+
+    MIGRATION_FILE = "f6a9b0c1d2e3_spec01h_rollback_atomic_wrapper.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"F1 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    # ─── F1 — atomic wrapper RPC ──────────────────────────────────────────
+
+    def test_upgrade_defines_atomic_wrapper_rpc(self):
+        text = self._text()
+        assert "CREATE OR REPLACE FUNCTION rollback_floor_plan_version_atomic" in text
+
+    def test_wrapper_calls_save_then_restore_inside_one_plpgsql_function(self):
+        """The wrapper's body invokes both save_floor_plan_version and
+        restore_floor_plan_relational_snapshot — placing both in the same
+        plpgsql function is what gives us atomic semantics."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        wrapper_block = upgrade.split("rollback_floor_plan_version_atomic", 1)[1]
+        assert "save_floor_plan_version(" in wrapper_block
+        assert "restore_floor_plan_relational_snapshot(" in wrapper_block
+
+    def test_wrapper_validates_tenant_property_and_archive(self):
+        """F1 moves the R5/R6/R8 checks into the RPC so they share the
+        transaction. Verify all three guards are present."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        wrapper_block = upgrade.split("rollback_floor_plan_version_atomic", 1)[1]
+        assert "get_my_company_id()" in wrapper_block
+        assert "Property mismatch" in wrapper_block or "property_id <> v_target.property_id" in wrapper_block
+        assert "Job archived" in wrapper_block or "status = 'collected'" in wrapper_block
+        assert "Job has no property" in wrapper_block
+
+    def test_wrapper_is_security_definer_with_locked_search_path(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        wrapper_block = upgrade.split("rollback_floor_plan_version_atomic", 1)[1]
+        # Look just past the function body for the LANGUAGE declaration.
+        assert "LANGUAGE plpgsql" in wrapper_block
+        assert "SECURITY DEFINER" in wrapper_block
+        assert "SET search_path = pg_catalog, public" in wrapper_block
+
+    # ─── F2 — wall_sf recompute inside restore ────────────────────────────
+
+    def test_upgrade_defines_compute_wall_sf_helper(self):
+        text = self._text()
+        assert "CREATE OR REPLACE FUNCTION _compute_wall_sf_for_room" in text
+
+    def test_compute_helper_honors_custom_wall_sf_override(self):
+        """R16 contract: if custom_wall_sf is set, skip the formula and
+        store that value directly."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        helper_block = upgrade.split("_compute_wall_sf_for_room", 1)[1]
+        assert "v_room.custom_wall_sf IS NOT NULL" in helper_block
+
+    def test_compute_helper_uses_ceiling_multipliers_matching_python(self):
+        """The multiplier table must match CEILING_MULTIPLIERS in
+        shared/constants.py. If Python changes, this test catches drift."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        helper_block = upgrade.split("_compute_wall_sf_for_room", 1)[1]
+        for line in [
+            "WHEN 'flat'      THEN 1.0",
+            "WHEN 'vaulted'   THEN 1.3",
+            "WHEN 'cathedral' THEN 1.5",
+            "WHEN 'sloped'    THEN 1.2",
+        ]:
+            assert line in helper_block
+
+    def test_restore_invokes_compute_wall_sf_per_room(self):
+        """After re-inserting walls + openings for a room, the restore
+        function must call _compute_wall_sf_for_room so the stored SF
+        catches up. Without this, rollback silently regresses R16."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        restore_block = upgrade.split(
+            "FUNCTION restore_floor_plan_relational_snapshot", 1
+        )[1].split(
+            "FUNCTION rollback_floor_plan_version_atomic", 1
+        )[0]
+        assert "_compute_wall_sf_for_room(v_room_id, v_caller_company)" in restore_block
+
+    # ─── F3 — skipped rooms surfaced ──────────────────────────────────────
+
+    def test_restore_accumulates_skipped_rooms(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        restore_block = upgrade.split(
+            "FUNCTION restore_floor_plan_relational_snapshot", 1
+        )[1].split(
+            "FUNCTION rollback_floor_plan_version_atomic", 1
+        )[0]
+        # When tenant check misses, append to skipped_rooms.
+        assert "v_skipped_rooms := v_skipped_rooms ||" in restore_block
+        # And return it in the payload.
+        assert "'skipped_rooms'" in restore_block
+
+
+class TestRollbackVersionUsesAtomicWrapper:
+    """Python's rollback_version now makes one RPC call to the wrapper
+    instead of two separate calls. Mapping of plpgsql SQLSTATEs to HTTP
+    error codes lives in the service layer."""
+
+    def test_rollback_calls_atomic_wrapper_rpc(self):
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        src = inspect.getsource(rollback_version)
+        assert '"rollback_floor_plan_version_atomic"' in src
+
+    def test_rollback_drops_the_two_separate_rpc_calls(self):
+        """Regression guard: the old two-RPC pattern (explicit
+        _create_version then restore_floor_plan_relational_snapshot) must
+        not reappear in rollback_version. The wrapper now owns both."""
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        src = inspect.getsource(rollback_version)
+        # _create_version and restore RPC name must be gone from rollback.
+        assert "_create_version(" not in src, (
+            "rollback_version must route through the atomic wrapper, not "
+            "call _create_version directly — doing so reintroduces the "
+            "non-atomic two-write pattern the reviewer flagged."
+        )
+        assert '"restore_floor_plan_relational_snapshot"' not in src
+
+    def test_rollback_maps_42501_to_403_rollback_forbidden(self):
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        src = inspect.getsource(rollback_version)
+        assert "ROLLBACK_FORBIDDEN" in src
+
+    def test_rollback_logs_skipped_rooms_warning(self):
+        """F3: when restore skips rooms, the service must log a warning
+        with the ids so data-integrity issues are visible."""
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        src = inspect.getsource(rollback_version)
+        assert "skipped_rooms" in src
+        assert "logger.warning" in src
+
+
+class TestEnrichCanvasRaisesOnNonDict:
+    """F4: _enrich_canvas_with_relational_snapshot used to coerce a
+    non-dict canvas_data to ``{"rooms": []}`` silently, saving an empty
+    version if a programmer error upstream corrupted the payload. The
+    helper now fails loudly with INVALID_CANVAS_DATA."""
+
+    @pytest.mark.asyncio
+    async def test_raises_on_list(self):
+        from api.floor_plans.service import _enrich_canvas_with_relational_snapshot
+        from api.shared.exceptions import AppException
+
+        class FakeClient:
+            def table(self, _n): raise AssertionError("should not reach DB")
+
+        with pytest.raises(AppException) as exc_info:
+            await _enrich_canvas_with_relational_snapshot(
+                FakeClient(), [{"not": "a dict"}], uuid4(),
+            )
+        assert exc_info.value.error_code == "INVALID_CANVAS_DATA"
+
+    @pytest.mark.asyncio
+    async def test_raises_on_string(self):
+        from api.floor_plans.service import _enrich_canvas_with_relational_snapshot
+        from api.shared.exceptions import AppException
+
+        class FakeClient:
+            def table(self, _n): raise AssertionError("should not reach DB")
+
+        with pytest.raises(AppException) as exc_info:
+            await _enrich_canvas_with_relational_snapshot(
+                FakeClient(), "oops", uuid4(),
+            )
+        assert exc_info.value.error_code == "INVALID_CANVAS_DATA"
+
+    @pytest.mark.asyncio
+    async def test_raises_on_none(self):
+        from api.floor_plans.service import _enrich_canvas_with_relational_snapshot
+        from api.shared.exceptions import AppException
+
+        class FakeClient:
+            def table(self, _n): raise AssertionError("should not reach DB")
+
+        with pytest.raises(AppException):
+            await _enrich_canvas_with_relational_snapshot(
+                FakeClient(), None, uuid4(),
+            )
+
+
+class TestWallSfNonNegBackfillGuard:
+    """F5: R17 migration backfills any rows with negative wall_sf to NULL
+    before the ADD CONSTRAINT, so the migration cannot fail on legacy
+    data. Uses a DO block with GET DIAGNOSTICS + RAISE NOTICE so the
+    count is visible in deploy logs."""
+
+    MIGRATION_FILE = "c3d4e5f8a9b0_spec01h_wall_sf_nonneg_checks.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        ).read_text(encoding="utf-8")
+
+    def test_upgrade_backfills_negative_custom_wall_sf_to_null(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "UPDATE job_rooms SET custom_wall_sf = NULL" in upgrade
+        assert "custom_wall_sf < 0" in upgrade
+
+    def test_upgrade_backfills_negative_wall_square_footage_to_null(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "UPDATE job_rooms SET wall_square_footage = NULL" in upgrade
+        assert "wall_square_footage < 0" in upgrade
+
+    def test_upgrade_emits_notice_with_row_counts(self):
+        """Operators should see how many rows were fixed in the deploy log."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "RAISE NOTICE" in upgrade
+        assert "GET DIAGNOSTICS" in upgrade
+
+
+class TestSwingColumnCommentMigration:
+    """R18 (round 2): wall_openings.swing is INTEGER CHECK IN (0,1,2,3).
+    Reviewer flagged that the four values have no DB-level documentation.
+    Migration d4e5f8a9b0c1 attaches a COMMENT ON COLUMN so psql \\d+ shows
+    the mapping inline. The comment must also be accurate — reviewer
+    guessed N/E/S/W, but the real frontend mapping is hinge + swing
+    quadrants per FloorOpeningData in floor-plan-tools.ts.
+    """
+
+    MIGRATION_FILE = "d4e5f8a9b0c1_spec01h_wall_openings_swing_comment.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R18 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_upgrade_attaches_comment_to_swing_column(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "COMMENT ON COLUMN wall_openings.swing" in upgrade
+
+    def test_comment_enumerates_all_four_values(self):
+        """All four mapping entries must be present and match the frontend
+        source-of-truth. If this fires, check floor-plan-tools.ts didn't
+        silently change the mapping."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "0=hinge-left-swing-up" in upgrade
+        assert "1=hinge-left-swing-down" in upgrade
+        assert "2=hinge-right-swing-down" in upgrade
+        assert "3=hinge-right-swing-up" in upgrade
+
+    def test_comment_points_at_frontend_source(self):
+        """The doc pointer to the authoritative TS enum should survive so
+        future devs find the source without grepping blind."""
+        text = self._text()
+        assert "floor-plan-tools.ts" in text
+
+    def test_downgrade_clears_the_comment(self):
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        assert "COMMENT ON COLUMN wall_openings.swing IS NULL" in downgrade
+
+
+class TestRoomUpdateTriggersWallSfRecalc:
+    """R16 (round 2): wall_square_footage is a cached value derived from
+    room-level inputs (height_ft, ceiling_type, custom_wall_sf) joined with
+    wall_segments + wall_openings. The walls/openings CRUD endpoints already
+    call _recalculate_room_wall_sf after every mutation (6 sites). The last
+    drift gap is room-level fields: if a tech PATCHes height_ft from 8 to
+    10, the formula input changes but no wall-level write fires, so the
+    cached SF stays stale. This test asserts update_room wires in the same
+    recalc hook when any of those three fields are part of the update.
+    """
+
+    @staticmethod
+    def _update_room_source() -> str:
+        import inspect
+
+        from api.rooms.service import update_room
+
+        return inspect.getsource(update_room)
+
+    def test_update_room_calls_recalc_on_wall_sf_input_change(self):
+        src = self._update_room_source()
+        # The wire-up uses a set of known formula inputs + conditional call.
+        assert '{"height_ft", "ceiling_type", "custom_wall_sf"}' in src, (
+            "update_room must name the three wall-SF formula inputs so the "
+            "recalc hook fires on any of them"
+        )
+        assert "_recalculate_room_wall_sf" in src, (
+            "update_room must invoke _recalculate_room_wall_sf after the main "
+            "UPDATE — otherwise stored wall_square_footage drifts when room "
+            "height/ceiling/override change"
+        )
+
+    def test_update_room_stamps_fresh_sf_on_response(self):
+        """After the recalc, the response dict must carry the new SF so the
+        caller (frontend mobile modal display, etc.) doesn't render the
+        pre-recalc stale value that was on result.data[0]."""
+        src = self._update_room_source()
+        assert 'room["wall_square_footage"] = fresh_sf' in src
+
+
+class TestRecalculateRoomWallSfReturnsValue:
+    """R16 helper refactor: _recalculate_room_wall_sf now returns the
+    freshly computed wall_sf so callers can update their in-memory room
+    dicts without a second DB round-trip."""
+
+    def test_function_signature_returns_float_or_none(self):
+        import inspect
+
+        from api.walls.service import _recalculate_room_wall_sf
+
+        sig = inspect.signature(_recalculate_room_wall_sf)
+        assert str(sig.return_annotation) in ("float | None", "typing.Optional[float]"), (
+            "_recalculate_room_wall_sf must return the computed wall_sf so "
+            "callers in update_room (R16) can stamp the fresh value on the "
+            "response dict without re-fetching the row."
+        )
+
+
+class TestWallSfNonNegChecksMigration:
+    """R17 (round 2): job_rooms.wall_square_footage and job_rooms.custom_wall_sf
+    had no DB-level sanity constraint. A tech typing -100 into an override (or
+    a future calc bug producing a negative) would silently corrupt every
+    downstream SF calculation — and therefore Xactimate line items.
+
+    Migration c3d4e5f8a9b0 adds two CHECK constraints with the exact names
+    the reviewer specified. NULL stays allowed (not-set case). 0 stays
+    allowed (valid edge case). Negative values → 23514 check_violation.
+    """
+
+    MIGRATION_FILE = "c3d4e5f8a9b0_spec01h_wall_sf_nonneg_checks.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R17 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_upgrade_adds_custom_wall_sf_constraint(self):
+        """Constraint name + shape must match the reviewer's exact snippet
+        so anyone reading the PR round-2 thread can confirm the fix is the
+        one they approved."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "ADD CONSTRAINT custom_wall_sf_nonneg" in upgrade
+        assert "CHECK (custom_wall_sf IS NULL OR custom_wall_sf >= 0)" in upgrade
+
+    def test_upgrade_adds_wall_square_footage_constraint(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "ADD CONSTRAINT wall_square_footage_nonneg" in upgrade
+        assert "CHECK (wall_square_footage IS NULL OR wall_square_footage >= 0)" in upgrade
+
+    def test_downgrade_drops_both_constraints(self):
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        assert "DROP CONSTRAINT IF EXISTS custom_wall_sf_nonneg" in downgrade
+        assert "DROP CONSTRAINT IF EXISTS wall_square_footage_nonneg" in downgrade
+
+    def test_revision_chains_after_r14(self):
+        text = self._text()
+        assert 'revision: str = "c3d4e5f8a9b0"' in text
+        assert 'down_revision: str | None = "b2c3d4e5f8a9"' in text
+
+
+class TestNumericInputInlineErrorMessaging:
+    """R17 UX follow-on (round 2): user asked for inline error messages on
+    numeric inputs so a typed ``-11`` gives visible feedback instead of
+    silently getting rejected. Touches 3 frontend files:
+
+      * cutout-editor-sheet.tsx — Width / Length (Must be greater than 0)
+      * floor-plan-sidebar.tsx — NumericInput (out-of-range message)
+      * konva-floor-plan.tsx — mobile-sheet Width / Height (Must be > 0)
+
+    The ceiling-height input in room-confirmation-card.tsx uses the
+    browser's native min/max prompt and is intentionally left alone.
+
+    These are static text scans against the TS source — same pattern used
+    for router + use-jobs hook guards. Runs in pytest, no Vitest needed.
+    """
+
+    @staticmethod
+    def _read(relative_path: str) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1].parent / "web" / "src" / relative_path
+        )
+        assert path.exists(), f"frontend file missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    # ─── cutout-editor-sheet.tsx ─────────────────────────────────────────
+
+    def test_cutout_editor_shows_error_when_invalid(self):
+        text = self._read("components/sketch/cutout-editor-sheet.tsx")
+        # Both Width and Length get the new "Must be greater than 0" message.
+        # There should be at least 2 occurrences — one per field.
+        assert text.count('Must be greater than 0') >= 2, (
+            "cutout-editor-sheet must show 'Must be greater than 0' for both "
+            "Width and Length when the typed value is invalid (non-empty, "
+            "non-positive)."
+        )
+
+    def test_cutout_editor_error_gated_on_not_valid(self):
+        """The message must only render when the value is ACTUALLY invalid —
+        not when the field is empty (user mid-edit) or over-max (which has
+        its own message). Guards: `!wValid` / `!lValid` + non-empty + !wOver."""
+        text = self._read("components/sketch/cutout-editor-sheet.tsx")
+        # Both guards should appear exactly next to the new error line.
+        assert '!wValid && widthStr !== "" && !wOver' in text
+        assert '!lValid && lengthStr !== "" && !lOver' in text
+
+    # ─── floor-plan-sidebar.tsx NumericInput ─────────────────────────────
+
+    def test_numeric_input_derives_draft_invalid_state(self):
+        text = self._read("components/sketch/floor-plan-sidebar.tsx")
+        assert "const draftInvalid = " in text, (
+            "NumericInput must track draft invalidity so the red border + "
+            "error message can render live (not after blur-and-revert)."
+        )
+
+    def test_numeric_input_shows_error_message(self):
+        text = self._read("components/sketch/floor-plan-sidebar.tsx")
+        # Error message block keyed off errorMessage state.
+        assert "{errorMessage && (" in text
+        assert 'text-red-600' in text
+
+    def test_numeric_input_applies_red_border_when_invalid(self):
+        text = self._read("components/sketch/floor-plan-sidebar.tsx")
+        assert 'draftInvalid ? "border-red-400"' in text
+
+    # ─── konva-floor-plan.tsx mobile sheet ───────────────────────────────
+
+    def test_konva_mobile_sheet_shows_error_for_width(self):
+        text = self._read("components/sketch/konva-floor-plan.tsx")
+        assert "const wInvalid = widthStr !== \"\" && (!Number.isFinite(wNum) || wNum <= 0)" in text
+        # Red border toggles on invalid
+        assert 'wInvalid ? "border-red-400"' in text
+
+    def test_konva_mobile_sheet_shows_error_for_height(self):
+        text = self._read("components/sketch/konva-floor-plan.tsx")
+        assert "const hInvalid = heightStr !== \"\" && (!Number.isFinite(hNum) || hNum <= 0)" in text
+        assert 'hInvalid ? "border-red-400"' in text
+
+    def test_konva_mobile_sheet_has_error_messages(self):
+        """Both Width and Height need the inline error line."""
+        text = self._read("components/sketch/konva-floor-plan.tsx")
+        # At least one "Must be greater than 0" per input = 2 minimum.
+        assert text.count('Must be greater than 0') >= 2
+
+    # ─── page.tsx RoomDimensionInputs (MobileRoomPanel bottom sheet) ─────
+    # Fourth entry point for numeric dimension inputs. Shown when the user
+    # taps an existing room on mobile. Same inline error pattern, min=1
+    # (matching commit()'s w < 1 || h < 1 guard).
+
+    def test_room_dimension_inputs_tracks_invalid_state(self):
+        text = self._read("app/(protected)/jobs/[id]/floor-plan/page.tsx")
+        assert "const wInvalid = wStr !== \"\" && (!Number.isFinite(wNum) || wNum < 1)" in text
+        assert "const hInvalid = hStr !== \"\" && (!Number.isFinite(hNum) || hNum < 1)" in text
+
+    def test_room_dimension_inputs_applies_red_border(self):
+        text = self._read("app/(protected)/jobs/[id]/floor-plan/page.tsx")
+        # Both Width and Length inputs swap border colour on invalid.
+        assert 'wInvalid ? "border-red-400"' in text
+        assert 'hInvalid ? "border-red-400"' in text
+
+    def test_room_dimension_inputs_shows_error_text(self):
+        """Tech who typed a negative or sub-1 value sees 'Must be at least 1'
+        — instead of the previous silent-reject behavior that left them
+        staring at an input that had no effect."""
+        text = self._read("app/(protected)/jobs/[id]/floor-plan/page.tsx")
+        assert text.count("Must be at least 1") >= 2
+
+
+class TestUseJobsHookSignatures:
+    """R15 (round 2): two frontend hook fixes in web/src/lib/hooks/use-jobs.ts.
+
+    R15a — useUpdateFloorPlan stopped accepting canvas_data (backend dropped
+    it from FloorPlanUpdate in round-1 C1). Old signature silently lied.
+
+    R15b — useSaveCanvas now takes jobId so it can invalidate the per-job
+    floor-plans list cache and the job row, instead of relying on every
+    caller to remember to invalidate manually.
+
+    These are static text assertions against the TS source — matches the
+    pattern we use for router guards, runs in plain pytest with no Vitest.
+    """
+
+    @staticmethod
+    def _text() -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "lib" / "hooks" / "use-jobs.ts"
+        )
+        assert path.exists(), f"use-jobs.ts not found at {path}"
+        return path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _hook_body(hook_name: str, text: str) -> str:
+        """Slice just the named hook's body so regex hits don't bleed
+        across functions."""
+        import re
+
+        m = re.search(
+            rf"export function {re.escape(hook_name)}\(.*?(?=^export function |\Z)",
+            text,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert m, f"{hook_name} not found in use-jobs.ts"
+        return m.group(0)
+
+    # ─── R15a: useUpdateFloorPlan — canvas_data removed ──────────────────
+
+    @staticmethod
+    def _strip_comments(src: str) -> str:
+        """Remove `//`-style line comments so a word appearing in a comment
+        doesn't trigger the check. `/* */` isn't used in this file."""
+        import re
+
+        return re.sub(r"//[^\n]*", "", src)
+
+    def test_use_update_floor_plan_no_longer_accepts_canvas_data(self):
+        body = self._strip_comments(self._hook_body("useUpdateFloorPlan", self._text()))
+        # The mutationFn's type parameter object must not list canvas_data.
+        # This catches the class of bug where the hook accepts a field the
+        # backend will silently drop.
+        assert "canvas_data" not in body, (
+            "useUpdateFloorPlan must not list canvas_data in its type signature — "
+            "FloorPlanUpdate schema doesn't accept it. Content writes go through "
+            "useSaveCanvas (POST /versions) exclusively."
+        )
+
+    def test_use_update_floor_plan_still_accepts_metadata_fields(self):
+        """Happy-path regression: floor_name and thumbnail_url are the
+        legitimate mutable metadata fields. They must still be accepted."""
+        body = self._hook_body("useUpdateFloorPlan", self._text())
+        assert "floor_name" in body
+        assert "thumbnail_url" in body
+
+    # ─── R15b: useSaveCanvas — jobId param + full cache invalidation ─────
+
+    def test_use_save_canvas_takes_job_id(self):
+        text = self._text()
+        assert "export function useSaveCanvas(floorPlanId: string, jobId: string)" in text, (
+            "useSaveCanvas must take jobId so it can invalidate the per-job "
+            "floor-plans list cache from inside the hook, instead of relying "
+            "on every caller to remember."
+        )
+
+    def test_use_save_canvas_invalidates_floor_plans_list(self):
+        body = self._hook_body("useSaveCanvas", self._text())
+        assert 'queryKey: ["floor-plans", jobId]' in body, (
+            'useSaveCanvas must invalidate ["floor-plans", jobId] on success'
+        )
+
+    def test_use_save_canvas_invalidates_jobs(self):
+        """Save may change room count on the floor — invalidate the job row
+        so any job-detail panels showing roomCount refresh."""
+        body = self._hook_body("useSaveCanvas", self._text())
+        assert 'queryKey: ["jobs", jobId]' in body
+
+    def test_use_save_canvas_still_invalidates_history(self):
+        """Regression: don't drop the existing floor-plan-history invalidation
+        while adding the new keys."""
+        body = self._hook_body("useSaveCanvas", self._text())
+        assert 'queryKey: ["floor-plan-history", floorPlanId]' in body
+
+
+class TestDropRedundantIsCurrentIndexMigration:
+    """R13 (round 2): idx_floor_plans_is_current (non-unique) is shadowed by
+    idx_floor_plans_current_unique (same columns, same predicate, plus UNIQUE).
+    Postgres always picks the unique index for reads, so the non-unique one
+    is dead weight on INSERT/UPDATE. Migration a1b2c3d4e5f7 drops it.
+    """
+
+    MIGRATION_FILE = "a1b2c3d4e5f7_spec01h_drop_redundant_is_current_index.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R13 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_upgrade_drops_redundant_index(self):
+        text = self._text()
+        upgrade = text.split("def upgrade", 1)[1].split("def downgrade", 1)[0]
+        assert "DROP INDEX IF EXISTS idx_floor_plans_is_current" in upgrade, (
+            "R13 upgrade must drop idx_floor_plans_is_current (IF EXISTS for idempotency)"
+        )
+
+    def test_downgrade_recreates_the_index(self):
+        """Rollback must restore the non-unique index exactly (same columns,
+        same predicate) so a downgrade leaves the schema identical to the
+        pre-R13 state."""
+        text = self._text()
+        downgrade = text.split("def downgrade", 1)[1]
+        assert "CREATE INDEX" in downgrade and "idx_floor_plans_is_current" in downgrade
+        assert "property_id, floor_number" in downgrade
+        assert "WHERE is_current = true" in downgrade
+
+    def test_revision_chains_after_r10(self):
+        """R13 must chain onto R10 (f0a1b2c3d4e5), not break the head."""
+        text = self._text()
+        assert 'revision: str = "a1b2c3d4e5f7"' in text
+        assert 'down_revision: str | None = "f0a1b2c3d4e5"' in text
+
+
+class TestRenameVersionsPoliciesMigration:
+    """R14 (round 2): policies on the renamed floor_plans table kept their
+    pre-rename names (versions_*). This migration renames to floor_plans_*
+    for grep-ability. Pure rename — zero behavior change.
+    """
+
+    MIGRATION_FILE = "b2c3d4e5f8a9_spec01h_rename_versions_policies.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R14 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_upgrade_renames_all_four_policies(self):
+        """select, insert, update, delete — every policy gets the rename."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        for action in ("select", "insert", "update", "delete"):
+            assert (
+                f"ALTER POLICY versions_{action} ON floor_plans "
+                f"RENAME TO floor_plans_{action}" in upgrade
+            ), f"R14 upgrade missing rename for versions_{action}"
+
+    def test_upgrade_guards_with_exists_check(self):
+        """EXISTS guard keeps the migration re-runnable — second pass on
+        already-renamed policies must not error."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # One EXISTS guard per policy rename — 4 total.
+        assert upgrade.count("IF EXISTS (SELECT 1 FROM pg_policies") == 4
+
+    def test_downgrade_reverses_all_four_renames(self):
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        for action in ("select", "insert", "update", "delete"):
+            assert (
+                f"ALTER POLICY floor_plans_{action} ON floor_plans "
+                f"RENAME TO versions_{action}" in downgrade
+            ), f"R14 downgrade missing reverse rename for floor_plans_{action}"
+
+    def test_revision_chains_after_r13(self):
+        text = self._text()
+        assert 'revision: str = "b2c3d4e5f8a9"' in text
+        assert 'down_revision: str | None = "a1b2c3d4e5f7"' in text
+
+
+class TestWallsOpeningsParentOwnershipRlsMigration:
+    """R10 (round 2): the ``walls_insert`` / ``walls_update`` /
+    ``openings_insert`` / ``openings_update`` RLS policies now require that
+    the parent row (job_rooms for walls, wall_segments for openings) is
+    also in the caller's company — not just the child row. Closes the
+    tenant-id side-channel where a bad INSERT could exist-check a foreign
+    parent id.
+    """
+
+    MIGRATION_FILE = "f0a1b2c3d4e5_spec01h_walls_openings_parent_rls.py"
+
+    def _migration_text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R10 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_migration_rewrites_walls_insert_with_parent_exists(self):
+        text = self._migration_text()
+
+        assert "CREATE POLICY walls_insert ON wall_segments" in text
+        assert "FROM job_rooms jr" in text, (
+            "walls_insert policy must join job_rooms for parent-ownership check"
+        )
+        assert "jr.id = wall_segments.room_id" in text
+        assert "jr.company_id = get_my_company_id()" in text
+
+    def test_migration_rewrites_walls_update_with_parent_exists(self):
+        text = self._migration_text()
+
+        # walls_update must have both USING (old row) and WITH CHECK (new row)
+        # clauses so a row's room_id can't be moved to a foreign room either.
+        assert "CREATE POLICY walls_update ON wall_segments" in text
+        assert "FOR UPDATE USING (company_id = get_my_company_id())" in text
+        assert "WITH CHECK (" in text
+        # The EXISTS must appear inside the WITH CHECK block of walls_update,
+        # not just inside walls_insert.
+        walls_update_block = text.split("walls_update ON wall_segments", 1)[1]
+        walls_update_block = walls_update_block.split("DROP POLICY", 1)[0]
+        assert "EXISTS" in walls_update_block and "job_rooms" in walls_update_block
+
+    def test_migration_rewrites_openings_insert_with_parent_exists(self):
+        text = self._migration_text()
+
+        assert "CREATE POLICY openings_insert ON wall_openings" in text
+        assert "FROM wall_segments ws" in text
+        assert "ws.id = wall_openings.wall_id" in text
+        assert "ws.company_id = get_my_company_id()" in text
+
+    def test_migration_rewrites_openings_update_with_parent_exists(self):
+        text = self._migration_text()
+
+        assert "CREATE POLICY openings_update ON wall_openings" in text
+        # Scope the EXISTS assertion to the openings_update block
+        openings_update_block = text.split("openings_update ON wall_openings", 1)[1]
+        openings_update_block = openings_update_block.split("DROP POLICY", 1)[0]
+        assert "EXISTS" in openings_update_block
+        assert "wall_segments" in openings_update_block
+
+    def test_migration_downgrade_restores_pre_r10_policies(self):
+        """Downgrade must reinstate the old child-only policies. Without
+        this, an accidental downgrade would leave the tables with no
+        walls_insert / openings_insert policy at all — every write fails."""
+        text = self._migration_text()
+
+        down = text.split("DOWNGRADE_SQL", 1)[1]
+        for policy in ("walls_insert", "walls_update", "openings_insert", "openings_update"):
+            assert f"CREATE POLICY {policy}" in down, (
+                f"downgrade must recreate {policy} with the old child-only shape"
+            )
+
+
+class TestEnsureJobPropertyRpcMigration:
+    """R9 (round 2): the auto-property-link path is now an atomic RPC
+    (migration ``e9f0a1b2c3d4``) with SELECT ... FOR UPDATE on the jobs row.
+    Tests here are static content scans — we can't apply the migration
+    locally because the moisture branch has migrations stacked on top.
+    """
+
+    MIGRATION_FILE = "e9f0a1b2c3d4_spec01h_ensure_job_property_rpc.py"
+
+    def _migration_text(self) -> str:
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        )
+        assert path.exists(), f"R9 migration missing at {path}"
+        return path.read_text(encoding="utf-8")
+
+    def test_migration_defines_rpc_with_required_hardening(self):
+        text = self._migration_text()
+
+        required = {
+            "RPC defined":
+                "CREATE OR REPLACE FUNCTION ensure_job_property",
+            "SECURITY DEFINER":
+                "SECURITY DEFINER",
+            "search_path pinned":
+                "SET search_path",
+            "JWT-derived company":
+                "get_my_company_id()",
+            "row lock on jobs":
+                "FOR UPDATE",
+            "idempotent fast-path return":
+                "IF v_job.property_id IS NOT NULL THEN",
+            "same-address reuse":
+                "FROM properties",
+            "42501 on no-company":
+                "'42501'",
+            "P0002 on job-not-accessible":
+                "'P0002'",
+            "grants to authenticated":
+                "GRANT EXECUTE ON FUNCTION ensure_job_property",
+        }
+        missing = [label for label, needle in required.items() if needle not in text]
+        assert not missing, (
+            "R9 RPC migration missing required elements: " + ", ".join(missing)
+        )
+
+    def test_migration_installs_partial_unique_address_index(self):
+        text = self._migration_text()
+
+        assert "CREATE UNIQUE INDEX" in text and "idx_properties_address_active" in text, (
+            "R9 migration must install the partial unique address index as "
+            "belt-and-suspenders for the RPC's FOR UPDATE coordination."
+        )
+        assert "lower(btrim(address_line1))" in text, (
+            "index expression must normalize address_line1 via lower+btrim "
+            "so '123 Main St' and '123 main st  ' dedup to one row"
+        )
+        assert "WHERE deleted_at IS NULL" in text, (
+            "index must be partial on deleted_at so soft-deleted rows don't "
+            "block re-creation at the same address"
+        )
+
+    def test_migration_downgrade_drops_rpc_and_index(self):
+        text = self._migration_text()
+        assert "DROP FUNCTION IF EXISTS ensure_job_property" in text
+        assert "DROP INDEX IF EXISTS idx_properties_address_active" in text
+
+
+class TestCreateFloorPlanByJobAutoLinkRace:
+    """R9 router refactor: ``create_floor_plan_by_job_endpoint`` now calls
+    the ``ensure_job_property`` RPC instead of read→INSERT→UPDATE. Static
+    check that the old 3-step dance is gone and the RPC call is present.
+    """
+
+    @staticmethod
+    def _endpoint_source() -> str:
+        from pathlib import Path
+        import re
+
+        router_path = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        )
+        src = router_path.read_text(encoding="utf-8")
+        m = re.search(
+            r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
+            src,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert m, "create_floor_plan_by_job_endpoint not found"
+        return m.group(0)
+
+    def test_calls_ensure_job_property_rpc(self):
+        body = self._endpoint_source()
+        assert 'client.rpc(' in body and '"ensure_job_property"' in body, (
+            "create_floor_plan_by_job_endpoint must call the ensure_job_property "
+            "RPC instead of the old non-atomic read→INSERT→UPDATE sequence."
+        )
+
+    def test_old_non_atomic_block_is_gone(self):
+        """Regression guard: the deleted INSERT-into-properties + UPDATE-jobs
+        pair must not reappear inline. Fires if a future edit accidentally
+        reintroduces the racy path.
+        """
+        body = self._endpoint_source()
+        assert 'client.table("properties")\n            .insert(' not in body, (
+            "Inline .table('properties').insert(...) is the old racy path. "
+            "Use the ensure_job_property RPC."
+        )
+        # The "UPDATE jobs SET property_id" step of the old dance also goes
+        # away — the RPC now owns that write.
+        assert 'client.table("jobs")\n            .update({"property_id"' not in body, (
+            "Inline .table('jobs').update({'property_id': ...}) from the old "
+            "auto-link dance must not reappear. The RPC owns this write."
+        )
+
+
+class TestFrozenMutationTriggerMigration:
+    """R4 belt-and-suspenders (round 2): a database trigger enforces that
+    rows with ``is_current = false`` cannot be UPDATEd. Defense-in-depth
+    behind the application-level ``.eq("is_current", True)`` filters added
+    to update_floor_plan and cleanup_floor_plan.
+
+    We can't apply the migration here (moisture branch divergence), so the
+    test is a static content scan of the migration file — if a future edit
+    weakens the trigger to, say, only guard ``canvas_data`` changes, this
+    test fires.
+    """
+
+    def test_migration_installs_prevent_frozen_mutation_trigger(self):
+        from pathlib import Path
+
+        migration = (
+            Path(__file__).resolve().parents[1]
+            / "alembic"
+            / "versions"
+            / "d8e9f0a1b2c3_spec01h_floor_plans_frozen_trigger.py"
+        )
+        assert migration.exists(), f"R4 trigger migration missing at {migration}"
+        text = migration.read_text(encoding="utf-8")
+
+        required = {
+            "trigger function defined":
+                "CREATE OR REPLACE FUNCTION floor_plans_prevent_frozen_mutation",
+            "fires BEFORE UPDATE":
+                "BEFORE UPDATE ON floor_plans",
+            "checks OLD.is_current":
+                "OLD.is_current IS FALSE",
+            "raises SQLSTATE 42501":
+                "'42501'",
+            "search_path pinned":
+                "SET search_path",
+            "downgrade drops trigger":
+                "DROP TRIGGER IF EXISTS trg_floor_plans_prevent_frozen_mutation",
+        }
+        missing = [label for label, needle in required.items() if needle not in text]
+        assert not missing, (
+            "R4 belt-and-suspenders trigger migration is missing required "
+            "elements: " + ", ".join(missing)
+        )
+
+
+class TestCleanupFloorPlanTOCTOU:
+    """cleanup_floor_plan's UPDATE at L1242 has the same TOCTOU shape as
+    update_floor_plan. Same fix: atomic is_current filter + VERSION_FROZEN
+    on zero-row result.
+    """
+
+    @pytest.mark.asyncio
+    async def test_cleanup_zero_rows_matched_raises_version_frozen(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            is_current_on_read=True,
+            update_rows_matched=0,
+        )
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ), patch.object(
+            fp_service, "ensure_job_mutable",
+            AsyncMock(return_value={"id": "job-id", "status": "active", "property_id": client.property_id}),
+        ), patch.object(
+            fp_service, "cleanup_sketch",
+            MagicMock(return_value={"walls": [{"x1": 0, "y1": 0, "x2": 10, "y2": 0}]}),
+        ), patch.object(
+            fp_service, "log_event", AsyncMock(),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.cleanup_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    job_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    client_canvas_data=None,
+                )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "VERSION_FROZEN"
+
+    @pytest.mark.asyncio
+    async def test_cleanup_writes_when_row_still_current(self):
+        """Happy path regression — cleaned canvas lands and response is
+        returned unchanged when the is_current filter matches."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        floor_plan_id = uuid4()
+        cleaned_walls = [{"x1": 0, "y1": 0, "x2": 10, "y2": 0}]
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            is_current_on_read=True,
+            update_rows_matched=1,
+        )
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ), patch.object(
+            fp_service, "ensure_job_mutable",
+            AsyncMock(return_value={"id": "job-id", "status": "active", "property_id": client.property_id}),
+        ), patch.object(
+            fp_service, "cleanup_sketch",
+            MagicMock(return_value={"walls": cleaned_walls}),
+        ), patch.object(
+            fp_service, "log_event", AsyncMock(),
+        ):
+            result = await fp_service.cleanup_floor_plan(
+                token="test",
+                floor_plan_id=floor_plan_id,
+                job_id=uuid4(),
+                company_id=uuid4(),
+                user_id=uuid4(),
+                client_canvas_data=None,
+            )
+        assert result["canvas_data"] == {"walls": cleaned_walls}
+
+
+# ---------------------------------------------------------------------------
+# R5 (round 2): rollback_version + cleanup_floor_plan must reject a job
+# whose property doesn't own the target floor plan. Round-1 W1 added this
+# check only to save_canvas; the helper assert_job_on_floor_plan_property
+# is now shared across all three call sites.
+# ---------------------------------------------------------------------------
+
+
+class _RollbackClient:
+    """Fake client for rollback_version tests. Four sequential SELECTs:
+    (1) jobs → returns {status, property_id}
+    (2) floor_plans anchor → returns {property_id, floor_number}
+    (3) floor_plans target version → returns a row with canvas_data
+    _create_version is patched separately, so no UPDATE/INSERT path here.
+    """
+
+    def __init__(self, *, job_property_id, floor_plan_property_id, job_status="active"):
+        self._calls = 0
+        self._job_property_id = str(job_property_id)
+        self._fp_property_id = str(floor_plan_property_id)
+        self._job_status = job_status
+
+    def table(self, _name):
+        outer = self
+
+        class QB:
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            def is_(self, *_a, **_kw): return self
+            def single(self): return self
+            async def execute(self):
+                outer._calls += 1
+                r = MagicMock()
+                if outer._calls == 1:  # jobs
+                    r.data = {
+                        "status": outer._job_status,
+                        "property_id": outer._job_property_id,
+                    }
+                elif outer._calls == 2:  # anchor
+                    r.data = {
+                        "property_id": outer._fp_property_id,
+                        "floor_number": 1,
+                    }
+                else:  # target version (only reached if property check passes)
+                    r.data = {
+                        "id": str(uuid4()),
+                        "canvas_data": {"walls": []},
+                        "version_number": 1,
+                    }
+                return r
+
+        return QB()
+
+    # Round-2 follow-on (F1): rollback_version now calls a single atomic
+    # wrapper RPC (rollback_floor_plan_version_atomic) which returns
+    # {"version": {...}, "restore": {...}}. Earlier intermediate code
+    # called restore_floor_plan_relational_snapshot separately — that path
+    # is gone. Return the wrapper shape so rollback_version's happy path
+    # can complete and the test assertions on the returned version hold.
+    def rpc(self, _name, _params=None):
+        class RpcQB:
+            async def execute(self):
+                r = MagicMock()
+                r.data = {
+                    "version": {
+                        "id": str(uuid4()),
+                        "version_number": 2,
+                        "is_current": True,
+                    },
+                    "restore": {
+                        "restored": False,
+                        "reason": "no_snapshot",
+                        "rooms": 0, "walls": 0, "openings": 0,
+                        "skipped_rooms": [],
+                    },
+                }
+                return r
+        return RpcQB()
+
+
+class TestRollbackVersionCrossProperty:
+    """rollback_version must reject a job_id whose property doesn't own the
+    floor plan being rolled back. Same-company user with job on property A
+    cannot rollback a floor plan on property B — even though both are
+    readable to them via RLS."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_cross_property_job(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        job_property = uuid4()
+        fp_property = uuid4()  # different
+
+        client = _RollbackClient(
+            job_property_id=job_property,
+            floor_plan_property_id=fp_property,
+        )
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.rollback_version(
+                    token="test",
+                    floor_plan_id=uuid4(),
+                    version_number=1,
+                    job_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "PROPERTY_MISMATCH"
+
+    @pytest.mark.asyncio
+    async def test_allows_same_property_job(self):
+        """Happy path: job and floor plan share property_id → rollback reaches
+        the atomic wrapper RPC, which returns a new version payload. We
+        assert the version dict shape is unwrapped from the RPC response
+        and returned to the caller unchanged.
+        """
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        shared_property = uuid4()
+        client = _RollbackClient(
+            job_property_id=shared_property,
+            floor_plan_property_id=shared_property,
+        )
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ), patch.object(
+            fp_service, "log_event", AsyncMock(),
+        ):
+            result = await fp_service.rollback_version(
+                token="test",
+                floor_plan_id=uuid4(),
+                version_number=1,
+                job_id=uuid4(),
+                company_id=uuid4(),
+                user_id=uuid4(),
+            )
+        # _RollbackClient.rpc() returns a fixed wrapper payload; rollback_version
+        # should hand back the `version` slice of that payload.
+        assert result["version_number"] == 2
+        assert result["is_current"] is True
+
+
+class TestRollbackVersionNullProperty:
+    """R8 (round 2): rollback_version must reject a job whose property_id
+    is NULL. The shared helper used to skip silently; the rewrite raises
+    JOB_NO_PROPERTY so the write never lands against a cross-property
+    floor plan by bypass.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejects_job_with_null_property(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        client = _RollbackClient(
+            job_property_id="unused",  # overridden below
+            floor_plan_property_id=uuid4(),
+        )
+        # Override the first SELECT response so jobs.property_id is NULL.
+        async def _null_exec_shim(calls_ref=[0]):
+            calls_ref[0] += 1
+            r = MagicMock()
+            if calls_ref[0] == 1:
+                r.data = {"status": "active", "property_id": None}
+            else:
+                r.data = {"property_id": str(uuid4()), "floor_number": 1}
+            return r
+        client.table = lambda _name, _shim=_null_exec_shim: _NullPropQB(_shim)
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.rollback_version(
+                    token="test",
+                    floor_plan_id=uuid4(),
+                    version_number=1,
+                    job_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "JOB_NO_PROPERTY"
+
+
+class _NullPropQB:
+    """Minimal query-builder fake that delegates .execute() to a supplied
+    async shim. Used by TestRollbackVersionNullProperty to script the two
+    sequential SELECT responses."""
+
+    def __init__(self, shim):
+        self._shim = shim
+
+    def select(self, *_a, **_kw): return self
+    def eq(self, *_a, **_kw): return self
+    def is_(self, *_a, **_kw): return self
+    def single(self): return self
+
+    async def execute(self):
+        return await self._shim()
+
+
+class TestCleanupFloorPlanNullProperty:
+    """R8: cleanup_floor_plan also rejects a job with NULL property_id —
+    prevents a data-integrity NULL from silently permitting a cross-property
+    cleanup under the former legacy-accommodation branch."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_job_with_null_property(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        fp_property = uuid4()
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            property_id=fp_property,
+            is_current_on_read=True,
+            update_rows_matched=1,
+        )
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ), patch.object(
+            fp_service, "ensure_job_mutable",
+            AsyncMock(return_value={
+                "id": "job-id",
+                "status": "active",
+                "property_id": None,  # R8: must be rejected
+            }),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.cleanup_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    job_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    client_canvas_data=None,
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "JOB_NO_PROPERTY"
+
+
+class TestCleanupFloorPlanCrossProperty:
+    """Companion to TestRollbackVersionCrossProperty — same R5 check wired
+    into cleanup_floor_plan. Uses _UpdateTOCTOUClient (current-row read) plus
+    a mocked ensure_job_mutable that declares a different property_id than
+    the floor plan's. Property check must fire BEFORE the UPDATE.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejects_cross_property_job(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        fp_property = uuid4()
+        job_property = uuid4()  # different
+        client = _UpdateTOCTOUClient(
+            floor_plan_id=floor_plan_id,
+            property_id=fp_property,
+            is_current_on_read=True,
+            update_rows_matched=1,  # irrelevant — property check fires first
+        )
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=client),
+        ), patch.object(
+            fp_service, "ensure_job_mutable",
+            AsyncMock(return_value={
+                "id": "job-id",
+                "status": "active",
+                "property_id": str(job_property),
+            }),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.cleanup_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    job_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    client_canvas_data=None,
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "PROPERTY_MISMATCH"
+
+
+# ---------------------------------------------------------------------------
+# R6 (round 2): archive-job guard wired into 3 by-job floor-plan endpoints.
+# get_valid_job only rejects soft-deleted rows; collected jobs slipped
+# through on POST/PATCH/DELETE /jobs/{id}/floor-plans. raise_if_archived
+# is now called at the top of each. Tests verify (a) the helper raises
+# correctly for each input shape, and (b) every by-job floor-plan
+# endpoint calls the helper before any IO.
+# ---------------------------------------------------------------------------
+
+
+class TestCreateFloorPlanConcurrentEdit:
+    """create_floor_plan's INSERT must map Postgres 23505 (partial unique
+    index violation on ``is_current=true`` per (property, floor)) to 409
+    CONCURRENT_EDIT so the client can retry. Round-1 C2 only wired this
+    handling into ``_create_version``; the initial create path surfaced
+    the race as a bare 500 DB_ERROR.
+    """
+
+    @pytest.mark.asyncio
+    async def test_insert_23505_raises_409_concurrent_edit(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanCreate
+        from api.shared.exceptions import AppException
+
+        class QB:
+            def __init__(self):
+                self._mode = None
+
+            def select(self, *_a, **_kw):
+                self._mode = "select"
+                return self
+
+            def insert(self, _payload):
+                self._mode = "insert"
+                return self
+
+            def eq(self, *_a, **_kw): return self
+
+            async def execute(self):
+                if self._mode == "select":
+                    r = MagicMock()
+                    r.data = []  # no existing floor plan — pass the pre-check
+                    return r
+                # insert path — simulate the race: partial unique index fires.
+                raise APIError({
+                    "message": "duplicate key value violates unique constraint "
+                               "\"idx_floor_plans_current_unique\"",
+                    "code": "23505",
+                    "details": "",
+                })
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.create_floor_plan(
+                    token="test",
+                    property_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    body=FloorPlanCreate(floor_number=1, floor_name="Main"),
+                )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.error_code == "CONCURRENT_EDIT"
+
+    @pytest.mark.asyncio
+    async def test_insert_non_23505_still_raises_500_db_error(self):
+        """Connection/permission errors keep the existing 500 DB_ERROR shape
+        — we only special-case the unique-violation race."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanCreate
+        from api.shared.exceptions import AppException
+
+        class QB:
+            def __init__(self):
+                self._mode = None
+
+            def select(self, *_a, **_kw):
+                self._mode = "select"
+                return self
+
+            def insert(self, _payload):
+                self._mode = "insert"
+                return self
+
+            def eq(self, *_a, **_kw): return self
+
+            async def execute(self):
+                if self._mode == "select":
+                    r = MagicMock()
+                    r.data = []
+                    return r
+                raise APIError({
+                    "message": "connection refused",
+                    "code": "08006",
+                    "details": "",
+                })
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.create_floor_plan(
+                    token="test",
+                    property_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    body=FloorPlanCreate(floor_number=1, floor_name="Main"),
+                )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "DB_ERROR"
+
+
+class TestRaiseIfArchivedHelper:
+    """Behavioral tests for the archive-job guard helper itself. Shared by
+    the 3 by-job router endpoints for R6 (and by ensure_job_mutable)."""
+
+    def test_collected_status_raises_job_archived(self):
+        from api.shared.exceptions import AppException
+        from api.shared.guards import raise_if_archived
+
+        with pytest.raises(AppException) as exc_info:
+            raise_if_archived({"status": "collected", "deleted_at": None})
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "JOB_ARCHIVED"
+
+    def test_active_status_returns_none(self):
+        from api.shared.guards import raise_if_archived
+
+        # No exception raised for a live job.
+        result = raise_if_archived({"status": "active", "deleted_at": None})
+        assert result is None
+
+    def test_deleted_at_raises_job_not_found(self):
+        """Soft-deleted rows short-circuit to 404 rather than leaking that
+        they exist. Keeps the behavior consistent across get_valid_job and
+        this in-memory guard."""
+        from api.shared.exceptions import AppException
+        from api.shared.guards import raise_if_archived
+
+        with pytest.raises(AppException) as exc_info:
+            raise_if_archived({"status": "active", "deleted_at": "2026-04-01T00:00:00Z"})
+        assert exc_info.value.status_code == 404
+        assert exc_info.value.error_code == "JOB_NOT_FOUND"
+
+
+class TestByJobRouterArchiveGuards:
+    """Static guardrail: the 3 by-job floor-plan router endpoints must call
+    raise_if_archived(job) at the top of their bodies. R6 plugged the last
+    leaks in the archive gate; this test fires if a future edit removes
+    the guard from any of them.
+
+    We read the router file as text rather than via inspect because
+    ``api.floor_plans.router`` imports as the APIRouter instance (module
+    shadowing), making ``inspect.getsource(module.fn)`` unavailable.
+    """
+
+    @staticmethod
+    def _router_source() -> str:
+        from pathlib import Path
+
+        router_path = (
+            Path(__file__).resolve().parents[1] / "api" / "floor_plans" / "router.py"
+        )
+        return router_path.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _body_for(defn: str, src: str) -> str:
+        """Return the function body starting at ``async def <defn>(`` up to
+        the next ``^async def`` (or EOF). Gives us a bounded window so we
+        don't accidentally match ``raise_if_archived`` from a different fn.
+        """
+        import re
+
+        match = re.search(
+            rf"async def {re.escape(defn)}\(.*?(?=^async def |\Z)",
+            src,
+            re.DOTALL | re.MULTILINE,
+        )
+        assert match, f"function {defn} not found in router.py"
+        return match.group(0)
+
+    def test_create_floor_plan_by_job_calls_raise_if_archived(self):
+        body = self._body_for("create_floor_plan_by_job_endpoint", self._router_source())
+        assert "raise_if_archived(job)" in body, (
+            "create_floor_plan_by_job_endpoint must call raise_if_archived(job) — "
+            "get_valid_job does not block collected jobs."
+        )
+
+    def test_update_floor_plan_by_job_calls_raise_if_archived(self):
+        body = self._body_for("update_floor_plan_by_job_endpoint", self._router_source())
+        assert "raise_if_archived(job)" in body, (
+            "update_floor_plan_by_job_endpoint must call raise_if_archived(job)."
+        )
+
+    def test_delete_floor_plan_by_job_calls_raise_if_archived(self):
+        body = self._body_for("delete_floor_plan_by_job_endpoint", self._router_source())
+        assert "raise_if_archived(job)" in body, (
+            "delete_floor_plan_by_job_endpoint must call raise_if_archived(job)."
+        )
 
 
 # ---------------------------------------------------------------------------
