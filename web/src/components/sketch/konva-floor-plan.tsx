@@ -423,6 +423,17 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   // occupied space.
   const lastValidRoomPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
 
+  // Wall-edge drag to resize: track whether the most recent wall gesture
+  // was a drag (so the click/tap handler can suppress the context menu).
+  // Konva fires onClick AFTER onDragEnd on some browsers — without this
+  // ref, every wall resize would also open the Add Door/Window menu.
+  const wallJustDraggedRef = useRef<string | null>(null);
+  // Stage-space position of each dragged wall Group at drag start; keyed
+  // by wall id so multi-touch or overlapping drags can't clobber each
+  // other's axis-lock. Used by dragBoundFunc to constrain motion to the
+  // perpendicular axis.
+  const wallDragStartPosRef = useRef<Map<string, { x: number; y: number }>>(new Map());
+
   // Refs for zoom to avoid stale closures in rapid scroll events
   const stageScaleRef = useRef(stageScale);
   stageScaleRef.current = stageScale;
@@ -1410,8 +1421,39 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     const centerY = (-stagePos.y + stageSize.height / 2) / stageScale;
     const widthPx = template.widthFt * gs;
     const heightPx = template.heightFt * gs;
-    const topLeftX = snapToGrid(centerX - widthPx / 2, gs);
-    const topLeftY = snapToGrid(centerY - heightPx / 2, gs);
+    let topLeftX = snapToGrid(centerX - widthPx / 2, gs);
+    let topLeftY = snapToGrid(centerY - heightPx / 2, gs);
+
+    // Auto-offset if the preferred placement overlaps an existing room.
+    // Creating 3 rooms in a row used to stack them on top of each other
+    // at viewport center — users couldn't tell new rooms were actually
+    // created until they dragged one off the pile. Spiral-search for
+    // the nearest non-overlapping slot to the right / below the center.
+    const rectOverlap = (ax: number, ay: number, aw: number, ah: number, b: RoomData) => {
+      const bx = b.x, by = b.y, bw = b.width, bh = b.height;
+      return Math.min(ax + aw, bx + bw) - Math.max(ax, bx) > 0
+        && Math.min(ay + ah, by + bh) - Math.max(ay, by) > 0;
+    };
+    // Edge-to-edge stick: no gap between the new room and the one it's
+    // avoiding, so the new room lands flush against the existing wall.
+    // detectSharedWalls then auto-flags them as sharing that edge, same
+    // as dragging one room to snap against another.
+    const existingRooms = state.rooms;
+    const maxIter = 40;
+    for (let i = 0; i < maxIter; i++) {
+      const overlaps = existingRooms.some((r) => rectOverlap(topLeftX, topLeftY, widthPx, heightPx, r));
+      if (!overlaps) break;
+      // Step right by exactly the room width (no gap) so the new room's
+      // left edge meets the existing room's right edge. If we've stepped
+      // past the viewport, wrap down to a new row below the center.
+      const rightEdgeOnScreen = (topLeftX + widthPx) * stageScale + stagePos.x;
+      if (rightEdgeOnScreen < stageSize.width + widthPx) {
+        topLeftX += widthPx;
+      } else {
+        topLeftX = snapToGrid(centerX - widthPx / 2, gs);
+        topLeftY += heightPx;
+      }
+    }
 
     if (template.pointsFt) {
       // Polygon shape — build absolute points by offsetting the template's
@@ -2626,12 +2668,302 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               const isStandalone = !wall.roomId;
               // Affected Mode: non-affected walls fade to 25% opacity
               const isDimmed = affectedOverlay && !wall.affected;
+
+              // Wall-edge drag to resize (Brett V2 spec). Classify which
+              // edge of the parent room this wall represents; drag is
+              // constrained to the perpendicular axis and grid-snapped.
+              // Only rect rooms (or rect-shaped polygons) support this —
+              // true polygons (L/T/U) use vertex drag instead.
+              const parentRoom = wall.roomId ? state.rooms.find((r) => r.id === wall.roomId) : null;
+              const parentHasPoints = !!parentRoom?.points && parentRoom.points.length >= 3;
+              const parentIsRectLike = parentRoom && (!parentHasPoints || isRectangularPolygon(parentRoom));
+              // Classify edge by matching the wall's axis-aligned coords
+              // against the room's bbox. Falls through to null for
+              // non-axis-aligned walls (shouldn't happen for rect rooms).
+              let wallEdge: "top" | "bottom" | "left" | "right" | null = null;
+              if (parentRoom && parentIsRectLike) {
+                const isHoriz = wall.y1 === wall.y2;
+                const isVert = wall.x1 === wall.x2;
+                if (isHoriz && wall.y1 === parentRoom.y) wallEdge = "top";
+                else if (isHoriz && wall.y1 === parentRoom.y + parentRoom.height) wallEdge = "bottom";
+                else if (isVert && wall.x1 === parentRoom.x) wallEdge = "left";
+                else if (isVert && wall.x1 === parentRoom.x + parentRoom.width) wallEdge = "right";
+              }
+              const isRoomEdgeWall = wallEdge !== null && parentRoom !== null;
+
               return (
                 <Group
                   key={wall.id}
                   opacity={isDimmed ? 0.25 : 1}
-                  draggable={tool === "select" && !readOnly && isStandalone}
-                  onDragEnd={(e) => { if (isStandalone) handleDragEnd("wall", wall.id, { x: e.target.x(), y: e.target.y() }); e.target.position({ x: 0, y: 0 }); }}
+                  draggable={tool === "select" && !readOnly && (isStandalone || isRoomEdgeWall)}
+                  // Perpendicular-axis constraint + live wall-to-wall
+                  // magnetic snap. Horizontal walls move vertically only;
+                  // vertical walls move horizontally only. During drag,
+                  // if the wall's new edge position lands within
+                  // WALL_SNAP_THRESHOLD of another room's matching edge,
+                  // the wall visually jumps to that edge — user sees the
+                  // snap live instead of discovering it on release.
+                  dragBoundFunc={!isRoomEdgeWall ? undefined : (pos) => {
+                    // HMR-safety: if the ref was initialized from a prior
+                    // (non-Map) shape during Fast Refresh, coerce here.
+                    if (!(wallDragStartPosRef.current instanceof Map)) {
+                      wallDragStartPosRef.current = new Map();
+                    }
+                    const start = wallDragStartPosRef.current.get(wall.id);
+                    if (!start || !parentRoom || !wallEdge) return pos;
+                    const WALL_SNAP_THRESHOLD = 40;
+                    let outX = pos.x;
+                    let outY = pos.y;
+                    if (wallEdge === "top" || wallEdge === "bottom") {
+                      outX = start.x; // lock horizontal axis
+                      // Compute the proposed new edge y-coordinate in
+                      // world coords and look for a snap target across
+                      // other rooms' top/bottom edges.
+                      const deltaY = pos.y - start.y;
+                      const proposedEdgeY = (wallEdge === "top")
+                        ? parentRoom.y + deltaY / stageScale
+                        : parentRoom.y + parentRoom.height + deltaY / stageScale;
+                      let best: { target: number; dist: number } | null = null;
+                      for (const o of state.rooms) {
+                        if (o.id === parentRoom.id) continue;
+                        for (const edgeY of [o.y, o.y + o.height]) {
+                          const d = Math.abs(proposedEdgeY - edgeY);
+                          if (d < WALL_SNAP_THRESHOLD / stageScale && (!best || d < best.dist)) {
+                            best = { target: edgeY, dist: d };
+                          }
+                        }
+                      }
+                      if (best) {
+                        const snappedDeltaY = (wallEdge === "top")
+                          ? best.target - parentRoom.y
+                          : best.target - (parentRoom.y + parentRoom.height);
+                        outY = start.y + snappedDeltaY * stageScale;
+                      }
+                    } else {
+                      outY = start.y; // lock vertical axis
+                      const deltaX = pos.x - start.x;
+                      const proposedEdgeX = (wallEdge === "left")
+                        ? parentRoom.x + deltaX / stageScale
+                        : parentRoom.x + parentRoom.width + deltaX / stageScale;
+                      let best: { target: number; dist: number } | null = null;
+                      for (const o of state.rooms) {
+                        if (o.id === parentRoom.id) continue;
+                        for (const edgeX of [o.x, o.x + o.width]) {
+                          const d = Math.abs(proposedEdgeX - edgeX);
+                          if (d < WALL_SNAP_THRESHOLD / stageScale && (!best || d < best.dist)) {
+                            best = { target: edgeX, dist: d };
+                          }
+                        }
+                      }
+                      if (best) {
+                        const snappedDeltaX = (wallEdge === "left")
+                          ? best.target - parentRoom.x
+                          : best.target - (parentRoom.x + parentRoom.width);
+                        outX = start.x + snappedDeltaX * stageScale;
+                      }
+                    }
+                    return { x: outX, y: outY };
+                  }}
+                  onDragStart={(e) => {
+                    if (isRoomEdgeWall) {
+                      wallJustDraggedRef.current = wall.id;
+                      setWallContextMenu(null);
+                      // Snapshot the Group's absolute stage position so
+                      // dragBoundFunc can pin the locked axis. Keyed by
+                      // wall id in case of overlapping gestures. Coerce
+                      // the ref to a Map in case HMR left it as a prior
+                      // shape.
+                      if (!(wallDragStartPosRef.current instanceof Map)) {
+                        wallDragStartPosRef.current = new Map();
+                      }
+                      const p = e.target.getAbsolutePosition();
+                      wallDragStartPosRef.current.set(wall.id, { x: p.x, y: p.y });
+                    }
+                  }}
+                  onDragEnd={(e) => {
+                    if (isStandalone) {
+                      handleDragEnd("wall", wall.id, { x: e.target.x(), y: e.target.y() });
+                      e.target.position({ x: 0, y: 0 });
+                      return;
+                    }
+                    if (!isRoomEdgeWall || !parentRoom || !wallEdge) {
+                      e.target.position({ x: 0, y: 0 });
+                      return;
+                    }
+                    // Group's translation = raw drag delta in canvas coords.
+                    // Snap to grid, then project onto the perpendicular axis
+                    // of this wall's edge only.
+                    const rawDx = e.target.x();
+                    const rawDy = e.target.y();
+                    let dx = (wallEdge === "left" || wallEdge === "right")
+                      ? snapToGrid(rawDx, gs) : 0;
+                    let dy = (wallEdge === "top" || wallEdge === "bottom")
+                      ? snapToGrid(rawDy, gs) : 0;
+
+                    // Wall-to-wall magnetic snap: if the proposed new edge
+                    // lands within ROOM_SNAP_THRESHOLD_PX of another room's
+                    // matching axis edge, align to it exactly. Lets the
+                    // user drag Living Room's right wall to align flush
+                    // with Bathroom's right wall in one motion — matching
+                    // widths instead of eyeballing the drag.
+                    const WALL_SNAP_THRESHOLD = 40;
+                    const otherRooms = state.rooms.filter((r) => r.id !== parentRoom.id);
+                    if (wallEdge === "left" || wallEdge === "right") {
+                      const proposedEdgeX = (wallEdge === "left")
+                        ? parentRoom.x + dx
+                        : parentRoom.x + parentRoom.width + dx;
+                      let best: { target: number; dist: number } | null = null;
+                      for (const o of otherRooms) {
+                        for (const edgeX of [o.x, o.x + o.width]) {
+                          const d = Math.abs(proposedEdgeX - edgeX);
+                          if (d < WALL_SNAP_THRESHOLD && (!best || d < best.dist)) {
+                            best = { target: edgeX, dist: d };
+                          }
+                        }
+                      }
+                      if (best) {
+                        const snappedEdgeX = best.target;
+                        dx = (wallEdge === "left")
+                          ? snappedEdgeX - parentRoom.x
+                          : snappedEdgeX - (parentRoom.x + parentRoom.width);
+                      }
+                    } else if (wallEdge === "top" || wallEdge === "bottom") {
+                      const proposedEdgeY = (wallEdge === "top")
+                        ? parentRoom.y + dy
+                        : parentRoom.y + parentRoom.height + dy;
+                      let best: { target: number; dist: number } | null = null;
+                      for (const o of otherRooms) {
+                        for (const edgeY of [o.y, o.y + o.height]) {
+                          const d = Math.abs(proposedEdgeY - edgeY);
+                          if (d < WALL_SNAP_THRESHOLD && (!best || d < best.dist)) {
+                            best = { target: edgeY, dist: d };
+                          }
+                        }
+                      }
+                      if (best) {
+                        const snappedEdgeY = best.target;
+                        dy = (wallEdge === "top")
+                          ? snappedEdgeY - parentRoom.y
+                          : snappedEdgeY - (parentRoom.y + parentRoom.height);
+                      }
+                    }
+                    // Reset Konva transform — updated state renders the new
+                    // coords via props.
+                    e.target.position({ x: 0, y: 0 });
+
+                    if (dx === 0 && dy === 0) {
+                      return;
+                    }
+
+                    // Apply edge translation + room bbox update.
+                    const MIN_SIZE = gs;
+                    const room = parentRoom;
+                    let newRoom: RoomData = { ...room };
+                    let actualDelta = 0;
+                    if (wallEdge === "top") {
+                      actualDelta = dy;
+                      const nh = room.height - actualDelta;
+                      if (nh < MIN_SIZE) actualDelta = room.height - MIN_SIZE;
+                      newRoom = { ...newRoom, y: room.y + actualDelta, height: room.height - actualDelta };
+                    } else if (wallEdge === "bottom") {
+                      actualDelta = dy;
+                      const nh = room.height + actualDelta;
+                      if (nh < MIN_SIZE) actualDelta = MIN_SIZE - room.height;
+                      newRoom = { ...newRoom, height: room.height + actualDelta };
+                    } else if (wallEdge === "left") {
+                      actualDelta = dx;
+                      const nw = room.width - actualDelta;
+                      if (nw < MIN_SIZE) actualDelta = room.width - MIN_SIZE;
+                      newRoom = { ...newRoom, x: room.x + actualDelta, width: room.width - actualDelta };
+                    } else if (wallEdge === "right") {
+                      actualDelta = dx;
+                      const nw = room.width + actualDelta;
+                      if (nw < MIN_SIZE) actualDelta = MIN_SIZE - room.width;
+                      newRoom = { ...newRoom, width: room.width + actualDelta };
+                    }
+                    if (actualDelta === 0) return;
+
+                    // Regen rect-shaped polygon points if present.
+                    if (newRoom.points) {
+                      newRoom.points = [
+                        { x: newRoom.x, y: newRoom.y },
+                        { x: newRoom.x + newRoom.width, y: newRoom.y },
+                        { x: newRoom.x + newRoom.width, y: newRoom.y + newRoom.height },
+                        { x: newRoom.x, y: newRoom.y + newRoom.height },
+                      ];
+                    }
+                    // Clamp cutouts into the new bbox.
+                    if (newRoom.floor_openings?.length) {
+                      newRoom.floor_openings = newRoom.floor_openings.map((o) => {
+                        const maxX = newRoom.x + newRoom.width - gs;
+                        const maxY = newRoom.y + newRoom.height - gs;
+                        const cx = Math.min(Math.max(o.x, newRoom.x), maxX);
+                        const cy = Math.min(Math.max(o.y, newRoom.y), maxY);
+                        const cw = Math.max(gs, Math.min(o.width, newRoom.x + newRoom.width - cx));
+                        const ch = Math.max(gs, Math.min(o.height, newRoom.y + newRoom.height - cy));
+                        return { ...o, x: cx, y: cy, width: cw, height: ch };
+                      });
+                    }
+
+                    // Update this room's walls by matching OLD edge to keep
+                    // wall ids stable (doors/windows stay linked).
+                    const updateRoomWalls = (allWalls: WallData[], oldRoom: RoomData, nextRoom: RoomData) =>
+                      allWalls.map((w) => {
+                        if (w.roomId !== oldRoom.id) return w;
+                        const wasTop = w.y1 === w.y2 && w.y1 === oldRoom.y;
+                        const wasBot = w.y1 === w.y2 && w.y1 === oldRoom.y + oldRoom.height;
+                        const wasLeft = w.x1 === w.x2 && w.x1 === oldRoom.x;
+                        const wasRight = w.x1 === w.x2 && w.x1 === oldRoom.x + oldRoom.width;
+                        if (wasTop) return { ...w, x1: nextRoom.x, y1: nextRoom.y, x2: nextRoom.x + nextRoom.width, y2: nextRoom.y };
+                        if (wasBot) return { ...w, x1: nextRoom.x + nextRoom.width, y1: nextRoom.y + nextRoom.height, x2: nextRoom.x, y2: nextRoom.y + nextRoom.height };
+                        if (wasLeft) return { ...w, x1: nextRoom.x, y1: nextRoom.y + nextRoom.height, x2: nextRoom.x, y2: nextRoom.y };
+                        if (wasRight) return { ...w, x1: nextRoom.x + nextRoom.width, y1: nextRoom.y, x2: nextRoom.x + nextRoom.width, y2: nextRoom.y + nextRoom.height };
+                        return w;
+                      });
+
+                    let newRooms = state.rooms.map((r) => (r.id === room.id ? newRoom : r));
+                    let newWalls = updateRoomWalls(state.walls, room, newRoom);
+
+                    // Shared-wall auto-resize: propagate the same delta to
+                    // the neighbor's opposite edge so both rooms stay in
+                    // contact.
+                    if (wall.shared && wall.sharedWithRoomId) {
+                      const neighbor = state.rooms.find((r) => r.id === wall.sharedWithRoomId);
+                      if (neighbor) {
+                        const nHasPoints = !!neighbor.points && neighbor.points.length >= 3;
+                        const nIsRectLike = !nHasPoints || isRectangularPolygon(neighbor);
+                        let neighborEdge: "top" | "bottom" | "left" | "right" | null = null;
+                        if (wallEdge === "top" && neighbor.y + neighbor.height === room.y) neighborEdge = "bottom";
+                        else if (wallEdge === "bottom" && neighbor.y === room.y + room.height) neighborEdge = "top";
+                        else if (wallEdge === "left" && neighbor.x + neighbor.width === room.x) neighborEdge = "right";
+                        else if (wallEdge === "right" && neighbor.x === room.x + room.width) neighborEdge = "left";
+                        if (nIsRectLike && neighborEdge) {
+                          let nNext: RoomData = { ...neighbor };
+                          if (neighborEdge === "bottom") nNext = { ...nNext, height: neighbor.height + actualDelta };
+                          else if (neighborEdge === "top") nNext = { ...nNext, y: neighbor.y + actualDelta, height: neighbor.height - actualDelta };
+                          else if (neighborEdge === "right") nNext = { ...nNext, width: neighbor.width + actualDelta };
+                          else if (neighborEdge === "left") nNext = { ...nNext, x: neighbor.x + actualDelta, width: neighbor.width - actualDelta };
+                          // Guard min-size on neighbor too
+                          if (nNext.width >= MIN_SIZE && nNext.height >= MIN_SIZE) {
+                            if (nNext.points) {
+                              nNext.points = [
+                                { x: nNext.x, y: nNext.y },
+                                { x: nNext.x + nNext.width, y: nNext.y },
+                                { x: nNext.x + nNext.width, y: nNext.y + nNext.height },
+                                { x: nNext.x, y: nNext.y + nNext.height },
+                              ];
+                            }
+                            newRooms = newRooms.map((r) => (r.id === neighbor.id ? nNext : r));
+                            newWalls = updateRoomWalls(newWalls, neighbor, nNext);
+                          }
+                        }
+                      }
+                    }
+
+                    // Re-detect shared walls for the full set.
+                    const finalWalls = detectSharedWalls(newWalls);
+                    push({ ...state, rooms: newRooms, walls: finalWalls });
+                  }}
                 >
                   <Line
                     points={[wall.x1, wall.y1, wall.x2, wall.y2]}
@@ -2655,21 +2987,28 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                       if (readOnly) return;
                       if (tool === "delete") { deleteElement(wall.id); return; }
                       if (tool !== "select") return;
+                      // Konva fires click after a drag on some browsers —
+                      // suppress menu if the user just resized this wall.
+                      if (wallJustDraggedRef.current === wall.id) {
+                        wallJustDraggedRef.current = null;
+                        return;
+                      }
                       // When a polygon room is currently selected AND the tapped
                       // wall belongs to it, interpret this as "insert a vertex
                       // on this edge" (Gate 4 L-shape creation flow). Otherwise
                       // open the regular wall context menu (Add Door/Window/etc).
-                      const parentRoom = wall.roomId ? state.rooms.find((r) => r.id === wall.roomId) : null;
+                      const parentRoomLocal = wall.roomId ? state.rooms.find((r) => r.id === wall.roomId) : null;
                       const isPolygonOfSelected =
-                        !!parentRoom &&
-                        parentRoom.id === selectedId &&
-                        !!parentRoom.points &&
-                        parentRoom.points.length >= 3;
+                        !!parentRoomLocal &&
+                        parentRoomLocal.id === selectedId &&
+                        !!parentRoomLocal.points &&
+                        parentRoomLocal.points.length >= 3 &&
+                        !isRectangularPolygon(parentRoomLocal);
                       const stage = e.target.getStage();
                       const pos = stage?.getPointerPosition();
                       if (isPolygonOfSelected && pos) {
                         const sPos = { x: (pos.x - stagePos.x) / stageScale, y: (pos.y - stagePos.y) / stageScale };
-                        handleInsertVertex(parentRoom!.id, sPos.x, sPos.y);
+                        handleInsertVertex(parentRoomLocal!.id, sPos.x, sPos.y);
                         return;
                       }
                       setSelectedId(wall.id);
@@ -2679,17 +3018,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                       if (readOnly) return;
                       if (tool === "delete") { deleteElement(wall.id); return; }
                       if (tool !== "select") return;
-                      const parentRoom = wall.roomId ? state.rooms.find((r) => r.id === wall.roomId) : null;
+                      if (wallJustDraggedRef.current === wall.id) {
+                        wallJustDraggedRef.current = null;
+                        return;
+                      }
+                      const parentRoomLocal = wall.roomId ? state.rooms.find((r) => r.id === wall.roomId) : null;
                       const isPolygonOfSelected =
-                        !!parentRoom &&
-                        parentRoom.id === selectedId &&
-                        !!parentRoom.points &&
-                        parentRoom.points.length >= 3;
+                        !!parentRoomLocal &&
+                        parentRoomLocal.id === selectedId &&
+                        !!parentRoomLocal.points &&
+                        parentRoomLocal.points.length >= 3 &&
+                        !isRectangularPolygon(parentRoomLocal);
                       const stage = e.target.getStage();
                       const pos = stage?.getPointerPosition();
                       if (isPolygonOfSelected && pos) {
                         const sPos = { x: (pos.x - stagePos.x) / stageScale, y: (pos.y - stagePos.y) / stageScale };
-                        handleInsertVertex(parentRoom!.id, sPos.x, sPos.y);
+                        handleInsertVertex(parentRoomLocal!.id, sPos.x, sPos.y);
                         return;
                       }
                       setSelectedId(wall.id);

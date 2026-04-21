@@ -86,6 +86,9 @@ branch carries the blow-by-blow detail; this list is what actually shipped.
 - Multi-floor selector (Basement / Main / Upper / Attic) with version badge, pick-floor-first UX, cross-floor room creation, archive read-only banner.
 - Autosave debounced 2s with immediate flush on room confirm, version creation, and manual Save button.
 - Wall sync to backend after each canvas save (walls → `wall_segments`, doors/windows/openings → `wall_openings`).
+- Wall-edge drag to resize (Brett V2 spec): rect-room walls are draggable; perpendicular-axis constraint + grid snap + live wall-to-wall magnetic snap (40px) so the dragged wall visually aligns with a neighbor's matching edge while still in motion. Shared-wall auto-resize propagates the same delta to the neighbor room's opposite edge. Wall ids stay stable across resizes so doors/windows/cutouts keep their linkage. Context menu suppressed when a tap becomes a drag.
+- No-overlap room placement: `handleShapePicked` auto-offsets new rooms that would collide with existing ones — flush-stick to the right edge (no gap) so adjacency is immediate and `detectSharedWalls` flags the contact edge automatically. No more "did the room actually get created?" pile-up at viewport center.
+- No-overlap room drag: rect rooms use `dragBoundFunc` + bbox collision check every frame; rooms physically refuse to be dropped on top of each other. Magnetic snap removed align-edge candidates + added post-snap safety net to prevent snap-induced overlap.
 
 **Mobile UX**
 - Full-bleed routes: `/jobs/<id>` and all sub-routes hide the mobile header + bottom nav for ~120px of reclaimed vertical space.
