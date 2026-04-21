@@ -2172,3 +2172,764 @@ class TestSketchCleanupRequiresJobId:
         req = SketchCleanupRequest(job_id=uuid4(), canvas_data={"walls": []})
         assert req.job_id is not None
         assert req.canvas_data == {"walls": []}
+
+
+# ---------------------------------------------------------------------------
+# W1: save_canvas rejects floor_plan_id from a foreign property
+# ---------------------------------------------------------------------------
+
+
+class TestSaveCanvasPropertyMismatch:
+    """save_canvas must reject a save when the target floor_plan_id resolves
+    to a property that isn't the job's own property. Same-company but wrong-
+    property requests would otherwise pin a job to a floor plan it doesn't
+    own, breaking the "a job's floor plan lives on its property" invariant.
+    """
+
+    @pytest.mark.asyncio
+    async def test_rejects_floor_plan_from_foreign_property(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        job_id = uuid4()
+        company_id = uuid4()
+        user_id = uuid4()
+        foreign_floor_plan_id = uuid4()
+        job_property_id = uuid4()
+        foreign_property_id = uuid4()  # belongs to a different property
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        class QB:
+            def __init__(self, table_name):
+                self.table_name = table_name
+                self.filters = {}
+
+            def select(self, *_args, **_kw): return self
+            def single(self): return self
+            def eq(self, col, val): self.filters[col] = val; return self
+            def is_(self, col, val): self.filters[col] = val; return self
+
+            async def execute(self):
+                if self.table_name == "floor_plans":
+                    # target floor plan lookup — belongs to foreign property
+                    return _result({
+                        "property_id": str(foreign_property_id),
+                        "floor_number": 1,
+                    })
+                if self.table_name == "jobs":
+                    # job is on its own property, not the foreign one
+                    return _result({
+                        "id": str(job_id),
+                        "floor_plan_id": None,
+                        "status": "mitigation",
+                        "property_id": str(job_property_id),
+                    })
+                return _result(None)
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        with (
+            patch.object(
+                fp_service, "get_authenticated_client",
+                AsyncMock(return_value=FakeClient()),
+            ),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.save_canvas(
+                    token="test",
+                    floor_plan_id=foreign_floor_plan_id,
+                    job_id=job_id,
+                    company_id=company_id,
+                    user_id=user_id,
+                    canvas_data={"walls": []},
+                    change_summary=None,
+                )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "PROPERTY_MISMATCH"
+
+    @pytest.mark.asyncio
+    async def test_allows_save_when_property_ids_match(self):
+        """Happy path: job.property_id == target_property_id → save proceeds
+        into Case 1 (no pinned version) without raising PROPERTY_MISMATCH."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        job_id = uuid4()
+        company_id = uuid4()
+        user_id = uuid4()
+        floor_plan_id = uuid4()
+        shared_property_id = uuid4()
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        class QB:
+            def __init__(self, table_name):
+                self.table_name = table_name
+
+            def select(self, *_args, **_kw): return self
+            def single(self): return self
+            def eq(self, *_args, **_kw): return self
+            def is_(self, *_args, **_kw): return self
+
+            async def execute(self):
+                if self.table_name == "floor_plans":
+                    return _result({
+                        "property_id": str(shared_property_id),
+                        "floor_number": 1,
+                    })
+                if self.table_name == "jobs":
+                    return _result({
+                        "id": str(job_id),
+                        "floor_plan_id": None,
+                        "status": "mitigation",
+                        "property_id": str(shared_property_id),
+                    })
+                return _result(None)
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        forked_row = {"id": str(uuid4()), "version_number": 1, "is_current": True}
+        with (
+            patch.object(fp_service, "_create_version", AsyncMock(return_value=forked_row)),
+            patch.object(fp_service, "log_event", AsyncMock(return_value=None)),
+            patch.object(
+                fp_service, "get_authenticated_client",
+                AsyncMock(return_value=FakeClient()),
+            ),
+        ):
+            result = await fp_service.save_canvas(
+                token="test",
+                floor_plan_id=floor_plan_id,
+                job_id=job_id,
+                company_id=company_id,
+                user_id=user_id,
+                canvas_data={"walls": []},
+                change_summary=None,
+            )
+        assert result == forked_row
+
+    @pytest.mark.asyncio
+    async def test_allows_save_when_job_property_id_is_null(self):
+        """Legacy jobs with property_id=NULL bypass the check — the
+        create-floor-plan-by-job flow auto-creates the property on first
+        save. Without this bypass, pre-property-linkage jobs couldn't save
+        their first floor plan."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        job_id = uuid4()
+        company_id = uuid4()
+        user_id = uuid4()
+        floor_plan_id = uuid4()
+        some_property_id = uuid4()
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        class QB:
+            def __init__(self, table_name):
+                self.table_name = table_name
+
+            def select(self, *_args, **_kw): return self
+            def single(self): return self
+            def eq(self, *_args, **_kw): return self
+            def is_(self, *_args, **_kw): return self
+
+            async def execute(self):
+                if self.table_name == "floor_plans":
+                    return _result({
+                        "property_id": str(some_property_id),
+                        "floor_number": 1,
+                    })
+                if self.table_name == "jobs":
+                    return _result({
+                        "id": str(job_id),
+                        "floor_plan_id": None,
+                        "status": "mitigation",
+                        "property_id": None,  # legacy row
+                    })
+                return _result(None)
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        forked_row = {"id": str(uuid4()), "version_number": 1, "is_current": True}
+        with (
+            patch.object(fp_service, "_create_version", AsyncMock(return_value=forked_row)),
+            patch.object(fp_service, "log_event", AsyncMock(return_value=None)),
+            patch.object(
+                fp_service, "get_authenticated_client",
+                AsyncMock(return_value=FakeClient()),
+            ),
+        ):
+            result = await fp_service.save_canvas(
+                token="test",
+                floor_plan_id=floor_plan_id,
+                job_id=job_id,
+                company_id=company_id,
+                user_id=user_id,
+                canvas_data={"walls": []},
+                change_summary=None,
+            )
+        assert result == forked_row
+
+
+# ---------------------------------------------------------------------------
+# W2: shared_with_room_id must belong to the same company
+# ---------------------------------------------------------------------------
+
+
+class TestWallSharedWithRoomValidation:
+    """create_wall / update_wall must reject a shared_with_room_id that
+    doesn't belong to the caller's company. The FK only checks row
+    existence; without this service-level check an INSERT with a foreign
+    room_id succeeds (RLS blocks the read-back but the write itself
+    confirms the target exists — a tenant-data side-channel)."""
+
+    @pytest.mark.asyncio
+    async def test_validator_rejects_foreign_company_room(self):
+        from api.shared.exceptions import AppException
+        from api.walls.service import _validate_shared_with_room
+
+        class QB:
+            def select(self, *_args, **_kw): return self
+            def eq(self, *_args, **_kw): return self
+            def single(self): return self
+            async def execute(self):
+                r = MagicMock()
+                r.data = None
+                return r
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with pytest.raises(AppException) as exc_info:
+            await _validate_shared_with_room(
+                client=FakeClient(),
+                shared_with_room_id=uuid4(),
+                company_id=uuid4(),
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "INVALID_SHARED_ROOM"
+
+    @pytest.mark.asyncio
+    async def test_validator_accepts_same_company_room(self):
+        from api.walls.service import _validate_shared_with_room
+
+        class QB:
+            def select(self, *_args, **_kw): return self
+            def eq(self, *_args, **_kw): return self
+            def single(self): return self
+            async def execute(self):
+                r = MagicMock()
+                r.data = {"id": "some-uuid"}
+                return r
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        await _validate_shared_with_room(
+            client=FakeClient(),
+            shared_with_room_id=uuid4(),
+            company_id=uuid4(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_validator_noops_on_none(self):
+        """shared_with_room_id=None is the common non-shared case — no
+        query should run, no exception."""
+        from api.walls.service import _validate_shared_with_room
+
+        class FakeClient:
+            def table(self, _name):
+                raise AssertionError("validator should not query when id is None")
+
+        await _validate_shared_with_room(
+            client=FakeClient(),
+            shared_with_room_id=None,
+            company_id=uuid4(),
+        )
+
+
+# ---------------------------------------------------------------------------
+# W3: PATCH / DELETE via job rejects when job.property_id is null
+# ---------------------------------------------------------------------------
+
+
+class TestFloorPlanJobEndpointsRequirePropertyId:
+    """Legacy jobs without property_id used to bypass the ownership path
+    by having the router read property_id from the floor plan row itself
+    (circular — row declared its own owner). The fallback is removed;
+    the endpoints now reject with 400 JOB_NO_PROPERTY, forcing callers
+    through POST /jobs/{id}/floor-plans which auto-creates + links the
+    property. Thumb rule: every job MUST have a property_id."""
+
+    @pytest.mark.asyncio
+    async def test_patch_rejects_job_with_null_property_id(self):
+        from unittest.mock import AsyncMock
+
+        from api.floor_plans.router import update_floor_plan_by_job_endpoint
+        from api.floor_plans.schemas import FloorPlanUpdate
+        from api.shared.exceptions import AppException
+
+        job = {"id": str(uuid4()), "property_id": None}
+        ctx = MagicMock()
+        ctx.company_id = uuid4()
+        ctx.user_id = uuid4()
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer test"}
+
+        with pytest.raises(AppException) as exc_info:
+            await update_floor_plan_by_job_endpoint(
+                body=FloorPlanUpdate(floor_name="New Name"),
+                request=request,
+                floor_plan_id=uuid4(),
+                job=job,
+                ctx=ctx,
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "JOB_NO_PROPERTY"
+
+    @pytest.mark.asyncio
+    async def test_delete_rejects_job_with_null_property_id(self):
+        from api.floor_plans.router import delete_floor_plan_by_job_endpoint
+        from api.shared.exceptions import AppException
+
+        job = {"id": str(uuid4()), "property_id": None}
+        ctx = MagicMock()
+        ctx.company_id = uuid4()
+        ctx.user_id = uuid4()
+        request = MagicMock()
+        request.headers = {"authorization": "Bearer test"}
+
+        with pytest.raises(AppException) as exc_info:
+            await delete_floor_plan_by_job_endpoint(
+                request=request,
+                floor_plan_id=uuid4(),
+                job=job,
+                ctx=ctx,
+            )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.error_code == "JOB_NO_PROPERTY"
+
+
+# ---------------------------------------------------------------------------
+# W4: delete_floor_plan is single-row — refuses when siblings exist
+# ---------------------------------------------------------------------------
+
+
+class TestDeleteFloorPlanSingleRow:
+    """delete_floor_plan targets one version row by id. If other versions
+    exist on the same floor it must refuse (409 VERSIONS_EXIST), not
+    silently wipe the whole floor's history like it used to."""
+
+    @pytest.mark.asyncio
+    async def test_refuses_when_other_versions_exist(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        property_id = uuid4()
+        company_id = uuid4()
+
+        def _result(data, count=None):
+            r = MagicMock()
+            r.data = data
+            r.count = count
+            return r
+
+        class QB:
+            def __init__(self):
+                self.mode = "single"
+
+            def select(self, *_a, **kw):
+                if kw.get("count") == "exact":
+                    self.mode = "count"
+                return self
+
+            def single(self): self.mode = "single"; return self
+            def eq(self, *_a, **_kw): return self
+            def neq(self, *_a, **_kw): return self
+
+            async def execute(self):
+                if self.mode == "single":
+                    return _result({
+                        "id": str(floor_plan_id),
+                        "floor_number": 1,
+                        "is_current": True,
+                    })
+                # count mode — siblings query
+                return _result([{"id": "other"}, {"id": "another"}], count=2)
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.delete_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    property_id=property_id,
+                    company_id=company_id,
+                    user_id=uuid4(),
+                )
+        assert exc_info.value.status_code == 409
+        assert exc_info.value.error_code == "VERSIONS_EXIST"
+
+    @pytest.mark.asyncio
+    async def test_deletes_when_no_siblings_exist(self):
+        """Single-version floor: the one row can be deleted cleanly."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+
+        floor_plan_id = uuid4()
+        property_id = uuid4()
+        company_id = uuid4()
+
+        delete_calls: list = []
+
+        def _result(data, count=None):
+            r = MagicMock()
+            r.data = data
+            r.count = count
+            return r
+
+        class QB:
+            def __init__(self, table_name):
+                self.table_name = table_name
+                self.mode = "single"
+
+            def select(self, *_a, **kw):
+                if kw.get("count") == "exact":
+                    self.mode = "count"
+                return self
+
+            def single(self): self.mode = "single"; return self
+            def update(self, _row): self.mode = "update"; return self
+
+            def delete(self):
+                self.mode = "delete"
+                delete_calls.append(self.table_name)
+                return self
+
+            def eq(self, *_a, **_kw): return self
+            def neq(self, *_a, **_kw): return self
+
+            async def execute(self):
+                if self.mode == "single":
+                    return _result({
+                        "id": str(floor_plan_id),
+                        "floor_number": 1,
+                        "is_current": True,
+                    })
+                if self.mode == "count":
+                    return _result([], count=0)
+                return _result([])
+
+        class FakeClient:
+            def table(self, name): return QB(name)
+
+        with (
+            patch.object(
+                fp_service, "get_authenticated_client",
+                AsyncMock(return_value=FakeClient()),
+            ),
+            patch.object(fp_service, "log_event", AsyncMock(return_value=None)),
+        ):
+            await fp_service.delete_floor_plan(
+                token="test",
+                floor_plan_id=floor_plan_id,
+                property_id=property_id,
+                company_id=company_id,
+                user_id=uuid4(),
+            )
+
+        # One delete call — against floor_plans table
+        assert "floor_plans" in delete_calls
+
+
+# ---------------------------------------------------------------------------
+# W5: update_floor_plan rejects ANY update on a frozen (non-current) row
+# ---------------------------------------------------------------------------
+
+
+class TestUpdateFloorPlanFrozenGuard:
+    """Previously only canvas_data + floor_number were blocked on
+    non-current rows; floor_name + thumbnail_url were still editable.
+    Renaming v1 after v2 was forked broke audit comparisons. The guard
+    now blocks any update field on a frozen version."""
+
+    @pytest.mark.asyncio
+    async def test_rejects_floor_name_rename_on_frozen_row(self):
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanUpdate
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        property_id = uuid4()
+        company_id = uuid4()
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        class QB:
+            def select(self, *_a, **_kw): return self
+            def single(self): return self
+            def eq(self, *_a, **_kw): return self
+            async def execute(self):
+                # non-current (frozen) version row
+                return _result({
+                    "id": str(floor_plan_id),
+                    "floor_number": 1,
+                    "floor_name": "Floor 1",
+                    "is_current": False,
+                })
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.update_floor_plan(
+                    token="test",
+                    floor_plan_id=floor_plan_id,
+                    property_id=property_id,
+                    company_id=company_id,
+                    user_id=uuid4(),
+                    body=FloorPlanUpdate(floor_name="Floor 1 (renamed)"),
+                )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "VERSION_FROZEN"
+
+    @pytest.mark.asyncio
+    async def test_rejects_thumbnail_update_on_frozen_row(self):
+        """thumbnail_url also locked — no partial escape hatches on frozen rows."""
+        from unittest.mock import AsyncMock
+
+        import api.floor_plans.service as fp_service
+        from api.floor_plans.schemas import FloorPlanUpdate
+        from api.shared.exceptions import AppException
+
+        def _result(data):
+            r = MagicMock()
+            r.data = data
+            return r
+
+        class QB:
+            def select(self, *_a, **_kw): return self
+            def single(self): return self
+            def eq(self, *_a, **_kw): return self
+            async def execute(self):
+                return _result({
+                    "id": "fp-id",
+                    "floor_number": 1,
+                    "floor_name": "Floor 1",
+                    "is_current": False,
+                })
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with patch.object(
+            fp_service, "get_authenticated_client",
+            AsyncMock(return_value=FakeClient()),
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await fp_service.update_floor_plan(
+                    token="test",
+                    floor_plan_id=uuid4(),
+                    property_id=uuid4(),
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    body=FloorPlanUpdate(thumbnail_url="https://example.com/new.png"),
+                )
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.error_code == "VERSION_FROZEN"
+
+
+# ---------------------------------------------------------------------------
+# W6: canvas_data size cap (500KB) prevents oversized JSON payloads
+# ---------------------------------------------------------------------------
+
+
+class TestCanvasDataSizeCap:
+    """FloorPlanSaveRequest.canvas_data was accepted as an opaque dict with
+    no size limit — a client could POST 10MB+ of JSON. We now cap the
+    serialized size at ~500KB across save, create, and cleanup requests."""
+
+    def test_save_rejects_oversized_canvas(self):
+        from pydantic import ValidationError
+
+        from api.floor_plans.schemas import FloorPlanSaveRequest
+
+        # 600KB payload — well above the 500KB cap
+        big_blob = {"walls": ["x" * 100 for _ in range(6000)]}
+        with pytest.raises(ValidationError) as exc_info:
+            FloorPlanSaveRequest(
+                job_id=uuid4(),
+                canvas_data=big_blob,
+                change_summary=None,
+            )
+        assert any(
+            "too large" in str(e.get("msg", ""))
+            for e in exc_info.value.errors()
+        )
+
+    def test_save_accepts_reasonable_canvas(self):
+        from api.floor_plans.schemas import FloorPlanSaveRequest
+
+        # ~100 walls is a large real sketch, well under the cap
+        normal = {"walls": [{"x1": 0, "y1": 0, "x2": 240, "y2": 0} for _ in range(100)]}
+        req = FloorPlanSaveRequest(
+            job_id=uuid4(),
+            canvas_data=normal,
+            change_summary="edit",
+        )
+        assert req.canvas_data is not None
+
+    def test_cleanup_rejects_oversized_canvas(self):
+        """Cleanup accepts optional canvas_data — same cap applies."""
+        from pydantic import ValidationError
+
+        from api.floor_plans.schemas import SketchCleanupRequest
+
+        big_blob = {"walls": ["x" * 100 for _ in range(6000)]}
+        with pytest.raises(ValidationError):
+            SketchCleanupRequest(job_id=uuid4(), canvas_data=big_blob)
+
+    def test_cleanup_accepts_none_canvas(self):
+        from api.floor_plans.schemas import SketchCleanupRequest
+
+        req = SketchCleanupRequest(job_id=uuid4(), canvas_data=None)
+        assert req.canvas_data is None
+
+
+# ---------------------------------------------------------------------------
+# W7: _copy_rooms_from_linked_job re-raises DB errors instead of returning 0
+# ---------------------------------------------------------------------------
+
+
+class TestCopyRoomsFromLinkedJobErrors:
+    """Previously the function caught Exception on both fetch + copy and
+    returned 0. Callers couldn't tell "source has no rooms" (legitimate)
+    from "copy crashed" (broken data). Now fetch/copy APIErrors re-raise
+    as AppException; only a truly empty source returns 0."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_failure_raises_500(self):
+        from postgrest.exceptions import APIError
+
+        from api.jobs.service import _copy_rooms_from_linked_job
+        from api.shared.exceptions import AppException
+
+        class QB:
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            async def execute(self):
+                raise APIError(
+                    {"message": "connection refused", "code": "08006", "details": ""}
+                )
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with pytest.raises(AppException) as exc_info:
+            await _copy_rooms_from_linked_job(
+                client=FakeClient(),
+                source_job_id=uuid4(),
+                new_job_id=uuid4(),
+                company_id=uuid4(),
+            )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "LINKED_ROOMS_FETCH_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_copy_failure_raises_500(self):
+        """Fetch succeeds, but the subsequent INSERT fails — re-raise."""
+        from postgrest.exceptions import APIError
+
+        from api.jobs.service import _copy_rooms_from_linked_job
+        from api.shared.exceptions import AppException
+
+        class QB:
+            def __init__(self):
+                self.mode = "fetch"
+
+            def select(self, *_a, **_kw): self.mode = "fetch"; return self
+            def eq(self, *_a, **_kw): return self
+            def insert(self, _rows): self.mode = "insert"; return self
+
+            async def execute(self):
+                if self.mode == "fetch":
+                    r = MagicMock()
+                    r.data = [{"room_name": "Kitchen", "sort_order": 0}]
+                    return r
+                # insert path: fail
+                raise APIError(
+                    {"message": "duplicate key", "code": "23505", "details": ""}
+                )
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        with pytest.raises(AppException) as exc_info:
+            await _copy_rooms_from_linked_job(
+                client=FakeClient(),
+                source_job_id=uuid4(),
+                new_job_id=uuid4(),
+                company_id=uuid4(),
+            )
+        assert exc_info.value.status_code == 500
+        assert exc_info.value.error_code == "LINKED_ROOMS_COPY_FAILED"
+
+    @pytest.mark.asyncio
+    async def test_empty_source_returns_zero(self):
+        """Legitimate: source job has no rooms. Returns 0, no exception."""
+        from api.jobs.service import _copy_rooms_from_linked_job
+
+        class QB:
+            def select(self, *_a, **_kw): return self
+            def eq(self, *_a, **_kw): return self
+            async def execute(self):
+                r = MagicMock()
+                r.data = []
+                return r
+
+        class FakeClient:
+            def table(self, _name): return QB()
+
+        count = await _copy_rooms_from_linked_job(
+            client=FakeClient(),
+            source_job_id=uuid4(),
+            new_job_id=uuid4(),
+            company_id=uuid4(),
+        )
+        assert count == 0
