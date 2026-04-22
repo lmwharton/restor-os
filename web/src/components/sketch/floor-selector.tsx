@@ -19,8 +19,6 @@ interface FloorSelectorProps {
   activeFloorId: string | null;
   onSelectFloor: (floorPlanId: string) => void;
   onCreateFloor: (floorNumber: number, floorName: string) => void;
-  /** Version number of the active floor's pinned version — rendered as a chip. */
-  currentVersion?: number | null;
   /** Archived jobs: tapping an empty preset won't create a floor. */
   disabled?: boolean;
   /** Blocked while a create is in flight — all empty slots disable briefly. */
@@ -39,7 +37,6 @@ export function FloorSelector({
   activeFloorId,
   onSelectFloor,
   onCreateFloor,
-  currentVersion,
   disabled = false,
   busy = false,
 }: FloorSelectorProps) {
@@ -106,15 +103,6 @@ export function FloorSelector({
                 }`}
               >
                 {roomCount}
-              </span>
-            )}
-            {isActive && typeof currentVersion === "number" && currentVersion > 0 && (
-              <span
-                className="px-1.5 h-[18px] inline-flex items-center rounded text-[10px] font-[family-name:var(--font-geist-mono)] font-bold leading-none tabular-nums bg-white/15 text-white"
-                title={`Pinned to version ${currentVersion}`}
-                aria-label={`Version ${currentVersion}`}
-              >
-                v{currentVersion}
               </span>
             )}
           </button>

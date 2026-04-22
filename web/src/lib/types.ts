@@ -161,6 +161,18 @@ export interface FloorPlan {
   thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Opaque version tag for optimistic-concurrency writes (Round 3).
+   * Derived from `updated_at` on the server. When the client saves
+   * (POST /v1/floor-plans/{id}/versions), it echoes this string back
+   * as `If-Match`. Server rejects with 412 VERSION_STALE if the row
+   * has been written by another editor since the client read it.
+   * Post-review LOW: backend returns JSON `null` when updated_at is
+   * missing (computed field returns `str | None` → serialized as null),
+   * so the wire shape is `string | null`, not just optional. Callers
+   * already use `opts.etag && opts.etag.length > 0` which handles both.
+   */
+  etag?: string | null;
 }
 
 

@@ -22,18 +22,31 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 class ApiError extends Error {
   status: number;
   error_code: string;
+  /**
+   * Extra fields from the server's error response body (beyond `error` +
+   * `error_code`). Populated for errors like 412 VERSION_STALE where the
+   * server returns `current_etag` alongside the message so the client can
+   * reload to the right version without another round-trip. Round 3.
+   */
+  body: Record<string, unknown>;
 
-  constructor(status: number, message: string, error_code: string) {
+  constructor(status: number, message: string, error_code: string, body: Record<string, unknown> = {}) {
     super(message);
     this.status = status;
     this.error_code = error_code;
+    this.body = body;
   }
 }
 
 async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText, error_code: "UNKNOWN" }));
-    throw new ApiError(res.status, body.error || res.statusText, body.error_code || "UNKNOWN");
+    throw new ApiError(
+      res.status,
+      body.error || res.statusText,
+      body.error_code || "UNKNOWN",
+      body,
+    );
   }
   // 204 No Content
   if (res.status === 204) return undefined as T;
@@ -48,8 +61,19 @@ export async function apiGet<T>(path: string): Promise<T> {
   return handleResponse<T>(res);
 }
 
-export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const headers = await getAuthHeaders();
+export async function apiPost<T>(
+  path: string,
+  body?: unknown,
+  /**
+   * Optional additional headers. Merged into the auth headers. Round 3:
+   * used for If-Match etag on floor-plan save endpoints to enable
+   * optimistic-concurrency 412 VERSION_STALE rejection — see
+   * `etag` on FloorPlan responses and the 412 handling at save sites.
+   */
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const authHeaders = await getAuthHeaders();
+  const headers = extraHeaders ? { ...authHeaders, ...extraHeaders } : authHeaders;
   const res = await fetch(`${API_URL}${path}`, {
     method: "POST",
     headers,
@@ -58,8 +82,20 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   return handleResponse<T>(res);
 }
 
-export async function apiPatch<T>(path: string, body: unknown): Promise<T> {
-  const headers = await getAuthHeaders();
+export async function apiPatch<T>(
+  path: string,
+  body: unknown,
+  /**
+   * Optional additional headers. Mirrors `apiPost`. Reserved for
+   * per-request headers (e.g., If-Match) that consumers need to
+   * forward end-to-end. Kept symmetrical with apiPost so a future
+   * caller threading a header through a PATCH doesn't have to retrofit
+   * the wrapper first.
+   */
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const authHeaders = await getAuthHeaders();
+  const headers = extraHeaders ? { ...authHeaders, ...extraHeaders } : authHeaders;
   const res = await fetch(`${API_URL}${path}`, {
     method: "PATCH",
     headers,

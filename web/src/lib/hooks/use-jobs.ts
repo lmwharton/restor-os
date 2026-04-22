@@ -404,6 +404,15 @@ export function useUpdateFloorPlan(jobId: string) {
     // exclusively. If a caller passed canvas_data here, the backend silently
     // dropped it; the old hook signature lied about accepted fields. Accept only
     // metadata fields now (floor_name and thumbnail_url are the mutable ones).
+    //
+    // Round 3 (post-review, MEDIUM #2): the etag/If-Match wiring was
+    // deliberately REMOVED from this hook. The backend endpoint accepts
+    // If-Match and 412s on mismatch, but this hook has no consumers today
+    // (grep -rn useUpdateFloorPlan → only the definition) and no shared
+    // 412-banner flow exists here — wiring it without a caller + banner
+    // would have shipped half a contract (the lessons-doc "claim-vs-fix
+    // gap" pattern). When a rename UI lands, add `etag` back AND thread
+    // the 412 handler through the shared stale-conflict banner.
     mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; floor_name?: string; thumbnail_url?: string }) =>
       apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`, data),
     onSuccess: (updatedFloorPlan) => {
@@ -429,6 +438,13 @@ export function useDeleteFloorPlan(jobId: string) {
 
 export function useCleanupSketch(floorPlanId: string) {
   return useMutation({
+    // Round 3 (post-review, MEDIUM #2): the etag/If-Match wiring was
+    // deliberately REMOVED. No consumers exist yet (grep -rn
+    // useCleanupSketch → definition only) and the 412 VERSION_STALE
+    // banner flow is not shared from this hook. Wiring etag without
+    // threading the 412 handler would have shipped half a contract —
+    // future cleanup UI must add `etag` back AND route 412 through the
+    // shared handleStaleConflictIfPresent banner.
     mutationFn: ({ jobId, canvasData }: { jobId: string; canvasData: Record<string, unknown> }) =>
       apiPost<{ canvas_data: Record<string, unknown> }>(
         `/v1/floor-plans/${floorPlanId}/cleanup`,

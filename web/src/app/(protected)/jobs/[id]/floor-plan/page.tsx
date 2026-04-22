@@ -30,6 +30,142 @@ import { isJobArchived as isJobArchivedStatus } from "@/lib/job-status";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
 
+
+/**
+ * Round 3: save a canvas version with optimistic-concurrency protection.
+ *
+ * Looks up the latest known `etag` for the target floor plan from React
+ * Query cache and sends it as `If-Match` on the POST. On 412 VERSION_STALE
+ * (another editor wrote since we read), throws the ApiError unchanged so
+ * the caller can surface the conflict banner. On any other error, also
+ * throws unchanged.
+ *
+ * Rationale for centralizing: the floor-plan page has four save sites
+ * (normal autosave, first-floor-create, 409 recovery, cross-floor). All
+ * four need the same etag send + 412 handling. A helper keeps them in
+ * lockstep so the next edit to the save-response contract touches one
+ * place.
+ */
+async function saveCanvasVersion(opts: {
+  floorPlanId: string;
+  jobId: string;
+  // Kept loose on purpose — the canvas data model (FloorPlanData) is
+  // declared in floor-plan-tools.ts and carries domain-specific shapes;
+  // the API wire contract is just "a JSON object." Casting once here
+  // keeps the save-site code terse.
+  canvasData: unknown;
+  changeSummary?: string;
+  /**
+   * Latest etag the caller has for this floor plan. When provided, the
+   * server compares to the row's current updated_at; mismatch → 412. Pass
+   * undefined to skip the check (first save on a freshly-created row).
+   */
+  etag?: string | null;
+}): Promise<import("@/lib/types").FloorPlan> {
+  // Only send If-Match if we actually have an etag string. Empty strings
+  // and null both mean "no etag available" — sending "" would tell the
+  // server "compare to empty" which 412s against any real row.
+  const headers = opts.etag && opts.etag.length > 0
+    ? { "If-Match": opts.etag }
+    : undefined;
+  return apiPost<import("@/lib/types").FloorPlan>(
+    `/v1/floor-plans/${opts.floorPlanId}/versions`,
+    {
+      job_id: opts.jobId,
+      canvas_data: opts.canvasData,
+      ...(opts.changeSummary ? { change_summary: opts.changeSummary } : {}),
+    },
+    headers,
+  );
+}
+
+
+/**
+ * Round 3 (second critical review): factor the fork-reconciliation block
+ * out of each save site so the pattern lives in ONE place. Before, the
+ * block was copy-pasted at 3 save sites and FORGOTTEN at the 4th (the
+ * 409 recovery branch) — the exact sibling-miss pattern flagged.
+ *
+ * When a save returns a version whose id differs from the row we saved
+ * against (Case 3 fork), this:
+ *   1. Replaces the source row with savedVersion in the per-job list cache,
+ *      keeping the list sorted by floor_number.
+ *   2. Switches activeFloorId to savedVersion.id so subsequent writes
+ *      land on the live current row, not the now-frozen source.
+ *   3. Invalidates the source row's floor-plan-history cache key (stale).
+ *   4. Invalidates the savedVersion's floor-plan-history + the per-job
+ *      floor-plans list + the jobs cache as a final sync.
+ *
+ * When the save didn't fork (savedVersion.id === sourceFloorId), only
+ * the final-sync invalidations run.
+ */
+/**
+ * Round-3 second critical review (HIGH #1): 412 VERSION_STALE handling
+ * was inline at one save site and missing from the cross-floor save site.
+ * Centralize so any new save site inherits conflict handling.
+ *
+ * Returns true if the error was a VERSION_STALE and was handled (caller
+ * should stop its own error flow — no retry, no generic "error" badge).
+ * Returns false if the error was something else; caller continues its
+ * usual error handling.
+ */
+function handleStaleConflictIfPresent(
+  err: unknown,
+  opts: {
+    floorPlanId: string;
+    setStaleConflict: (v: { floorPlanId: string; currentEtag: string | null } | null) => void;
+    setSaveStatus: (v: "idle" | "saving" | "saved" | "error" | "offline") => void;
+    clearRetryTimer?: () => void;
+  },
+): boolean {
+  const apiErr = err as { status?: number; error_code?: string; body?: Record<string, unknown> };
+  if (apiErr.status !== 412 || apiErr.error_code !== "VERSION_STALE") {
+    return false;
+  }
+  opts.setStaleConflict({
+    floorPlanId: opts.floorPlanId,
+    currentEtag: (apiErr.body?.current_etag as string | undefined) ?? null,
+  });
+  opts.setSaveStatus("error");
+  opts.clearRetryTimer?.();
+  return true;
+}
+
+
+function reconcileSavedVersion(
+  qc: import("@tanstack/react-query").QueryClient,
+  jobId: string,
+  sourceFloorId: string,
+  savedVersion: import("@/lib/types").FloorPlan,
+  setActiveFloorId: (id: string) => void,
+): void {
+  if (savedVersion.id !== sourceFloorId) {
+    qc.setQueryData<import("@/lib/types").FloorPlan[]>(
+      ["floor-plans", jobId],
+      (old) => {
+        if (!old) return [savedVersion];
+        const withoutOld = old.filter(
+          (fp) => fp.id !== sourceFloorId && fp.id !== savedVersion.id,
+        );
+        return [...withoutOld, savedVersion].sort(
+          (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
+        );
+      },
+    );
+    setActiveFloorId(savedVersion.id);
+    qc.invalidateQueries({ queryKey: ["floor-plan-history", sourceFloorId] });
+  }
+  // Round 3 (post-review): deliberately NOT invalidating ["floor-plans", jobId]
+  // here. The setQueryData above wrote the authoritative post-fork row; a
+  // same-key invalidate would trigger a background refetch that could
+  // briefly overwrite the optimistic update with slightly stale read
+  // (race between the save response committing and the refetch firing).
+  // ["floor-plan-history", savedVersion.id] and ["jobs"] target different
+  // keys, so they stay.
+  qc.invalidateQueries({ queryKey: ["floor-plan-history", savedVersion.id] });
+  qc.invalidateQueries({ queryKey: ["jobs"] });
+}
+
 /* ------------------------------------------------------------------ */
 /*  Wall sync: canvas walls → backend wall_segments                    */
 /* ------------------------------------------------------------------ */
@@ -745,6 +881,21 @@ export default function FloorPlanPage({
   // canvasMode/pins/etc., so non-geometry changes still fall through.
   const lastSavedSigRef = useRef<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error" | "offline">("idle");
+  /**
+   * Round 3: set when a save is rejected with 412 VERSION_STALE (another
+   * editor wrote to this floor plan between our read and our save).
+   * The banner prompts the user to reload so they see the other editor's
+   * changes before redoing theirs. Null = no conflict pending.
+   */
+  const [staleConflict, setStaleConflict] = useState<{
+    floorPlanId: string;
+    currentEtag: string | null;
+  } | null>(null);
+  // Ref mirror so setTimeout closures (retry queue) see the latest value
+  // without adding staleConflict to every dep array that would otherwise
+  // re-bind handleChange on each keystroke-driven save.
+  const staleConflictRef = useRef(staleConflict);
+  staleConflictRef.current = staleConflict;
   const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -951,44 +1102,18 @@ export default function FloorPlanPage({
           // at the now-frozen row. Next autosave would fork AGAIN, and the
           // FloorSelector roomCount chip would lag. Mirrors R12's cross-floor
           // save fix — apply the same reconciliation here.
-          const savedVersion = await apiPost<FloorPlan>(`/v1/floor-plans/${currentFloor.id}/versions`, {
-            job_id: jobId,
-            canvas_data: canvasData,
+          const savedVersion = await saveCanvasVersion({
+            floorPlanId: currentFloor.id,
+            jobId,
+            canvasData,
+            etag: currentFloor.etag,
           });
-          if (savedVersion.id !== currentFloor.id) {
-            // Backend forked. Swap cache + active-floor to the live row so
-            // subsequent writes land on the new current version.
-            queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
-              if (!old) return old;
-              const withoutOld = old.filter(
-                (fp) => fp.id !== currentFloor.id && fp.id !== savedVersion.id,
-              );
-              return [...withoutOld, savedVersion].sort(
-                (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
-              );
-            });
-            setActiveFloorId(savedVersion.id);
-            // The old floor_plan_id is now frozen history — purge its
-            // per-row caches so readers don't serve stale.
-            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", currentFloor.id] });
-          }
-          queryClient.invalidateQueries({ queryKey: ["floor-plan-history", savedVersion.id] });
-          // W11: also invalidate the per-job floor-plans list. On Case-3
-          // fork the backend creates a new row + flips is_current, but the
-          // list feeding FloorSelector chips stays stale until staleTime
-          // expires. roomCount badge shows yesterday's count. Add explicit
-          // invalidation so the selector reflects the new version row.
-          queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-          // Backend may update jobs.floor_plan_id on first save (Case 1) or
-          // fork (Case 3). Sibling jobs keep their own pins — no auto-upgrade.
-          // Refetch this job so hydration reads the fresh pin; invalidate jobs
-          // broadly so other open tabs pick up the new version in their lists.
-          // Single ["jobs"] invalidation — prefix-matches the detail query
-          // (["jobs", jobId]) and the filtered list queries (["jobs", filters]),
-          // so one call refetches both. Firing both keys used to trigger two
-          // back-to-back GET /v1/jobs/:id calls since React Query didn't dedupe
-          // the two invalidations in time.
-          queryClient.invalidateQueries({ queryKey: ["jobs"] });
+          // Round 3 (second critical review): reconcile via the shared
+          // helper. Previously this block was inline at 3 sites and
+          // forgotten at the 4th — exactly the sibling-miss pattern.
+          reconcileSavedVersion(
+            queryClient, jobId, currentFloor.id, savedVersion, setActiveFloorId,
+          );
         } else {
           // No floor plan yet — create the floor plan shell first (metadata only),
           // then save canvas through the versioning endpoint.
@@ -1016,29 +1141,34 @@ export default function FloorPlanPage({
             // Round-2 follow-on #3: capture return; on the (rare) fork path
             // from a just-created row (shouldn't happen for v1, but defend
             // in case a sibling raced the create), swap active to the fork.
-            const firstSaved = await apiPost<FloorPlan>(`/v1/floor-plans/${created.id}/versions`, {
-              job_id: jobId,
-              canvas_data: canvasData,
+            const firstSaved = await saveCanvasVersion({
+              floorPlanId: created.id,
+              jobId,
+              canvasData,
+              etag: created.etag,
             });
-            if (firstSaved.id !== created.id) {
-              queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
-                if (!old) return [firstSaved];
-                const withoutOld = old.filter(
-                  (fp) => fp.id !== created.id && fp.id !== firstSaved.id,
-                );
-                return [...withoutOld, firstSaved].sort(
-                  (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
-                );
-              });
-              setActiveFloorId(firstSaved.id);
-              queryClient.invalidateQueries({ queryKey: ["floor-plan-history", created.id] });
-            }
-            queryClient.invalidateQueries({ queryKey: ["floor-plan-history", firstSaved.id] });
-            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-            queryClient.invalidateQueries({ queryKey: ["jobs"] });
+            // Reconcile via the shared helper (same path as autosave).
+            reconcileSavedVersion(
+              queryClient, jobId, created.id, firstSaved, setActiveFloorId,
+            );
           } catch (err: unknown) {
             const apiErr = err as { status?: number };
             if (apiErr.status === 409) {
+              // Round 3 (second critical review, HIGH #1): this 409
+              // recovery branch was regressing R12's cache fix because
+              // it threw away saveCanvasVersion's return. If the backend
+              // forked on this save (possible since plans[0] may not be
+              // the row this job owns the pin on), activeFloorId stayed
+              // on the now-frozen row, roomCount went stale, and the
+              // next autosave forked AGAIN. Fix: capture savedVersion
+              // and run the same fork-reconciliation pattern via the
+              // shared helper.
+              //
+              // Note: with the new ensure_job_floor_plan RPC
+              // (migration b8c9d0e1f2a3), 409 only surfaces on a
+              // back-to-back 23505 pathological race. The branch is
+              // near-unreachable in practice but correct-when-it-fires
+              // is still the rule.
               const refetched = await apiGet<{ items: FloorPlan[]; total: number } | FloorPlan[]>(
                 `/v1/jobs/${jobId}/floor-plans`,
               );
@@ -1047,13 +1177,15 @@ export default function FloorPlanPage({
               if (plans.length > 0) {
                 const fp = plans[0];
                 setActiveFloorId(fp.id);
-                await apiPost(`/v1/floor-plans/${fp.id}/versions`, {
-                  job_id: jobId,
-                  canvas_data: canvasData,
+                const recovered = await saveCanvasVersion({
+                  floorPlanId: fp.id,
+                  jobId,
+                  canvasData,
+                  etag: fp.etag,
                 });
-                queryClient.invalidateQueries({ queryKey: ["floor-plan-history", fp.id] });
-                queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-                queryClient.invalidateQueries({ queryKey: ["jobs"] });
+                reconcileSavedVersion(
+                  queryClient, jobId, fp.id, recovered, setActiveFloorId,
+                );
               }
             } else {
               throw err;
@@ -1164,12 +1296,34 @@ export default function FloorPlanPage({
         if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
         saveStatusTimer.current = setTimeout(() => { setSaveStatus("idle"); manualSaveRef.current = false; }, 2000);
       } catch (err) {
+        // Round 3: 412 VERSION_STALE means another editor wrote to this
+        // floor plan since we read it. Do NOT retry on 412 — a retry with
+        // the same etag would 412 again, and a retry without it would be
+        // the exact silent-overwrite we're trying to prevent. Surface a
+        // banner so the user knows to reload + merge their edits.
+        // Round-3 second critical review: centralize the 412 branch in
+        // handleStaleConflictIfPresent so every save site inherits the
+        // same conflict handling (cross-floor save was previously missing).
+        if (handleStaleConflictIfPresent(err, {
+          floorPlanId: activeFloorRef.current?.id ?? "",
+          setStaleConflict,
+          setSaveStatus,
+          clearRetryTimer: () => {
+            if (retryTimer.current) clearTimeout(retryTimer.current);
+          },
+        })) {
+          return;
+        }
         console.error("Failed to save floor plan:", err);
         if (retryCount.current < MAX_RETRIES) {
           retryCount.current++;
           setSaveStatus("offline");
           if (retryTimer.current) clearTimeout(retryTimer.current);
           retryTimer.current = setTimeout(() => {
+            // Round-3 second critical review: belt-and-suspenders — if a
+            // staleConflict got raised between the time we scheduled this
+            // retry and it fires, do not re-submit. Safety beats retry.
+            if (staleConflictRef.current !== null) return;
             const pending = lastCanvasRef.current;
             if (pending) handleChangeRef.current(pending.data);
           }, 5000 * retryCount.current);
@@ -1191,9 +1345,18 @@ export default function FloorPlanPage({
     if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
   }, []);
 
-  // When coming back online, retry any pending save
+  // When coming back online, retry any pending save.
+  //
+  // Round-3 second critical review: guard against auto-firing a retry
+  // while a VERSION_STALE banner is showing. The cache could have
+  // refetched a fresh etag behind the banner (staleTime expiry, sibling
+  // invalidation) — a retry at that moment would send fresh etag + stale
+  // canvas = silent overwrite. Only resolution path out of a stale
+  // conflict is the Reload button, which triggers window.location.reload
+  // and nukes all client state. Until that happens, don't auto-save.
   useEffect(() => {
     const handleOnline = () => {
+      if (staleConflict !== null) return;
       if (lastCanvasRef.current && (saveStatus === "offline" || saveStatus === "error")) {
         retryCount.current = 0;
         handleChangeRef.current(lastCanvasRef.current.data);
@@ -1201,7 +1364,7 @@ export default function FloorPlanPage({
     };
     window.addEventListener("online", handleOnline);
     return () => window.removeEventListener("online", handleOnline);
-  }, [saveStatus]);
+  }, [saveStatus, staleConflict]);
 
   // Restore pending backup after handleChange is available
   useEffect(() => {
@@ -1296,8 +1459,16 @@ export default function FloorPlanPage({
     pendingBounds: { x: number; y: number; width: number; height: number; points?: Array<{ x: number; y: number }> },
     gridSize: number,
   ) => {
+    // Round 3 (post-review): capture the target floor id OUTSIDE the try
+    // so the catch block below can thread it to the stale-conflict banner.
+    // Previously the catch fell back to activeFloorRef.current?.id, which
+    // points at the OLD floor (the one the user is on), not the new one
+    // that saveCanvasVersion actually failed against — banner copy would
+    // say "Floor X is stale" while the stale floor was actually Y.
+    let targetFloorIdForConflict: string | undefined;
     try {
       const targetFloor = await ensureFloor(targetLevel);
+      targetFloorIdForConflict = targetFloor.id;
 
       const newRoom: RoomData = {
         id: uid("room"),
@@ -1323,60 +1494,42 @@ export default function FloorPlanPage({
       };
 
       setSaveStatus("saving");
-      const savedVersion = await apiPost<FloorPlan>(`/v1/floor-plans/${targetFloor.id}/versions`, {
-        job_id: jobId,
-        canvas_data: mergedCanvas,
+      const savedVersion = await saveCanvasVersion({
+        floorPlanId: targetFloor.id,
+        jobId,
+        canvasData: mergedCanvas,
+        etag: targetFloor.etag,
       });
 
-      // R12 (round 2): reconcile caches using savedVersion.id as truth, not
-      // targetFloor.id. On a Case 3 fork (backend sees the pinned target is
-      // frozen → forks a new row), savedVersion.id !== targetFloor.id, and
-      // anything we keyed on targetFloor.id now points at frozen history.
-      // Symptoms pre-fix: FloorSelector roomCount chip stale, the active
-      // floor id points at a frozen row so the next autosave forks again.
+      // R12 (round 2) + Round 3: reconcile caches using savedVersion.id
+      // as truth. On Case 3 fork the selector moves to savedVersion.id;
+      // the per-row list gets the canvas-enriched version so the first
+      // paint after navigating to the target floor renders the merged
+      // data (no empty-state flash).
       //
-      // Prime both caches synchronously BEFORE switching floors so the
-      // canvas hydrates from the merged data on first mount (no empty-state
-      // flash while the background refetch runs):
-      //   1. floorPlans list → replace the stale targetFloor row with
-      //      savedVersion (merged canvas) — handles both Case-2 same-id
-      //      update and Case-3 fork-with-new-id.
-      //   2. floor-plan-history (keyed by floor_number family, not row id)
-      //      — keep seeding against savedVersion.id so versions.find(is_current)
-      //      returns the truth on first paint. We also seed under the old
-      //      targetFloor.id key in case other queries still reference it.
-      const savedVersionWithCanvas = {
+      // Pass the enriched row to the shared helper so its list-swap
+      // writes the canvas_data into the cache. Also seed the per-row
+      // floor-plan-history cache (cross-floor-specific — the other 3
+      // save sites don't navigate, so they don't need this seed).
+      const savedVersionWithCanvas: FloorPlan = {
         ...savedVersion,
         canvas_data: mergedCanvas as unknown as Record<string, unknown>,
       };
-      queryClient.setQueryData<FloorPlan[]>(["floor-plans", jobId], (old) => {
-        if (!old) return old;
-        const withoutOld = old.filter(
-          (fp) => fp.id !== targetFloor.id && fp.id !== savedVersion.id,
-        );
-        return [...withoutOld, savedVersionWithCanvas].sort(
-          (a, b) => (a.floor_number ?? 0) - (b.floor_number ?? 0),
-        );
-      });
-      queryClient.setQueryData<FloorPlan[]>(["floor-plan-history", savedVersion.id], (old) => {
-        const next = (old ?? []).map((v) => v.id === savedVersion.id ? savedVersion : v);
-        if (!next.some((v) => v.id === savedVersion.id)) next.unshift(savedVersion);
-        return next;
-      });
-      queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-      queryClient.invalidateQueries({ queryKey: ["floor-plan-history", savedVersion.id] });
-      if (savedVersion.id !== targetFloor.id) {
-        // Purge the now-frozen-history cache key so readers don't serve stale.
-        queryClient.invalidateQueries({ queryKey: ["floor-plan-history", targetFloor.id] });
-      }
-      queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
+      queryClient.setQueryData<FloorPlan[]>(
+        ["floor-plan-history", savedVersion.id],
+        (old) => {
+          const next = (old ?? []).map((v) => v.id === savedVersion.id ? savedVersion : v);
+          if (!next.some((v) => v.id === savedVersion.id)) next.unshift(savedVersion);
+          return next;
+        },
+      );
+      reconcileSavedVersion(
+        queryClient, jobId, targetFloor.id, savedVersionWithCanvas, setActiveFloorId,
+      );
+
       setSaveStatus("saved");
       if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
       saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
-
-      // Switch active canvas to the saved version (not targetFloor) so the
-      // selector points at the is_current row even when the backend forked.
-      setActiveFloorId(savedVersion.id);
 
       // Create the job_rooms row with metadata (floor_level locked to target).
       const widthFt = Math.round((pendingBounds.width / gridSize) * 10) / 10;
@@ -1390,6 +1543,25 @@ export default function FloorPlanPage({
         affected: roomData.affected,
       });
     } catch (err) {
+      // Round-3 second critical review (HIGH #1 sibling-miss):
+      // cross-floor save previously swallowed 412 into a generic "error"
+      // badge. A VERSION_STALE here is exactly the concurrent-editing
+      // case the user needs to see — route through the shared helper so
+      // the stale-conflict banner surfaces and the reload path works.
+      if (handleStaleConflictIfPresent(err, {
+        // Prefer the target floor id captured above — that's the floor
+        // saveCanvasVersion actually wrote against. Fall back to the
+        // active floor only if ensureFloor itself threw before returning
+        // (targetFloorIdForConflict undefined), so the banner still has
+        // a non-empty floorPlanId for its localStorage purge.
+        floorPlanId: targetFloorIdForConflict
+          ?? activeFloorRef.current?.id
+          ?? "",
+        setStaleConflict,
+        setSaveStatus,
+      })) {
+        return;
+      }
       console.error("Cross-floor room create failed", err);
       setSaveStatus("error");
     }
@@ -1514,11 +1686,6 @@ export default function FloorPlanPage({
               setActiveFloorId(id);
             }}
             onCreateFloor={handleCreatePresetFloor}
-            currentVersion={
-              job?.floor_plan_id
-                ? versions?.find((v) => v.id === job.floor_plan_id)?.version_number ?? null
-                : null
-            }
             disabled={isJobArchived}
             // NOTE: intentionally not forwarding createFloorPlan.isPending here.
             // Disabling empty presets during an in-flight create blocks the user
@@ -1623,6 +1790,87 @@ export default function FloorPlanPage({
           isPolygon={mobileSelectedRoom.isPolygon}
           wallSf={jobRooms?.find(r => r.id === mobileSelectedRoom.propertyRoomId)?.wall_square_footage}
         />
+      )}
+
+      {/* Round 3: stale-version conflict banner. Shown when another editor
+          wrote to the floor plan between our read and our save (412
+          VERSION_STALE). User can reload to pick up the other editor's
+          changes; their pending edits need to be re-applied manually. */}
+      {staleConflict && (
+        <div className="fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
+          <div className="max-w-md w-full rounded-xl bg-surface-container-lowest border border-red-300 shadow-lg p-4">
+            <p className="text-[13px] font-semibold text-on-surface mb-1">
+              Floor plan was updated by another editor
+            </p>
+            <p className="text-[12px] text-on-surface-variant mb-3">
+              Your most recent edits couldn&apos;t be saved because someone
+              else saved changes to this floor plan. Reload to see their
+              changes — you&apos;ll need to re-apply your edits on top.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  // Round-3 second critical review (CRITICAL silent-overwrite):
+                  // React Query cache invalidation alone is NOT sufficient.
+                  // Konva maintains its own stage state outside React Query,
+                  // and <KonvaFloorPlan key={activeFloor?.id}> only re-mounts
+                  // when the floor id changes — which doesn't happen on reload.
+                  // Previous implementation: invalidate caches, clear
+                  // lastSavedSigRef, dismiss banner. Result: server had fresh
+                  // canvas, React Query had fresh etag, but Konva still held
+                  // the user's REJECTED canvas in memory. Next keystroke
+                  // wrote that stale canvas back with a now-matching fresh
+                  // etag — the exact silent-overwrite the etag system was
+                  // meant to prevent.
+                  //
+                  // window.location.reload() is the only reliably-correct
+                  // reset: dumps all in-memory state (Konva, refs,
+                  // pendingBackup, lastCanvasRef), forces re-hydration from
+                  // the server. The browser takes ~500ms; for a safety
+                  // mechanism guarding against silent data loss, that cost
+                  // is acceptable. localStorage backup is cleared below
+                  // first so the reload doesn't re-deliver the rejected
+                  // canvas via the pendingBackup restoration path.
+                  if (typeof window !== "undefined") {
+                    try {
+                      // Clear any local backup for this floor so the
+                      // post-reload restoration flow doesn't re-deliver
+                      // the rejected canvas (the backup was our client's
+                      // stale view of the world).
+                      // Key format mirrors the one at L862:
+                      //   fp-backup-${jobId}-${activeFloorId}
+                      //   or fp-backup-${jobId} when no active floor.
+                      const active = activeFloorRef.current?.id ?? staleConflict.floorPlanId;
+                      const lsKey = active
+                        ? `fp-backup-${jobId}-${active}`
+                        : `fp-backup-${jobId}`;
+                      window.localStorage.removeItem(lsKey);
+                    } catch {
+                      // localStorage unavailable (private mode, etc.) —
+                      // reload still does the right thing; backup path
+                      // just won't trigger.
+                    }
+                    window.location.reload();
+                  }
+                }}
+                className="h-9 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent px-5 inline-flex items-center justify-center hover:shadow-lg active:scale-[0.98]"
+              >
+                Reload
+              </button>
+              {/*
+                Round-3 second critical review: Dismiss button removed.
+                The investigation caught that clearing only the banner
+                left lastCanvasRef + Konva state + localStorage backup
+                all holding the rejected canvas. The next keystroke
+                would have silently overwritten the remote editor's work
+                with stale data + fresh etag. Reload is the only safe
+                exit from a stale-conflict state; making the user commit
+                to that is intentional, not friction.
+              */}
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Room edit modal — z-[60] to sit above bottom nav bar */}
