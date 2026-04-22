@@ -18,7 +18,7 @@ import {
 import { RoomPhotoSection } from "@/components/room-photo-section";
 import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import type { FloorPlan, FloorLevel } from "@/lib/types";
-import { FLOOR_LEVEL_TO_NUMBER, FLOOR_LEVEL_LABEL, floorNumberToLevel } from "@/lib/types";
+import { FLOOR_LEVEL_TO_NUMBER, FLOOR_LEVEL_LABEL, floorNumberToLevel, hasEtag } from "@/lib/types";
 import type { FloorPlanData, RoomData } from "@/components/sketch/floor-plan-tools";
 import { wallsForRoom, detectSharedWalls, uid } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
@@ -56,18 +56,44 @@ async function saveCanvasVersion(opts: {
   canvasData: unknown;
   changeSummary?: string;
   /**
-   * Latest etag the caller has for this floor plan. When provided, the
-   * server compares to the row's current updated_at; mismatch → 412. Pass
-   * undefined to skip the check (first save on a freshly-created row).
+   * Etag for the If-Match header. Required — every caller must supply
+   * either a concrete etag string (from a FloorPlan row read) OR the
+   * literal "*" for a confirmed first-save creation flow. Round-5
+   * follow-up (Lakshman M1): the previous `etag?: string | null`
+   * shape let callers silently fall through to a "*" fallback when
+   * cache was stale — reopening the round-4 P2 #2 default-allow
+   * loophole. The required type forces every call site to use
+   * `hasEtag(fp) ? fp.etag : "*"` (if genuinely first-save) or refetch
+   * and defer (if cache-miss). Never silent-default.
    */
-  etag?: string | null;
+  etag: string;
 }): Promise<import("@/lib/types").FloorPlan> {
-  // Only send If-Match if we actually have an etag string. Empty strings
-  // and null both mean "no etag available" — sending "" would tell the
-  // server "compare to empty" which 412s against any real row.
-  const headers = opts.etag && opts.etag.length > 0
-    ? { "If-Match": opts.etag }
-    : undefined;
+  // Round 5 (INV-1) + round-5 follow-up (Lakshman M1): every mutating
+  // request MUST carry an If-Match header. Backend rejects missing
+  // with 428 ETAG_REQUIRED, and rejects `If-Match: *` on every endpoint
+  // EXCEPT save_canvas (which accepts it for the legitimate first-
+  // version creation flow). Previously this helper silently fell back
+  // to `*` whenever opts.etag was falsy — that's what Lakshman flagged
+  // as the cache-miss default-allow loophole: if the FloorPlan row
+  // wasn't in query cache with etag populated (mount race, stale
+  // refetch window), we'd send `*` and silently bypass the precondition.
+  //
+  // New contract: opts.etag must be either a real etag string or the
+  // literal "*" (explicitly opt-in to the creation marker). Empty /
+  // undefined / null throws — the caller should refetch the FloorPlan
+  // or defer the save until the cache is populated, not silently
+  // default to no-enforcement. Since saveCanvasVersion only hits
+  // /versions (save_canvas), `*` is legal here, but the caller has
+  // to spell it out.
+  if (!opts.etag || opts.etag.length === 0) {
+    throw new Error(
+      "saveCanvasVersion: etag is required. Pass a concrete etag "
+      + "from the FloorPlan row, or \"*\" for a confirmed first-save "
+      + "creation flow. Never fall through to no-etag — that reopens "
+      + "the round-4 P2 #2 default-allow loophole.",
+    );
+  }
+  const headers = { "If-Match": opts.etag };
   return apiPost<import("@/lib/types").FloorPlan>(
     `/v1/floor-plans/${opts.floorPlanId}/versions`,
     {
@@ -113,6 +139,14 @@ function handleStaleConflictIfPresent(
   err: unknown,
   opts: {
     floorPlanId: string;
+    /** Round 5 (P1 #2): rejected canvas data to persist before reload so
+     *  the user's work survives the navigation. Keyed on floorPlanId so
+     *  the restore banner on next load can route the draft to the right
+     *  floor. */
+    rejectedCanvas?: unknown;
+    /** Job id — part of the localStorage key so drafts from different jobs
+     *  don't collide. Required whenever rejectedCanvas is supplied. */
+    jobId?: string;
     setStaleConflict: (v: { floorPlanId: string; currentEtag: string | null } | null) => void;
     setSaveStatus: (v: "idle" | "saving" | "saved" | "error" | "offline") => void;
     clearRetryTimer?: () => void;
@@ -122,6 +156,40 @@ function handleStaleConflictIfPresent(
   if (apiErr.status !== 412 || apiErr.error_code !== "VERSION_STALE") {
     return false;
   }
+
+  // Round 5 (Lakshman P1 #2): snapshot the rejected canvas BEFORE the
+  // reload flow kicks in. Keyed on the floor the save was AGAINST
+  // (captured at POST time by the caller, NOT activeFloorRef.current
+  // which may have changed since the request fired). On next load, a
+  // restore banner offers the user the choice to re-apply their work
+  // on top of the fresh server state. Without this, window.location.
+  // reload() nukes Konva state and the user loses every edit they
+  // made since their last successful save — the stale-conflict banner
+  // was previously lying when it said "reload to re-apply."
+  if (
+    typeof window !== "undefined"
+    && opts.rejectedCanvas !== undefined
+    && opts.jobId
+    && opts.floorPlanId
+  ) {
+    try {
+      const key = `canvas-conflict-draft:${opts.jobId}:${opts.floorPlanId}`;
+      window.localStorage.setItem(
+        key,
+        JSON.stringify({
+          canvasData: opts.rejectedCanvas,
+          rejectedAt: Date.now(),
+          sourceFloorId: opts.floorPlanId,
+        }),
+      );
+    } catch {
+      // localStorage unavailable (private mode, quota exceeded) — the
+      // restore flow just won't fire. The banner still surfaces and the
+      // user can at least not-silently-overwrite; the restore CTA is
+      // additive.
+    }
+  }
+
   opts.setStaleConflict({
     floorPlanId: opts.floorPlanId,
     currentEtag: (apiErr.body?.current_etag as string | undefined) ?? null,
@@ -193,6 +261,23 @@ function reconcileSavedVersion(
 // wall rows in the backend. Only one wall-sync runs at a time;
 // queued ones short-circuit and trust the in-flight one to converge.
 let _wallSyncInFlight = false;
+
+// Round 5 (Lakshman P2 #1 / INV-4): canvas-save in-flight guard.
+// Autosave debounce is 2s (konva-floor-plan.tsx). When POST latency
+// exceeds 2s — slow cellular, Railway cold start, backend GC pause —
+// two autosaves can overlap:
+//   T0:    save1 starts, reads currentFloor.etag = E1, POSTs If-Match: E1
+//   T2.1s: save2 fires with cache still at E1 (save1 hasn't reconciled),
+//          POSTs If-Match: E1
+//   T2.5s: save1 returns, reconcileSavedVersion updates cache to E2
+//   T3s:   save2 reaches server. Server sees If-Match: E1 vs current E2
+//          → 412 VERSION_STALE against the user's own work
+// The guard serializes autosaves: while one is in flight, later changes
+// update lastCanvasRef but DON'T POST; when the in-flight one finishes
+// and reconciles the cache, the deferred change replays with the fresh
+// etag. Single-writer invariant restored.
+let _canvasSaveInFlight = false;
+let _canvasDeferredDuringSave = false;
 
 async function syncWallsToBackend(
   canvasData: FloorPlanData,
@@ -914,6 +999,18 @@ export default function FloorPlanPage({
   // re-bind handleChange on each keystroke-driven save.
   const staleConflictRef = useRef(staleConflict);
   staleConflictRef.current = staleConflict;
+
+  // Round 5 (Lakshman P1 #2): conflict-draft restore state. Scanned from
+  // localStorage on mount; if a prior save failed with VERSION_STALE and
+  // the user reloaded, the rejected canvas is persisted under a
+  // `canvas-conflict-draft:${jobId}:${floorId}` key. The restore banner
+  // offers the user the choice to re-apply their lost work on top of
+  // the fresh server state.
+  const [conflictDraft, setConflictDraft] = useState<{
+    floorPlanId: string;
+    canvasData: FloorPlanData;
+    rejectedAt: number;
+  } | null>(null);
   const manualSaveRef = useRef(false);
   const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -962,6 +1059,60 @@ export default function FloorPlanPage({
       setActiveFloorId(floorPlans[0].id);
     }
   }, [floorPlans, activeFloorId]);
+
+  // Round 5 (Lakshman P1 #2): on mount, scan localStorage for any
+  // conflict drafts from a prior VERSION_STALE that triggered a reload.
+  // If found, surface the restore banner so the user can re-apply
+  // their work on top of the fresh server state. Keys are scoped per
+  // job + floor via `canvas-conflict-draft:${jobId}:${floorId}` so
+  // drafts from unrelated jobs don't cross-leak.
+  //
+  // We pick the MOST RECENT draft for this job — if the user somehow
+  // accumulated drafts across multiple floors, the banner surfaces
+  // one at a time. The "Discard all" CTA on the banner wipes every
+  // draft for this job so a user with a stale old draft isn't trapped.
+  useEffect(() => {
+    if (!jobId || typeof window === "undefined") return;
+    try {
+      const prefix = `canvas-conflict-draft:${jobId}:`;
+      let newest: {
+        floorPlanId: string;
+        canvasData: FloorPlanData;
+        rejectedAt: number;
+      } | null = null;
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (!k || !k.startsWith(prefix)) continue;
+        const raw = window.localStorage.getItem(k);
+        if (!raw) continue;
+        try {
+          const parsed = JSON.parse(raw);
+          if (
+            parsed
+            && typeof parsed === "object"
+            && parsed.canvasData
+            && typeof parsed.rejectedAt === "number"
+          ) {
+            // Age out drafts older than 7 days — the user almost
+            // certainly moved on, and stale drafts clutter localStorage.
+            if (Date.now() - parsed.rejectedAt > 7 * 86_400_000) {
+              window.localStorage.removeItem(k);
+              continue;
+            }
+            const floorPlanId = k.slice(prefix.length);
+            if (!newest || parsed.rejectedAt > newest.rejectedAt) {
+              newest = {
+                floorPlanId,
+                canvasData: parsed.canvasData as FloorPlanData,
+                rejectedAt: parsed.rejectedAt,
+              };
+            }
+          }
+        } catch { /* malformed entry — skip, GC later */ }
+      }
+      if (newest) setConflictDraft(newest);
+    } catch { /* localStorage unavailable — no restore flow */ }
+  }, [jobId]);
 
   const activeFloor = floorPlans?.find((fp) => fp.id === activeFloorId)
     ?? floorPlans?.[activeFloorIdx]
@@ -1101,15 +1252,41 @@ export default function FloorPlanPage({
         return;
       }
 
+      // Round 5 (Lakshman P2 #1 / INV-4): in-flight guard. If a previous
+      // autosave is still in-flight (POST hasn't returned, cache hasn't
+      // reconciled), don't start a second one — it would carry the same
+      // stale etag and 412 against the user's own pending save. Record
+      // the latest canvas in lastCanvasRef + set the deferred flag so
+      // the in-flight save's finally block replays once the response
+      // lands and the fresh etag is in cache.
+      if (_canvasSaveInFlight) {
+        lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
+        _canvasDeferredDuringSave = true;
+        return;
+      }
+
       // Try ref first, then fall back to looking up by ID in query cache
       const currentFloor = activeFloorRef.current
         ?? (activeFloorIdRef.current ? queryClient.getQueryData<FloorPlan[]>(["floor-plans", jobId])?.find((fp) => fp.id === activeFloorIdRef.current) : null);
+      // Round 5 (Lakshman P1 #2): capture source floor id NOW, before the
+      // await. activeFloorRef can change during the POST (cross-floor nav,
+      // another tab), and if we read it from the catch block the conflict
+      // draft would be keyed on the wrong floor — banner would restore
+      // the user's work onto whatever they're currently looking at instead
+      // of the floor they were editing when the save fired.
+      const postTimeSourceFloorId: string | null = currentFloor?.id ?? null;
       setSaveStatus("saving");
       // Track when "saving" started so the indicator stays visible long enough
       // for the human eye even if the POST returns in <100ms (otherwise React
       // batches saving→saved into a single render and you only see "Saved ✓").
       const savingStartTime = Date.now();
+      // Round-5 follow-up (Lakshman LOW #1): set the in-flight flag INSIDE
+      // the try — if any code between the flag-set and try-entry ever
+      // throws in a future edit, the flag would lock true for the rest
+      // of the page lifetime and block every autosave with a stuck
+      // "saving" indicator. The finally clears it defensively now.
       try {
+        _canvasSaveInFlight = true;
         if (currentFloor) {
           // Save through the versioning state machine. Backend decides: create v1,
           // update in place, or fork a new version based on job ownership.
@@ -1120,6 +1297,18 @@ export default function FloorPlanPage({
           // at the now-frozen row. Next autosave would fork AGAIN, and the
           // FloorSelector roomCount chip would lag. Mirrors R12's cross-floor
           // save fix — apply the same reconciliation here.
+          //
+          // Round-5 follow-up (Lakshman M1): we must send a concrete etag.
+          // If the cached FloorPlan doesn't have one populated (cross-deploy
+          // window, stale refetch), refetching the list + deferring is
+          // correct — silently sending "*" is the default-allow loophole
+          // the strict-helper closure is meant to prevent.
+          if (!hasEtag(currentFloor)) {
+            queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+            lastCanvasRef.current = { floorId: activeFloorIdRef.current, data: canvasData };
+            setSaveStatus("offline");
+            return;
+          }
           const savedVersion = await saveCanvasVersion({
             floorPlanId: currentFloor.id,
             jobId,
@@ -1159,11 +1348,19 @@ export default function FloorPlanPage({
             // Round-2 follow-on #3: capture return; on the (rare) fork path
             // from a just-created row (shouldn't happen for v1, but defend
             // in case a sibling raced the create), swap active to the fork.
+            //
+            // Round-5 follow-up (Lakshman M1): `created` came from
+            // ensure_job_floor_plan which stamps etag via the @computed_field.
+            // On the off-chance it's missing (backend bug / rollout skew),
+            // fall back to `*` — this IS the genuine first-save creation
+            // flow save_canvas's permissive require_if_match is built for,
+            // and save_canvas is the only endpoint that accepts `*`.
+            const firstSaveEtag: string = hasEtag(created) ? created.etag : "*";
             const firstSaved = await saveCanvasVersion({
               floorPlanId: created.id,
               jobId,
               canvasData,
-              etag: created.etag,
+              etag: firstSaveEtag,
             });
             // Reconcile via the shared helper (same path as autosave).
             reconcileSavedVersion(
@@ -1195,6 +1392,16 @@ export default function FloorPlanPage({
               if (plans.length > 0) {
                 const fp = plans[0];
                 setActiveFloorId(fp.id);
+                // Round-5 follow-up (Lakshman M1): refetched row should
+                // always have etag populated (backend's @computed_field),
+                // but defend against the cross-deploy window by defer +
+                // invalidate rather than silent-`*`.
+                if (!hasEtag(fp)) {
+                  queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+                  lastCanvasRef.current = { floorId: fp.id, data: canvasData };
+                  setSaveStatus("offline");
+                  return;
+                }
                 const recovered = await saveCanvasVersion({
                   floorPlanId: fp.id,
                   jobId,
@@ -1322,8 +1529,23 @@ export default function FloorPlanPage({
         // Round-3 second critical review: centralize the 412 branch in
         // handleStaleConflictIfPresent so every save site inherits the
         // same conflict handling (cross-floor save was previously missing).
+        // Round 5 (Lakshman P1 #2): pass rejectedCanvas + postTimeSourceFloorId
+        // so the handler can persist the user's work to a conflict-draft
+        // localStorage key before the reload nukes Konva state. Source floor
+        // was captured BEFORE the await; activeFloorRef.current may have
+        // moved during the POST.
+        // Round-5 follow-up (Lakshman LOW #2): prefer lastCanvasRef over
+        // the canvasData that was actually POSTed — if the user kept
+        // editing during the in-flight save (via the _canvasSaveInFlight
+        // defer path), lastCanvasRef holds the POST-save state. Persisting
+        // only the POSTed canvas would lose those post-POST edits when
+        // the user clicks Restore after reload. Falling back to canvasData
+        // covers the common case where no deferred edits accumulated.
+        const draftCanvas = lastCanvasRef.current?.data ?? canvasData;
         if (handleStaleConflictIfPresent(err, {
-          floorPlanId: activeFloorRef.current?.id ?? "",
+          floorPlanId: postTimeSourceFloorId ?? activeFloorRef.current?.id ?? "",
+          rejectedCanvas: draftCanvas,
+          jobId,
           setStaleConflict,
           setSaveStatus,
           clearRetryTimer: () => {
@@ -1347,6 +1569,32 @@ export default function FloorPlanPage({
           }, 5000 * retryCount.current);
         } else {
           setSaveStatus("error");
+        }
+      } finally {
+        // Round 5 (INV-4): clear the in-flight flag and replay any
+        // deferred edits. The replay runs through a microtask so this
+        // invocation's React state updates (reconcileSavedVersion →
+        // setQueryData → etag refresh) complete before the next handleChange
+        // reads currentFloor.etag. Without the microtask, the replay
+        // would read the cache BEFORE the write committed and re-fire
+        // with the same stale etag it just failed (or succeeded) with.
+        //
+        // The replay goes through handleChangeRef so it picks up the
+        // current useCallback closure (floorPlans/jobId/etc. may have
+        // changed during the await). The signature dedup at the top
+        // of handleChange short-circuits if the deferred canvas ==
+        // what we just saved (no wasted work).
+        _canvasSaveInFlight = false;
+        if (_canvasDeferredDuringSave) {
+          _canvasDeferredDuringSave = false;
+          const deferred = lastCanvasRef.current;
+          if (
+            deferred
+            && deferred.floorId === activeFloorIdRef.current
+            && staleConflictRef.current === null
+          ) {
+            queueMicrotask(() => handleChangeRef.current(deferred.data));
+          }
         }
       }
     },
@@ -1512,11 +1760,18 @@ export default function FloorPlanPage({
       };
 
       setSaveStatus("saving");
+      // Round-5 follow-up (Lakshman M1): targetFloor came from
+      // ensureFloor which either returns an existing floor-plans row
+      // (etag populated) or creates one via ensure_job_floor_plan
+      // (also etag-populated). The hasEtag guard is belt-and-suspenders
+      // for the cross-deploy window; legitimately-fresh targets fall
+      // through to the `*` creation opt-out (save_canvas accepts it).
+      const crossFloorEtag: string = hasEtag(targetFloor) ? targetFloor.etag : "*";
       const savedVersion = await saveCanvasVersion({
         floorPlanId: targetFloor.id,
         jobId,
         canvasData: mergedCanvas,
-        etag: targetFloor.etag,
+        etag: crossFloorEtag,
       });
 
       // R12 (round 2) + Round 3: reconcile caches using savedVersion.id
@@ -1575,6 +1830,11 @@ export default function FloorPlanPage({
       // badge. A VERSION_STALE here is exactly the concurrent-editing
       // case the user needs to see — route through the shared helper so
       // the stale-conflict banner surfaces and the reload path works.
+      // Round 5 (P1 #2): pass rejectedCanvas so the user's cross-floor
+      // work gets persisted to the conflict-draft localStorage key
+      // keyed on the TARGET floor (where the save was written to, not
+      // the source the user drew on) — restore banner after reload
+      // routes the draft back to the correct floor.
       if (handleStaleConflictIfPresent(err, {
         // Prefer the target floor id captured above — that's the floor
         // saveCanvasVersion actually wrote against. Fall back to the
@@ -1584,6 +1844,8 @@ export default function FloorPlanPage({
         floorPlanId: targetFloorIdForConflict
           ?? activeFloorRef.current?.id
           ?? "",
+        rejectedCanvas: mergedCanvas,
+        jobId,
         setStaleConflict,
         setSaveStatus,
       })) {
@@ -1822,7 +2084,9 @@ export default function FloorPlanPage({
       {/* Round 3: stale-version conflict banner. Shown when another editor
           wrote to the floor plan between our read and our save (412
           VERSION_STALE). User can reload to pick up the other editor's
-          changes; their pending edits need to be re-applied manually. */}
+          changes; their pending edits are persisted to localStorage
+          (round-5 P1 #2) and offered for restore on next load.
+          conflictDraft banner below handles the restore flow. */}
       {staleConflict && (
         <div className="fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
           <div className="max-w-md w-full rounded-xl bg-surface-container-lowest border border-red-300 shadow-lg p-4">
@@ -1831,8 +2095,9 @@ export default function FloorPlanPage({
             </p>
             <p className="text-[12px] text-on-surface-variant mb-3">
               Your most recent edits couldn&apos;t be saved because someone
-              else saved changes to this floor plan. Reload to see their
-              changes — you&apos;ll need to re-apply your edits on top.
+              else saved changes to this floor plan. Reload to pick up
+              their changes — we&apos;ve saved your unsaved work and
+              will offer to restore it on top after the reload.
             </p>
             <div className="flex gap-2">
               <button
@@ -1895,6 +2160,83 @@ export default function FloorPlanPage({
                 exit from a stale-conflict state; making the user commit
                 to that is intentional, not friction.
               */}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Round 5 (Lakshman P1 #2): conflict-draft restore banner. Surfaces
+          after a reload that followed a VERSION_STALE rejection — the
+          pre-reload mount effect scanned localStorage for
+          canvas-conflict-draft:${jobId}:* keys and picked the most
+          recent. User chooses:
+            Restore → apply draft on top of current canvas (which already
+                      reflects the other editor's changes), clear the key.
+            Discard → drop the draft, clear the key.
+          We deliberately do NOT auto-apply; letting the user decide is
+          the point (they may have moved on, or the draft may be stale
+          enough that merging would produce garbage). */}
+      {conflictDraft && !staleConflict && (
+        <div className="fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
+          <div className="max-w-md w-full rounded-xl bg-surface-container-lowest border border-amber-300 shadow-lg p-4">
+            <p className="text-[13px] font-semibold text-on-surface mb-1">
+              Unsaved edits from your last session
+            </p>
+            <p className="text-[12px] text-on-surface-variant mb-3">
+              A previous save couldn&apos;t land because another editor was
+              faster. Your work was saved locally — you can apply it on
+              top of the current version now, or discard it.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  // Restore: switch to the draft's source floor if it's not
+                  // already active (the user may have navigated elsewhere
+                  // between reload and clicking Restore), hydrate Konva with
+                  // the draft canvas by routing through handleChange (which
+                  // also persists server-side), then clear the localStorage
+                  // key so the banner doesn't resurface.
+                  try {
+                    if (activeFloorIdRef.current !== conflictDraft.floorPlanId) {
+                      setActiveFloorId(conflictDraft.floorPlanId);
+                    }
+                    // Defer one tick so the activeFloor switch settles
+                    // before handleChange reads currentFloor from cache.
+                    queueMicrotask(() => {
+                      handleChangeRef.current(conflictDraft.canvasData);
+                    });
+                    if (typeof window !== "undefined") {
+                      window.localStorage.removeItem(
+                        `canvas-conflict-draft:${jobId}:${conflictDraft.floorPlanId}`,
+                      );
+                    }
+                  } catch (e) {
+                    console.error("Restore conflict draft failed", e);
+                  } finally {
+                    setConflictDraft(null);
+                  }
+                }}
+                className="h-9 rounded-lg text-[13px] font-semibold text-on-primary bg-brand-accent px-5 inline-flex items-center justify-center hover:shadow-lg active:scale-[0.98]"
+              >
+                Restore my edits
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  try {
+                    if (typeof window !== "undefined") {
+                      window.localStorage.removeItem(
+                        `canvas-conflict-draft:${jobId}:${conflictDraft.floorPlanId}`,
+                      );
+                    }
+                  } catch { /* noop */ }
+                  setConflictDraft(null);
+                }}
+                className="h-9 rounded-lg text-[13px] font-medium text-on-surface-variant border border-outline-variant px-4 inline-flex items-center justify-center hover:bg-surface-container"
+              >
+                Discard
+              </button>
             </div>
           </div>
         </div>

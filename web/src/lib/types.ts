@@ -167,12 +167,40 @@ export interface FloorPlan {
    * (POST /v1/floor-plans/{id}/versions), it echoes this string back
    * as `If-Match`. Server rejects with 412 VERSION_STALE if the row
    * has been written by another editor since the client read it.
-   * Post-review LOW: backend returns JSON `null` when updated_at is
-   * missing (computed field returns `str | None` → serialized as null),
-   * so the wire shape is `string | null`, not just optional. Callers
-   * already use `opts.etag && opts.etag.length > 0` which handles both.
+   *
+   * Round 5 (Lakshman P3 #6): type narrowed from `string | null | undefined`
+   * to `string | undefined`. Tri-state at a contract boundary was a
+   * smell — consumers reaching for `?? undefined` or `!etag` could
+   * silently drop to no-etag, which under round-5's "If-Match required"
+   * rule would previously have silently skipped the precondition. The
+   * wire JSON may still produce `null` for the rare no-updated_at case,
+   * but all current consumers narrow via `hasEtag()` (below) or the
+   * `opts.etag && opts.etag.length > 0` truthy check in
+   * `saveCanvasVersion` — both handle runtime null correctly even with
+   * the stricter TS type, and the type now forbids silent-drop consumers.
    */
-  etag?: string | null;
+  etag?: string;
+}
+
+/**
+ * Type guard for {@link FloorPlan.etag}. Returns `true` when the floor
+ * plan row has a concrete etag string we can send as `If-Match`; `false`
+ * otherwise (undefined, or runtime null). Use this when you need to
+ * branch on "do I have an etag to assert?" — the `fp is FloorPlan &
+ * { etag: string }` narrowing makes the positive branch type-safe.
+ *
+ * ```ts
+ * if (hasEtag(fp)) {
+ *   // fp.etag is string here, not string | undefined.
+ *   sendIfMatch(fp.etag);
+ * } else {
+ *   // no etag available — use wildcard opt-out.
+ *   sendIfMatch("*");
+ * }
+ * ```
+ */
+export function hasEtag(fp: FloorPlan): fp is FloorPlan & { etag: string } {
+  return typeof fp.etag === "string" && fp.etag.length > 0;
 }
 
 

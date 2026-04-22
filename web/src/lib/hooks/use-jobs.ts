@@ -453,10 +453,17 @@ export function useCleanupSketch(floorPlanId: string) {
   });
 }
 
-// ─── Floor Plan History + Canvas Save ────────────────────────────────
+// ─── Floor Plan History ────────────────────────────────
 // After the container/versions merge (migration e1a7c9b30201), each floor_plan
 // row IS a versioned snapshot. `useFloorPlanHistory` fetches the history
-// timeline for a given floor; `useSaveCanvas` posts a new snapshot.
+// timeline for a given floor.
+//
+// Round 5 (Lakshman P2 #2): the former `useSaveCanvas` hook was deleted.
+// It had zero consumers (canvas saves go through the `saveCanvasVersion`
+// helper in floor-plan/page.tsx) AND was the surface that would bypass
+// the required-If-Match precondition if someone re-wired it naively. The
+// real save path lives in one place now; dead hooks that could re-
+// introduce no-etag mutations are a liability, not a convenience.
 
 export function useFloorPlanHistory(floorPlanId: string) {
   return useQuery<FloorPlan[]>({
@@ -469,24 +476,6 @@ export function useFloorPlanHistory(floorPlanId: string) {
       return data.items ?? [];
     },
     enabled: !!floorPlanId,
-  });
-}
-
-export function useSaveCanvas(floorPlanId: string, jobId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (data: { job_id: string; canvas_data: Record<string, unknown>; change_summary?: string }) =>
-      apiPost<FloorPlan>(`/v1/floor-plans/${floorPlanId}/versions`, data),
-    // R15b (round 2): also invalidate the per-job floor-plans list and the job
-    // row so the FloorSelector roomCount chip and any job-scoped panels catch
-    // up immediately on a Case 3 fork. Previously callers manually invalidated
-    // these after every call; a future consumer would have forgotten and the
-    // cache would silently go stale.
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["floor-plan-history", floorPlanId] });
-      qc.invalidateQueries({ queryKey: ["floor-plans", jobId] });
-      qc.invalidateQueries({ queryKey: ["jobs", jobId] });
-    },
   });
 }
 
