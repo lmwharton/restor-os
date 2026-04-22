@@ -3416,10 +3416,34 @@ class TestRouterImportsHoisted:
 
 
 class TestPinUpdateScopedByCompanyId:
-    """Round-2 follow-on #7: create_floor_plan_by_job_endpoint's pin UPDATE
-    now scopes by company_id for consistency with other write paths."""
+    """Round-2 follow-on #7 + round-3 evolution: the router used to do
+    a SEPARATE .update({"floor_plan_id": ...}).eq("company_id") call
+    after the INSERT to pin the job. Round 3 replaced the whole
+    INSERT + separate UPDATE flow with the ensure_job_floor_plan RPC,
+    which performs both atomically INSIDE the plpgsql function. The
+    company_id scoping is enforced via get_my_company_id() + FOR UPDATE
+    on the jobs row.
 
-    def test_pin_update_adds_company_id_filter(self):
+    Now checks the RPC (where pin now lives) instead of the router.
+    """
+
+    def test_rpc_pin_update_is_company_scoped(self):
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions"
+            / "b8c9d0e1f2a3_spec01h_ensure_job_floor_plan_rpc.py"
+        ).read_text(encoding="utf-8")
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # The RPC's pin UPDATE must be scoped by company_id.
+        assert "UPDATE jobs" in upgrade
+        assert "company_id = v_caller_company" in upgrade
+
+    def test_router_no_longer_has_separate_pin_update(self):
+        """Regression guard: the old post-INSERT pin UPDATE at the
+        router is gone. If it comes back, the atomic-inside-RPC
+        invariant is lost."""
         import re
         from pathlib import Path
 
@@ -3431,11 +3455,9 @@ class TestPinUpdateScopedByCompanyId:
             r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
             src, re.DOTALL | re.MULTILINE,
         )
-        assert m, "create_floor_plan_by_job_endpoint not found"
+        assert m
         body = m.group(0)
-        # The jobs.floor_plan_id UPDATE chain must include .eq("company_id", ...).
-        pin_block = body.split('.update({"floor_plan_id": floor_plan["id"]})', 1)[1]
-        assert '.eq("company_id"' in pin_block
+        assert '.update({"floor_plan_id": floor_plan["id"]})' not in body
 
 
 class TestSaveCanvasCase3AutosaveReconciliation:
@@ -3456,21 +3478,757 @@ class TestSaveCanvasCase3AutosaveReconciliation:
         ).read_text(encoding="utf-8")
 
     def test_autosave_captures_version_response(self):
+        """Round-3 update: the save sites now route through the shared
+        `saveCanvasVersion` helper (which carries the etag / If-Match).
+        Test still asserts a `savedVersion` is captured at the normal
+        autosave path — just via the helper now, not a raw apiPost."""
         text = self._text()
-        # Find the normal-autosave block (currentFloor branch).
-        assert "const savedVersion = await apiPost<FloorPlan>" in text
+        # currentFloor branch captures the return.
+        assert "const savedVersion = await saveCanvasVersion" in text
 
     def test_autosave_reconciles_on_fork(self):
+        """Round 3 second critical review: the inline fork-reconciliation
+        block was extracted into the shared ``reconcileSavedVersion``
+        helper. The autosave site now delegates to it instead of having
+        the ``savedVersion.id !== currentFloor.id`` block inline."""
         text = self._text()
-        # Fork detection + setActiveFloorId to the saved id + stale history invalidation.
-        assert "savedVersion.id !== currentFloor.id" in text
-        assert "setActiveFloorId(savedVersion.id)" in text
+        # Helper call wires savedVersion + currentFloor.id → reconciliation.
+        assert "reconcileSavedVersion(\n            queryClient, jobId, currentFloor.id, savedVersion, setActiveFloorId," in text
 
     def test_first_floor_create_also_captures_and_reconciles(self):
+        """Round 3 second critical review: first-floor-create also
+        delegates to ``reconcileSavedVersion`` for the fork handling."""
         text = self._text()
-        # Second call site at the first-floor-create path.
-        assert "const firstSaved = await apiPost<FloorPlan>" in text
-        assert "firstSaved.id !== created.id" in text
+        # firstSaved capture + delegation to the shared helper.
+        assert "const firstSaved = await saveCanvasVersion" in text
+        assert "reconcileSavedVersion(\n              queryClient, jobId, created.id, firstSaved, setActiveFloorId," in text
+
+
+class TestEnsureJobFloorPlanRpcMigration:
+    """Round 3 — migration b8c9d0e1f2a3_spec01h_ensure_job_floor_plan_rpc.py.
+
+    New idempotent plpgsql RPC replaces the racy optimistic-create +
+    catch-409-fallback pattern that Lakshman flagged as the blocker.
+    Two callers on the same job, same floor number, get the same row
+    back regardless of who wins the race. The 409 catch branch in
+    `create_floor_plan_by_job_endpoint` is deleted as dead code.
+
+    Verifies the migration has the same security posture as the other
+    round-2 RPCs: SECURITY DEFINER, JWT-derived company, SELECT FOR UPDATE
+    on jobs, pinned search_path, tenant + archive + property guards.
+    """
+
+    MIGRATION_FILE = "b8c9d0e1f2a3_spec01h_ensure_job_floor_plan_rpc.py"
+
+    def _text(self) -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions" / self.MIGRATION_FILE
+        ).read_text(encoding="utf-8")
+
+    def test_upgrade_defines_rpc(self):
+        text = self._text()
+        assert "CREATE OR REPLACE FUNCTION ensure_job_floor_plan" in text
+
+    def test_rpc_is_security_definer_with_pinned_search_path(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "SECURITY DEFINER" in upgrade
+        assert "SET search_path = pg_catalog, public" in upgrade
+
+    def test_rpc_derives_company_from_jwt(self):
+        """Same R3 pattern as every other 01H SECURITY DEFINER RPC —
+        the caller's company is never trusted from parameters."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "v_caller_company := get_my_company_id()" in upgrade
+        assert "'42501'" in upgrade
+
+    def test_rpc_locks_jobs_row(self):
+        """FOR UPDATE on the jobs row serializes two callers on the
+        same job — the primary concurrency control."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "FROM jobs" in upgrade
+        assert "FOR UPDATE" in upgrade
+
+    def test_rpc_rejects_archived_jobs(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "v_job.status = 'collected'" in upgrade
+        # Post-review MEDIUM #4: archived jobs raise 55006
+        # (object_not_in_prerequisite_state), NOT 42501. 42501 is reserved
+        # for "caller identity" failures; 55006 matches the frozen-version
+        # trigger convention for "row not in mutable state". A Python
+        # catch block must be able to tell them apart — same SQLSTATE for
+        # different causes was lessons-doc pattern #5.
+        archived_block = upgrade.split("v_job.status = 'collected'", 1)[1].split(
+            "END IF", 1
+        )[0]
+        assert "'55006'" in archived_block, (
+            "Archived-job branch must raise 55006 (distinct from the "
+            "42501 no-JWT-company branch). See lessons-doc pattern #5."
+        )
+
+    def test_rpc_rejects_null_property(self):
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "v_job.property_id IS NULL" in upgrade
+        # Post-review MEDIUM #4: null-property raises 23502
+        # (not_null_violation), distinct from both 42501 (no JWT company)
+        # and 55006 (archived). Lets the router emit 409 JOB_NO_PROPERTY
+        # with the actionable "call ensure_job_property first" message.
+        null_prop_block = upgrade.split("v_job.property_id IS NULL", 1)[1].split(
+            "END IF", 1
+        )[0]
+        assert "'23502'" in null_prop_block, (
+            "Null-property branch must raise 23502 so the router can "
+            "disambiguate from archived/JWT failures."
+        )
+
+    def test_rpc_idempotent_fast_path_via_existing_pin(self):
+        """If the job is already pinned to a current row for this floor,
+        the RPC returns it unchanged — no duplicate version on retry."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "IF v_job.floor_plan_id IS NOT NULL THEN" in upgrade
+        assert "RETURN to_jsonb(v_existing)" in upgrade
+
+    def test_rpc_reuses_existing_floor_row_on_second_caller(self):
+        """This is the race-closing branch: caller B finds the row A
+        just inserted and pins its own job to it."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "floor_number = p_floor_number" in upgrade
+        assert "is_current = TRUE" in upgrade
+        assert "UPDATE jobs" in upgrade
+
+    def test_rpc_creates_row_with_correct_stamps(self):
+        """New row gets created_by_user_id from the caller so audit
+        trail reflects who triggered the creation."""
+        text = self._text()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "INSERT INTO floor_plans" in upgrade
+        assert "p_user_id, p_job_id" in upgrade
+
+    def test_downgrade_drops_the_rpc(self):
+        text = self._text()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        assert "DROP FUNCTION IF EXISTS ensure_job_floor_plan" in downgrade
+
+
+class TestCreateFloorPlanByJobEndpointUsesNewRpc:
+    """Round 3: the router's create_floor_plan_by_job_endpoint must call
+    the new ensure_job_floor_plan RPC and NOT retain the old 409 catch
+    fallback (which regressed R12's cache reconciliation on the error
+    branch — Lakshman's named round-3 blocker)."""
+
+    @staticmethod
+    def _endpoint_body() -> str:
+        import re
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        m = re.search(
+            r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        assert m, "create_floor_plan_by_job_endpoint not found"
+        return m.group(0)
+
+    def test_calls_ensure_job_floor_plan_rpc(self):
+        body = self._endpoint_body()
+        assert '"ensure_job_floor_plan"' in body
+        assert '"p_floor_number"' in body
+        assert '"p_user_id"' in body
+
+    def test_retries_once_on_23505(self):
+        """Same pattern as ensure_job_property — two different jobs at
+        the same address racing past their FOR UPDATE locks both hit
+        the partial unique index on the same-floor-number INSERT."""
+        body = self._endpoint_body()
+        assert "23505" in body
+        assert body.count("_invoke_ensure_floor_plan") >= 2  # helper + retry call
+
+    def test_old_409_catch_fallback_is_removed(self):
+        """Dead-code regression guard: the old try create_floor_plan +
+        except 409 + pick plans[0] block must not reappear. That code
+        silently regressed R12's Case-3 cache reconciliation fix on the
+        error branch — removing it is the round-3 critical fix."""
+        body = self._endpoint_body()
+        # The old fallback used this exact catch/refetch shape.
+        assert "apiErr.status === 409" not in body  # belongs only to frontend
+        assert "create_floor_plan(" not in body, (
+            "Router must not fall back to the old service-layer "
+            "create_floor_plan function — use the idempotent RPC instead."
+        )
+
+
+class TestSaveCanvasEtagIfMatchCheck:
+    """Round 3: save_canvas enforces an optional If-Match etag check to
+    prevent silent lost-updates when two users edit the same floor plan
+    concurrently. Backend derives the etag from floor_plans.updated_at.
+    """
+
+    def test_service_signature_accepts_if_match(self):
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        sig = inspect.signature(save_canvas)
+        assert "if_match" in sig.parameters, (
+            "save_canvas must accept an `if_match` parameter so the router "
+            "can pass the If-Match header value through."
+        )
+        # Default None for backward compat during frontend rollout.
+        assert sig.parameters["if_match"].default is None
+
+    def test_service_raises_412_on_etag_mismatch(self):
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        assert "status_code=412" in src
+        assert "VERSION_STALE" in src
+        assert "if_match" in src
+
+    def test_service_includes_current_etag_in_412_response(self):
+        """Clients need the current etag in the error body so they can
+        reload + re-apply without another round-trip."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        assert "current_etag" in src
+        assert "extra=" in src
+
+    def test_backward_compat_when_if_match_absent(self):
+        """Pre-rollout clients (or the first-ever save on a new row)
+        won't send If-Match. Service must skip the check, not reject."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        # The guard is "if if_match is not None and ..." — verifies
+        # absent header skips entirely.
+        assert "if if_match is not None" in src
+
+    def test_router_reads_if_match_header(self):
+        """The POST /floor-plans/{id}/versions endpoint must extract
+        If-Match from request headers and forward to the service."""
+        import re
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        m = re.search(
+            r"async def save_canvas_endpoint\(.*?(?=^async def |\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        assert m
+        body = m.group(0)
+        assert 'request.headers.get("If-Match")' in body
+        assert "if_match=if_match" in body
+
+
+class TestFloorPlanResponseEtag:
+    """Round 3: FloorPlanResponse exposes an `etag` computed field derived
+    from updated_at. Clients read it and echo it back as If-Match on save.
+    """
+
+    def test_schema_has_computed_etag_field(self):
+        from api.floor_plans.schemas import FloorPlanResponse
+
+        # Pydantic v2 computed fields show up via model_computed_fields.
+        assert "etag" in FloorPlanResponse.model_computed_fields, (
+            "FloorPlanResponse must expose `etag` via @computed_field so "
+            "it appears in JSON responses"
+        )
+
+    def test_etag_matches_updated_at_iso_string(self):
+        """Round-trip: read the row, serialize → etag === updated_at.isoformat()."""
+        from datetime import UTC, datetime
+        from uuid import uuid4
+
+        from api.floor_plans.schemas import FloorPlanResponse
+
+        now = datetime(2026, 4, 22, 3, 47, 12, 345678, tzinfo=UTC)
+        row = FloorPlanResponse(
+            id=uuid4(),
+            property_id=uuid4(),
+            company_id=uuid4(),
+            floor_number=1,
+            floor_name="Main",
+            version_number=1,
+            canvas_data=None,
+            is_current=True,
+            created_at=now,
+            updated_at=now,
+        )
+        serialized = row.model_dump()
+        assert serialized["etag"] == now.isoformat()
+        assert serialized["updated_at"] == now
+
+    def test_etag_helper_handles_string_input(self):
+        """Some code paths receive updated_at as an ISO string already
+        (JSON round-trip from the RPC). Helper must pass through unchanged.
+        Post-review LOW: was ``compute_etag`` (schemas alias); the alias
+        was deleted, this test now references the shared source."""
+        from api.shared.etag import etag_from_updated_at
+
+        iso = "2026-04-22T03:47:12.345678+00:00"
+        assert etag_from_updated_at(iso) == iso
+
+    def test_etag_helper_returns_none_on_none(self):
+        from api.shared.etag import etag_from_updated_at
+
+        assert etag_from_updated_at(None) is None
+
+
+class TestAppExceptionExtraField:
+    """Round 3: AppException now carries an optional `extra` dict that the
+    exception handler merges into the JSON body. Used by VERSION_STALE to
+    ship current_etag without a second round-trip."""
+
+    def test_app_exception_accepts_extra(self):
+        from api.shared.exceptions import AppException
+
+        exc = AppException(
+            status_code=412,
+            detail="Stale",
+            error_code="VERSION_STALE",
+            extra={"current_etag": "2026-04-22T00:00:00+00:00"},
+        )
+        assert exc.extra == {"current_etag": "2026-04-22T00:00:00+00:00"}
+
+    def test_app_exception_extra_defaults_to_empty_dict(self):
+        from api.shared.exceptions import AppException
+
+        exc = AppException(status_code=400, detail="x")
+        assert exc.extra == {}
+
+
+class TestApplyScriptDeleted:
+    """Round-3 hygiene (Lakshman #3): the manual-apply script
+    pr10_round2_apply.sql kept drifting from the Alembic chain as new
+    migrations landed. Alembic is the source of truth; delete the
+    secondary artifact. Regression guard — the file must not come back
+    as a convenience without a sync enforcement mechanism."""
+
+    def test_apply_script_does_not_exist(self):
+        from pathlib import Path
+
+        path = (
+            Path(__file__).resolve().parents[1] / "scripts" / "pr10_round2_apply.sql"
+        )
+        assert not path.exists(), (
+            "backend/scripts/pr10_round2_apply.sql must stay deleted "
+            "(Lakshman round-3 #3). If you need a dev-apply helper, "
+            "wire it up from alembic/env.py as the single source of truth."
+        )
+
+
+class TestA7b8c9Downgrade_RestoresRestoreRpcCallShape:
+    """Round-3 #2 (Lakshman): migration a7b8c9d0e1f2 rewrote BOTH
+    _compute_wall_sf_for_room (2-arg → 1-arg) AND the RPC that calls it
+    (restore_floor_plan_relational_snapshot). The original DOWNGRADE_SQL
+    restored the helper's 2-arg signature but left restore calling the
+    1-arg shape — rollback would leave runtime broken. This test asserts
+    the downgrade symmetry was restored."""
+
+    def test_downgrade_reinstalls_restore_rpc_with_2arg_call(self):
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions"
+            / "a7b8c9d0e1f2_spec01h_rpc_security_followup.py"
+        ).read_text(encoding="utf-8")
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        # Restore RPC must be re-installed on downgrade...
+        assert "CREATE OR REPLACE FUNCTION restore_floor_plan_relational_snapshot" in downgrade
+        # ...with the 2-arg call shape that matches the downgraded helper.
+        assert "_compute_wall_sf_for_room(v_room_id, v_caller_company)" in downgrade
+        # Regression guard: the 1-arg form must NOT appear in downgrade.
+        # (If it did, the downgrade would leave the schema internally inconsistent.)
+        downgrade_after_restore = downgrade.split(
+            "restore_floor_plan_relational_snapshot", 1
+        )[1]
+        # The 1-arg call shape appears in UPGRADE only, not DOWNGRADE's restore body.
+        # Split on the restore block; the part inside shouldn't contain (v_room_id) without company.
+        assert "_compute_wall_sf_for_room(v_room_id);" not in downgrade_after_restore
+
+
+class TestEtagHelpersUnified:
+    """Round 3 second critical review (MEDIUM #1 + LOW #2): the previously
+    duplicated ``compute_etag`` (schemas.py) and ``_coerce_etag``
+    (service.py) diverged on the None case (one returned None, one
+    returned ""). Consolidated into ``api.shared.etag`` so there's a
+    single source of truth. Frontend sees ``etag: null`` instead of
+    ``etag: ""`` — fixes the "falsy-check silently skips If-Match" bug.
+    """
+
+    def test_etag_from_updated_at_returns_none_on_none(self):
+        from api.shared.etag import etag_from_updated_at
+
+        assert etag_from_updated_at(None) is None
+
+    def test_etag_from_updated_at_passes_through_strings(self):
+        from api.shared.etag import etag_from_updated_at
+
+        iso = "2026-04-22T03:47:12.345678+00:00"
+        assert etag_from_updated_at(iso) == iso
+
+    def test_etag_from_updated_at_serializes_datetime(self):
+        from datetime import UTC, datetime
+
+        from api.shared.etag import etag_from_updated_at
+
+        dt = datetime(2026, 4, 22, 3, 47, 12, 345678, tzinfo=UTC)
+        assert etag_from_updated_at(dt) == dt.isoformat()
+
+    def test_etags_match_identical_strings(self):
+        from api.shared.etag import etags_match
+
+        assert etags_match("2026-04-22T00:00:00+00:00", "2026-04-22T00:00:00+00:00") is True
+
+    def test_etags_match_normalizes_microsecond_precision(self):
+        """Round 3 second critical review (MEDIUM #2): the old compare
+        was raw string equality; the docstring claimed datetime-parse
+        normalization. Now matches the doc — two ISO strings that
+        represent the same instant but differ in microsecond rendering
+        compare equal."""
+        from api.shared.etag import etags_match
+
+        a = "2026-04-22T03:47:12+00:00"
+        b = "2026-04-22T03:47:12.000000+00:00"
+        assert etags_match(a, b) is True
+
+    def test_etags_match_rejects_different_timestamps(self):
+        from api.shared.etag import etags_match
+
+        a = "2026-04-22T03:47:12+00:00"
+        b = "2026-04-22T03:47:13+00:00"
+        assert etags_match(a, b) is False
+
+    def test_etags_match_none_never_matches(self):
+        from api.shared.etag import etags_match
+
+        assert etags_match(None, "any") is False
+        assert etags_match("any", None) is False
+        assert etags_match(None, None) is False
+
+    def test_etags_match_falls_back_to_string_equality_on_garbage(self):
+        """Callers may supply non-ISO etags (tests, future hash-based
+        etags, etc.). Helper must not crash on parse failure — plain
+        equality is the fallback."""
+        from api.shared.etag import etags_match
+
+        assert etags_match("abc123", "abc123") is True
+        assert etags_match("abc", "def") is False
+
+    def test_floor_plan_response_etag_is_nullable_not_empty(self):
+        """FloorPlanResponse.etag must serialize None → null, not '' —
+        the empty-string coercion caused a silent bug on the frontend
+        where falsy-checks skipped the If-Match header."""
+        from uuid import uuid4
+
+        from api.floor_plans.schemas import FloorPlanResponse
+
+        row = FloorPlanResponse(
+            id=uuid4(),
+            property_id=uuid4(),
+            company_id=uuid4(),
+            floor_number=1,
+            floor_name="Main",
+            version_number=1,
+            canvas_data=None,
+            is_current=True,
+            created_at="2026-04-22T03:00:00+00:00",  # type: ignore[arg-type]
+            updated_at="2026-04-22T03:00:00+00:00",  # type: ignore[arg-type]
+        )
+        # String passes through — round-trip consistency.
+        assert row.model_dump()["etag"] == "2026-04-22T03:00:00+00:00"
+
+
+class TestEtagExtendedToAllMutationEndpoints:
+    """Round 3 second critical review (HIGH #2): the etag guard was
+    originally wired only to ``POST /versions``. This round extends it
+    to every mutation endpoint on floor_plans so cleanup / rollback /
+    PATCH also reject stale concurrent writes instead of last-writer-wins.
+
+    Tests verify the wiring at router + service layer for all 4
+    endpoints.
+    """
+
+    @staticmethod
+    def _read_router() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1] / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+
+    def test_update_floor_plan_service_accepts_if_match(self):
+        import inspect
+
+        from api.floor_plans.service import update_floor_plan
+
+        sig = inspect.signature(update_floor_plan)
+        assert "if_match" in sig.parameters
+        assert sig.parameters["if_match"].default is None
+
+    def test_cleanup_floor_plan_service_accepts_if_match(self):
+        import inspect
+
+        from api.floor_plans.service import cleanup_floor_plan
+
+        sig = inspect.signature(cleanup_floor_plan)
+        assert "if_match" in sig.parameters
+        assert sig.parameters["if_match"].default is None
+
+    def test_rollback_version_service_accepts_if_match(self):
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        sig = inspect.signature(rollback_version)
+        assert "if_match" in sig.parameters
+        assert sig.parameters["if_match"].default is None
+
+    def test_all_mutation_endpoints_forward_if_match_header(self):
+        """Every POST/PATCH route that writes to floor_plans must read
+        the header and pass it to the service. Regression guard for the
+        sibling-miss pattern (forgetting one endpoint)."""
+        import re
+
+        text = self._read_router()
+        mutation_routes = [
+            "save_canvas_endpoint",
+            "update_floor_plan_endpoint",
+            "update_floor_plan_by_job_endpoint",
+            "rollback_version_endpoint",
+            "cleanup_endpoint",
+        ]
+        for route_name in mutation_routes:
+            m = re.search(
+                rf"async def {route_name}\(.*?(?=^async def |\Z)",
+                text, re.DOTALL | re.MULTILINE,
+            )
+            assert m, f"route {route_name} not found"
+            body = m.group(0)
+            assert 'request.headers.get("If-Match")' in body, (
+                f"{route_name} must extract If-Match from request headers"
+            )
+
+    def test_service_uses_shared_etags_match_not_raw_equality(self):
+        """Round 3 second critical review (MEDIUM #2): the compare is
+        parse-based via etags_match, not raw string equality. This was
+        the docstring-lies-about-code bug — the doc claimed datetime
+        normalization but the code did ==. Fixed + tested."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas, update_floor_plan, cleanup_floor_plan, rollback_version
+
+        for fn in (save_canvas, update_floor_plan, cleanup_floor_plan, rollback_version):
+            src = inspect.getsource(fn)
+            if "if_match" in src:
+                assert "etags_match" in src, (
+                    f"{fn.__name__} must use shared etags_match helper, "
+                    f"not raw string equality (MEDIUM #2)"
+                )
+
+
+class TestRound4FixContractPins:
+    """Round-4 critical review follow-through: grep-shape regression
+    guards that pin the round-3 fix contracts so a future edit can't
+    silently revert them. Each test targets a specific contract that
+    was introduced to close a named finding — text scans the source so
+    the failure mode is ``someone deleted the fix`` not ``someone
+    refactored the call graph.``
+    """
+
+    def test_ensure_job_floor_plan_rpc_uses_distinct_sqlstates_per_prereq(self):
+        """MEDIUM #4 (previous round): ``ensure_job_floor_plan`` raises
+        distinct SQLSTATEs per prerequisite state so the Python caller
+        can disambiguate archived-job (55006) from null-property
+        (23502) from no-JWT (42501) from not-found (P0002). If a
+        future edit collapses any of these back onto 42501, the
+        catcher in router.py can no longer emit the right user-facing
+        error code."""
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions"
+            / "b8c9d0e1f2a3_spec01h_ensure_job_floor_plan_rpc.py"
+        ).read_text(encoding="utf-8")
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+
+        assert "ERRCODE = '55006'" in upgrade, (
+            "Archived-job branch must raise 55006 (not_in_prerequisite_state), "
+            "not 42501 — router maps 55006 → JOB_ARCHIVED"
+        )
+        assert "ERRCODE = '23502'" in upgrade, (
+            "Null-property branch must raise 23502 (not_null_violation), "
+            "not 42501 — router maps 23502 → JOB_NO_PROPERTY"
+        )
+        assert "ERRCODE = '42501'" in upgrade, (
+            "No-JWT-company branch must still raise 42501 (access rule violation)"
+        )
+        assert "ERRCODE = 'P0002'" in upgrade, (
+            "Not-found branch must raise P0002 (job_not_accessible)"
+        )
+
+    def test_router_retry_path_routes_through_shared_mapper(self):
+        """Previous HIGH: the retry handler used to catch only 23505
+        and bare-``raise`` 42501/P0002, producing opaque 500s. Fix was
+        a shared ``_map_ensure_floor_plan_error`` helper called from
+        both first-error AND retry-error paths. If a future edit
+        reverts to inline mapping at either site, the catch coverage
+        can drift between the two again."""
+        import re
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1]
+            / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        m = re.search(
+            r"async def create_floor_plan_by_job_endpoint\(.*?(?=^async def |\Z)",
+            src, re.DOTALL | re.MULTILINE,
+        )
+        assert m
+        body = m.group(0)
+
+        assert "def _map_ensure_floor_plan_error(" in body, (
+            "Shared error mapper must exist inside create_floor_plan_by_job_endpoint"
+        )
+        # Retry path must invoke the mapper, not bare-raise.
+        assert "raise _map_ensure_floor_plan_error(retry_err)" in body, (
+            "Retry path must route through _map_ensure_floor_plan_error so "
+            "42501/P0002/55006/23502 on retry get structured errors instead "
+            "of opaque 500s (previous HIGH finding)"
+        )
+        # Mapper must cover all five codes the RPC raises.
+        for code in ("23505", "42501", "55006", "23502", "P0002"):
+            assert f'code == "{code}"' in body, (
+                f"Mapper must handle SQLSTATE {code} explicitly"
+            )
+
+    def test_atomic_updated_at_filter_in_etag_aware_updates(self):
+        """Round-4 HIGH: the atomic ``.eq("updated_at", …)`` filter on
+        UPDATE was applied to ``update_floor_plan`` but initially missed
+        ``cleanup_floor_plan`` and ``save_canvas`` Case 2 — same
+        sibling-miss class the lessons doc warns about. All three
+        methods do etag-check-then-write on floor_plans rows, so all
+        three need the atomic filter on their UPDATE chain. If a
+        future edit removes the filter from any, two concurrent writes
+        can sneak past the etag compare and silently overwrite each
+        other.
+
+        ``rollback_version`` is intentionally excluded — see its
+        docstring for why the RPC's internal is_current flip makes
+        the atomic filter redundant there.
+        """
+        import inspect
+
+        from api.floor_plans.service import (
+            cleanup_floor_plan,
+            save_canvas,
+            update_floor_plan,
+        )
+
+        for fn in (update_floor_plan, cleanup_floor_plan, save_canvas):
+            src = inspect.getsource(fn)
+            assert '.eq("updated_at"' in src, (
+                f"{fn.__name__} must add .eq(\"updated_at\", …) to its "
+                f"UPDATE chain when if_match is supplied, so a concurrent "
+                f"writer committing between the etag check and the UPDATE "
+                f"loses the race instead of silently overwriting."
+            )
+            # Each must also disambiguate STALE vs FROZEN on zero-row
+            # match via a post-UPDATE re-read (the filter kicking us out
+            # is the STALE signal; is_current=false is the FROZEN signal).
+            assert 'select("is_current, updated_at")' in src, (
+                f"{fn.__name__} must re-read is_current + updated_at on "
+                f"zero-row match so callers see the right VERSION_STALE vs "
+                f"VERSION_FROZEN error code."
+            )
+
+
+class TestReconcileSavedVersionHelperPresent:
+    """Round 3 second critical review (HIGH #1): the fork-reconciliation
+    block was inline at 3 save sites and forgotten at the 4th (409
+    recovery branch). Fix: factor into a ``reconcileSavedVersion``
+    helper called from ALL save sites including the 409 recovery.
+    """
+
+    @staticmethod
+    def _text() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "app"
+            / "(protected)" / "jobs" / "[id]" / "floor-plan" / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+    def test_shared_helper_is_defined(self):
+        text = self._text()
+        assert "function reconcileSavedVersion(" in text
+
+    def test_all_four_save_sites_call_helper(self):
+        """Every save site — autosave, first-create, 409 recovery,
+        cross-floor — must route reconciliation through the helper.
+        The 409 recovery branch is the site that was forgotten before;
+        this guards against the sibling-miss reappearing."""
+        text = self._text()
+        # Count helper invocations — 4 save sites + the definition itself
+        # (so 5 occurrences of the name in the file).
+        assert text.count("reconcileSavedVersion(") >= 4, (
+            "reconcileSavedVersion must be called from every save site"
+        )
+
+    def test_409_recovery_branch_captures_savedVersion(self):
+        """The 409 recovery branch previously threw away the return of
+        saveCanvasVersion, regressing R12's fork reconciliation. The
+        fix captures the return into `recovered` and routes through
+        the helper."""
+        text = self._text()
+        # The recovery branch's const captures the return.
+        assert "const recovered = await saveCanvasVersion" in text
+
+    def test_409_recovery_branch_no_longer_throws_away_return(self):
+        """Regression guard: the old pattern (`await saveCanvasVersion(...)`
+        with no assignment) must NOT appear at the 409 recovery site.
+        If anyone restores it, the reconciliation is lost again."""
+        import re
+
+        text = self._text()
+        # Isolate the 409 catch block body.
+        m = re.search(
+            r"if \(apiErr\.status === 409\) \{(.*?)\} else \{",
+            text, re.DOTALL,
+        )
+        assert m, "409 recovery branch not found"
+        branch = m.group(1)
+        assert "await saveCanvasVersion" in branch
+        # And the call must be on the RHS of an assignment, not bare.
+        assert "const recovered = await saveCanvasVersion" in branch, (
+            "409 recovery branch must capture saveCanvasVersion's return "
+            "so reconcileSavedVersion can run on it"
+        )
 
 
 class TestSaveCanvasPostEnrichmentSizeCap:
