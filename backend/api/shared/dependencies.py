@@ -23,6 +23,83 @@ def _get_token(request: Request) -> str:
     return _extract_token(request)
 
 
+def require_if_match(request: Request) -> str | None:
+    """Extract and validate ``If-Match`` header on a mutation endpoint
+    that HAS a legitimate first-version creation flow.
+
+    Round-5 (Lakshman P2 #2): enforces INV-1 — every mutating request
+    carries an etag or an explicit no-etag marker. Round-5
+    follow-up (Lakshman M1): this permissive variant is reserved for
+    ``save_canvas_endpoint`` only. Every other mutation route uses
+    :func:`require_if_match_strict` (below), which rejects ``*`` — they
+    always target an existing row, so there's no legitimate opt-out.
+
+    Return semantics:
+    - Header missing → raises 428 ``ETAG_REQUIRED``.
+    - Header == ``*`` → returns ``None``. Standard HTTP semantics for
+      "any representation." The service layer treats as "skip etag
+      check." Only save_canvas honors this (first-save on a freshly
+      ensured floor_plan row).
+    - Otherwise → returns the etag string.
+    """
+    header = request.headers.get("If-Match")
+    if header is None:
+        raise AppException(
+            status_code=428,
+            detail=(
+                "If-Match header is required on this endpoint. Send the "
+                "etag you received on your last read of this floor plan, "
+                "or 'If-Match: *' to explicitly opt out (creation flow)."
+            ),
+            error_code="ETAG_REQUIRED",
+        )
+    if header == "*":
+        return None
+    return header
+
+
+def require_if_match_strict(request: Request) -> str:
+    """Extract and validate ``If-Match`` on a mutation endpoint with
+    NO legitimate creation flow — update / cleanup / rollback all
+    target existing rows by definition.
+
+    Round-5 follow-up (Lakshman M1): the permissive
+    :func:`require_if_match` was applied uniformly to all 5 mutation
+    routes. It accepts ``If-Match: *`` and returns ``None``, which the
+    service layer treats as "skip etag check." On save_canvas that's
+    legitimate (first-save on a freshly ensured row). On update /
+    cleanup / rollback it's a default-allow loophole — a caller with a
+    cache miss or a hand-crafted curl silently bypasses the
+    precondition and gets last-write-wins semantics on an existing row.
+
+    This strict variant closes the loophole: both a missing header AND
+    the ``*`` wildcard raise 428 ``ETAG_REQUIRED``. Only a concrete
+    etag string is accepted. Callers of update / cleanup / rollback
+    always have a row they're mutating (via GET of the FloorPlan list
+    or a specific floor-plan row) — they always have an etag to
+    assert. No legitimate reason to send ``*``.
+
+    Return semantics:
+    - Missing header → 428 ``ETAG_REQUIRED`` (error_code).
+    - ``If-Match: *`` → 428 ``ETAG_REQUIRED`` (error_code).
+    - Concrete etag → returned verbatim.
+    """
+    header = request.headers.get("If-Match")
+    if header is None or header == "*":
+        raise AppException(
+            status_code=428,
+            detail=(
+                "If-Match header is required on this endpoint and must "
+                "carry a concrete etag — the wildcard '*' is not accepted "
+                "because this endpoint never operates on a freshly-created "
+                "row. Fetch the floor plan first to obtain its etag, then "
+                "retry with If-Match set to that value."
+            ),
+            error_code="ETAG_REQUIRED",
+        )
+    return header
+
+
 class PaginationParams:
     """Reusable pagination query parameters."""
 
