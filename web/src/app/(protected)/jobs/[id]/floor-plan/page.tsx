@@ -1544,6 +1544,15 @@ export default function FloorPlanPage({
       reconcileSavedVersion(
         queryClient, jobId, targetFloor.id, savedVersionWithCanvas, setActiveFloorId,
       );
+      // reconcileSavedVersion only switches activeFloorId on a fork
+      // (savedVersion.id !== sourceFloorId). Cross-floor create is a
+      // non-fork save — the user is on Main, picked Upper, and we just
+      // wrote onto Upper's own row. Without this line, activeFloorId
+      // stays on Main and the user sees an empty Main canvas while their
+      // room lands on Upper. Restores the explicit floor switch that
+      // the round-3 refactor dropped when it moved reconciliation into
+      // the shared helper.
+      setActiveFloorId(savedVersion.id);
 
       setSaveStatus("saved");
       if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current);
