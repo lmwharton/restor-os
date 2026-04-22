@@ -859,11 +859,56 @@ async def save_canvas(
     # shadow 412 that disappears on reload. Matching the row's real state
     # is only meaningful once the request is otherwise eligible.
     #
-    # Backward-compat: if_match=None skips the check. That's the intended
-    # behavior during the cross-deploy window and for very-first saves
-    # where no prior etag exists. The check is purely additive — every
-    # existing happy-path save still succeeds.
-    if if_match is not None and target_updated_at is not None:
+    # Round 6 (Lakshman P1 blocker #2 / lessons-doc pattern #24): the `*`
+    # wildcard is a creation-flow opt-out that the permissive
+    # `require_if_match` helper passes through literally. It's ONLY
+    # legitimate when the target row has no current version yet
+    # (target_updated_at IS NULL). Accepting `*` on a row that already
+    # has a current_version was the round-5 bypass: the endpoint layer
+    # declared "this route supports creation" and the service honored
+    # None-means-skip without verifying the request is actually a
+    # creation. The proxy doesn't hold — endpoint capability is not a
+    # request-level assertion. Discriminate here, at the service, where
+    # target_updated_at is known.
+    if if_match == "*":
+        # Round-6 follow-up (user-flagged escape-hatch closure): reject
+        # `*` uniformly on save_canvas — target_updated_at is guaranteed
+        # NOT NULL at the PG schema level
+        # (`e1a7c9b30201_spec01h_merge_floor_plans_versions.py:238`
+        # declares `updated_at TIMESTAMPTZ NOT NULL DEFAULT now()` +
+        # trg_floor_plans_updated_at refreshes on every write). If we
+        # reach save_canvas with if_match="*", it can only mean the
+        # caller had no prior etag to assert — and since every
+        # floor_plans row has updated_at set, there's no legitimate
+        # "creation opt-out" scenario left for this endpoint. Accepting
+        # `*` with NULL updated_at as a fallthrough would be a
+        # second-layer escape hatch against the NOT NULL + trigger
+        # invariant: if either breaks (accidental migration, direct DB
+        # seed, rollback leaves the trigger off), the fallthrough
+        # silently skips concurrency enforcement. Uniformly rejecting
+        # removes that escape hatch. Behavior is identical to the
+        # prior "if target_updated_at is not None" branch in the
+        # architecturally-reachable case; strictly safer in the
+        # unreachable-but-possible one. Schema invariant pinned by
+        # TestRound5EtagContractInvariants::test_floor_plans_updated_at_is_not_null.
+        raise AppException(
+            status_code=412,
+            detail=(
+                "If-Match: * is not a valid precondition for this "
+                "endpoint. Every floor plan row carries a concrete "
+                "updated_at (schema-level NOT NULL); fetch the row's "
+                "etag and retry with If-Match set to that value."
+            ),
+            error_code="WILDCARD_ON_EXISTING",
+            extra={
+                "current_etag": (
+                    etag_from_updated_at(target_updated_at)
+                    if target_updated_at is not None
+                    else None
+                )
+            },
+        )
+    elif if_match is not None and target_updated_at is not None:
         current_etag = etag_from_updated_at(target_updated_at)
         # etags_match parses both sides, so microsecond precision / timezone
         # formatting drift (".000000+00:00" vs "+00:00") doesn't cause

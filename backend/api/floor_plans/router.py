@@ -537,16 +537,17 @@ async def save_canvas_endpoint(
 ):
     """Save canvas changes. Auto-creates, updates, or forks a version depending on state."""
     token = _get_token(request)
-    # Round 5 (Lakshman P2 #2): If-Match is REQUIRED. Missing → 428
-    # ETAG_REQUIRED. `If-Match: *` is the explicit opt-out for the
-    # first-save-on-a-fresh-row creation flow (no prior etag exists to
-    # assert). Round-5 follow-up (Lakshman M1): this endpoint is the
-    # ONLY one that uses the permissive `require_if_match` (accepts
-    # `*`). Every other mutation route uses `require_if_match_strict`
-    # because they always target an existing row. The distinction
-    # matters: `*` here means "I'm creating v1 on a freshly-ensured
-    # row" — a legitimate state; on update / cleanup / rollback there
-    # is no legitimate `*` semantic so those routes reject it.
+    # If-Match is REQUIRED. Missing → 428 ETAG_REQUIRED. The wildcard
+    # `*` is also rejected — by save_canvas at the service layer, with
+    # 412 WILDCARD_ON_EXISTING (not 428). Why the split between this
+    # route and update/cleanup/rollback: save_canvas goes through the
+    # PERMISSIVE helper so the wildcard reaches the service and gets
+    # turned into a 412 with current_etag in the body (recoverable by
+    # the frontend's STALE_CONFLICT_ERROR_CODES handler). The strict
+    # helper used by update/cleanup/rollback returns 428 directly
+    # (not recoverable via the banner flow). The distinction is about
+    # error shape, not about whether `*` is accepted — both reject it.
+    # See require_if_match docstring for the full history.
     if_match = require_if_match(request)
     return await save_canvas(
         token=token,

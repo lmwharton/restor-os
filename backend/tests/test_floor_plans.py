@@ -4407,15 +4407,26 @@ class TestRound5EtagContractInvariants:
         assert exc_info.value.status_code == 428
         assert exc_info.value.error_code == "ETAG_REQUIRED"
 
-    def test_require_if_match_wildcard_returns_none(self):
-        """`If-Match: *` is the explicit opt-out marker (creation flow)."""
+    def test_require_if_match_wildcard_passes_through_as_literal(self):
+        """Round-6 (Lakshman P1 blocker #2 / lessons-doc pattern #24):
+        `If-Match: *` must be passed through to the service as the
+        literal string `"*"`, NOT coerced to None at the dep layer.
+
+        Prior round-5 behavior returned None here. The service's gate
+        was `if if_match is not None and target_updated_at is not None:`
+        — which treated None as "skip all checks" regardless of row
+        state, letting any client bypass INV-1 by sending `*` against
+        an existing row. Now the service validates the wildcard against
+        target_updated_at and rejects with 412 WILDCARD_ON_EXISTING when
+        the row already has a current version.
+        """
         from fastapi import Request
 
         from api.shared.dependencies import require_if_match
 
         scope = {"type": "http", "headers": [(b"if-match", b"*")]}
         req = Request(scope)
-        assert require_if_match(req) is None
+        assert require_if_match(req) == "*"
 
     def test_require_if_match_returns_header_value(self):
         from fastapi import Request
@@ -4477,6 +4488,388 @@ class TestRound5EtagContractInvariants:
         etag = "2026-04-22T12:34:56+00:00"
         req = Request({"type": "http", "headers": [(b"if-match", etag.encode())]})
         assert require_if_match_strict(req) == etag
+
+    # ------------------------------------------------------------------
+    # Round 6 source-shape pins (structural, NOT adversarial).
+    #
+    # Round-6 follow-up (Lakshman MEDIUM re-review): these two tests
+    # use inspect.getsource + string-grep. They prove the code LOOKS
+    # right — the wildcard branch exists, the right SQLSTATE string
+    # appears, the branch is before the generic gate. They do NOT
+    # prove the code BEHAVES right. A future refactor that renames
+    # the error_code but keeps the string "WILDCARD_ON_EXISTING" in
+    # a nearby comment would pass these grep tests while the behavior
+    # is broken.
+    #
+    # The real pattern-#23 adversarial test is
+    # `test_save_canvas_wildcard_on_existing_row_runtime_412` below —
+    # it invokes save_canvas() with if_match="*" + mocked Supabase
+    # client and asserts AppException(412, "WILDCARD_ON_EXISTING")
+    # plus current_etag in exc.extra. One runtime adversarial >
+    # many source-shape pins.
+    # ------------------------------------------------------------------
+
+    def test_save_canvas_rejects_wildcard_on_existing_row(self):
+        """SOURCE-SHAPE PIN (not adversarial — see the comment block
+        above): save_canvas's wildcard branch must exist and raise
+        WILDCARD_ON_EXISTING. Behavioral coverage lives in the
+        runtime test below; this pin catches accidental deletion of
+        the branch during future refactors."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        # The wildcard branch must exist AND must check target_updated_at.
+        assert 'if if_match == "*":' in src, (
+            "save_canvas must have an explicit wildcard branch that "
+            "validates row state before honoring `*` as a creation "
+            "opt-out (Lakshman P1 blocker #2 / lessons-doc pattern #24)"
+        )
+        assert "WILDCARD_ON_EXISTING" in src, (
+            "The wildcard-on-existing-row case must raise 412 "
+            "WILDCARD_ON_EXISTING — silent skip reopens the round-4 "
+            "P2 #2 default-allow loophole under a different name"
+        )
+
+    def test_save_canvas_wildcard_branch_comes_before_etag_gate(self):
+        """SOURCE-SHAPE PIN (ordering): the `if if_match == "*"`
+        branch MUST run BEFORE the generic `elif if_match is not None
+        and target_updated_at is not None:` gate. If the generic gate
+        runs first, `*` falls into the etag-equality path, fails
+        parsing, and produces a confusing 412 VERSION_STALE instead
+        of the accurate 412 WILDCARD_ON_EXISTING. Behavioral coverage
+        lives in the runtime test below."""
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        wildcard_idx = src.find('if if_match == "*":')
+        etag_gate_idx = src.find(
+            "elif if_match is not None and target_updated_at is not None:"
+        )
+        assert wildcard_idx != -1, "wildcard branch missing"
+        assert etag_gate_idx != -1, (
+            "etag gate must be an `elif` (not `if`) to preserve "
+            "ordering with the wildcard branch"
+        )
+        assert wildcard_idx < etag_gate_idx, (
+            "wildcard branch must precede the etag gate — otherwise "
+            "`*` would be treated as a malformed etag string"
+        )
+
+    def test_require_if_match_return_type_is_str_not_optional(self):
+        """Round-6 follow-through: require_if_match now returns str
+        unconditionally (missing raises 428, wildcard returns the
+        literal '*', concrete etag returns the string). The prior
+        str | None shape let the service's gate misinterpret None as
+        'skip all checks'."""
+        import inspect
+
+        from api.shared.dependencies import require_if_match
+
+        sig = inspect.signature(require_if_match)
+        # str, not str | None. Use typing representation check — accepts
+        # both the literal `str` type and its string repr for future
+        # Python versions.
+        ret = sig.return_annotation
+        assert ret is str or str(ret) == "str" or repr(ret) == "<class 'str'>", (
+            f"require_if_match must return `str` unconditionally, got "
+            f"{ret}. None return reopens the service-layer bypass."
+        )
+
+    # ------------------------------------------------------------------
+    # Round-6 adversarial RUNTIME test (pattern #23 done right).
+    #
+    # This is the load-bearing pattern-#23 test for the wildcard
+    # fix — it actually invokes save_canvas() with if_match="*",
+    # mocks the Supabase client so the wildcard branch is reached,
+    # and asserts AppException(412, "WILDCARD_ON_EXISTING") + the
+    # current_etag in the exception's extra dict. If the fix were
+    # cosmetic-only (code looks right, behavior wrong), the grep
+    # pins above would pass but THIS test would fail.
+    #
+    # One runtime adversarial > many source-shape pins. Future fixes
+    # to etag paths should lead with a runtime test like this one
+    # and use grep pins only as structural belt-and-suspenders.
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_save_canvas_wildcard_on_existing_row_runtime_412(self):
+        """Directly invoke the save_canvas service method with
+        if_match='*' against a mocked target row whose updated_at is
+        set. Assert AppException(412, WILDCARD_ON_EXISTING) fires at
+        runtime. This is the adversarial equivalent of a curl probe:
+            POST /v1/floor-plans/<id>/versions -H 'If-Match: *'
+        against an existing row, which must now surface 412 instead of
+        silently bypassing the concurrency check.
+        """
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from api.floor_plans.service import save_canvas
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        job_id = uuid4()
+        company_id = uuid4()
+        user_id = uuid4()
+        property_id = str(uuid4())
+        existing_updated_at = "2026-04-22T10:00:00+00:00"
+
+        # Single merged dict serves both the target_floor_result read
+        # (keys: property_id, floor_number, updated_at) and the
+        # job_result read (keys: id, floor_plan_id, status, property_id).
+        # The two MagicMock chains resolve to the same .execute.return_value
+        # in AsyncSupabaseMock — acceptable because save_canvas extracts
+        # disjoint keys per read and property_id is shared by design.
+        mock_row = {
+            "id": str(job_id),
+            "property_id": property_id,
+            "floor_number": 1,
+            "updated_at": existing_updated_at,
+            "floor_plan_id": str(floor_plan_id),
+            "status": "in_progress",  # NOT in ARCHIVED_JOB_STATUSES
+        }
+
+        mock_client = AsyncSupabaseMock()
+        (
+            mock_client.table.return_value
+            .select.return_value
+            .eq.return_value
+            .eq.return_value
+            .is_.return_value
+            .single.return_value
+            .execute.return_value
+        ).data = mock_row
+        # Shorter chain for the target_floor_result read (no .is_() on it)
+        (
+            mock_client.table.return_value
+            .select.return_value
+            .eq.return_value
+            .single.return_value
+            .execute.return_value
+        ).data = mock_row
+
+        with patch(
+            "api.floor_plans.service.get_authenticated_client",
+            return_value=mock_client,
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await save_canvas(
+                    token="fake-token",
+                    floor_plan_id=floor_plan_id,
+                    job_id=job_id,
+                    company_id=company_id,
+                    user_id=user_id,
+                    canvas_data={"rooms": [], "walls": []},
+                    if_match="*",
+                )
+
+        exc = exc_info.value
+        assert exc.status_code == 412, (
+            f"Expected 412 for wildcard on existing row, got "
+            f"{exc.status_code}: {exc.detail}"
+        )
+        assert exc.error_code == "WILDCARD_ON_EXISTING", (
+            f"Expected WILDCARD_ON_EXISTING error_code, got {exc.error_code}. "
+            f"If this test fails with VERSION_STALE or no error at all, "
+            f"the round-6 wildcard gate is either mis-ordered or missing."
+        )
+        # Response must carry current_etag so client can recover without
+        # a separate GET.
+        assert "current_etag" in exc.extra, (
+            "WILDCARD_ON_EXISTING response must include current_etag in "
+            "the extra dict so the frontend can recover without a "
+            "separate fetch"
+        )
+        assert exc.extra["current_etag"] == existing_updated_at
+
+    def test_floor_plans_updated_at_is_not_null(self):
+        """Round-6 follow-up (user-flagged escape-hatch closure):
+        the save_canvas wildcard gate relies on the architectural
+        invariant that `floor_plans.updated_at` is always set. That
+        invariant is enforced at the PG schema level — the column
+        must be declared NOT NULL. If a future migration drops the
+        NOT NULL constraint, the service layer's uniform-reject
+        becomes over-restrictive (breaks the theoretical `*` on a
+        row-without-updated_at case that ISN'T actually a bypass
+        anymore). This test pins the schema shape so any migration
+        that touches it has to explicitly confirm here.
+
+        Why pinned at both migrations: `e1a7c9b30201` is the
+        container/versions merge that created the post-merge
+        floor_plans table; `1113c0e7729d` is the pre-merge reparent
+        that ADDED the column to the container. Both must declare
+        NOT NULL for the invariant to hold across upgrade + legacy
+        paths.
+        """
+        import re
+        from pathlib import Path
+
+        versions_dir = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+
+        merge_migration = (versions_dir / "e1a7c9b30201_spec01h_merge_floor_plans_versions.py").read_text(encoding="utf-8")
+        assert re.search(
+            r"updated_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+now\(\)",
+            merge_migration,
+            re.IGNORECASE,
+        ), (
+            "e1a7c9b30201 must declare `updated_at TIMESTAMPTZ NOT NULL "
+            "DEFAULT now()` on the merged floor_plans table. Dropping "
+            "NOT NULL on this column re-opens the escape-hatch path "
+            "the round-6 uniform-reject closed."
+        )
+
+        reparent_migration = (versions_dir / "1113c0e7729d_spec01h_reparent_floor_plans_add_.py").read_text(encoding="utf-8")
+        assert re.search(
+            r"updated_at\s+TIMESTAMPTZ\s+NOT\s+NULL\s+DEFAULT\s+now\(\)",
+            reparent_migration,
+            re.IGNORECASE,
+        ), (
+            "1113c0e7729d must declare `updated_at TIMESTAMPTZ NOT NULL "
+            "DEFAULT now()` on the pre-merge floor_plans container."
+        )
+
+        # Regression guard: no later migration may drop the NOT NULL.
+        for f in sorted(versions_dir.glob("*.py")):
+            text = f.read_text(encoding="utf-8")
+            if re.search(
+                r"ALTER\s+(?:TABLE\s+)?floor_plans.*ALTER\s+COLUMN\s+updated_at.*DROP\s+NOT\s+NULL",
+                text,
+                re.IGNORECASE | re.DOTALL,
+            ):
+                raise AssertionError(
+                    f"{f.name} drops NOT NULL on floor_plans.updated_at "
+                    f"— this reopens the round-6 wildcard escape hatch. "
+                    f"If you genuinely need nullable updated_at, update "
+                    f"save_canvas's wildcard branch to handle it."
+                )
+
+    @pytest.mark.asyncio
+    async def test_save_canvas_rejects_wildcard_uniformly_runtime(self):
+        """Round-6 follow-up adversarial test: save_canvas must raise
+        WILDCARD_ON_EXISTING regardless of target_updated_at state.
+        The prior round-6 branch only raised when target_updated_at
+        was set, with a fallthrough comment claiming the NULL case
+        was 'near-unreachable' defense-in-depth. That fallthrough was
+        the escape hatch — if the schema invariant broke, `*` + NULL
+        updated_at silently bypassed. Uniform-reject closes it.
+
+        This test constructs the adversarial case — a mocked target
+        row with updated_at=None — and asserts the 412 still fires.
+        Before the fix, this test would have silently passed through
+        save_canvas without raising (dead bypass). After the fix, it
+        raises WILDCARD_ON_EXISTING with current_etag=None in extra.
+        """
+        from unittest.mock import patch
+        from uuid import uuid4
+
+        from api.floor_plans.service import save_canvas
+        from api.shared.exceptions import AppException
+
+        floor_plan_id = uuid4()
+        job_id = uuid4()
+        property_id = str(uuid4())
+
+        # Adversarial shape — target row with updated_at=None (bypasses
+        # the schema NOT NULL at the mock level, simulating a hypothetical
+        # future where the invariant is broken).
+        mock_row = {
+            "id": str(job_id),
+            "property_id": property_id,
+            "floor_number": 1,
+            "updated_at": None,  # adversarial
+            "floor_plan_id": str(floor_plan_id),
+            "status": "in_progress",
+        }
+
+        mock_client = AsyncSupabaseMock()
+        (
+            mock_client.table.return_value
+            .select.return_value
+            .eq.return_value.eq.return_value.is_.return_value
+            .single.return_value.execute.return_value
+        ).data = mock_row
+        (
+            mock_client.table.return_value
+            .select.return_value.eq.return_value
+            .single.return_value.execute.return_value
+        ).data = mock_row
+
+        with patch(
+            "api.floor_plans.service.get_authenticated_client",
+            return_value=mock_client,
+        ):
+            with pytest.raises(AppException) as exc_info:
+                await save_canvas(
+                    token="fake-token",
+                    floor_plan_id=floor_plan_id,
+                    job_id=job_id,
+                    company_id=uuid4(),
+                    user_id=uuid4(),
+                    canvas_data={"rooms": [], "walls": []},
+                    if_match="*",
+                )
+
+        exc = exc_info.value
+        assert exc.status_code == 412
+        assert exc.error_code == "WILDCARD_ON_EXISTING", (
+            "Uniform rejection: `*` must 412 even when target_updated_at "
+            "is None. If this test fails with 'no exception raised', the "
+            "fallthrough escape-hatch is back (user-flagged round-6 "
+            "follow-up regression)."
+        )
+        # When target_updated_at is None, current_etag in extra is None
+        # (graceful — client gets a 412 but no recoverable etag to retry
+        # with; they need a fresh fetch).
+        assert "current_etag" in exc.extra
+        assert exc.extra["current_etag"] is None
+
+    def test_frontend_handler_catches_wildcard_on_existing(self):
+        """Round-6 follow-through (Lakshman HIGH / pattern #17):
+        `WILDCARD_ON_EXISTING` is a NEW error code introduced by the
+        backend fix. The frontend's handleStaleConflictIfPresent must
+        treat it the same as VERSION_STALE — both surface the
+        stale-conflict banner + persist the rejected canvas to the
+        conflict-draft localStorage entry + offer reload. Previously
+        the handler gated only on VERSION_STALE; WILDCARD_ON_EXISTING
+        fell through to the autosave retry loop, which retried the
+        same `If-Match: *` request until MAX_RETRIES elapsed and died
+        with a generic error badge — exactly the 'new error path
+        without end-to-end UX' shape pattern #17 warns against.
+
+        Source-shape pin: asserts the handler's error-code gate names
+        both codes and that `STALE_CONFLICT_ERROR_CODES` collection
+        contains both. If a future edit removes WILDCARD_ON_EXISTING
+        from the set, the silent-retry-loop regression returns."""
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "app"
+            / "(protected)" / "jobs" / "[id]" / "floor-plan" / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+        assert "STALE_CONFLICT_ERROR_CODES" in text, (
+            "Frontend must expose a named set of error codes the "
+            "handler treats as stale-conflict; a hardcoded == check "
+            "is the shape that missed WILDCARD_ON_EXISTING in round 6"
+        )
+        assert '"VERSION_STALE"' in text and '"WILDCARD_ON_EXISTING"' in text, (
+            "Both error codes must be members of the stale-conflict "
+            "set. Removing either reopens the silent-retry-loop "
+            "regression (pattern #17)"
+        )
+        # The gate itself must use the set membership check, not a
+        # one-code equality — otherwise adding WILDCARD_ON_EXISTING
+        # to the set doesn't actually route through the handler.
+        assert "STALE_CONFLICT_ERROR_CODES.has(apiErr.error_code)" in text, (
+            "The handler's gate must use STALE_CONFLICT_ERROR_CODES."
+            "has(apiErr.error_code) so new stale-conflict codes "
+            "propagate automatically"
+        )
 
     def test_strict_helper_used_on_non_creation_routes(self):
         """update / cleanup / rollback / update-by-job all target existing

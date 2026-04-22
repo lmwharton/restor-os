@@ -58,39 +58,41 @@ async function saveCanvasVersion(opts: {
   /**
    * Etag for the If-Match header. Required — every caller must supply
    * either a concrete etag string (from a FloorPlan row read) OR the
-   * literal "*" for a confirmed first-save creation flow. Round-5
-   * follow-up (Lakshman M1): the previous `etag?: string | null`
-   * shape let callers silently fall through to a "*" fallback when
-   * cache was stale — reopening the round-4 P2 #2 default-allow
-   * loophole. The required type forces every call site to use
-   * `hasEtag(fp) ? fp.etag : "*"` (if genuinely first-save) or refetch
-   * and defer (if cache-miss). Never silent-default.
+   * literal "*" as a loud-failure signal when the expected etag is
+   * missing (rare; indicates a backend stamping bug or cache race).
+   *
+   * The backend uniformly rejects "*" on save_canvas with 412
+   * WILDCARD_ON_EXISTING (see dependencies.py + service.py round-6
+   * follow-up). Sending "*" is therefore NOT a way to succeed — it's
+   * a way to fail loudly and trigger the STALE_CONFLICT_ERROR_CODES
+   * banner + reload flow instead of a silent last-write-wins. The
+   * actual legitimate-save path is always via `hasEtag(fp) ? fp.etag
+   * : <defer-and-invalidate>` — two save sites use an explicit "*"
+   * fallback purely as a belt-and-suspenders loud-error path.
+   *
+   * Round-5 history: the previous `etag?: string | null` shape let
+   * callers silently fall through to a "*" which the backend then
+   * coerced to "skip etag check" — that was the round-4 P2 #2
+   * default-allow loophole Lakshman caught. Required type + uniform
+   * backend reject closed both the silent-fallback and the
+   * silent-skip.
    */
   etag: string;
 }): Promise<import("@/lib/types").FloorPlan> {
-  // Round 5 (INV-1) + round-5 follow-up (Lakshman M1): every mutating
-  // request MUST carry an If-Match header. Backend rejects missing
-  // with 428 ETAG_REQUIRED, and rejects `If-Match: *` on every endpoint
-  // EXCEPT save_canvas (which accepts it for the legitimate first-
-  // version creation flow). Previously this helper silently fell back
-  // to `*` whenever opts.etag was falsy — that's what Lakshman flagged
-  // as the cache-miss default-allow loophole: if the FloorPlan row
-  // wasn't in query cache with etag populated (mount race, stale
-  // refetch window), we'd send `*` and silently bypass the precondition.
-  //
-  // New contract: opts.etag must be either a real etag string or the
-  // literal "*" (explicitly opt-in to the creation marker). Empty /
-  // undefined / null throws — the caller should refetch the FloorPlan
-  // or defer the save until the cache is populated, not silently
-  // default to no-enforcement. Since saveCanvasVersion only hits
-  // /versions (save_canvas), `*` is legal here, but the caller has
-  // to spell it out.
+  // INV-1 enforcement: every mutating request carries a concrete
+  // If-Match header. Empty string / null / undefined are all
+  // operator errors — the caller must either pass a real etag, or
+  // explicitly pass "*" to trigger the stale-conflict banner as a
+  // loud failure. Silently falling through to no-header reopens the
+  // round-4 P2 #2 default-allow loophole.
   if (!opts.etag || opts.etag.length === 0) {
     throw new Error(
       "saveCanvasVersion: etag is required. Pass a concrete etag "
-      + "from the FloorPlan row, or \"*\" for a confirmed first-save "
-      + "creation flow. Never fall through to no-etag — that reopens "
-      + "the round-4 P2 #2 default-allow loophole.",
+      + "from the FloorPlan row, or \"*\" to trigger a loud 412 "
+      + "(the backend rejects \"*\" uniformly — it's a loud-error "
+      + "signal, not a success path). Never fall through to "
+      + "no-etag — that reopens the round-4 P2 #2 default-allow "
+      + "loophole.",
     );
   }
   const headers = { "If-Match": opts.etag };
@@ -135,6 +137,21 @@ async function saveCanvasVersion(opts: {
  * Returns false if the error was something else; caller continues its
  * usual error handling.
  */
+// Round 6 follow-up (Lakshman HIGH, lessons-doc pattern #17): this
+// handler catches both VERSION_STALE (round 3: concurrent editor wrote
+// between our read and our save) AND WILDCARD_ON_EXISTING (round 6:
+// service rejected an `If-Match: *` against a row with updated_at set).
+// Both 412s carry current_etag in the error body and both mean "your
+// save can't land against the current server state; reload to recover."
+// Treating them identically keeps the recovery UX single-path: banner
+// + conflict-draft persistence + reload offer. Previously we only
+// gated on VERSION_STALE; WILDCARD_ON_EXISTING fell through to the
+// autosave retry loop, which retried the same `*` request until
+// MAX_RETRIES elapsed and died with a generic error badge — the exact
+// "new error path introduced without end-to-end UX" shape pattern #17
+// warns about.
+const STALE_CONFLICT_ERROR_CODES = new Set(["VERSION_STALE", "WILDCARD_ON_EXISTING"]);
+
 function handleStaleConflictIfPresent(
   err: unknown,
   opts: {
@@ -153,7 +170,11 @@ function handleStaleConflictIfPresent(
   },
 ): boolean {
   const apiErr = err as { status?: number; error_code?: string; body?: Record<string, unknown> };
-  if (apiErr.status !== 412 || apiErr.error_code !== "VERSION_STALE") {
+  if (
+    apiErr.status !== 412
+    || !apiErr.error_code
+    || !STALE_CONFLICT_ERROR_CODES.has(apiErr.error_code)
+  ) {
     return false;
   }
 
@@ -1350,11 +1371,22 @@ export default function FloorPlanPage({
             // in case a sibling raced the create), swap active to the fork.
             //
             // Round-5 follow-up (Lakshman M1): `created` came from
-            // ensure_job_floor_plan which stamps etag via the @computed_field.
-            // On the off-chance it's missing (backend bug / rollout skew),
-            // fall back to `*` — this IS the genuine first-save creation
-            // flow save_canvas's permissive require_if_match is built for,
-            // and save_canvas is the only endpoint that accepts `*`.
+            // ensure_job_floor_plan which stamps etag via the
+            // @computed_field.
+            //
+            // Round-6 follow-up (Lakshman LOW): the prior comment
+            // claimed `*` is "the genuine first-save creation flow."
+            // After the round-6 service-layer wildcard gate, that's
+            // no longer true — Postgres auto-stamps updated_at on
+            // every insert, so save_canvas always sees
+            // target_updated_at set and rejects `*` with 412
+            // WILDCARD_ON_EXISTING. This `*` fallback is therefore a
+            // belt-and-suspenders loud-failure path: if the backend
+            // ever ships with broken etag stamping (@computed_field
+            // returns None), we'd rather trip the stale-conflict
+            // banner and force a reload than silently send
+            // last-write-wins. In normal operation this branch
+            // doesn't fire because hasEtag(created) is true.
             const firstSaveEtag: string = hasEtag(created) ? created.etag : "*";
             const firstSaved = await saveCanvasVersion({
               floorPlanId: created.id,
@@ -1732,6 +1764,19 @@ export default function FloorPlanPage({
     // that saveCanvasVersion actually failed against — banner copy would
     // say "Floor X is stale" while the stale floor was actually Y.
     let targetFloorIdForConflict: string | undefined;
+    // Round 6 (Lakshman P1 blocker #1 / lessons-doc pattern #3):
+    // mergedCanvas must be referenced from the catch block below to
+    // persist the rejected canvas into the conflict-draft localStorage
+    // entry on VERSION_STALE. `const` inside the try scopes it out of
+    // catch — TS2304 compile error, Vercel build red. Hoist via the
+    // same `let T | undefined` pattern already used for
+    // targetFloorIdForConflict above. If construction throws before
+    // assignment (ensureFloor / detectSharedWalls failure), the catch
+    // sees undefined; handleStaleConflictIfPresent tolerates that via
+    // its `rejectedCanvas !== undefined` guard, so the banner still
+    // surfaces with no draft to persist (correct behavior — there was
+    // no user work past the failure point anyway).
+    let mergedCanvas: FloorPlanData | undefined;
     try {
       const targetFloor = await ensureFloor(targetLevel);
       targetFloorIdForConflict = targetFloor.id;
@@ -1752,7 +1797,7 @@ export default function FloorPlanPage({
       const existingCanvas = (targetFloor.canvas_data as FloorPlanData | null) ?? {
         gridSize, rooms: [], walls: [], doors: [], windows: [],
       };
-      const mergedCanvas: FloorPlanData = {
+      mergedCanvas = {
         ...existingCanvas,
         gridSize: existingCanvas.gridSize ?? gridSize,
         rooms: [...(existingCanvas.rooms ?? []), newRoom],
@@ -1763,9 +1808,19 @@ export default function FloorPlanPage({
       // Round-5 follow-up (Lakshman M1): targetFloor came from
       // ensureFloor which either returns an existing floor-plans row
       // (etag populated) or creates one via ensure_job_floor_plan
-      // (also etag-populated). The hasEtag guard is belt-and-suspenders
-      // for the cross-deploy window; legitimately-fresh targets fall
-      // through to the `*` creation opt-out (save_canvas accepts it).
+      // (also etag-populated).
+      //
+      // Round-6 follow-up (Lakshman LOW): the `*` fallback is NOT a
+      // "creation opt-out that succeeds" — the round-6 service-layer
+      // wildcard gate rejects `*` with 412 WILDCARD_ON_EXISTING
+      // whenever target_updated_at is set, which is always the case
+      // for a legitimately-fetched row (trigger auto-stamps updated_at
+      // on every insert). The fallback fires only if the backend
+      // ships without a populated etag (rollout skew or a
+      // @computed_field regression) — in that case we 412 loudly,
+      // trip the stale-conflict banner, and force a reload. Strictly
+      // safer than silent last-write-wins. Normal operation:
+      // hasEtag(targetFloor) returns true and we use the real etag.
       const crossFloorEtag: string = hasEtag(targetFloor) ? targetFloor.etag : "*";
       const savedVersion = await saveCanvasVersion({
         floorPlanId: targetFloor.id,
@@ -2091,13 +2146,15 @@ export default function FloorPlanPage({
         <div className="fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
           <div className="max-w-md w-full rounded-xl bg-surface-container-lowest border border-red-300 shadow-lg p-4">
             <p className="text-[13px] font-semibold text-on-surface mb-1">
-              Floor plan was updated by another editor
+              Floor plan needs to be reloaded
             </p>
             <p className="text-[12px] text-on-surface-variant mb-3">
-              Your most recent edits couldn&apos;t be saved because someone
-              else saved changes to this floor plan. Reload to pick up
-              their changes — we&apos;ve saved your unsaved work and
-              will offer to restore it on top after the reload.
+              Your most recent edits couldn&apos;t be saved against the
+              current state of this floor plan — either another editor
+              wrote since you last read, or your view is out of sync with
+              the server. Reload to pick up the latest state. We&apos;ve
+              saved your unsaved work and will offer to restore it on top
+              after the reload.
             </p>
             <div className="flex gap-2">
               <button
