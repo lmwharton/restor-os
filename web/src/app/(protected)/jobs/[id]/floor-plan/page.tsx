@@ -154,11 +154,29 @@ function reconcileSavedVersion(
     );
     setActiveFloorId(savedVersion.id);
     qc.invalidateQueries({ queryKey: ["floor-plan-history", sourceFloorId] });
+  } else {
+    // Round 3 bug found in testing: non-fork in-place save (same id, fresh
+    // updated_at) returns a savedVersion with a fresh etag, but the list
+    // cache entry keeps the pre-save etag. The next autosave reads the
+    // stale etag from cache, sends it as If-Match, and the backend 412s —
+    // stale-conflict banner fires against the user's own just-saved row,
+    // no actual concurrent editor involved. Spread savedVersion OVER the
+    // cached row so response fields (etag, updated_at, canvas_data) become
+    // authoritative while any client-only fields survive the merge.
+    qc.setQueryData<import("@/lib/types").FloorPlan[]>(
+      ["floor-plans", jobId],
+      (old) => {
+        if (!old) return old;
+        return old.map((fp) =>
+          fp.id === sourceFloorId ? { ...fp, ...savedVersion } : fp,
+        );
+      },
+    );
   }
   // Round 3 (post-review): deliberately NOT invalidating ["floor-plans", jobId]
-  // here. The setQueryData above wrote the authoritative post-fork row; a
+  // here. The setQueryData above wrote the authoritative post-save row; a
   // same-key invalidate would trigger a background refetch that could
-  // briefly overwrite the optimistic update with slightly stale read
+  // briefly overwrite the optimistic update with a slightly stale read
   // (race between the save response committing and the refetch firing).
   // ["floor-plan-history", savedVersion.id] and ["jobs"] target different
   // keys, so they stay.
