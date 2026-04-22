@@ -43,7 +43,12 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    # If-Match carries the round-3 optimistic-concurrency etag on every
+    # POST /v1/floor-plans/{id}/versions (and the other mutation endpoints).
+    # Browser CORS preflight rejects the actual request if the header name
+    # isn't in this list — rounds 3 shipped the client side without allowing
+    # it here, so every save failed at preflight with no HTTP status.
+    allow_headers=["Authorization", "Content-Type", "If-Match"],
     max_age=3600,
 )
 
