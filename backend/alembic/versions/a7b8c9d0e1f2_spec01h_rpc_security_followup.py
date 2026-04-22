@@ -321,6 +321,113 @@ END;
 $$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
 GRANT EXECUTE ON FUNCTION _compute_wall_sf_for_room(UUID, UUID) TO authenticated, service_role;
 
+-- Round-3 fix for downgrade drift (Lakshman #2): the UPGRADE of this
+-- migration rewrote BOTH _compute_wall_sf_for_room (1-arg, JWT-derived)
+-- AND the callers that invoke it — restore_floor_plan_relational_snapshot
+-- was updated to pass just (v_room_id). DOWNGRADE restores the 2-arg
+-- helper signature above, but without this second CREATE OR REPLACE, the
+-- restore RPC would still hold the 1-arg call site — runtime crash
+-- (function _compute_wall_sf_for_room(uuid) does not exist) on any
+-- rollback call. Re-install the pre-#2 body of restore with the 2-arg
+-- call shape so downgrade leaves the schema fully internally consistent.
+CREATE OR REPLACE FUNCTION restore_floor_plan_relational_snapshot(
+    p_new_floor_plan_id UUID
+) RETURNS JSONB AS $$
+DECLARE
+    v_caller_company   UUID;
+    v_canvas           JSONB;
+    v_snapshot         JSONB;
+    v_snapshot_version INTEGER;
+    v_room_count       INTEGER := 0;
+    v_wall_count       INTEGER := 0;
+    v_opening_count    INTEGER := 0;
+    v_skipped_rooms    JSONB := '[]'::JSONB;
+    v_room_jsonb       JSONB;
+    v_room_id          UUID;
+    v_wall_jsonb       JSONB;
+    v_new_wall_id      UUID;
+    v_opening_jsonb    JSONB;
+BEGIN
+    IF p_new_floor_plan_id IS NULL THEN
+        RAISE EXCEPTION 'Required parameter is NULL' USING ERRCODE = '22023';
+    END IF;
+    v_caller_company := get_my_company_id();
+    IF v_caller_company IS NULL THEN
+        RAISE EXCEPTION 'No authenticated company' USING ERRCODE = '42501';
+    END IF;
+    SELECT canvas_data INTO v_canvas
+      FROM floor_plans WHERE id = p_new_floor_plan_id AND company_id = v_caller_company;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Floor plan not accessible' USING ERRCODE = 'P0002';
+    END IF;
+    v_snapshot := v_canvas -> '_relational_snapshot';
+    IF v_snapshot IS NULL OR jsonb_typeof(v_snapshot) <> 'object' THEN
+        RETURN jsonb_build_object(
+            'restored', false, 'reason', 'no_snapshot',
+            'rooms', 0, 'walls', 0, 'openings', 0,
+            'skipped_rooms', '[]'::JSONB
+        );
+    END IF;
+    v_snapshot_version := COALESCE((v_snapshot ->> 'version')::INTEGER, 0);
+    IF v_snapshot_version <> 1 THEN
+        RAISE EXCEPTION 'Unsupported snapshot version: %', v_snapshot_version USING ERRCODE = '22023';
+    END IF;
+    FOR v_room_jsonb IN SELECT * FROM jsonb_array_elements(v_snapshot -> 'rooms') LOOP
+        v_room_id := (v_room_jsonb ->> 'id')::UUID;
+        PERFORM 1 FROM job_rooms WHERE id = v_room_id AND company_id = v_caller_company;
+        IF NOT FOUND THEN
+            v_skipped_rooms := v_skipped_rooms || jsonb_build_array(v_room_id::TEXT);
+            CONTINUE;
+        END IF;
+        UPDATE job_rooms
+           SET room_polygon   = v_room_jsonb -> 'room_polygon',
+               floor_openings = COALESCE(v_room_jsonb -> 'floor_openings', '[]'::jsonb)
+         WHERE id = v_room_id AND company_id = v_caller_company;
+        DELETE FROM wall_segments WHERE room_id = v_room_id AND company_id = v_caller_company;
+        v_room_count := v_room_count + 1;
+        FOR v_wall_jsonb IN SELECT * FROM jsonb_array_elements(COALESCE(v_room_jsonb -> 'walls', '[]'::jsonb)) LOOP
+            INSERT INTO wall_segments (
+                room_id, company_id, x1, y1, x2, y2,
+                wall_type, wall_height_ft, affected, shared, shared_with_room_id, sort_order
+            ) VALUES (
+                v_room_id, v_caller_company,
+                (v_wall_jsonb ->> 'x1')::DECIMAL, (v_wall_jsonb ->> 'y1')::DECIMAL,
+                (v_wall_jsonb ->> 'x2')::DECIMAL, (v_wall_jsonb ->> 'y2')::DECIMAL,
+                COALESCE(v_wall_jsonb ->> 'wall_type', 'interior'),
+                NULLIF(v_wall_jsonb ->> 'wall_height_ft', '')::DECIMAL,
+                COALESCE((v_wall_jsonb ->> 'affected')::BOOLEAN, false),
+                COALESCE((v_wall_jsonb ->> 'shared')::BOOLEAN, false),
+                NULLIF(v_wall_jsonb ->> 'shared_with_room_id', '')::UUID,
+                COALESCE((v_wall_jsonb ->> 'sort_order')::INTEGER, 0)
+            ) RETURNING id INTO v_new_wall_id;
+            v_wall_count := v_wall_count + 1;
+            FOR v_opening_jsonb IN SELECT * FROM jsonb_array_elements(COALESCE(v_wall_jsonb -> '_openings', '[]'::jsonb)) LOOP
+                INSERT INTO wall_openings (
+                    wall_id, company_id, opening_type, position,
+                    width_ft, height_ft, sill_height_ft, swing
+                ) VALUES (
+                    v_new_wall_id, v_caller_company,
+                    v_opening_jsonb ->> 'opening_type',
+                    (v_opening_jsonb ->> 'position')::DECIMAL,
+                    (v_opening_jsonb ->> 'width_ft')::DECIMAL,
+                    (v_opening_jsonb ->> 'height_ft')::DECIMAL,
+                    NULLIF(v_opening_jsonb ->> 'sill_height_ft', '')::DECIMAL,
+                    NULLIF(v_opening_jsonb ->> 'swing', '')::INTEGER
+                );
+                v_opening_count := v_opening_count + 1;
+            END LOOP;
+        END LOOP;
+        -- Pre-#2 call shape: pass (v_room_id, v_caller_company).
+        PERFORM _compute_wall_sf_for_room(v_room_id, v_caller_company);
+    END LOOP;
+    RETURN jsonb_build_object(
+        'restored', true,
+        'rooms', v_room_count, 'walls', v_wall_count, 'openings', v_opening_count,
+        'skipped_rooms', v_skipped_rooms
+    );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, public;
+
 -- Restore frozen trigger with old SQLSTATE 42501.
 CREATE OR REPLACE FUNCTION floor_plans_prevent_frozen_mutation()
 RETURNS TRIGGER AS $$
