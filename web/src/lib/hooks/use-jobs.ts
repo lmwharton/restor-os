@@ -6,6 +6,7 @@ import type {
   JobDetail, JobCreate, Job,
   Room, Photo, PhotoType, MoistureReading, Event,
   FloorPlan, PaginatedResponse, ReconPhase,
+  WallSegment, WallOpening,
 } from "../types";
 // Mock data fallback — remove when real backend is connected
 import { mockJobs, mockRooms, mockPhotos, mockEvents, mockReconPhases } from "../mock-data";
@@ -40,6 +41,13 @@ export function useJob(jobId: string) {
       return apiGet<JobDetail>(`/v1/jobs/${jobId}`);
     },
     enabled: !!jobId,
+    // The job's floor_plan_id changes when this job saves (forks or pins to
+    // a new version). Components that render floor-plan thumbnails or hydrate
+    // the canvas depend on this being fresh. Override the global 1-minute
+    // staleTime so navigating between job pages always re-reads the current
+    // pin instead of trusting a potentially-stale snapshot.
+    staleTime: 0,
+    refetchOnMount: "always",
   });
 }
 
@@ -391,7 +399,21 @@ export function useCreateFloorPlan(jobId: string) {
 export function useUpdateFloorPlan(jobId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; canvas_data?: Record<string, unknown>; floor_name?: string }) =>
+    // R15a (round 2): `canvas_data` was dropped from FloorPlanUpdate in round-1 C1
+    // — content writes go through POST /floor-plans/{id}/versions (useSaveCanvas)
+    // exclusively. If a caller passed canvas_data here, the backend silently
+    // dropped it; the old hook signature lied about accepted fields. Accept only
+    // metadata fields now (floor_name and thumbnail_url are the mutable ones).
+    //
+    // Round 3 (post-review, MEDIUM #2): the etag/If-Match wiring was
+    // deliberately REMOVED from this hook. The backend endpoint accepts
+    // If-Match and 412s on mismatch, but this hook has no consumers today
+    // (grep -rn useUpdateFloorPlan → only the definition) and no shared
+    // 412-banner flow exists here — wiring it without a caller + banner
+    // would have shipped half a contract (the lessons-doc "claim-vs-fix
+    // gap" pattern). When a rename UI lands, add `etag` back AND thread
+    // the 412 handler through the shared stale-conflict banner.
+    mutationFn: ({ floorPlanId, ...data }: { floorPlanId: string; floor_name?: string; thumbnail_url?: string }) =>
       apiPatch<FloorPlan>(`/v1/jobs/${jobId}/floor-plans/${floorPlanId}`, data),
     onSuccess: (updatedFloorPlan) => {
       // Optimistic cache update — use the PATCH response directly instead of re-fetching.
@@ -414,12 +436,142 @@ export function useDeleteFloorPlan(jobId: string) {
   });
 }
 
-export function useCleanupSketch(jobId: string, floorPlanId: string) {
+export function useCleanupSketch(floorPlanId: string) {
   return useMutation({
-    mutationFn: (canvasData: Record<string, unknown>) =>
+    // Round 3 (post-review, MEDIUM #2): the etag/If-Match wiring was
+    // deliberately REMOVED. No consumers exist yet (grep -rn
+    // useCleanupSketch → definition only) and the 412 VERSION_STALE
+    // banner flow is not shared from this hook. Wiring etag without
+    // threading the 412 handler would have shipped half a contract —
+    // future cleanup UI must add `etag` back AND route 412 through the
+    // shared handleStaleConflictIfPresent banner.
+    mutationFn: ({ jobId, canvasData }: { jobId: string; canvasData: Record<string, unknown> }) =>
       apiPost<{ canvas_data: Record<string, unknown> }>(
-        `/v1/jobs/${jobId}/floor-plans/${floorPlanId}/ai-cleanup`,
-        { canvas_data: canvasData }
+        `/v1/floor-plans/${floorPlanId}/cleanup`,
+        { job_id: jobId, canvas_data: canvasData }
       ),
+  });
+}
+
+// ─── Floor Plan History ────────────────────────────────
+// After the container/versions merge (migration e1a7c9b30201), each floor_plan
+// row IS a versioned snapshot. `useFloorPlanHistory` fetches the history
+// timeline for a given floor.
+//
+// Round 5 (Lakshman P2 #2): the former `useSaveCanvas` hook was deleted.
+// It had zero consumers (canvas saves go through the `saveCanvasVersion`
+// helper in floor-plan/page.tsx) AND was the surface that would bypass
+// the required-If-Match precondition if someone re-wired it naively. The
+// real save path lives in one place now; dead hooks that could re-
+// introduce no-etag mutations are a liability, not a convenience.
+
+export function useFloorPlanHistory(floorPlanId: string) {
+  return useQuery<FloorPlan[]>({
+    queryKey: ["floor-plan-history", floorPlanId],
+    queryFn: async () => {
+      const data = await apiGet<FloorPlan[] | PaginatedResponse<FloorPlan>>(
+        `/v1/floor-plans/${floorPlanId}/versions`
+      );
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!floorPlanId,
+  });
+}
+
+// ─── Wall Queries + Mutations ───────────────────────────────────────
+
+export function useWalls(roomId: string) {
+  return useQuery<WallSegment[]>({
+    queryKey: ["walls", roomId],
+    queryFn: async () => {
+      const data = await apiGet<WallSegment[] | PaginatedResponse<WallSegment>>(
+        `/v1/rooms/${roomId}/walls`
+      );
+      if (Array.isArray(data)) return data;
+      return data.items ?? [];
+    },
+    enabled: !!roomId,
+  });
+}
+
+// Wall/opening hooks take jobId so they can narrow rooms-query invalidation
+// to the current job instead of blasting the bare ["rooms"] key, which used
+// to refetch rooms across every job the user had loaded.
+export function useCreateWall(jobId: string, roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      x1: number; y1: number; x2: number; y2: number;
+      wall_type?: string; affected?: boolean; shared?: boolean;
+      shared_with_room_id?: string; sort_order?: number;
+    }) => apiPost<WallSegment>(`/v1/rooms/${roomId}/walls`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
+  });
+}
+
+export function useUpdateWall(jobId: string, roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ wallId, ...data }: { wallId: string } & Partial<WallSegment>) =>
+      apiPatch<WallSegment>(`/v1/rooms/${roomId}/walls/${wallId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
+  });
+}
+
+export function useDeleteWall(jobId: string, roomId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (wallId: string) =>
+      apiDelete(`/v1/rooms/${roomId}/walls/${wallId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
+  });
+}
+
+export function useCreateOpening(jobId: string, roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      opening_type: string; position: number;
+      width_ft: number; height_ft: number;
+      sill_height_ft?: number; swing?: number;
+    }) => apiPost<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
+  });
+}
+
+export function useUpdateOpening(jobId: string, roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ openingId, ...data }: { openingId: string } & Partial<WallOpening>) =>
+      apiPatch<WallOpening>(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
+  });
+}
+
+export function useDeleteOpening(jobId: string, roomId: string, wallId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (openingId: string) =>
+      apiDelete(`/v1/rooms/${roomId}/walls/${wallId}/openings/${openingId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["walls", roomId] });
+      qc.invalidateQueries({ queryKey: ["rooms", jobId] });
+    },
   });
 }

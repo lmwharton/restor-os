@@ -1,6 +1,30 @@
 // Floor plan tool definitions, types, and snap logic
 
-export type ToolType = "room" | "wall" | "door" | "window" | "select" | "delete";
+export type ToolType =
+  | "room"
+  | "wall"
+  | "door"
+  | "window"
+  | "opening"
+  | "cutout"
+  | "select"
+  | "delete"
+  | "trace";
+
+/** Floor opening (stairwell, HVAC shaft, elevator): a rectangular cutout
+ *  inside a room that subtracts from its floor SF. Lives on the parent
+ *  RoomData so SF math stays per-room. Persisted into
+ *  `job_rooms.floor_openings` JSONB on save. */
+export interface FloorOpeningData {
+  id: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  /** Optional label for clarity in reports / the properties panel
+   *  (e.g., "Stairwell", "HVAC Shaft", "Elevator"). */
+  name?: string;
+}
 
 export interface RoomData {
   id: string;
@@ -11,6 +35,14 @@ export interface RoomData {
   name: string;
   fill: string;
   propertyRoomId?: string; // links to property_rooms.id — avoids name-based matching
+  /** Polygon vertices in absolute canvas coordinates. When present, the room
+   *  is rendered as a closed polygon and x/y/width/height are treated as the
+   *  bounding box (derived). Rectangles may leave this undefined; the four
+   *  corners are implied from x/y/width/height. */
+  points?: Array<{ x: number; y: number }>;
+  /** Rectangular cutouts in the room floor (stairwells etc.). Rendered as
+   *  dashed white rectangles and subtracted from floor SF. Axis-aligned. */
+  floor_openings?: FloorOpeningData[];
 }
 
 export interface WallData {
@@ -21,6 +53,13 @@ export interface WallData {
   y2: number;
   thickness: number;
   roomId?: string;
+  wallType?: "interior" | "exterior";
+  affected?: boolean;
+  /** Auto-set when this wall is collinear and overlapping with a wall of
+   *  another room (E4 shared-wall detection). Shared walls are excluded from
+   *  perimeter LF calculations and rendered with lighter line weight. */
+  shared?: boolean;
+  sharedWithRoomId?: string;
 }
 
 export interface DoorData {
@@ -28,6 +67,7 @@ export interface DoorData {
   wallId: string;
   position: number; // 0-1 parametric
   width: number; // feet
+  height?: number; // feet (default 7)
   swing: 0 | 1 | 2 | 3; // 4 quadrants: 0=hinge-left-swing-up, 1=hinge-left-swing-down, 2=hinge-right-swing-down, 3=hinge-right-swing-up
 }
 
@@ -36,6 +76,7 @@ export interface WindowData {
   wallId: string;
   position: number;
   width: number;
+  height?: number; // feet (default 4 for windows, 8 for openings)
 }
 
 export interface FloorPlanData {
@@ -47,7 +88,7 @@ export interface FloorPlanData {
 }
 
 export function emptyFloorPlan(): FloorPlanData {
-  return { gridSize: 20, rooms: [], walls: [], doors: [], windows: [] };
+  return { gridSize: 10, rooms: [], walls: [], doors: [], windows: [] };
 }
 
 let _counter = 0;
@@ -111,16 +152,22 @@ export function snapEndpoint(
   return { x, y, snapped: false };
 }
 
-/** Create 4 walls for a room rectangle */
+/** Create walls enclosing a room. Works for both rectangles (4 walls) and
+ *  polygon rooms (N walls matching the N vertices — each edge of the polygon
+ *  becomes one wall segment). */
 export function wallsForRoom(room: RoomData): WallData[] {
-  const { x, y, width, height, id } = room;
+  const pts = getRoomPoints(room);
   const base = uid("wall");
-  return [
-    { id: `${base}_t`, x1: x, y1: y, x2: x + width, y2: y, thickness: 4, roomId: id },
-    { id: `${base}_r`, x1: x + width, y1: y, x2: x + width, y2: y + height, thickness: 4, roomId: id },
-    { id: `${base}_b`, x1: x + width, y1: y + height, x2: x, y2: y + height, thickness: 4, roomId: id },
-    { id: `${base}_l`, x1: x, y1: y + height, x2: x, y2: y, thickness: 4, roomId: id },
-  ];
+  return pts.map((p, i) => {
+    const next = pts[(i + 1) % pts.length];
+    return {
+      id: `${base}_${i}`,
+      x1: p.x, y1: p.y,
+      x2: next.x, y2: next.y,
+      thickness: 4,
+      roomId: room.id,
+    };
+  });
 }
 
 /** Get door position in canvas coordinates */
@@ -140,11 +187,319 @@ export function projectOntoWall(mx: number, my: number, wall: WallData, margin =
   return Math.max(margin, Math.min(1 - margin, t));
 }
 
+/* ------------------------------------------------------------------ */
+/*  E3: Magnetic room-to-room snap                                     */
+/* ------------------------------------------------------------------ */
+
+/** Threshold (px) for magnetic snap during room drag. */
+export const ROOM_SNAP_THRESHOLD_PX = 20;
+
+/**
+ * Compute the snapped (x, y) for a dragged room, aligning edges to nearby
+ * rooms within ROOM_SNAP_THRESHOLD_PX. Checks four cases per axis:
+ *   - dragged.left ↔ other.right (rooms touch side-by-side)
+ *   - dragged.right ↔ other.left
+ *   - dragged.left ↔ other.left (edges aligned, side-by-side)
+ *   - dragged.right ↔ other.right
+ * Equivalent rules for Y axis. Only runs when the other axis ranges overlap
+ * — snapping to a room you're nowhere near would feel weird.
+ */
+export function magneticRoomSnap(
+  draggedId: string,
+  proposedX: number,
+  proposedY: number,
+  width: number,
+  height: number,
+  rooms: RoomData[],
+): { x: number; y: number; snappedX: boolean; snappedY: boolean } {
+  const T = ROOM_SNAP_THRESHOLD_PX;
+  const others = rooms.filter((r) => r.id !== draggedId);
+  let snapX = proposedX;
+  let snapY = proposedY;
+  let snappedX = false;
+  let snappedY = false;
+
+  const draggedLeft = proposedX;
+  const draggedRight = proposedX + width;
+  const draggedTop = proposedY;
+  const draggedBottom = proposedY + height;
+
+  for (const other of others) {
+    const otherLeft = other.x;
+    const otherRight = other.x + other.width;
+    const otherTop = other.y;
+    const otherBottom = other.y + other.height;
+
+    // X-axis snap only when Y ranges overlap (rooms are vertically beside each other).
+    // Only edge-to-edge candidates (left-to-right, right-to-left) — the
+    // align-edges candidates would stick rooms sharing an X coordinate on
+    // top of each other, guaranteeing overlap when yOverlap is true.
+    const yOverlap = draggedBottom > otherTop && draggedTop < otherBottom;
+    if (yOverlap && !snappedX) {
+      const candidates: Array<[number, number]> = [
+        [Math.abs(draggedLeft - otherRight), otherRight],
+        [Math.abs(draggedRight - otherLeft), otherLeft - width],
+      ];
+      const best = candidates.reduce((min, c) => (c[0] < min[0] ? c : min));
+      if (best[0] < T) {
+        snapX = best[1];
+        snappedX = true;
+      }
+    }
+
+    // Y-axis snap only when X ranges overlap. Same edge-to-edge-only rule.
+    const xOverlap = draggedRight > otherLeft && draggedLeft < otherRight;
+    if (xOverlap && !snappedY) {
+      const candidates: Array<[number, number]> = [
+        [Math.abs(draggedTop - otherBottom), otherBottom],
+        [Math.abs(draggedBottom - otherTop), otherTop - height],
+      ];
+      const best = candidates.reduce((min, c) => (c[0] < min[0] ? c : min));
+      if (best[0] < T) {
+        snapY = best[1];
+        snappedY = true;
+      }
+    }
+  }
+
+  // Safety net: if the computed snap still overlaps any other room (e.g.
+  // the dragged room is near a corner where two neighbors share edges),
+  // drop the magnetic adjustment and return the un-snapped position so
+  // the user's drag isn't forcibly pushed into an overlap.
+  const finalLeft = snapX;
+  const finalRight = snapX + width;
+  const finalTop = snapY;
+  const finalBottom = snapY + height;
+  for (const other of others) {
+    const otherLeft = other.x;
+    const otherRight = other.x + other.width;
+    const otherTop = other.y;
+    const otherBottom = other.y + other.height;
+    const overlapX = finalRight > otherLeft && finalLeft < otherRight;
+    const overlapY = finalBottom > otherTop && finalTop < otherBottom;
+    // Strictly overlapping area (not just touching): require positive overlap
+    // in BOTH axes. Edge-to-edge contact has overlap=0 on one axis and is OK.
+    const areaOverlap = (
+      Math.min(finalRight, otherRight) - Math.max(finalLeft, otherLeft) > 0 &&
+      Math.min(finalBottom, otherBottom) - Math.max(finalTop, otherTop) > 0
+    );
+    if (overlapX && overlapY && areaOverlap) {
+      return { x: proposedX, y: proposedY, snappedX: false, snappedY: false };
+    }
+  }
+
+  return { x: snapX, y: snapY, snappedX, snappedY };
+}
+
+/* ------------------------------------------------------------------ */
+/*  E4: Shared wall auto-detection                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * For each wall attached to a room, detect if another room has a collinear,
+ * overlapping wall. If yes, both walls are marked `shared=true` with a mutual
+ * `sharedWithRoomId` pointer. Shared walls are counted only once in perimeter
+ * LF calculations (one side bills; the other's LF is excluded).
+ *
+ * Returns a new walls array — call after any drag/resize that might change
+ * adjacency. O(n²) over walls; fine for typical 30-50-wall floors.
+ */
+export function detectSharedWalls(walls: WallData[]): WallData[] {
+  const EPS = 1; // coord tolerance — post-snap, walls should be pixel-exact
+
+  return walls.map((wall) => {
+    if (!wall.roomId) {
+      // Standalone walls can't be shared with a room
+      if (wall.shared || wall.sharedWithRoomId) {
+        return { ...wall, shared: false, sharedWithRoomId: undefined };
+      }
+      return wall;
+    }
+
+    const isHorizontal = Math.abs(wall.y1 - wall.y2) < EPS;
+    const isVertical = Math.abs(wall.x1 - wall.x2) < EPS;
+    if (!isHorizontal && !isVertical) {
+      // Only axis-aligned walls participate in shared detection for now
+      if (wall.shared || wall.sharedWithRoomId) {
+        return { ...wall, shared: false, sharedWithRoomId: undefined };
+      }
+      return wall;
+    }
+
+    const match = walls.find((other) => {
+      if (other.id === wall.id) return false;
+      if (!other.roomId) return false;
+      if (other.roomId === wall.roomId) return false;
+
+      if (isHorizontal) {
+        // Must also be horizontal at same Y, with X-range overlap
+        if (Math.abs(other.y1 - other.y2) >= EPS) return false;
+        if (Math.abs(wall.y1 - other.y1) >= EPS) return false;
+        const wMin = Math.min(wall.x1, wall.x2);
+        const wMax = Math.max(wall.x1, wall.x2);
+        const oMin = Math.min(other.x1, other.x2);
+        const oMax = Math.max(other.x1, other.x2);
+        return Math.min(wMax, oMax) - Math.max(wMin, oMin) > EPS;
+      }
+
+      // Vertical
+      if (Math.abs(other.x1 - other.x2) >= EPS) return false;
+      if (Math.abs(wall.x1 - other.x1) >= EPS) return false;
+      const wMin = Math.min(wall.y1, wall.y2);
+      const wMax = Math.max(wall.y1, wall.y2);
+      const oMin = Math.min(other.y1, other.y2);
+      const oMax = Math.max(other.y1, other.y2);
+      return Math.min(wMax, oMax) - Math.max(wMin, oMin) > EPS;
+    });
+
+    if (match) {
+      return { ...wall, shared: true, sharedWithRoomId: match.roomId };
+    }
+    // Clear if no longer shared (rooms moved apart)
+    if (wall.shared || wall.sharedWithRoomId) {
+      return { ...wall, shared: false, sharedWithRoomId: undefined };
+    }
+    return wall;
+  });
+}
+
 export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "draw" | "place" | "edit" }> = [
   { id: "room", label: "Room", icon: "rect", group: "draw" },
+  { id: "trace", label: "Trace", icon: "trace", group: "draw" },
   { id: "wall", label: "Wall", icon: "line", group: "draw" },
   { id: "door", label: "Door", icon: "door", group: "place" },
   { id: "window", label: "Window", icon: "window", group: "place" },
+  { id: "opening", label: "Opening", icon: "opening", group: "place" },
+  { id: "cutout", label: "Cutout", icon: "cutout", group: "place" },
   { id: "select", label: "Select", icon: "pointer", group: "edit" },
   { id: "delete", label: "Delete", icon: "trash", group: "edit" },
 ];
+
+/* ------------------------------------------------------------------ */
+/*  Polygon helpers (E1 — unified rect + polygon room model)           */
+/* ------------------------------------------------------------------ */
+
+/** True when a room has `points` but those 4 vertices are still at the
+ *  bbox corners — i.e. it's been converted to a polygon (so vertex-drag
+ *  works) but the user hasn't actually deformed it into an L/T/U yet.
+ *  These rooms should behave like rectangles for direct W × H editing. */
+export function isRectangularPolygon(room: RoomData): boolean {
+  if (!room.points || room.points.length !== 4) return false;
+  const cornerKeys = new Set([
+    `${room.x},${room.y}`,
+    `${room.x + room.width},${room.y}`,
+    `${room.x + room.width},${room.y + room.height}`,
+    `${room.x},${room.y + room.height}`,
+  ]);
+  // Match by set (any permutation) — convertRoomToPolygon writes them in
+  // a specific order but future flows shouldn't have to care about order.
+  const pointKeys = new Set(room.points.map((p) => `${p.x},${p.y}`));
+  if (pointKeys.size !== 4) return false;
+  for (const key of cornerKeys) {
+    if (!pointKeys.has(key)) return false;
+  }
+  return true;
+}
+
+/** Returns the room's vertices. For polygon rooms this is the stored points
+ *  array; for rectangle rooms (no `points` set), derives the four corners. */
+export function getRoomPoints(room: RoomData): Array<{ x: number; y: number }> {
+  if (room.points && room.points.length >= 3) return room.points;
+  return [
+    { x: room.x, y: room.y },
+    { x: room.x + room.width, y: room.y },
+    { x: room.x + room.width, y: room.y + room.height },
+    { x: room.x, y: room.y + room.height },
+  ];
+}
+
+/** Shoelace formula — signed area in px². Positive if points are CCW,
+ *  negative if CW. We take absolute value for SF calc. */
+export function polygonArea(points: Array<{ x: number; y: number }>): number {
+  if (points.length < 3) return 0;
+  let sum = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(sum) / 2;
+}
+
+/** Area-weighted centroid for correct label placement (especially on L-shapes
+ *  where rectangular center would fall inside the notch). */
+export function polygonCentroid(points: Array<{ x: number; y: number }>): { x: number; y: number } {
+  if (points.length < 3) return { x: 0, y: 0 };
+  let cx = 0, cy = 0, a = 0;
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    const q = points[(i + 1) % points.length];
+    const cross = p.x * q.y - q.x * p.y;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+    a += cross;
+  }
+  a /= 2;
+  if (Math.abs(a) < 1e-6) {
+    // Degenerate polygon — fallback to average
+    const avgX = points.reduce((s, p) => s + p.x, 0) / points.length;
+    const avgY = points.reduce((s, p) => s + p.y, 0) / points.length;
+    return { x: avgX, y: avgY };
+  }
+  return { x: cx / (6 * a), y: cy / (6 * a) };
+}
+
+/** Axis-aligned bounding box of a polygon. Used to keep RoomData's x/y/width/
+ *  height fields in sync so existing rect-based code (thumbnails, hit testing,
+ *  label sizing) keeps working even when a polygon is added. */
+export function polygonBoundingBox(points: Array<{ x: number; y: number }>): {
+  x: number; y: number; width: number; height: number;
+} {
+  if (points.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+  let minX = points[0].x, maxX = points[0].x;
+  let minY = points[0].y, maxY = points[0].y;
+  for (const p of points) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+}
+
+/** Returns flat [x1,y1,x2,y2,...] for Konva's Line component. */
+export function polygonToKonvaPoints(points: Array<{ x: number; y: number }>): number[] {
+  return points.flatMap((p) => [p.x, p.y]);
+}
+
+/** Ray-casting point-in-polygon test. Used to determine which room (if any)
+ *  a cutout placement falls inside. */
+export function pointInPolygon(
+  pt: { x: number; y: number },
+  polygon: Array<{ x: number; y: number }>,
+): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x, yi = polygon[i].y;
+    const xj = polygon[j].x, yj = polygon[j].y;
+    const intersect =
+      yi > pt.y !== yj > pt.y &&
+      pt.x < ((xj - xi) * (pt.y - yi)) / (yj - yi + 1e-12) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}
+
+/** Floor area (SF) with cutouts subtracted. `gridSize` = pixels per foot.
+ *  Used for Xactimate quantity accuracy — stairwells and HVAC shafts reduce
+ *  the billable floor square footage. */
+export function roomFloorArea(room: RoomData, gridSize: number): number {
+  const pts = getRoomPoints(room);
+  const areaPx = polygonArea(pts);
+  const cutoutsPx = (room.floor_openings ?? []).reduce(
+    (sum, o) => sum + Math.abs(o.width * o.height),
+    0,
+  );
+  const net = Math.max(0, areaPx - cutoutsPx);
+  return net / (gridSize * gridSize);
+}

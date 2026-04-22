@@ -7,6 +7,8 @@ import time
 from datetime import UTC, date, datetime
 from uuid import UUID
 
+from postgrest.exceptions import APIError
+
 from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate, LinkedJobSummary
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
@@ -154,7 +156,7 @@ def _parse_job_detail_from_embedded(data: dict) -> JobDetailResponse:
     counts = {
         "room_count": _extract_embedded_count(data, "job_rooms"),
         "photo_count": _extract_embedded_count(data, "photos"),
-        "floor_plan_count": _extract_embedded_count(data, "floor_plans"),
+        "floor_plan_count": 0,  # reparented to property_id (Spec 01H)
         "line_item_count": 0,  # line_items table not created yet (Spec 02)
     }
     return _parse_job_detail(data, counts)
@@ -191,6 +193,7 @@ def _parse_job_detail(
         loss_date=data.get("loss_date"),
         home_year_built=data.get("home_year_built"),
         status=data["status"],
+        floor_plan_id=data.get("floor_plan_id"),
         assigned_to=data.get("assigned_to"),
         notes=data.get("notes"),
         tech_notes=data.get("tech_notes"),
@@ -229,13 +232,11 @@ async def _get_linked_job_summary(client, linked_job_id: str | None) -> LinkedJo
 
 async def _get_job_counts(client, job_id: str) -> dict:
     """Query counts of related entities for a job."""
-    counts: dict[str, int] = {}
+    counts: dict[str, int] = {"floor_plan_count": 0, "line_item_count": 0}
 
     for table, key in [
         ("job_rooms", "room_count"),
         ("photos", "photo_count"),
-        ("floor_plans", "floor_plan_count"),
-        # ("line_items", "line_item_count"),  # Not created yet (Spec 02)
     ]:
         try:
             result = await (
@@ -464,9 +465,142 @@ async def create_job(
         except Exception as e:
             logger.error("Failed to insert default phases for job %s: %s", new_job_id, e)
 
-    # New job has zero counts
-    counts = {"room_count": 0, "photo_count": 0, "floor_plan_count": 0, "line_item_count": 0}
+    # Copy rooms from the linked job so the new job inherits its room list (and
+    # matching floor-plan geometry via the property's current floor plan version).
+    # Moisture readings, photos, equipment logs stay with the original job — only
+    # the room definitions are cloned.
+    room_count = 0
+    if body.linked_job_id and new_job_id:
+        copied = await _copy_rooms_from_linked_job(
+            client=client,
+            source_job_id=body.linked_job_id,
+            new_job_id=UUID(str(new_job_id)),
+            company_id=company_id,
+        )
+        room_count = copied
+
+        # Inherit the parent's floor plan pin so the new recon job opens straight
+        # to mitigation's current floor (no null floor_plan_id state, no UI
+        # fallback). Recon's first canvas save will hit save_canvas Case 3
+        # (pinned version is owned by mitigation, not recon) and correctly fork
+        # a new version — the pre-pin doesn't change versioning, only the
+        # initial UX so the floor selector shows mitigation's v1 immediately.
+        parent_pin = linked_job_data.get("floor_plan_id") if linked_job_data else None
+        if parent_pin:
+            try:
+                await (
+                    client.table("jobs")
+                    .update({"floor_plan_id": parent_pin})
+                    .eq("id", str(new_job_id))
+                    .execute()
+                )
+                # Reflect the pin in job_data so the response payload isn't null.
+                job_data["floor_plan_id"] = parent_pin
+            except APIError as e:
+                # Non-fatal: the recon job is created and rooms are copied. Worst
+                # case the user opens the floor plan with floor_plan_id=NULL and
+                # their first save hits Case 1 (no pin) → forks v2 against
+                # mitigation's existing v1 — same end state, just one extra step.
+                logger.warning(
+                    "Failed to inherit floor_plan_id from linked job %s to new job %s: %s",
+                    body.linked_job_id,
+                    new_job_id,
+                    e.message,
+                )
+
+    counts = {
+        "room_count": room_count,
+        "photo_count": 0,
+        "floor_plan_count": 0,
+        "line_item_count": 0,
+    }
     return _parse_job_detail(job_data, counts)
+
+
+async def _copy_rooms_from_linked_job(
+    client,
+    source_job_id: UUID,
+    new_job_id: UUID,
+    company_id: UUID,
+) -> int:
+    """Copy each job_rooms row from source_job to new_job. Returns count copied.
+
+    This is a workaround for the fact that the current schema crams two concerns
+    into one table: the building's physical rooms (property-level reality) and
+    each job's scope on those rooms (per-job state). A future refactor should
+    split these into `property_rooms` (name, geometry, room_type, ceiling,
+    floor_level, polygon) and `job_rooms` (water_category, equipment counts,
+    affected, material_flags, notes, moisture_readings link).
+
+    Until that split lands, we clone only the STRUCTURAL fields from the linked
+    job. Per-job scope fields (water category, equipment, damage notes) must
+    NOT carry over — the new job starts fresh on its own scope decisions.
+    Moisture readings, equipment logs, and photos are per-job entities anyway
+    (separate tables with job_id FK) and stay with the original job.
+    """
+    # Property-level fields only — the building's physical reality, safe to copy.
+    # Intentionally excludes: water_category, water_class, dry_standard,
+    # equipment_air_movers, equipment_dehus, affected, material_flags, notes,
+    # room_sketch_data — those are mitigation's scope, not reconstruction's.
+    #
+    # C6 fix: `floor_plan_id` is also excluded. Post-container/versions merge,
+    # that id points at a specific version row. If we copied it here, recon's
+    # rooms would start life pinned to mitigation's frozen v1 — then recon's
+    # first save_canvas would fork v2 and move the JOB's pin to v2, while the
+    # rooms keep pointing at v1. The ROOM↔FLOOR-PLAN linkage would be desynced
+    # from the JOB↔FLOOR-PLAN pin forever. Leaving it NULL lets recon's first
+    # save use the normal versioning flow to link its rooms to the right row.
+    COPY_FIELDS = [
+        "room_name",
+        "length_ft", "width_ft", "height_ft", "square_footage",
+        "room_type", "ceiling_type", "floor_level",
+        "room_polygon", "floor_openings", "custom_wall_sf",
+        "sort_order",
+    ]
+
+    # W7: only return 0 for "source has no rooms" (legitimate). Fetch or
+    # copy failures re-raise as AppException so the caller can distinguish
+    # "nothing to copy" from "copy crashed." Previously both paths returned
+    # 0 and the caller treated a broken recon-link as a silent no-op.
+    try:
+        source_rooms = await (
+            client.table("job_rooms")
+            .select(",".join(COPY_FIELDS))
+            .eq("job_id", str(source_job_id))
+            .eq("company_id", str(company_id))
+            .execute()
+        )
+    except APIError as e:
+        logger.error(
+            "Failed to fetch rooms from linked job %s: %s", source_job_id, e
+        )
+        raise AppException(
+            status_code=500,
+            detail=f"Failed to fetch source rooms: {e.message}",
+            error_code="LINKED_ROOMS_FETCH_FAILED",
+        )
+
+    if not source_rooms.data:
+        return 0
+
+    new_rows = [
+        {**row, "job_id": str(new_job_id), "company_id": str(company_id)}
+        for row in source_rooms.data
+    ]
+
+    try:
+        await client.table("job_rooms").insert(new_rows).execute()
+        return len(new_rows)
+    except APIError as e:
+        logger.error(
+            "Failed to copy %d rooms from %s to %s: %s",
+            len(new_rows), source_job_id, new_job_id, e,
+        )
+        raise AppException(
+            status_code=500,
+            detail=f"Failed to copy rooms from linked job: {e.message}",
+            error_code="LINKED_ROOMS_COPY_FAILED",
+        )
 
 
 async def create_linked_recon(
@@ -585,7 +719,9 @@ async def list_jobs(
 
     # Use PostgREST embedded counts to get photo/room/floor_plan/line_item
     # counts in a single query (no N+1).
-    select_str = "*, job_rooms(count), photos(count), floor_plans(count)"
+    # floor_plans no longer has job_id FK (reparented to property_id in Spec 01H)
+    # Count floor plans via property_id join instead
+    select_str = "*, job_rooms(count), photos(count)"
 
     query = (
         client.table("jobs")

@@ -125,6 +125,7 @@ class JobResponse(BaseModel):
     loss_date: date | None = None
     home_year_built: int | None = Field(None, ge=1600, le=2100)
     status: str
+    floor_plan_id: UUID | None = None
     assigned_to: UUID | None = None
     notes: str | None = None
     tech_notes: str | None = None

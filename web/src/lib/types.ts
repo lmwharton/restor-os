@@ -96,6 +96,7 @@ export interface Job {
   loss_date: string | null;
   home_year_built: number | null;
   status: JobStatus;
+  floor_plan_id: string | null;
   assigned_to: string | null;
   notes: string | null;
   tech_notes: string | null;
@@ -142,20 +143,98 @@ export interface JobCreate {
   tech_notes?: string;
 }
 
-// ─── Floor Plans ──────────────────────────────────────────────────────
+// ─── Floor Plans (property-scoped, unified table, Spec 01H) ──────────
+// Post-merge: one table. Each row IS a versioned snapshot of a floor at a
+// property. No separate container + versions — they're the same thing now.
 export interface FloorPlan {
   id: string;
-  job_id: string;
+  property_id: string;
   company_id: string;
   floor_number: number;
   floor_name: string;
+  version_number: number;
   canvas_data: Record<string, unknown> | null;
+  is_current: boolean;
+  created_by_job_id: string | null;
+  created_by_user_id: string | null;
+  change_summary: string | null;
   thumbnail_url: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * Opaque version tag for optimistic-concurrency writes (Round 3).
+   * Derived from `updated_at` on the server. When the client saves
+   * (POST /v1/floor-plans/{id}/versions), it echoes this string back
+   * as `If-Match`. Server rejects with 412 VERSION_STALE if the row
+   * has been written by another editor since the client read it.
+   *
+   * Round 5 (Lakshman P3 #6): type narrowed from `string | null | undefined`
+   * to `string | undefined`. Tri-state at a contract boundary was a
+   * smell — consumers reaching for `?? undefined` or `!etag` could
+   * silently drop to no-etag, which under round-5's "If-Match required"
+   * rule would previously have silently skipped the precondition. The
+   * wire JSON may still produce `null` for the rare no-updated_at case,
+   * but all current consumers narrow via `hasEtag()` (below) or the
+   * `opts.etag && opts.etag.length > 0` truthy check in
+   * `saveCanvasVersion` — both handle runtime null correctly even with
+   * the stricter TS type, and the type now forbids silent-drop consumers.
+   */
+  etag?: string;
 }
 
-// ─── Rooms ────────────────────────────────────────────────────────────
+/**
+ * Type guard for {@link FloorPlan.etag}. Returns `true` when the floor
+ * plan row has a concrete etag string we can send as `If-Match`; `false`
+ * otherwise (undefined, or runtime null). Use this when you need to
+ * branch on "do I have an etag to assert?" — the `fp is FloorPlan &
+ * { etag: string }` narrowing makes the positive branch type-safe.
+ *
+ * ```ts
+ * if (hasEtag(fp)) {
+ *   // fp.etag is string here, not string | undefined.
+ *   sendIfMatch(fp.etag);
+ * } else {
+ *   // no etag available — use wildcard opt-out.
+ *   sendIfMatch("*");
+ * }
+ * ```
+ */
+export function hasEtag(fp: FloorPlan): fp is FloorPlan & { etag: string } {
+  return typeof fp.etag === "string" && fp.etag.length > 0;
+}
+
+
+// ─── Rooms (extended, Spec 01H) ──────────────────────────────────────
+export type RoomType =
+  | "living_room" | "kitchen" | "bathroom" | "bedroom" | "basement"
+  | "hallway" | "laundry_room" | "garage" | "dining_room" | "office"
+  | "closet" | "utility_room" | "other";
+export type CeilingType = "flat" | "vaulted" | "cathedral" | "sloped";
+export type FloorLevel = "basement" | "main" | "upper" | "attic";
+
+// Mapping between the semantic FloorLevel enum (UI) and the integer
+// floor_number stored on floor_plans (DB). Kept alongside the type so
+// imports are single-source. Mirrors FLOOR_PRESETS in floor-selector.tsx.
+export const FLOOR_LEVEL_TO_NUMBER: Record<FloorLevel, number> = {
+  basement: 0,
+  main: 1,
+  upper: 2,
+  attic: 3,
+};
+export const FLOOR_LEVEL_LABEL: Record<FloorLevel, string> = {
+  basement: "Basement",
+  main: "Main Floor",
+  upper: "Upper Floor",
+  attic: "Attic",
+};
+export function floorNumberToLevel(n: number | null | undefined): FloorLevel | null {
+  if (n === 0) return "basement";
+  if (n === 1) return "main";
+  if (n === 2) return "upper";
+  if (n === 3) return "attic";
+  return null;
+}
+
 export interface Room {
   id: string;
   job_id: string;
@@ -166,6 +245,17 @@ export interface Room {
   width_ft: number | null;
   height_ft: number | null;
   square_footage: number | null;
+  // V2 fields (Spec 01H) — optional with defaults for backward compat with mock data
+  room_type?: RoomType | null;
+  ceiling_type?: CeilingType;
+  floor_level?: FloorLevel | null;
+  affected?: boolean;
+  material_flags?: string[] | null;
+  wall_square_footage?: number | null;
+  custom_wall_sf?: number | null;
+  room_polygon?: Array<{ x: number; y: number }> | null;
+  floor_openings?: Array<{ x: number; y: number; width: number; height: number }> | null;
+  // Existing fields
   water_category: WaterCategory | null;
   water_class: WaterClass | null;
   dry_standard: number | null;
@@ -176,6 +266,43 @@ export interface Room {
   sort_order: number;
   reading_count: number;
   latest_reading_date: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+// ─── Walls (new, Spec 01H) ──────────────────────────────────────────
+export type WallType = "exterior" | "interior";
+export type OpeningType = "door" | "window" | "missing_wall";
+
+export interface WallSegment {
+  id: string;
+  room_id: string;
+  company_id: string;
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  wall_type: WallType;
+  wall_height_ft: number | null;
+  affected: boolean;
+  shared: boolean;
+  shared_with_room_id: string | null;
+  sort_order: number;
+  openings: WallOpening[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface WallOpening {
+  id: string;
+  wall_id: string;
+  company_id: string;
+  opening_type: OpeningType;
+  position: number;
+  width_ft: number;
+  height_ft: number;
+  sill_height_ft: number | null;
+  swing: number | null;
   created_at: string;
   updated_at: string;
 }

@@ -1550,3 +1550,102 @@ class TestServiceHelpers:
         from api.rooms.service import _serialize_decimals
 
         assert _serialize_decimals({}) == {}
+
+
+# ---------------------------------------------------------------------------
+# R11 (round 2): JSONB + notes size caps on RoomCreate / RoomUpdate.
+# W6 only capped canvas_data on floor_plans; the reviewer found four
+# unbounded fields on rooms (room_polygon, floor_openings, material_flags,
+# notes). Add a per-field cap so every JSON surface has one rule.
+# ---------------------------------------------------------------------------
+
+
+class TestRoomSchemaSizeCaps:
+    """Pydantic-level rejection for oversized values on RoomCreate and
+    RoomUpdate. These run at the API boundary, before any service code —
+    so a malicious or buggy client can't push 10 MB of polygon data into
+    the DB.
+    """
+
+    def test_room_polygon_rejected_over_10kb_on_create(self):
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomCreate
+
+        # 10001 entries each a few bytes → blows past 10 KB JSON.
+        huge = [{"x": i, "y": i} for i in range(1500)]
+        with pytest.raises(ValidationError) as exc_info:
+            RoomCreate(room_name="K", room_polygon=huge)
+        assert "room_polygon" in str(exc_info.value).lower()
+
+    def test_room_polygon_accepted_at_realistic_size(self):
+        from api.rooms.schemas import RoomCreate
+
+        # 16-vertex L-shape is at the pathological upper end for real rooms.
+        realistic = [{"x": i, "y": i} for i in range(16)]
+        model = RoomCreate(room_name="K", room_polygon=realistic)
+        assert model.room_polygon == realistic
+
+    def test_floor_openings_rejected_over_50kb_on_update(self):
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomUpdate
+
+        huge = [{"x": i, "y": i, "w": 10, "h": 20, "label": "stair"} for i in range(3000)]
+        with pytest.raises(ValidationError) as exc_info:
+            RoomUpdate(floor_openings=huge)
+        assert "floor_openings" in str(exc_info.value).lower()
+
+    def test_material_flags_rejected_over_20_items(self):
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomCreate
+
+        flags = [f"flag_{i}" for i in range(21)]
+        with pytest.raises(ValidationError) as exc_info:
+            RoomCreate(room_name="K", material_flags=flags)
+        assert "material_flags" in str(exc_info.value).lower()
+
+    def test_material_flags_rejected_per_item_too_long(self):
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomCreate
+
+        flags = ["x" * 200]
+        with pytest.raises(ValidationError) as exc_info:
+            RoomCreate(room_name="K", material_flags=flags)
+        assert "material_flags" in str(exc_info.value).lower()
+
+    def test_material_flags_accepted_at_realistic_values(self):
+        from api.rooms.schemas import RoomCreate
+
+        flags = ["drywall", "insulation", "hardwood"]
+        model = RoomCreate(room_name="K", material_flags=flags)
+        assert model.material_flags == flags
+
+    def test_notes_rejected_over_5000_chars(self):
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomCreate
+
+        with pytest.raises(ValidationError) as exc_info:
+            RoomCreate(room_name="K", notes="x" * 5001)
+        assert "notes" in str(exc_info.value).lower()
+
+    def test_notes_accepted_at_reasonable_length(self):
+        from api.rooms.schemas import RoomCreate
+
+        model = RoomCreate(room_name="K", notes="Soaked carpet in NE corner; pad removed.")
+        assert model.notes is not None
+
+    def test_room_sketch_data_rejected_over_50kb(self):
+        """room_sketch_data is a legacy per-room dict that was previously
+        unbounded. R11 includes it in the cap set."""
+        from pydantic import ValidationError
+
+        from api.rooms.schemas import RoomUpdate
+
+        bloat = {"walls": [{"x": i} for i in range(6000)]}
+        with pytest.raises(ValidationError) as exc_info:
+            RoomUpdate(room_sketch_data=bloat)
+        assert "room_sketch_data" in str(exc_info.value).lower()
