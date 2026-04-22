@@ -3723,7 +3723,14 @@ class TestSaveCanvasEtagIfMatchCheck:
 
     def test_router_reads_if_match_header(self):
         """The POST /floor-plans/{id}/versions endpoint must extract
-        If-Match from request headers and forward to the service."""
+        If-Match and forward to the service.
+
+        Round 5 update: ``request.headers.get("If-Match")`` was the
+        silent-skip default-allow pattern (Lakshman P2 #2). Replaced
+        with ``require_if_match(request)`` which returns 428
+        ETAG_REQUIRED on missing header. The TestRound5EtagContractInvariants
+        class has the dedicated regression pin; this test just asserts
+        the save_canvas endpoint is still wired to forward the value."""
         import re
         from pathlib import Path
 
@@ -3737,7 +3744,7 @@ class TestSaveCanvasEtagIfMatchCheck:
         )
         assert m
         body = m.group(0)
-        assert 'request.headers.get("If-Match")' in body
+        assert "require_if_match(request)" in body
         assert "if_match=if_match" in body
 
 
@@ -4007,9 +4014,17 @@ class TestEtagExtendedToAllMutationEndpoints:
         assert sig.parameters["if_match"].default is None
 
     def test_all_mutation_endpoints_forward_if_match_header(self):
-        """Every POST/PATCH route that writes to floor_plans must read
-        the header and pass it to the service. Regression guard for the
-        sibling-miss pattern (forgetting one endpoint)."""
+        """Every POST/PATCH route that writes to floor_plans must use
+        the ``require_if_match`` helper. Regression guard for the
+        sibling-miss pattern (forgetting one endpoint).
+
+        Round 5 update (Lakshman P2 #2): the original round-3 test
+        asserted the ``request.headers.get("If-Match")`` default-allow
+        shape. That pattern is now forbidden — it skipped the guard
+        whenever the header was missing. Replaced with
+        ``require_if_match(request)`` which returns 428 ETAG_REQUIRED.
+        The stricter pin lives in TestRound5EtagContractInvariants;
+        this test just confirms the call site is still present."""
         import re
 
         text = self._read_router()
@@ -4027,8 +4042,20 @@ class TestEtagExtendedToAllMutationEndpoints:
             )
             assert m, f"route {route_name} not found"
             body = m.group(0)
-            assert 'request.headers.get("If-Match")' in body, (
-                f"{route_name} must extract If-Match from request headers"
+            # Round-5 follow-up (Lakshman M1): either permissive
+            # require_if_match (save_canvas only) or strict
+            # require_if_match_strict (every other route). Both forms
+            # reject missing header; strict also rejects `*`. The
+            # per-route pin of which variant lives in
+            # TestRound5EtagContractInvariants::test_strict_helper_used_on_non_creation_routes.
+            uses_helper = (
+                "require_if_match(request)" in body
+                or "require_if_match_strict(request)" in body
+            )
+            assert uses_helper, (
+                f"{route_name} must use require_if_match(request) / "
+                f"require_if_match_strict(request) — the default-allow "
+                f"shape was replaced in round 5"
             )
 
     def test_service_uses_shared_etags_match_not_raw_equality(self):
@@ -4165,6 +4192,499 @@ class TestRound4FixContractPins:
                 f"zero-row match so callers see the right VERSION_STALE vs "
                 f"VERSION_FROZEN error code."
             )
+
+
+class TestRound5EtagContractInvariants:
+    """Round 5 (Lakshman P1/P2/P3 closure): the etag system is now
+    end-to-end. Every finding Lakshman raised maps to one of four
+    invariants; these tests pin each invariant so a future refactor
+    can't silently regress one.
+
+    INV-1: Every mutating request carries an etag or explicit no-etag
+           marker. Missing ``If-Match`` → 428, never silent-skip.
+    INV-2: Every write path enforces the etag atomically at the SQL
+           layer (``.eq("updated_at", …)`` on direct UPDATEs;
+           ``p_expected_updated_at`` threaded into RPCs).
+    INV-3: Every 412-triggered reload persists the rejected canvas to
+           localStorage so the user can restore their work on next load.
+    INV-4: At most one in-flight canvas save per target at a time
+           (overlap guard + deferred replay).
+    """
+
+    # ------------------------------------------------------------------
+    # INV-2: RPCs carry p_expected_updated_at and enforce it on the flip
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_round5_migration() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1]
+            / "alembic" / "versions"
+            / "c9d0e1f2a3b4_spec01h_etag_into_save_and_rollback_rpc.py"
+        ).read_text(encoding="utf-8")
+
+    def test_save_rpc_takes_p_expected_updated_at(self):
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # Signature must include the new optional TIMESTAMPTZ param.
+        assert "p_expected_updated_at TIMESTAMPTZ DEFAULT NULL" in upgrade, (
+            "save_floor_plan_version must accept p_expected_updated_at "
+            "with DEFAULT NULL for backward compat on existing callers"
+        )
+
+    def test_rollback_rpc_takes_p_expected_updated_at(self):
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # Same param on the atomic rollback wrapper — threaded through
+        # to save_floor_plan_version internally.
+        assert "rollback_floor_plan_version_atomic" in upgrade
+        # A second occurrence of the param inside the rollback body
+        # confirms it's threaded (not just accepted and dropped).
+        assert upgrade.count("p_expected_updated_at") >= 3, (
+            "p_expected_updated_at must be: (1) in save signature, "
+            "(2) in rollback signature, (3) forwarded from rollback to save"
+        )
+
+    def test_save_rpc_enforces_etag_atomically_on_flip(self):
+        """The core INV-2 claim: the flip UPDATE carries the etag as an
+        atomic AND filter, not a separate check-then-write."""
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "AND updated_at   = p_expected_updated_at" in upgrade, (
+            "The flip UPDATE must carry `AND updated_at = p_expected_updated_at` "
+            "so a concurrent writer committing between the Python etag check "
+            "and this RPC call leaves zero rows to flip — the RPC then raises "
+            "55006 and the caller maps to 412 VERSION_STALE."
+        )
+
+    def test_save_rpc_raises_55006_on_etag_mismatch(self):
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        assert "ERRCODE = '55006'" in upgrade, (
+            "Stale-etag rejection must raise SQLSTATE 55006 so Python "
+            "catches disambiguate from 42501 (tenant) / 23505 (race) / "
+            "23502 (null) / P0002 (not found). Existing Python catches "
+            "for 55006 map to VERSION_STALE / VERSION_FROZEN."
+        )
+
+    def test_save_rpc_disambiguates_stale_vs_first_save(self):
+        """Zero rows flipped has TWO causes: (a) etag mismatch on an
+        existing current row (stale), (b) no current row exists yet
+        (first save on this floor). Must not conflate them."""
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+        # The code does a follow-up PERFORM to discriminate. The
+        # discriminator's IF FOUND THEN raise, else fall through.
+        assert "GET DIAGNOSTICS v_flipped_count = ROW_COUNT" in upgrade
+        assert "IF v_flipped_count = 0 THEN" in upgrade
+        # The discriminator is a second PERFORM on the current-row
+        # predicate to distinguish stale from first-save.
+        assert "IF FOUND THEN" in upgrade
+
+    def test_migration_has_symmetric_downgrade(self):
+        """Lesson #10 (downgrade asymmetry): every RPC signature change
+        in UPGRADE_SQL must have a matching CREATE OR REPLACE in
+        DOWNGRADE_SQL that restores the pre-change shape."""
+        text = self._read_round5_migration()
+        downgrade = text.split("DOWNGRADE_SQL", 1)[1]
+        # DOWNGRADE must DROP the new 9-arg save RPC (different arity =
+        # different Postgres object) and CREATE the old 8-arg form.
+        assert (
+            "DROP FUNCTION IF EXISTS save_floor_plan_version(" in downgrade
+            and "TIMESTAMPTZ" in downgrade.split("DROP FUNCTION IF EXISTS save_floor_plan_version(", 1)[1].split(")", 1)[0]
+        ), (
+            "Downgrade must explicitly DROP the 9-arg save RPC before "
+            "recreating the 8-arg form — otherwise both exist and "
+            "dispatch is ambiguous"
+        )
+        assert (
+            "DROP FUNCTION IF EXISTS rollback_floor_plan_version_atomic(" in downgrade
+        ), "Same symmetry required for rollback_floor_plan_version_atomic"
+
+    # ------------------------------------------------------------------
+    # Service layer threads the etag through (closes the Python-side gap)
+    # ------------------------------------------------------------------
+
+    def test_create_version_accepts_expected_updated_at(self):
+        import inspect
+
+        from api.floor_plans.service import _create_version
+
+        sig = inspect.signature(_create_version)
+        assert "expected_updated_at" in sig.parameters, (
+            "_create_version must accept expected_updated_at so save_canvas "
+            "can forward the caller's target_updated_at into the RPC"
+        )
+        assert sig.parameters["expected_updated_at"].default is None, (
+            "Default must be None so creation paths keep working without "
+            "the param — backward-compat during rollout"
+        )
+
+    def test_create_version_forwards_to_rpc(self):
+        import inspect
+
+        from api.floor_plans.service import _create_version
+
+        src = inspect.getsource(_create_version)
+        assert '"p_expected_updated_at"' in src, (
+            "_create_version must put expected_updated_at into the RPC "
+            "payload as p_expected_updated_at — otherwise the SQL layer "
+            "never sees it and the atomic enforcement doesn't fire"
+        )
+
+    def test_create_version_maps_55006_to_412_when_etag_present(self):
+        """The shared 55006 SQLSTATE is used by both the frozen-row
+        trigger AND the round-5 stale-etag RPC raise. The Python catch
+        disambiguates: etag-present → 412 VERSION_STALE; etag-absent →
+        403 VERSION_FROZEN (frozen-row trigger path)."""
+        import inspect
+
+        from api.floor_plans.service import _create_version
+
+        src = inspect.getsource(_create_version)
+        assert 'status_code=412' in src
+        assert 'VERSION_STALE' in src
+        assert 'expected_updated_at is not None' in src, (
+            "The 55006 handler must branch on whether an etag was passed "
+            "to disambiguate STALE (round-5 RPC raise) from FROZEN (trigger)"
+        )
+
+    def test_save_canvas_passes_expected_for_rpc(self):
+        import inspect
+
+        from api.floor_plans.service import save_canvas
+
+        src = inspect.getsource(save_canvas)
+        assert "expected_for_rpc" in src, (
+            "save_canvas must compute a per-request expected_updated_at "
+            "for the _create_version call so Case 1 and Case 3 inherit "
+            "the etag enforcement"
+        )
+        assert "expected_updated_at=expected_for_rpc" in src, (
+            "Both _create_version call sites (Case 1 and Case 3) must "
+            "forward the value — sibling-miss guard"
+        )
+
+    def test_rollback_version_passes_expected_updated_at_to_rpc(self):
+        import inspect
+
+        from api.floor_plans.service import rollback_version
+
+        src = inspect.getsource(rollback_version)
+        assert '"p_expected_updated_at"' in src, (
+            "rollback_version must forward the anchor's updated_at as "
+            "p_expected_updated_at so the wrapper RPC (and its inner "
+            "save_floor_plan_version) enforces atomically. Closes "
+            "Lakshman P3 #5 by threading (option 2) rather than "
+            "documenting the asymmetry (option 1)."
+        )
+
+    # ------------------------------------------------------------------
+    # INV-1: If-Match is required (no more default-allow)
+    # ------------------------------------------------------------------
+
+    def test_require_if_match_helper_exists(self):
+        from api.shared.dependencies import require_if_match
+
+        assert callable(require_if_match)
+
+    def test_require_if_match_raises_428_on_missing(self):
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match
+        from api.shared.exceptions import AppException
+
+        # Build a minimal Request with no If-Match header.
+        scope = {"type": "http", "headers": []}
+        req = Request(scope)
+
+        import pytest
+
+        with pytest.raises(AppException) as exc_info:
+            require_if_match(req)
+        assert exc_info.value.status_code == 428
+        assert exc_info.value.error_code == "ETAG_REQUIRED"
+
+    def test_require_if_match_wildcard_returns_none(self):
+        """`If-Match: *` is the explicit opt-out marker (creation flow)."""
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match
+
+        scope = {"type": "http", "headers": [(b"if-match", b"*")]}
+        req = Request(scope)
+        assert require_if_match(req) is None
+
+    def test_require_if_match_returns_header_value(self):
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match
+
+        etag = "2026-04-22T12:34:56+00:00"
+        scope = {"type": "http", "headers": [(b"if-match", etag.encode())]}
+        req = Request(scope)
+        assert require_if_match(req) == etag
+
+    # ------------------------------------------------------------------
+    # Round-5 follow-up (Lakshman M1): strict helper rejects `*` on
+    # endpoints that never operate on a freshly-created row. Pinned
+    # so a future edit can't silently widen update/cleanup/rollback
+    # to accept the wildcard again.
+    # ------------------------------------------------------------------
+
+    def test_require_if_match_strict_helper_exists(self):
+        from api.shared.dependencies import require_if_match_strict
+
+        assert callable(require_if_match_strict)
+
+    def test_require_if_match_strict_raises_428_on_missing(self):
+        import pytest
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match_strict
+        from api.shared.exceptions import AppException
+
+        req = Request({"type": "http", "headers": []})
+        with pytest.raises(AppException) as exc_info:
+            require_if_match_strict(req)
+        assert exc_info.value.status_code == 428
+        assert exc_info.value.error_code == "ETAG_REQUIRED"
+
+    def test_require_if_match_strict_rejects_wildcard(self):
+        """The P2 #2 closure said `*` → None (treat as no-etag); the
+        round-5 follow-up (Lakshman M1) caught that this reopens
+        default-allow on endpoints with no creation flow. Strict
+        variant rejects `*` the same way it rejects missing."""
+        import pytest
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match_strict
+        from api.shared.exceptions import AppException
+
+        req = Request({"type": "http", "headers": [(b"if-match", b"*")]})
+        with pytest.raises(AppException) as exc_info:
+            require_if_match_strict(req)
+        assert exc_info.value.status_code == 428
+        assert exc_info.value.error_code == "ETAG_REQUIRED"
+
+    def test_require_if_match_strict_returns_concrete_etag(self):
+        from fastapi import Request
+
+        from api.shared.dependencies import require_if_match_strict
+
+        etag = "2026-04-22T12:34:56+00:00"
+        req = Request({"type": "http", "headers": [(b"if-match", etag.encode())]})
+        assert require_if_match_strict(req) == etag
+
+    def test_strict_helper_used_on_non_creation_routes(self):
+        """update / cleanup / rollback / update-by-job all target existing
+        rows. They must use the strict helper (rejects `*`) NOT the
+        permissive require_if_match (which would accept `*` and bypass
+        the precondition). Only save_canvas_endpoint uses the permissive
+        variant because it has a genuine first-version creation flow.
+        Sibling-miss regression guard for Lakshman M1."""
+        import re
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1] / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+
+        strict_routes = [
+            "update_floor_plan_endpoint",
+            "update_floor_plan_by_job_endpoint",
+            "rollback_version_endpoint",
+            "cleanup_endpoint",
+        ]
+        for route_name in strict_routes:
+            m = re.search(
+                rf"async def {route_name}\(.*?(?=^async def |\Z)",
+                text, re.DOTALL | re.MULTILINE,
+            )
+            assert m, f"route {route_name} not found"
+            body = m.group(0)
+            assert "require_if_match_strict(request)" in body, (
+                f"{route_name} must use require_if_match_strict — "
+                f"the permissive require_if_match accepts `*` and "
+                f"would reopen the default-allow loophole (Lakshman M1)"
+            )
+
+        # And save_canvas MUST use the permissive variant — it has a
+        # legitimate first-save-with-`*` flow.
+        m = re.search(
+            r"async def save_canvas_endpoint\(.*?(?=^async def |\Z)",
+            text, re.DOTALL | re.MULTILINE,
+        )
+        assert m
+        save_body = m.group(0)
+        assert (
+            "require_if_match(request)" in save_body
+            and "require_if_match_strict(request)" not in save_body
+        ), (
+            "save_canvas_endpoint must keep the permissive "
+            "require_if_match — it's the only route with a legitimate "
+            "`*` creation-marker flow (first save on a freshly-ensured row)"
+        )
+
+    def test_migration_drops_old_overloads_before_replacing(self):
+        """Lakshman M2: Postgres treats different arities as distinct
+        objects. CREATE OR REPLACE FUNCTION with 9 args doesn't replace
+        the existing 8-arg — it adds a second overload. The UPGRADE_SQL
+        must DROP the prior 8-arg save + 4-arg rollback forms BEFORE
+        creating the new signatures, so only one version of each
+        function exists after upgrade. Maintenance-hazard regression
+        guard (sibling-miss shape from lesson #10)."""
+        import re
+
+        text = self._read_round5_migration()
+        upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
+
+        # The old 8-arg save form must be DROPped explicitly.
+        assert re.search(
+            r"DROP FUNCTION IF EXISTS save_floor_plan_version\(\s*"
+            r"UUID, INTEGER, TEXT, UUID, UUID, UUID, JSONB, TEXT\s*\)",
+            upgrade,
+        ), (
+            "UPGRADE_SQL must DROP the prior 8-arg save_floor_plan_version "
+            "before CREATE OR REPLACE of the 9-arg version — otherwise "
+            "both overloads coexist and the next editor patches one"
+        )
+
+        # The old 4-arg rollback form must be DROPped explicitly.
+        assert re.search(
+            r"DROP FUNCTION IF EXISTS rollback_floor_plan_version_atomic\(\s*"
+            r"UUID, UUID, UUID, TEXT\s*\)",
+            upgrade,
+        ), (
+            "UPGRADE_SQL must DROP the prior 4-arg rollback_floor_plan_"
+            "version_atomic before CREATE OR REPLACE of the 5-arg version"
+        )
+
+    def test_all_mutation_routes_use_require_if_match(self):
+        """Every POST/PATCH to floor_plans (save, update, update-by-job,
+        rollback, cleanup) must use one of the two require_if_match
+        helpers, NOT the silent-skip `request.headers.get("If-Match")`
+        pattern. Sibling-miss regression guard — one forgotten route
+        would re-open the default-allow hole (Lakshman P2 #2).
+
+        Round-5 follow-up (Lakshman M1): save_canvas uses the permissive
+        require_if_match (accepts `*` for first-version creation); the
+        other four use require_if_match_strict (rejects `*` too). This
+        test accepts either shape; the stricter per-route pin lives in
+        `test_strict_helper_used_on_non_creation_routes` above."""
+        import re
+        from pathlib import Path
+
+        text = (
+            Path(__file__).resolve().parents[1] / "api" / "floor_plans" / "router.py"
+        ).read_text(encoding="utf-8")
+        mutation_routes = [
+            "save_canvas_endpoint",
+            "update_floor_plan_endpoint",
+            "update_floor_plan_by_job_endpoint",
+            "rollback_version_endpoint",
+            "cleanup_endpoint",
+        ]
+        for route_name in mutation_routes:
+            m = re.search(
+                rf"async def {route_name}\(.*?(?=^async def |\Z)",
+                text, re.DOTALL | re.MULTILINE,
+            )
+            assert m, f"route {route_name} not found"
+            body = m.group(0)
+            uses_helper = (
+                "require_if_match(request)" in body
+                or "require_if_match_strict(request)" in body
+            )
+            assert uses_helper, (
+                f"{route_name} must use require_if_match(request) or "
+                f"require_if_match_strict(request) — the silent-skip "
+                f"request.headers.get(\"If-Match\") pattern is the P2 #2 "
+                f"regression shape"
+            )
+            # Belt-and-suspenders: the old pattern must NOT appear.
+            assert 'request.headers.get("If-Match")' not in body, (
+                f"{route_name} still contains the default-allow "
+                f"request.headers.get(\"If-Match\") pattern — "
+                f"replace with require_if_match(request) / _strict"
+            )
+
+    def test_dead_use_save_canvas_hook_removed(self):
+        """Lakshman P2 #2: `useSaveCanvas` had zero consumers and was
+        the surface that would bypass require-If-Match if someone
+        re-wired it naively. Must stay removed."""
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "lib" / "hooks" / "use-jobs.ts"
+        ).read_text(encoding="utf-8")
+        assert "export function useSaveCanvas" not in src, (
+            "useSaveCanvas hook must stay deleted — zero consumers and "
+            "would bypass the required If-Match precondition if re-wired"
+        )
+
+    # ------------------------------------------------------------------
+    # Frontend: grep-shape pins for INV-3 (conflict draft) + INV-4 (in-flight)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _read_floor_plan_page() -> str:
+        from pathlib import Path
+
+        return (
+            Path(__file__).resolve().parents[1].parent
+            / "web" / "src" / "app"
+            / "(protected)" / "jobs" / "[id]" / "floor-plan" / "page.tsx"
+        ).read_text(encoding="utf-8")
+
+    def test_in_flight_guard_present_on_handle_change(self):
+        """INV-4: handleChange must consult _canvasSaveInFlight and
+        defer overlapping invocations via lastCanvasRef + replay."""
+        text = self._read_floor_plan_page()
+        assert "_canvasSaveInFlight" in text
+        assert "_canvasDeferredDuringSave" in text
+        # Flag must be set before the POST and cleared in finally.
+        assert "_canvasSaveInFlight = true" in text
+        assert "_canvasSaveInFlight = false" in text
+        # Deferred replay via queueMicrotask inside the finally block.
+        assert "queueMicrotask(() => handleChangeRef.current(deferred.data))" in text
+
+    def test_conflict_draft_persisted_on_version_stale(self):
+        """INV-3: handleStaleConflictIfPresent must persist the
+        rejected canvas to a `canvas-conflict-draft:${jobId}:${floorId}`
+        localStorage key BEFORE the reload nukes Konva state."""
+        text = self._read_floor_plan_page()
+        assert "canvas-conflict-draft:" in text, (
+            "Conflict-draft key must be written on VERSION_STALE so "
+            "the user's rejected edits survive the reload"
+        )
+        # The helper must accept rejectedCanvas + jobId to key the draft.
+        assert "rejectedCanvas?" in text or "rejectedCanvas:" in text
+
+    def test_conflict_draft_restore_banner_present(self):
+        """INV-3: after reload, the mount effect must scan for
+        conflict drafts and surface the restore banner."""
+        text = self._read_floor_plan_page()
+        assert "setConflictDraft" in text
+        assert "Restore my edits" in text or "Restore my" in text, (
+            "Restore CTA must exist so the user can re-apply their "
+            "persisted work; auto-apply is intentionally avoided"
+        )
+        assert "Discard" in text, "User must be able to discard the draft too"
+
+    def test_source_floor_captured_at_post_time(self):
+        """INV-3 subtle: the conflict-draft key must be keyed on the
+        floor the save was AGAINST (captured before the await), not
+        activeFloorRef.current which may have changed during the POST."""
+        text = self._read_floor_plan_page()
+        assert "postTimeSourceFloorId" in text, (
+            "Autosave path must capture the source floor id BEFORE "
+            "the await; conflict drafts keyed on activeFloorRef after "
+            "the await target the wrong floor (Lakshman P1 #2)."
+        )
 
 
 class TestReconcileSavedVersionHelperPresent:
@@ -4926,33 +5446,33 @@ class TestUseJobsHookSignatures:
         assert "floor_name" in body
         assert "thumbnail_url" in body
 
-    # ─── R15b: useSaveCanvas — jobId param + full cache invalidation ─────
+    # ─── Round 5 (Lakshman P2 #2): useSaveCanvas hook DELETED ───────────
+    #
+    # The hook had zero consumers (real saves route through the
+    # `saveCanvasVersion` helper in floor-plan/page.tsx) AND was the
+    # surface that would bypass the required-If-Match precondition if
+    # someone re-wired it naively. Deleting collapsed round-2's R15b
+    # invariants (jobId param + cache invalidation) into irrelevance —
+    # the only save path now is the helper, which does its own
+    # reconciliation via reconcileSavedVersion.
+    #
+    # These tests are flipped to regression guards against the hook
+    # coming back without the round-5 required-etag wiring.
 
-    def test_use_save_canvas_takes_job_id(self):
+    def test_use_save_canvas_hook_stays_deleted(self):
+        """If the hook returns, a naive re-wire would skip require_if_match
+        and silently bypass the etag precondition (P2 #2 re-opens).
+        Force the next contributor to either: (a) use the existing
+        saveCanvasVersion helper, or (b) re-introduce the hook WITH
+        explicit If-Match wiring — they'll see this test fail and know
+        to do the latter."""
         text = self._text()
-        assert "export function useSaveCanvas(floorPlanId: string, jobId: string)" in text, (
-            "useSaveCanvas must take jobId so it can invalidate the per-job "
-            "floor-plans list cache from inside the hook, instead of relying "
-            "on every caller to remember."
+        assert "export function useSaveCanvas" not in text, (
+            "useSaveCanvas was deleted in round 5 (Lakshman P2 #2). If "
+            "a rename UI / cleanup UI needs a hook, re-introduce it WITH "
+            "an If-Match header path — don't ship a save hook without "
+            "the precondition."
         )
-
-    def test_use_save_canvas_invalidates_floor_plans_list(self):
-        body = self._hook_body("useSaveCanvas", self._text())
-        assert 'queryKey: ["floor-plans", jobId]' in body, (
-            'useSaveCanvas must invalidate ["floor-plans", jobId] on success'
-        )
-
-    def test_use_save_canvas_invalidates_jobs(self):
-        """Save may change room count on the floor — invalidate the job row
-        so any job-detail panels showing roomCount refresh."""
-        body = self._hook_body("useSaveCanvas", self._text())
-        assert 'queryKey: ["jobs", jobId]' in body
-
-    def test_use_save_canvas_still_invalidates_history(self):
-        """Regression: don't drop the existing floor-plan-history invalidation
-        while adding the new keys."""
-        body = self._hook_body("useSaveCanvas", self._text())
-        assert 'queryKey: ["floor-plan-history", floorPlanId]' in body
 
 
 class TestDropRedundantIsCurrentIndexMigration:

@@ -35,7 +35,6 @@ import uuid
 
 import pytest
 
-
 # Conftest.py's module-level pytestmark doesn't cascade to sibling test
 # modules — every integration test file needs to opt in explicitly. The
 # `_supabase_is_reachable` probe lives in conftest; we re-use it here so
@@ -416,5 +415,267 @@ class TestComputeWallSfForRoomJwtDerived:
 
         # Cleanup
         await admin_client.table("job_rooms").delete().eq("id", room_id).execute()
+        await admin_client.table("jobs").delete().eq("id", job_id).execute()
+        await admin_client.table("properties").delete().eq("id", prop_id).execute()
+
+
+# ---------------------------------------------------------------------------
+# Contract 5 — Round 5: p_expected_updated_at enforces atomicity on the flip
+# ---------------------------------------------------------------------------
+
+
+class TestRound5AtomicEtagRace:
+    """Round-5 follow-up (Lakshman M3): the core round-5 correctness
+    claim — "a concurrent writer committing between the Python etag
+    check and the RPC raises SQLSTATE 55006" — was previously only
+    pinned via grep-shape tests on migration source. Those catch
+    literal-string regressions but can't verify the runtime contract:
+    TIMESTAMPTZ round-trip through PostgREST (JSON string → TIMESTAMPTZ
+    coerce → equality filter) has subtle precision/timezone-format
+    failure modes that only surface against a real Postgres.
+
+    Three contracts pinned end-to-end:
+      1. ``save_floor_plan_version(p_expected_updated_at=T_old)`` on a
+         floor whose current row has ``updated_at=T_new (> T_old)``
+         raises ``APIError.code == "55006"``.
+      2. Same RPC with ``p_expected_updated_at=T_match`` (caller's
+         view matches current) succeeds and creates the new version.
+      3. First-save discriminator: the RPC called against a floor with
+         NO current row + ``p_expected_updated_at`` supplied inserts
+         cleanly (zero rows flipped, but no current row to raise against,
+         so fall through to insert).
+    """
+
+    @pytest.mark.asyncio
+    async def test_stale_expected_updated_at_raises_55006(
+        self, api_client, admin_client, onboarded_user,
+    ):
+        """Simulate the race from Lakshman's P1 #1 failure window:
+
+        T0: Writer-A reads floor — sees current row v1 with updated_at=T0.
+        T1: Writer-B commits v2 (current now, updated_at=T1).
+        T2: Writer-A calls save_floor_plan_version with
+            p_expected_updated_at=T0. RPC sees current = v2 (updated_at=T1).
+            Zero rows match WHERE updated_at = T0. Current row exists
+            → raise 55006.
+        """
+        from postgrest.exceptions import APIError
+
+        prop_id = await _make_property(admin_client, onboarded_user["company_id"])
+        job_id = await _make_job(
+            admin_client,
+            onboarded_user["company_id"],
+            prop_id,
+            onboarded_user["user_id"],
+        )
+        # v1: the "current" row at T0 from Writer-A's perspective.
+        v1 = await _make_floor_plan_row(
+            admin_client,
+            property_id=prop_id,
+            company_id=onboarded_user["company_id"],
+            user_id=onboarded_user["user_id"],
+            is_current=True,
+            version_number=1,
+        )
+        t0 = v1["updated_at"]
+
+        # Writer-B commits v2 at T1 — flips v1.is_current to false,
+        # inserts v2 as current with a fresh updated_at.
+        await admin_client.table("floor_plans").update({"is_current": False}).eq("id", v1["id"]).execute()
+        v2 = await _make_floor_plan_row(
+            admin_client,
+            property_id=prop_id,
+            company_id=onboarded_user["company_id"],
+            user_id=onboarded_user["user_id"],
+            is_current=True,
+            version_number=2,
+        )
+        assert v2["updated_at"] != t0, (
+            "Setup sanity — v2 must have a fresh updated_at; if the DB "
+            "didn't advance the timestamp, the test below can't discriminate"
+        )
+
+        # Writer-A (authenticated as the same company) calls the RPC with
+        # p_expected_updated_at=T0. Current row is now v2 (T1 ≠ T0), so
+        # zero rows flipped + discriminator finds a current row → 55006.
+        from supabase import AsyncClientOptions, acreate_client
+
+        from tests.integration.conftest import (
+            LOCAL_SUPABASE_ANON_KEY,
+            LOCAL_SUPABASE_URL,
+        )
+
+        writer_a = await acreate_client(
+            LOCAL_SUPABASE_URL,
+            LOCAL_SUPABASE_ANON_KEY,
+            options=AsyncClientOptions(postgrest_client_timeout=30),
+        )
+        await writer_a.auth.set_session(
+            access_token=onboarded_user["access_token"],
+            refresh_token="",
+        )
+
+        with pytest.raises(APIError) as exc_info:
+            await (
+                writer_a.rpc(
+                    "save_floor_plan_version",
+                    {
+                        "p_property_id":        prop_id,
+                        "p_floor_number":       1,
+                        "p_floor_name":         None,
+                        "p_company_id":         onboarded_user["company_id"],
+                        "p_job_id":             job_id,
+                        "p_user_id":            onboarded_user["user_id"],
+                        "p_canvas_data":        {"rooms": []},
+                        "p_change_summary":     "Writer-A stale save",
+                        "p_expected_updated_at": t0,
+                    },
+                ).execute()
+            )
+
+        assert getattr(exc_info.value, "code", None) == "55006", (
+            f"Expected SQLSTATE 55006 (VERSION_STALE) from stale "
+            f"p_expected_updated_at, got {exc_info.value.code}: "
+            f"{exc_info.value.message}"
+        )
+
+        # Cleanup
+        await admin_client.table("floor_plans").delete().eq("id", v2["id"]).execute()
+        await admin_client.table("floor_plans").delete().eq("id", v1["id"]).execute()
+        await admin_client.table("jobs").delete().eq("id", job_id).execute()
+        await admin_client.table("properties").delete().eq("id", prop_id).execute()
+
+    @pytest.mark.asyncio
+    async def test_matching_expected_updated_at_succeeds(
+        self, admin_client, onboarded_user,
+    ):
+        """Happy path for the new param — caller's view matches current,
+        the flip filter matches, v2 is created as the new current."""
+        prop_id = await _make_property(admin_client, onboarded_user["company_id"])
+        job_id = await _make_job(
+            admin_client,
+            onboarded_user["company_id"],
+            prop_id,
+            onboarded_user["user_id"],
+        )
+        v1 = await _make_floor_plan_row(
+            admin_client,
+            property_id=prop_id,
+            company_id=onboarded_user["company_id"],
+            user_id=onboarded_user["user_id"],
+            is_current=True,
+            version_number=1,
+        )
+        t_current = v1["updated_at"]
+
+        from supabase import AsyncClientOptions, acreate_client
+
+        from tests.integration.conftest import (
+            LOCAL_SUPABASE_ANON_KEY,
+            LOCAL_SUPABASE_URL,
+        )
+
+        writer = await acreate_client(
+            LOCAL_SUPABASE_URL,
+            LOCAL_SUPABASE_ANON_KEY,
+            options=AsyncClientOptions(postgrest_client_timeout=30),
+        )
+        await writer.auth.set_session(
+            access_token=onboarded_user["access_token"],
+            refresh_token="",
+        )
+
+        result = await writer.rpc(
+            "save_floor_plan_version",
+            {
+                "p_property_id":        prop_id,
+                "p_floor_number":       1,
+                "p_floor_name":         None,
+                "p_company_id":         onboarded_user["company_id"],
+                "p_job_id":             job_id,
+                "p_user_id":            onboarded_user["user_id"],
+                "p_canvas_data":        {"rooms": []},
+                "p_change_summary":     "matching etag",
+                "p_expected_updated_at": t_current,
+            },
+        ).execute()
+
+        v2 = result.data
+        if isinstance(v2, list):
+            v2 = v2[0]
+        assert v2 is not None, "RPC returned empty result on matching etag"
+        assert v2["version_number"] == 2
+        assert v2["is_current"] is True
+
+        # Cleanup
+        await admin_client.table("floor_plans").delete().eq("id", v2["id"]).execute()
+        await admin_client.table("floor_plans").delete().eq("id", v1["id"]).execute()
+        await admin_client.table("jobs").delete().eq("id", job_id).execute()
+        await admin_client.table("properties").delete().eq("id", prop_id).execute()
+
+    @pytest.mark.asyncio
+    async def test_first_save_with_expected_updated_at_succeeds(
+        self, admin_client, onboarded_user,
+    ):
+        """Discriminator contract: when p_expected_updated_at is supplied
+        but no current row exists yet for this (property, floor), the
+        RPC falls through to insert (creation path). The discriminator
+        ``PERFORM 1 … WHERE is_current=true; IF FOUND THEN raise`` is
+        what distinguishes this case from the stale-etag case above."""
+        prop_id = await _make_property(admin_client, onboarded_user["company_id"])
+        job_id = await _make_job(
+            admin_client,
+            onboarded_user["company_id"],
+            prop_id,
+            onboarded_user["user_id"],
+        )
+
+        from supabase import AsyncClientOptions, acreate_client
+
+        from tests.integration.conftest import (
+            LOCAL_SUPABASE_ANON_KEY,
+            LOCAL_SUPABASE_URL,
+        )
+
+        writer = await acreate_client(
+            LOCAL_SUPABASE_URL,
+            LOCAL_SUPABASE_ANON_KEY,
+            options=AsyncClientOptions(postgrest_client_timeout=30),
+        )
+        await writer.auth.set_session(
+            access_token=onboarded_user["access_token"],
+            refresh_token="",
+        )
+
+        # No floor_plans row for (prop_id, 1) yet. Even passing a
+        # bogus expected_updated_at, the discriminator sees no current
+        # row and falls through to insert v1.
+        result = await writer.rpc(
+            "save_floor_plan_version",
+            {
+                "p_property_id":        prop_id,
+                "p_floor_number":       1,
+                "p_floor_name":         "First Floor",
+                "p_company_id":         onboarded_user["company_id"],
+                "p_job_id":             job_id,
+                "p_user_id":            onboarded_user["user_id"],
+                "p_canvas_data":        {"rooms": []},
+                "p_change_summary":     "first save with etag",
+                "p_expected_updated_at": "2020-01-01T00:00:00+00:00",
+            },
+        ).execute()
+
+        v1 = result.data
+        if isinstance(v1, list):
+            v1 = v1[0]
+        assert v1 is not None, (
+            "First-save discriminator must fall through to insert when "
+            "no current row exists, regardless of p_expected_updated_at"
+        )
+        assert v1["version_number"] == 1
+        assert v1["is_current"] is True
+
+        # Cleanup
+        await admin_client.table("floor_plans").delete().eq("id", v1["id"]).execute()
         await admin_client.table("jobs").delete().eq("id", job_id).execute()
         await admin_client.table("properties").delete().eq("id", prop_id).execute()
