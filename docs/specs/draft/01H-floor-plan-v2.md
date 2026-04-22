@@ -131,6 +131,24 @@ Frontend:
 
 Round-2 product-intent decision (not a code change): **R2 deferred**. Reviewer asked to drop the `parent_pin` block in `create_job`; under Crewmatic's linked-job model (mitigation and recon share property-anchored data — floor plan, rooms, walls — until recon edits and forks) the `parent_pin` is the mechanism that makes sharing work. Reviewer's fix would leave recon techs with a blank canvas on every linked recon, defeating the feature. `job_rooms.floor_plan_id` is vestigial (no backend join uses it) so the "split join" concern the reviewer flagged is theoretical. Acknowledged on PR with product rationale.
 
+**PR10 Round 3 — re-review + concurrent-editing hardening (2026-04-22)**
+
+Two categories of work: Lakshman's round-3 re-review items (#1 cache regression on 409, #2 downgrade drift, #3 stale apply script), and a larger fix for the **same-job concurrent-editing silent-lost-update** scenario that's a real field-tool problem (two techs on one property both editing the floor plan). Instead of patching the specific 409 path Lakshman flagged, we eliminated it entirely with an idempotent RPC, and layered an etag/If-Match optimistic-concurrency guard on top to prevent silent overwrites.
+
+3 new Alembic migrations. 26 new tests. Zero regressions.
+
+Concurrent-editing protection:
+- **`ensure_job_floor_plan` RPC** (migration `b8c9d0e1f2a3`) replaces the old optimistic-create + catch-409 + pick-plans[0] fallback in `create_floor_plan_by_job_endpoint`. SECURITY DEFINER, JWT-derived company, `SELECT … FOR UPDATE` on jobs row. Idempotent: if the job already has a pinned current row for the target floor, return it; if a sibling job beat us with the same-floor INSERT, reuse their row and pin ours; only INSERT if neither exists. 23505 race retry at the router (same pattern as `ensure_job_property`). The 409 recovery branch in the frontend is unreachable now and was deleted.
+- **Etag / If-Match / 412 `VERSION_STALE`** — new optimistic-concurrency guard on `POST /v1/floor-plans/{id}/versions`. No schema change — etag is derived from `floor_plans.updated_at` (already auto-bumped by the `update_updated_at` trigger). Frontend captures etag on read, sends as `If-Match` on save. Server compares; mismatch → 412 with `current_etag` in the error body. Backward-compat during rollout: missing `If-Match` header skips the check. Frontend catches 412 and renders a "Floor plan was updated by another editor — Reload" banner; on reload, caches are invalidated and the canvas re-hydrates from server truth, user re-applies their edits on top.
+- **Shared `saveCanvasVersion` helper** in `floor-plan/page.tsx` centralizes the etag-send + response-capture pattern across all 4 save sites (autosave, first-create, cross-floor, error-recovery) — future edits to the save-response contract touch one place, not four.
+- **`AppException.extra`** field added to `api/shared/exceptions.py` so structured context (like `current_etag`) can ride along with the JSON error body. Merged into the response verbatim; `None` values dropped.
+
+Backend hardening (Lakshman round-3 findings):
+- **#1** — 409 cache regression closed by the RPC replacement above (the bug was on the error branch; eliminating the error branch is the cleanest fix).
+- **#2** — downgrade drift in `a7b8c9d0e1f2` fixed: DOWNGRADE now re-installs `restore_floor_plan_relational_snapshot` with the pre-follow-on `_compute_wall_sf_for_room(v_room_id, v_caller_company)` 2-arg call shape to match the restored 2-arg helper signature. A future `alembic downgrade -1` past this revision leaves the schema internally consistent.
+- **#3** — `backend/scripts/pr10_round2_apply.sql` deleted. Alembic is the single source of truth; the secondary artifact had drifted twice (F1/F2/F3 migrations + follow-on-2 migrations weren't mirrored into the script). Regression guard: `TestApplyScriptDeleted::test_apply_script_does_not_exist`.
+- **#4** — `backend/tests/integration/test_floor_plans_trigger_integration.py` added with 4 live-DB behavior tests: frozen UPDATE raises `55006`, legitimate flip inside `save_floor_plan_version` passes through, `save_floor_plan_version` raises `42501` on JWT/company mismatch, `_compute_wall_sf_for_room` (1-arg) computes correctly for authenticated callers. Tests skip cleanly when local Supabase isn't running (`supabase start`).
+
 ---
 
 
@@ -1382,6 +1400,84 @@ R19 — full-fidelity rollback via snapshot + restore:
 - `test_rollback_maps_restore_failure_to_500` — RPC APIError surfaces as `ROLLBACK_RESTORE_FAILED` so caller knows state is inconsistent (implemented)
 - Manual verify: edit a room (add a door), save, edit again (change door width), save → roll back to first version → door width reverts. Pre-R19: canvas showed v1 but `wall_openings` still held v2 width.
 
+**Phase 1 — PR10 round 3 hardening (concurrent-editing + re-review fixes):**
+
+RPC replacement for optimistic-create race (migration `b8c9d0e1f2a3`):
+- `test_upgrade_defines_rpc` — `CREATE OR REPLACE FUNCTION ensure_job_floor_plan` present (implemented)
+- `test_rpc_is_security_definer_with_pinned_search_path` — same R3 hygiene as every other 01H RPC (implemented)
+- `test_rpc_derives_company_from_jwt` — `get_my_company_id()` + `42501` on no-auth (implemented)
+- `test_rpc_locks_jobs_row` — `SELECT ... FOR UPDATE FROM jobs` serializes concurrent callers on same job (implemented)
+- `test_rpc_rejects_archived_jobs` — 42501 if job.status = 'collected' (implemented)
+- `test_rpc_rejects_null_property` — 42501 if job.property_id IS NULL (ensure_job_property should run first) (implemented)
+- `test_rpc_idempotent_fast_path_via_existing_pin` — retry after a successful call returns the same row, no duplicate version (implemented)
+- `test_rpc_reuses_existing_floor_row_on_second_caller` — race-closing branch: caller B finds A's INSERT, pins its own job to it (implemented)
+- `test_rpc_creates_row_with_correct_stamps` — created_by_user_id + created_by_job_id (implemented)
+- `test_downgrade_drops_the_rpc` — rollback symmetry (implemented)
+
+Router refactor:
+- `test_calls_ensure_job_floor_plan_rpc` — static: `create_floor_plan_by_job_endpoint` invokes the new RPC with all 4 params (implemented)
+- `test_retries_once_on_23505` — same pattern as `ensure_job_property`; two different jobs racing past their per-job FOR UPDATE locks hit the partial unique index (implemented)
+- `test_old_409_catch_fallback_is_removed` — regression guard against the dead optimistic-create + catch-409 + pick-plans[0] block that caused the round-3 critical regression (implemented)
+
+Etag + If-Match + 412 VERSION_STALE:
+- `test_service_signature_accepts_if_match` — `save_canvas` has an `if_match: str | None = None` parameter, default None for backward-compat (implemented)
+- `test_service_raises_412_on_etag_mismatch` — `status_code=412` + `VERSION_STALE` error code present in save_canvas (implemented)
+- `test_service_includes_current_etag_in_412_response` — response body carries `current_etag` so clients can reload to the right version (implemented)
+- `test_backward_compat_when_if_match_absent` — the `if if_match is not None` guard skips the check entirely for pre-rollout clients (implemented)
+- `test_router_reads_if_match_header` — `save_canvas_endpoint` extracts `request.headers.get("If-Match")` and forwards (implemented)
+
+FloorPlanResponse etag field:
+- `test_schema_has_computed_etag_field` — Pydantic v2 `@computed_field` exposes etag on the response model (implemented)
+- `test_etag_matches_updated_at_iso_string` — etag round-trips as the ISO string of `updated_at` (implemented)
+- `test_compute_etag_handles_string_input` — helper pass-through when updated_at arrives pre-serialized (implemented)
+- `test_compute_etag_returns_none_on_none` — defensive: NULL updated_at → None (implemented)
+
+AppException extra field:
+- `test_app_exception_accepts_extra` — new optional `extra` dict for structured error context like `current_etag` (implemented)
+- `test_app_exception_extra_defaults_to_empty_dict` — backward-compat for every existing raise site (implemented)
+
+Apply-script deletion (Lakshman #3):
+- `test_apply_script_does_not_exist` — regression guard against reintroducing `backend/scripts/pr10_round2_apply.sql` without a sync-enforcement mechanism (implemented)
+
+Downgrade symmetry fix (Lakshman #2):
+- `test_downgrade_reinstalls_restore_rpc_with_2arg_call` — `a7b8c9d0e1f2` DOWNGRADE re-installs `restore_floor_plan_relational_snapshot` with the 2-arg helper call shape that matches the downgraded `_compute_wall_sf_for_room` signature; the 1-arg form does not leak into the downgrade body (implemented)
+
+Frontend etag + 412 banner (manual verify on mobile in multi-user setup):
+- Open the same job on two devices. Tech A edits a room, saves. Tech B edits a different room (without reloading). Tech B's save returns 412; a red "Floor plan was updated by another editor" banner appears with Reload + Dismiss buttons. Reload shows A's room; B redraws theirs on top; saves successfully.
+- Pre-rollout compatibility: an older frontend (no `If-Match` header) still saves successfully — backend skips the check when the header is absent.
+
+**Phase 1 — Round-3 follow-through (concurrent-editing surface closure):**
+
+Shared etag module + parse-based comparison:
+- `test_etag_from_updated_at_returns_none_on_none` — None passes through as None, not "" (fixes the silent falsy-check skip) (implemented)
+- `test_etag_from_updated_at_passes_through_strings` — ISO string input is returned unchanged (implemented)
+- `test_etag_from_updated_at_serializes_datetime` — datetime → `.isoformat()` matches what `to_jsonb()` produces (implemented)
+- `test_etags_match_identical_strings` — fast-path string equality (implemented)
+- `test_etags_match_normalizes_microsecond_precision` — `"+00:00"` vs `".000000+00:00"` for the same instant compare equal (implemented; closes the docstring-lies-about-code bug)
+- `test_etags_match_rejects_different_timestamps` — different instants compare unequal (implemented)
+- `test_etags_match_none_never_matches` — None on either side returns False so callers choose skip vs reject explicitly (implemented)
+- `test_etags_match_falls_back_to_string_equality_on_garbage` — non-ISO inputs don't crash (implemented)
+- `test_floor_plan_response_etag_is_nullable_not_empty` — response etag serializes None → null, not "" (implemented)
+
+Etag extended to all mutation endpoints:
+- `test_update_floor_plan_service_accepts_if_match` — `update_floor_plan` service takes `if_match` param (implemented)
+- `test_cleanup_floor_plan_service_accepts_if_match` — same for cleanup (implemented)
+- `test_rollback_version_service_accepts_if_match` — same for rollback (implemented)
+- `test_all_mutation_endpoints_forward_if_match_header` — router guard: every save_canvas / update / update-by-job / rollback / cleanup endpoint extracts `If-Match` (implemented; sibling-miss regression guard)
+- `test_service_uses_shared_etags_match_not_raw_equality` — every `if_match`-aware service method uses `etags_match`, not `!=` (implemented)
+
+Shared reconcileSavedVersion helper + 409 branch fix:
+- `test_shared_helper_is_defined` — `function reconcileSavedVersion(` exists in page.tsx (implemented)
+- `test_all_four_save_sites_call_helper` — autosave + first-create + 409 recovery + cross-floor all delegate; sibling-miss regression guard (implemented)
+- `test_409_recovery_branch_captures_savedVersion` — the branch that previously threw away the return now captures it (implemented)
+- `test_409_recovery_branch_no_longer_throws_away_return` — explicit regression guard against reverting to fire-and-forget (implemented)
+
+Integration tests (live-DB, skip without Supabase):
+- `test_update_on_frozen_row_raises_55006` — R4 trigger behavior, not text (implemented, skip-without-DB)
+- `test_save_canvas_flow_does_not_trip_trigger` — legitimate flip passes through (implemented)
+- `test_passing_foreign_company_id_raises_42501` — cross-tenant RPC rejection (implemented)
+- `test_authenticated_call_computes_wall_sf` — 1-arg `_compute_wall_sf_for_room` correctness (implemented)
+
 **Phase 2:**
 - `test_pin_color_boundaries` — green/amber/red at dry_standard boundaries
 - `test_pin_color_at_exact_threshold` — reading = dry_standard returns green
@@ -1637,6 +1733,61 @@ Product-intent decision:
 
 **Round-2 totals:** 9 new Alembic migrations, 105 new pytest cases — all green. No regressions against the existing round-1 suite (C1–C6, W1–W11, P2.1, P2.2). Pre-existing `TestClient`-based tests (`TestCreateFloorPlan`, `TestUpdateFloorPlan`, `TestSketchCleanup`, etc.) continue to fail due to an auth-middleware async-mock bug on main — unrelated to round-2 changes.
 
+**PR10 round 3 (concurrent-editing + re-review fixes)**
+
+Migration + backend:
+- **Idempotent-create** — new `ensure_job_floor_plan` RPC (migration `b8c9d0e1f2a3`) replaces the racy optimistic-create + 409 fallback. SECURITY DEFINER + JWT-derived company + `SELECT … FOR UPDATE` on jobs row + partial-unique-index retry at the router. Same security posture as every other 01H RPC. 13 tests (10 migration content, 3 router refactor).
+- **Etag + If-Match + 412 VERSION_STALE** — no schema change. Etag derived from `floor_plans.updated_at` (already auto-bumped by trigger). Service layer adds optional `if_match` parameter; router forwards `request.headers.get("If-Match")`. Frontend captures etag via `FloorPlanResponse.etag` computed field, sends as header on save. Backward-compat: missing header skips the check. 9 tests (5 service + router, 4 schema + helper).
+- **AppException.extra** — new optional dict field merged into the JSON error body so VERSION_STALE can ship `current_etag` without a second round-trip. 2 tests.
+- **Downgrade drift fix** (Lakshman #2) — `a7b8c9d0e1f2` DOWNGRADE re-installs `restore_floor_plan_relational_snapshot` with the pre-follow-on 2-arg helper call shape so rollback leaves the schema internally consistent. 1 test.
+- **Apply script deleted** (Lakshman #3) — `backend/scripts/pr10_round2_apply.sql` removed. Alembic is the single source of truth; the secondary artifact had drifted twice. Regression guard test.
+
+Frontend:
+- **`saveCanvasVersion` helper** — centralizes etag send + 412 handling across all 4 save sites (autosave, first-floor-create, cross-floor, error-recovery). Future save-contract edits touch one place.
+- **Stale-conflict banner** — red banner with Reload + Dismiss buttons appears on 412; Reload invalidates all floor-plan caches and refetches. Clears `lastSavedSigRef` so dedup doesn't short-circuit the next save.
+- **FloorPlan type** — optional `etag?: string` field on the TypeScript interface.
+
+**Round-3 totals:** 3 new Alembic migrations, 26 new pytest cases — all green. No regressions. 193 tests total in the round-2+3 suite.
+
+**Round-3 follow-through — concurrent-editing surface fully closed (2026-04-22):**
+
+- **409 recovery branch reconciliation.** Factored the fork-reconciliation
+  block from 3 inline save sites into a shared
+  `reconcileSavedVersion(queryClient, jobId, sourceFloorId, savedVersion, setActiveFloorId)`
+  helper in `floor-plan/page.tsx`. All 4 save sites (autosave,
+  first-create, 409 recovery, cross-floor) now delegate. The 409
+  recovery branch previously threw away `saveCanvasVersion`'s return —
+  regressing the cache fix on the error path. Now captured + routed
+  through the helper.
+- **Etag extended to every mutation endpoint.** Added `if_match` param
+  to `update_floor_plan`, `cleanup_floor_plan`, `rollback_version` at
+  the service layer; routers forward `request.headers.get("If-Match")`.
+  Every write path to `floor_plans` now has the same 412 VERSION_STALE
+  contract. A stale cleanup, rollback, or PATCH can no longer silently
+  overwrite an in-flight save.
+- **Shared etag module.** Consolidated `compute_etag` (schemas.py) and
+  `_coerce_etag` (service.py) into a single `api/shared/etag.py` module
+  exporting `etag_from_updated_at` + `etags_match`. The two helpers had
+  diverged on the None case (returning `None` vs `""`), causing a
+  silent falsy-check on the frontend to skip If-Match headers. Unified;
+  the backend now returns `etag: null` (not `""`) when `updated_at` is
+  absent so the frontend's check is correct.
+- **Parse-based etag comparison.** Replaced raw string equality with
+  `etags_match` which `datetime.fromisoformat`-parses both sides. Fixes
+  microsecond-precision formatting drift (`"+00:00"` vs
+  `".000000+00:00"`) producing spurious 412s. Falls back to string
+  equality on non-ISO inputs so hand-crafted etags still work.
+
+Field-tool concurrent-editing scenario now fully covered (all 4 mutation paths):
+- **Same-second concurrent create** (two techs both first-create on the same job) — serialized by `ensure_job_floor_plan` RPC; both callers converge on the same row, no 409 to handle.
+- **Sequential-edit lost-update on save_canvas** — caught by etag mismatch → 412 → reload banner.
+- **Stale cleanup overwrites in-flight save** — now caught by etag check in `cleanup_floor_plan`.
+- **Rollback races with concurrent save** — now caught by etag check in `rollback_version`.
+- **PATCH on stale metadata** — now caught by etag check in `update_floor_plan`.
+
+Product-intent decision (carried over, still valid):
+- **R2** — linked recon shares mitigation's property-anchored data. Reviewer accepted this in round 3 with a follow-up ask for a PR-body tweak on the C6 bullet and a cross-reference comment in COPY_FIELDS.
+
 ---
 
-*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16. Round 2 hardening: 2026-04-22.*
+*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16. Round 2 hardening: 2026-04-22. Round 3 hardening: 2026-04-22.*
