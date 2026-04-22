@@ -899,6 +899,7 @@ async def save_canvas(
     # very complex floor plan) is rare; we surface it as 413 so the client
     # can split the save rather than silently oversize the row.
     import json as _json
+
     from api.floor_plans.schemas import MAX_STORED_CANVAS_DATA_BYTES
 
     _enriched_size = len(_json.dumps(canvas_data, separators=(",", ":")))
@@ -912,6 +913,20 @@ async def save_canvas(
             ),
             error_code="CANVAS_TOO_LARGE",
         )
+
+    # Round-5 INV-2: when the caller supplied a real If-Match (not the
+    # creation marker "*", which is filtered out earlier when present),
+    # thread target_updated_at down into the version-creating RPC as
+    # p_expected_updated_at. The RPC's flip UPDATE carries that value
+    # as an atomic AND filter — a concurrent Case 3 fork landing between
+    # our Python etag check and the RPC call leaves zero rows to flip,
+    # the RPC raises 55006, and _create_version surfaces 412 VERSION_STALE.
+    # When if_match is None (no guard) OR target_updated_at is missing
+    # (shouldn't happen, defensive), pass None and let the RPC fall back
+    # to its backward-compat path.
+    expected_for_rpc: str | None = (
+        target_updated_at if if_match is not None and target_updated_at is not None else None
+    )
 
     pinned_version_id = job.get("floor_plan_id")
 
@@ -928,6 +943,7 @@ async def save_canvas(
             user_id=user_id,
             canvas_data=canvas_data,
             change_summary=change_summary or "Initial floor plan version",
+            expected_updated_at=expected_for_rpc,
         )
 
         await log_event(
@@ -1074,6 +1090,12 @@ async def save_canvas(
     # The RPC inside _create_version handles flip + insert + pin atomically (C4).
     # Sibling jobs are NOT auto-upgraded — per frozen-version semantics, every
     # job stays on the version it last saved.
+    #
+    # Round-5 INV-2: pass expected_for_rpc (target_updated_at captured above)
+    # so the RPC's flip UPDATE enforces the etag atomically. A concurrent
+    # Case-3 fork that moved the current row past target_updated_at between
+    # our etag check and this call surfaces as 412 VERSION_STALE instead of
+    # silently demoting the other writer's fresh work to frozen history.
     version = await _create_version(
         client=client,
         property_id=UUID(target_property_id),
@@ -1084,6 +1106,7 @@ async def save_canvas(
         user_id=user_id,
         canvas_data=canvas_data,
         change_summary=change_summary or "Floor plan edited by new job",
+        expected_updated_at=expected_for_rpc,
     )
 
     await log_event(
@@ -1201,22 +1224,18 @@ async def rollback_version(
     protection, a concurrent save + rollback can produce unexpected
     version layering. Matches the save_canvas contract.
 
-    Round-4 note — atomicity asymmetry vs ``update_floor_plan`` and
-    ``cleanup_floor_plan``: those two methods extend the ``if_match``
-    compare with an atomic ``.eq("updated_at", …)`` filter on the UPDATE
-    (closing the TOCTOU window between check and write). Rollback does
-    NOT plumb ``p_if_match`` through ``rollback_floor_plan_version_atomic``
-    because there's no silent-overwrite shape here: the RPC creates a
-    NEW is_current row from a historical snapshot and atomically flips
-    the prior current row to is_current=false. Whatever canvas was on
-    the prior current row survives as frozen history — not overwritten,
-    just demoted. A concurrent save that commits BEFORE the RPC has its
-    work preserved in the demoted row; one that commits AFTER lands on
-    a now-frozen row and is rejected at the app layer's
-    ``.eq("is_current", True)`` filter (or the 55006 trigger). Either
-    ordering is safe. The ``if_match`` check here is therefore a
-    fast-reject UX affordance so the user can reconfirm against the
-    updated state, not the atomicity mechanism.
+    Round-5 (Lakshman P3 #5 closure): the ``if_match`` value is now
+    threaded into ``rollback_floor_plan_version_atomic`` as
+    ``p_expected_updated_at`` (migration c9d0e1f2a3b4). The inner
+    ``save_floor_plan_version`` enforces it atomically on the flip —
+    a concurrent save between our Python check and the RPC call moves
+    the current row's updated_at past what we vouched for, the RPC
+    raises 55006, we surface 412 VERSION_STALE. Symmetric with
+    ``save_canvas`` Case 3 under round-5. Earlier rounds left this as
+    a "fast-reject UX affordance" with a rationale about no data loss
+    (history preserved) — Lakshman accepted that for rollback as P3
+    (rare UX flow) but we close it uniformly now so the etag contract
+    holds across every write path.
     """
     client = await get_authenticated_client(token)
 
@@ -1309,18 +1328,68 @@ async def rollback_version(
     # a failure in restore left the new version row + job repin committed
     # while walls/openings still held pre-rollback state. That regressed
     # the C4 atomicity intent one layer up.
+    #
+    # Round-5 INV-2 (Lakshman P3 #5): thread the anchor's updated_at into
+    # the RPC as p_expected_updated_at. The wrapper forwards to
+    # save_floor_plan_version which enforces atomically on the flip. A
+    # concurrent save that commits between our Python etag check above
+    # and this RPC call moves the current row's updated_at past what we
+    # vouched for — the RPC raises 55006, which we map to 412 below
+    # (same semantic as save_canvas Case 3 under round-5).
+    rpc_args: dict = {
+        "p_target_floor_plan_id": str(target.data["id"]),
+        "p_job_id": str(job_id),
+        "p_user_id": str(user_id),
+        "p_change_summary": f"Rolled back to version {version_number}",
+    }
+    anchor_updated_at = anchor.data.get("updated_at")
+    if if_match is not None and anchor_updated_at is not None:
+        rpc_args["p_expected_updated_at"] = anchor_updated_at
+
     try:
         rpc_result = await client.rpc(
             "rollback_floor_plan_version_atomic",
-            {
-                "p_target_floor_plan_id": str(target.data["id"]),
-                "p_job_id": str(job_id),
-                "p_user_id": str(user_id),
-                "p_change_summary": f"Rolled back to version {version_number}",
-            },
+            rpc_args,
         ).execute()
     except APIError as e:
         err_code = getattr(e, "code", None)
+        if err_code == "55006":
+            # Round-5 L2: 55006 sources in the rollback path, explicitly
+            # enumerated so future readers don't have to chase:
+            #   (a) round-5 atomic etag check inside save_floor_plan_version
+            #       (wrapper's inner call) — fires when p_expected_updated_at
+            #       doesn't match the current row's updated_at. This is the
+            #       round-5 P1 #1 closure and the common case when if_match
+            #       was supplied.
+            #   (b) R4 frozen-mutation trigger (d8e9f0a1b2c3) — fires when
+            #       any UPDATE targets a row with OLD.is_current=false.
+            #       Can only fire in rollback if restore_floor_plan_relational_
+            #       snapshot touches a frozen row; the wrapper's flip itself
+            #       targets is_current=true only, so this path is indirect.
+            #   (c) Future plpgsql raises that pick 55006 (the class-55 slot
+            #       for "invalid_prerequisite_state"). If you add one, update
+            #       this comment AND ensure the if_match disambiguator below
+            #       still holds.
+            # Disambiguator: etag supplied → (a) dominates → 412 VERSION_STALE.
+            # No etag supplied → (b) or (c) → 403 VERSION_FROZEN.
+            if if_match is not None:
+                raise AppException(
+                    status_code=412,
+                    detail=(
+                        "Floor plan was updated by another editor between "
+                        "your read and this rollback. Reload and reconfirm "
+                        "the rollback target."
+                    ),
+                    error_code="VERSION_STALE",
+                    extra={"received_etag": if_match},
+                )
+            # No etag supplied but 55006 fired — must be the pre-round-5
+            # frozen-row trigger path. Surface as FROZEN for backward compat.
+            raise AppException(
+                status_code=403,
+                detail="Floor plan version is frozen — retry against the current version",
+                error_code="VERSION_FROZEN",
+            )
         if err_code == "42501":
             raise AppException(
                 status_code=403,
@@ -1557,6 +1626,7 @@ async def _create_version(
     user_id: UUID,
     canvas_data: dict,
     change_summary: str,
+    expected_updated_at: str | None = None,
 ) -> dict:
     """Create a new floor plan version AND pin the creating job to it.
 
@@ -1572,20 +1642,38 @@ async def _create_version(
     concurrent writer. We convert to 409 CONCURRENT_EDIT so the client
     retries; the retry re-enters save_canvas, sees the winner's row as
     current, and takes Case 3 (fork) cleanly on top of it.
+
+    Round-5 (INV-2): ``expected_updated_at`` is forwarded to the RPC's
+    ``p_expected_updated_at`` param (migration c9d0e1f2a3b4). When
+    non-None, the RPC's flip UPDATE carries an atomic
+    ``AND updated_at = p_expected_updated_at`` filter — a concurrent
+    writer landing between the Python etag check and this RPC call
+    leaves zero rows to flip, the RPC raises SQLSTATE ``55006``, and we
+    map that to ``412 VERSION_STALE`` below. When None, the original
+    behavior (no etag enforcement) holds — used for first-save-on-floor
+    creation paths where no prior etag exists.
     """
+    rpc_args = {
+        "p_property_id":   str(property_id),
+        "p_floor_number":  floor_number,
+        "p_floor_name":    floor_name,
+        "p_company_id":    str(company_id),
+        "p_job_id":        str(job_id),
+        "p_user_id":       str(user_id),
+        "p_canvas_data":   canvas_data,
+        "p_change_summary": change_summary,
+    }
+    if expected_updated_at is not None:
+        # Only include the new param when the caller actually has an etag
+        # to assert. Omitting preserves the pre-round-5 no-enforcement
+        # behavior via the RPC's DEFAULT NULL and keeps older rollbacks /
+        # first-saves working unchanged.
+        rpc_args["p_expected_updated_at"] = expected_updated_at
+
     try:
         result = await client.rpc(
             "save_floor_plan_version",
-            {
-                "p_property_id":   str(property_id),
-                "p_floor_number":  floor_number,
-                "p_floor_name":    floor_name,
-                "p_company_id":    str(company_id),
-                "p_job_id":        str(job_id),
-                "p_user_id":       str(user_id),
-                "p_canvas_data":   canvas_data,
-                "p_change_summary": change_summary,
-            },
+            rpc_args,
         ).execute()
     except APIError as e:
         err_code = getattr(e, "code", None)
@@ -1597,11 +1685,25 @@ async def _create_version(
                 error_code="CONCURRENT_EDIT",
             )
         if err_code == "55006":
-            # Round-2 follow-on #4 — d8e9f0a1b2c3 frozen-mutation trigger
-            # (SQLSTATE updated from 42501 to 55006 by a7b8c9d0e1f2 so it no
-            # longer collides with the R3 tenant check below). Fires when
-            # any UPDATE targets a row whose is_current was already false.
-            # Clients should retry against the current version.
+            # d8e9f0a1b2c3 frozen-mutation trigger OR round-5 etag-stale
+            # RPC raise (c9d0e1f2a3b4). The two share SQLSTATE by design —
+            # both mean "row is not in the prerequisite state the caller
+            # expected." When the caller supplied an expected_updated_at,
+            # this is almost certainly the etag path; map to VERSION_STALE
+            # so the client surfaces the stale-conflict banner. When no
+            # etag was supplied, the only 55006 source is the frozen-row
+            # trigger — map to VERSION_FROZEN (legacy code path).
+            if expected_updated_at is not None:
+                raise AppException(
+                    status_code=412,
+                    detail=(
+                        "Floor plan was updated by another editor. Reload "
+                        "the page to see the latest state, then re-apply "
+                        "your edits."
+                    ),
+                    error_code="VERSION_STALE",
+                    extra={"received_etag": expected_updated_at},
+                )
             raise AppException(
                 status_code=403,
                 detail="Floor plan version is frozen — retry against the current version",
@@ -1852,7 +1954,10 @@ async def cleanup_floor_plan(
             )
         raise AppException(
             status_code=403,
-            detail="Floor plan was forked by another edit during cleanup — retry against the current version",
+            detail=(
+                "Floor plan was forked by another edit during cleanup — "
+                "retry against the current version"
+            ),
             error_code="VERSION_FROZEN",
         )
 

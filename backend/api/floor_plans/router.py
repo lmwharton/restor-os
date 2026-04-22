@@ -51,13 +51,15 @@ from api.floor_plans.service import (
     save_canvas,
     update_floor_plan,
 )
+from api.shared.database import get_authenticated_client
 from api.shared.dependencies import (
     _get_token,
     get_valid_floor_plan,
     get_valid_job,
     get_valid_property,
+    require_if_match,
+    require_if_match_strict,
 )
-from api.shared.database import get_authenticated_client
 from api.shared.exceptions import AppException
 from api.shared.guards import raise_if_archived
 
@@ -124,10 +126,12 @@ async def update_floor_plan_endpoint(
 ):
     """Update a floor plan (name, floor_number, canvas_data, thumbnail).
 
-    Round 3 (second critical review): forwards the If-Match header for
-    etag optimistic-concurrency protection. Matches the save_canvas
-    endpoint so every floor_plans write path has consistent lost-update
-    semantics.
+    Round 3: forwards the If-Match header for etag optimistic-concurrency
+    protection. Round 5 (Lakshman P2 #2): If-Match is now REQUIRED — missing
+    header returns 428 ETAG_REQUIRED. Round-5 follow-up (Lakshman M1): uses
+    require_if_match_strict, which ALSO rejects `If-Match: *` — this endpoint
+    always targets an existing row, there's no legitimate creation flow to
+    opt out of, and accepting `*` here reopens the default-allow loophole.
     """
     token = _get_token(request)
     return await update_floor_plan(
@@ -137,7 +141,7 @@ async def update_floor_plan_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
-        if_match=request.headers.get("If-Match"),
+        if_match=require_if_match_strict(request),
     )
 
 
@@ -440,7 +444,9 @@ async def update_floor_plan_by_job_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
-        if_match=request.headers.get("If-Match"),
+        # Round-5 follow-up (Lakshman M1): strict variant — rejects
+        # both missing and `*`. Update-by-job is never a creation flow.
+        if_match=require_if_match_strict(request),
     )
 
 
@@ -531,14 +537,17 @@ async def save_canvas_endpoint(
 ):
     """Save canvas changes. Auto-creates, updates, or forks a version depending on state."""
     token = _get_token(request)
-    # Round 3: optional optimistic-concurrency guard via If-Match. Client
-    # sends the etag it received when it READ this floor plan; service
-    # compares to the row's current updated_at. Mismatch → 412 VERSION_STALE
-    # so the client can reload + merge rather than silently overwrite
-    # another user's edits. If the header is absent (older client, or
-    # the very first save on a freshly-created row), the service skips
-    # the check — backward compat during rollout.
-    if_match = request.headers.get("If-Match")
+    # Round 5 (Lakshman P2 #2): If-Match is REQUIRED. Missing → 428
+    # ETAG_REQUIRED. `If-Match: *` is the explicit opt-out for the
+    # first-save-on-a-fresh-row creation flow (no prior etag exists to
+    # assert). Round-5 follow-up (Lakshman M1): this endpoint is the
+    # ONLY one that uses the permissive `require_if_match` (accepts
+    # `*`). Every other mutation route uses `require_if_match_strict`
+    # because they always target an existing row. The distinction
+    # matters: `*` here means "I'm creating v1 on a freshly-ensured
+    # row" — a legitimate state; on update / cleanup / rollback there
+    # is no legitimate `*` semantic so those routes reject it.
+    if_match = require_if_match(request)
     return await save_canvas(
         token=token,
         floor_plan_id=fp["id"],
@@ -564,9 +573,10 @@ async def rollback_version_endpoint(
 ):
     """Rollback: create a new version from a past version's canvas_data.
 
-    Round 3 (second critical review): forwards If-Match for etag
-    protection. A rollback that raced with a save should 412 so the
-    initiator can reconfirm against the updated state.
+    Round 5 (Lakshman P2 #2): If-Match is REQUIRED — missing → 428
+    ETAG_REQUIRED. `If-Match: *` accepted as opt-out marker. The
+    round-3 advisory-only behavior allowed a rollback to race past a
+    concurrent save with no guard; now the precondition is enforced.
     """
     token = _get_token(request)
     return await rollback_version(
@@ -576,7 +586,9 @@ async def rollback_version_endpoint(
         job_id=body.job_id,
         company_id=ctx.company_id,
         user_id=ctx.user_id,
-        if_match=request.headers.get("If-Match"),
+        # Round-5 follow-up (Lakshman M1): strict — rollback always
+        # targets an existing row the caller just read. No `*` opt-out.
+        if_match=require_if_match_strict(request),
     )
 
 
@@ -599,9 +611,10 @@ async def cleanup_endpoint(
 
     No AI — uses Shapely geometric operations. Zero cost.
 
-    Round 3 (second critical review): forwards If-Match for etag
-    protection. Cleanup overwrites canvas_data, so without this a
-    Tech-B cleanup can silently wipe Tech-A's in-flight save.
+    Round 5 (Lakshman P2 #2): If-Match is REQUIRED. Missing → 428
+    ETAG_REQUIRED. Cleanup overwrites canvas_data, so a stale caller
+    without a precondition header could silently wipe another editor's
+    in-flight work — closing that with the required precondition.
     """
     token = _get_token(request)
     return await cleanup_floor_plan(
@@ -611,7 +624,9 @@ async def cleanup_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         client_canvas_data=body.canvas_data,
-        if_match=request.headers.get("If-Match"),
+        # Round-5 follow-up (Lakshman M1): strict — cleanup always
+        # targets an existing sketch. No creation flow here.
+        if_match=require_if_match_strict(request),
     )
 
 
