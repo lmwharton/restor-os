@@ -149,6 +149,53 @@ Backend hardening (Lakshman round-3 findings):
 - **#3** — `backend/scripts/pr10_round2_apply.sql` deleted. Alembic is the single source of truth; the secondary artifact had drifted twice (F1/F2/F3 migrations + follow-on-2 migrations weren't mirrored into the script). Regression guard: `TestApplyScriptDeleted::test_apply_script_does_not_exist`.
 - **#4** — `backend/tests/integration/test_floor_plans_trigger_integration.py` added with 4 live-DB behavior tests: frozen UPDATE raises `55006`, legitimate flip inside `save_floor_plan_version` passes through, `save_floor_plan_version` raises `42501` on JWT/company mismatch, `_compute_wall_sf_for_room` (1-arg) computes correctly for authenticated callers. Tests skip cleanly when local Supabase isn't running (`supabase start`).
 
+**PR10 Round 5 — ETag contract closure (2026-04-22)**
+
+Lakshman's round-4 review flagged 6 items on the round-3 etag/If-Match surface — 2×P1, 2×P2, 2×P3. All closed in one batch. The theme is the one the lessons doc now calls out explicitly (pattern #19): **fix at invariant scope, not code-location scope**. Round-3 shipped the etag contract across 3 layers but enforcement was only end-to-end for the Case-2 save path — every other write path had a TOCTOU hole of some shape. Round 5 closes them uniformly by declaring the 4 invariants up front and pinning each with tests:
+
+- **INV-1.** Every mutating request carries an `If-Match` header or the explicit creation marker `If-Match: *`.
+- **INV-2.** Every write path enforces the etag atomically at the SQL layer (`.eq("updated_at", …)` on direct UPDATEs OR `p_expected_updated_at` threaded into RPCs).
+- **INV-3.** Every error path that leads to `window.location.reload()` persists in-flight work to a conflict-draft localStorage key keyed on the post-time source floor id, and offers a restore banner on next load.
+- **INV-4.** At most one in-flight save per target at any moment (overlap guard + deferred replay).
+
+1 new alembic migration. 21 new pytest cases on top of round-4's 3. Zero regressions. The 4 invariants are now grep-pinnable so the next write path added to `floor_plans` cannot silently reintroduce any of the four holes.
+
+Fixes landed (each closes a Lakshman finding):
+
+- **P1 #1 — ETag now threaded into version-creating RPCs** (migration `c9d0e1f2a3b4`). `save_floor_plan_version` + `rollback_floor_plan_version_atomic` both accept `p_expected_updated_at TIMESTAMPTZ DEFAULT NULL`. When non-NULL, the flip UPDATE inside `save_floor_plan_version` carries `AND updated_at = p_expected_updated_at` — zero rows flipped with a current row still present ⇒ raise `55006 VERSION_STALE`, Python catch maps to 412. Discriminates stale-etag from first-save-on-this-floor via a follow-up `PERFORM … IF FOUND` so the creation path keeps working. Downgrade DROPs the new 9-arg / 5-arg overloads first (Postgres treats different arities as distinct objects), then recreates the pre-change 8-arg / 4-arg forms — symmetric per lesson #10. Closes INV-2 end-to-end for Case 3 fork + rollback.
+- **P1 #2 — Conflict-draft persistence on VERSION_STALE**. Before `window.location.reload()`, the shared `handleStaleConflictIfPresent` helper writes `{ canvasData, rejectedAt, sourceFloorId }` to `canvas-conflict-draft:${jobId}:${sourceFloorId}`. The source floor id is captured BEFORE the await (via `postTimeSourceFloorId` in autosave, `targetFloorIdForConflict` in cross-floor create) so the draft routes to the floor the save was AGAINST, not whatever `activeFloorRef.current` happens to be when the error lands. A mount effect scans `canvas-conflict-draft:${jobId}:*` on next load, picks the most recent draft, surfaces a restore banner with `Restore my edits` / `Discard` CTAs. No auto-apply — user reviews before overwriting. Closes INV-3.
+- **P2 #1 — Autosave in-flight guard + deferred replay**. Module-scoped `_canvasSaveInFlight` + `_canvasDeferredDuringSave`. If `handleChange` fires while a save is in-flight, it updates `lastCanvasRef` + sets the deferred flag + returns without POSTing. In the save's `finally` block, if the deferred flag is set, `queueMicrotask(() => handleChangeRef.current(deferred.data))` replays — the microtask scheduling ensures React's state updates (`reconcileSavedVersion` → fresh etag in cache) commit before the replay reads the etag. Closes INV-4 / self-412 race on slow networks.
+- **P2 #2 — `If-Match` now REQUIRED on every mutation endpoint**. New `require_if_match(request)` helper in `api/shared/dependencies.py`: missing header → 428 `ETAG_REQUIRED`; `If-Match: *` → returns `None` (creation opt-out, standard HTTP); otherwise returns the etag. Wired into all 5 mutation routes (save_canvas, update_floor_plan property+by-job, rollback, cleanup). Frontend `saveCanvasVersion` sends `If-Match: *` when no cached etag so first-saves don't 428. The stale `useSaveCanvas` hook (zero consumers, would have bypassed the precondition if re-wired) is deleted. Closes INV-1.
+- **P3 #5 — Rollback etag now transactional** (same migration as P1 #1). `rollback_floor_plan_version_atomic` forwards `p_expected_updated_at` to its inner `save_floor_plan_version` call. Closes the Opus/Codex split by picking option 2 (thread) rather than option 1 (document-the-asymmetry). Rollback docstring rewritten to reflect the new symmetry.
+- **P3 #6 — `FloorPlan.etag` narrowed from `string | null | undefined` to `string | undefined`** + new exported `hasEtag()` type guard in `lib/types.ts`. Tri-state at contract boundaries was a smell; the type guard forces explicit handling for any future consumer that wants safe narrowing.
+
+Non-code hygiene:
+
+- **`docs/pr-review-lessons.md`** rebuilt as a committed first-class doc (was "local working notes" — got wiped in a parallel-session cleanup). Now includes 21 meta-patterns across rounds 1-4, the INV-1/2/3/4 discipline, pre-PR grep checklist with round-4 additions, per-round honesty ledger.
+
+**PR10 Round-5 follow-up — Lakshman's M1/M2/M3 closure (2026-04-22)**
+
+Lakshman's round-5 review of the round-5 batch itself surfaced one HIGH (M1) + two MEDIUMs (M2, M3) + two LOWs (L1, L2). All 6 closed in this pass — the HIGH was a narrower variant of the original P2 #2 (wildcard opt-out on endpoints with no creation flow), the MEDIUMs closed correctness-adjacent cleanups and filled the integration-test gap.
+
+- **M1 (HIGH) — `If-Match: *` wildcard now rejected on endpoints with no creation flow.** Split `require_if_match` into two helpers in `api/shared/dependencies.py`:
+  - `require_if_match(request) -> str | None` — permissive. Missing → 428. `*` → returns `None` (opt-out for first-version creation). Used ONLY on `save_canvas_endpoint`.
+  - `require_if_match_strict(request) -> str` — strict. Missing OR `*` → 428. Used on `update_floor_plan_endpoint` (property + by-job), `rollback_version_endpoint`, `cleanup_endpoint`. These all target existing rows; `*` on them was a default-allow loophole disguised as the round-5 closure.
+
+  Frontend `saveCanvasVersion` helper's type tightened from `etag?: string | null` to `etag: string` (required). Dropped the silent `opts.etag ?? "*"` fallback. Each save-site caller now narrows via `hasEtag(fp)` — pass the concrete etag when present, or defer + invalidate query cache when absent (autosave + 409-recovery paths). First-save / cross-floor-create paths fall back to `"*"` explicitly with a code comment naming the scenario. Cache-miss windows no longer silently bypass the precondition.
+
+- **M2 (MEDIUM) — Migration now DROPs prior overloads before CREATE OR REPLACE.** Postgres treats functions with different arities as distinct objects. The round-5 migration originally `CREATE OR REPLACE`d the 9-arg save + 5-arg rollback without dropping the 8-arg / 4-arg predecessors; both overloads coexisted. Runtime dispatch happened to be correct (Postgres picks the exact-match arity) but a future migration editing `save_floor_plan_version` would see one function and patch it, silently drifting the other — lesson #10 shape. Migration `c9d0e1f2a3b4` now opens with `DROP FUNCTION IF EXISTS save_floor_plan_version(UUID, INTEGER, TEXT, UUID, UUID, UUID, JSONB, TEXT)` + same for the 4-arg rollback, so only the new signatures exist after upgrade. The now-incorrect inline comment that claimed `CREATE OR REPLACE` replaced the old form (L1) is rewritten to describe the DROP-then-CREATE pattern.
+
+- **M3 (MEDIUM) — Integration test for the atomic race.** `TestRound5AtomicEtagRace` added to `backend/tests/integration/test_floor_plans_trigger_integration.py` with 3 live-DB contracts:
+  - `test_stale_expected_updated_at_raises_55006` — seeds v1 at T0, admin-client commits v2 at T1, authenticated client calls `save_floor_plan_version` with `p_expected_updated_at=T0`, asserts `APIError.code == "55006"`. End-to-end validation that the atomic flip filter actually fires through PostgREST's TIMESTAMPTZ round-trip.
+  - `test_matching_expected_updated_at_succeeds` — happy path; caller's view matches current, v2 created successfully.
+  - `test_first_save_with_expected_updated_at_succeeds` — discriminator contract: bogus `p_expected_updated_at` against a floor with NO current row inserts cleanly (the `PERFORM 1 … WHERE is_current=true; IF FOUND THEN raise` follow-up distinguishes stale-etag from first-save).
+
+  Skips cleanly when local Supabase isn't reachable, matching the round-3 file's convention. Lakshman noted separately that CI doesn't exist at all — orthogonal to this PR; tracked as a follow-up.
+
+- **L2 — Enumerate 55006 sources in `rollback_version` catch.** Explicit comment in `service.py` naming the three 55006 raise paths (round-5 atomic etag check, R4 frozen trigger, future plpgsql raises) so the next reader can cross-check the disambiguator without chasing source across migrations.
+
+**Round-5 follow-up totals:** 0 new migrations (edited the existing `c9d0e1f2a3b4`), 3 new integration tests + 6 new unit tests for the split helper + DROP guards — all green locally. Zero regressions on the 27-test round-5 suite or the 188-test non-TestClient sweep.
+
 ---
 
 
@@ -1478,6 +1525,63 @@ Integration tests (live-DB, skip without Supabase):
 - `test_passing_foreign_company_id_raises_42501` — cross-tenant RPC rejection (implemented)
 - `test_authenticated_call_computes_wall_sf` — 1-arg `_compute_wall_sf_for_room` correctness (implemented)
 
+**Phase 1 — PR10 Round 5 (ETag contract closure, 2026-04-22):**
+
+All 21 tests live in `TestRound5EtagContractInvariants` in `backend/tests/test_floor_plans.py`. Grouped by the invariant they pin.
+
+INV-2 (SQL-level atomic enforcement — migration `c9d0e1f2a3b4`):
+- `test_save_rpc_takes_p_expected_updated_at` — new param present on `save_floor_plan_version` with `DEFAULT NULL` for backward compat (implemented)
+- `test_rollback_rpc_takes_p_expected_updated_at` — same param on `rollback_floor_plan_version_atomic`, forwarded through to save's inner call (implemented)
+- `test_save_rpc_enforces_etag_atomically_on_flip` — flip UPDATE carries `AND updated_at = p_expected_updated_at` — NOT a separate check-then-write (implemented)
+- `test_save_rpc_raises_55006_on_etag_mismatch` — stale-etag rejection uses SQLSTATE 55006 so Python catches disambiguate from 42501/23505/23502/P0002 (implemented)
+- `test_save_rpc_disambiguates_stale_vs_first_save` — zero-rows-flipped follow-up `PERFORM … IF FOUND` distinguishes "stale etag on existing current row" from "no current row yet, first save" (implemented)
+- `test_migration_has_symmetric_downgrade` — DOWNGRADE drops the new 9-arg/5-arg overloads BEFORE recreating pre-change 8-arg/4-arg forms (lesson #10 regression guard) (implemented)
+- `test_create_version_accepts_expected_updated_at` — Python `_create_version` signature takes the param, `DEFAULT None` for creation paths (implemented)
+- `test_create_version_forwards_to_rpc` — `_create_version` builds `p_expected_updated_at` into the RPC payload (implemented)
+- `test_create_version_maps_55006_to_412_when_etag_present` — 55006 handler branches on `expected_updated_at is not None` → 412 VERSION_STALE (etag path) vs 403 VERSION_FROZEN (legacy trigger path) (implemented)
+- `test_save_canvas_passes_expected_for_rpc` — save_canvas Case 1 + Case 3 both forward `expected_for_rpc` (sibling-miss regression guard) (implemented)
+- `test_rollback_version_passes_expected_updated_at_to_rpc` — closes Lakshman P3 #5 via option 2 (thread) not option 1 (document) (implemented)
+
+INV-1 (`If-Match` required — helper + route wiring):
+- `test_require_if_match_helper_exists` — `api.shared.dependencies.require_if_match` callable (implemented)
+- `test_require_if_match_raises_428_on_missing` — missing header → `AppException(status_code=428, error_code="ETAG_REQUIRED")` (implemented, functional)
+- `test_require_if_match_wildcard_returns_none` — `If-Match: *` returns None (opt-out for creation, standard HTTP) (implemented)
+- `test_require_if_match_returns_header_value` — real etag pass-through (implemented)
+- `test_all_mutation_routes_use_require_if_match` — all 5 mutation endpoints (save/update×2/rollback/cleanup) use the helper; the old `request.headers.get("If-Match")` silent-skip pattern must NOT appear anywhere (sibling-miss regression guard) (implemented)
+- `test_dead_use_save_canvas_hook_removed` — `useSaveCanvas` hook stays deleted (had zero consumers, was the surface that would re-open the precondition bypass) (implemented)
+
+INV-3 + INV-4 (frontend grep-shape pins):
+- `test_in_flight_guard_present_on_handle_change` — module-scoped `_canvasSaveInFlight` + `_canvasDeferredDuringSave` flags, `queueMicrotask(…)` replay in `finally` block (implemented)
+- `test_conflict_draft_persisted_on_version_stale` — `canvas-conflict-draft:` localStorage key written on 412 BEFORE reload; helper accepts `rejectedCanvas` + `jobId` (implemented)
+- `test_conflict_draft_restore_banner_present` — `setConflictDraft` state + Restore / Discard CTAs exist; no auto-apply (implemented)
+- `test_source_floor_captured_at_post_time` — `postTimeSourceFloorId` variable captured BEFORE the await; conflict drafts keyed on the floor the save was AGAINST, not `activeFloorRef.current` which can move during the POST (implemented)
+
+Two round-3/4 tests updated to assert the new `require_if_match` pattern instead of the old silent-skip:
+- `TestSaveCanvasEtagIfMatchCheck::test_router_reads_if_match_header` — now asserts `require_if_match(request)` in `save_canvas_endpoint` body
+- `TestEtagExtendedToAllMutationEndpoints::test_all_mutation_endpoints_forward_if_match_header` — same pattern across all 5 routes
+
+Four round-2 `TestUseJobsHookSignatures::test_use_save_canvas_*` tests collapsed into a single regression guard `test_use_save_canvas_hook_stays_deleted` since the hook no longer exists.
+
+Manual verify on mobile (multi-user race):
+- Open the same job on two devices. Tech A draws + saves. Tech B draws against stale view + saves → 412 banner fires, draft persists. Tech B clicks Reload. Post-reload banner asks "Restore my edits?" — clicking Restore re-applies B's room on top of A's latest, save succeeds (fresh etag in cache). Clicking Discard drops the draft cleanly.
+- Missing-header probe: `curl -X POST /v1/floor-plans/{id}/versions -d '{…}'` without If-Match → 428 `ETAG_REQUIRED`.
+- Wildcard probe: same curl with `-H 'If-Match: *'` → save succeeds (creation-path opt-out, save_canvas only).
+- Round-5 follow-up (M1) wildcard probe on strict routes: `curl -X PATCH /v1/properties/{pid}/floor-plans/{fpid} -H 'If-Match: *' …` → 428 `ETAG_REQUIRED`. Same for DELETE-adjacent / cleanup / rollback — no endpoint with an existing-row target accepts the wildcard.
+- Slow-network simulation: Chrome DevTools → Network → Slow 3G. Draw and hold for rapid edits. Autosave overlap → second save defers via in-flight flag, replays after first response commits — no self-412.
+
+Round-5 follow-up tests (all in `TestRound5EtagContractInvariants`):
+- `test_require_if_match_strict_helper_exists` — `api.shared.dependencies.require_if_match_strict` callable (implemented)
+- `test_require_if_match_strict_raises_428_on_missing` — missing header → 428 `ETAG_REQUIRED` (implemented)
+- `test_require_if_match_strict_rejects_wildcard` — `If-Match: *` → 428 `ETAG_REQUIRED` (the M1 core guard) (implemented)
+- `test_require_if_match_strict_returns_concrete_etag` — real etag pass-through (implemented)
+- `test_strict_helper_used_on_non_creation_routes` — update/cleanup/rollback/update-by-job use the strict variant; save_canvas uses the permissive variant (per-route pin) (implemented)
+- `test_migration_drops_old_overloads_before_replacing` — M2 regression guard: UPGRADE_SQL must DROP both 8-arg save + 4-arg rollback forms BEFORE the new signatures so only the new overloads exist after upgrade (implemented)
+
+Round-5 follow-up integration tests (live-DB, skip without Supabase):
+- `test_stale_expected_updated_at_raises_55006` — end-to-end race: seed v1 at T0, admin-commit v2 at T1, authenticated RPC with `p_expected_updated_at=T0` raises 55006 (implemented)
+- `test_matching_expected_updated_at_succeeds` — happy path, v2 created when etag matches current (implemented)
+- `test_first_save_with_expected_updated_at_succeeds` — discriminator: bogus etag + no current row → insert (implemented)
+
 **Phase 2:**
 - `test_pin_color_boundaries` — green/amber/red at dry_standard boundaries
 - `test_pin_color_at_exact_threshold` — reading = dry_standard returns green
@@ -1784,6 +1888,32 @@ Field-tool concurrent-editing scenario now fully covered (all 4 mutation paths):
 - **Stale cleanup overwrites in-flight save** — now caught by etag check in `cleanup_floor_plan`.
 - **Rollback races with concurrent save** — now caught by etag check in `rollback_version`.
 - **PATCH on stale metadata** — now caught by etag check in `update_floor_plan`.
+
+**PR10 Round 5 (ETag contract closure, 2026-04-22):**
+
+Closes all 6 findings from Lakshman's round-4 review (2×P1, 2×P2, 2×P3). The theme from the lessons doc: *fix at invariant scope, not code-location scope*. Round-3 shipped the contract across 3 layers but only the Case-2 write path was end-to-end; every other write path had a TOCTOU hole of some shape. Round 5 closes them by declaring 4 invariants up front and pinning each with tests.
+
+Migration + backend:
+- **Etag atomicity via RPC param** — new migration `c9d0e1f2a3b4` adds `p_expected_updated_at TIMESTAMPTZ DEFAULT NULL` to both `save_floor_plan_version` (Case 3 fork path) and `rollback_floor_plan_version_atomic`. The flip UPDATE inside `save_floor_plan_version` carries `AND updated_at = p_expected_updated_at` — zero rows flipped with a current row present ⇒ raise `55006 VERSION_STALE`, mapped in Python to 412. Discriminates stale-etag from first-save via follow-up `PERFORM … IF FOUND`. Downgrade DROPs the new 9-arg/5-arg overloads first (different arity = different Postgres object), then recreates pre-change forms — symmetric per lesson #10. Closes Lakshman P1 #1 + P3 #5 in one change (option 2 in the Opus/Codex split). 11 tests.
+- **`If-Match` now required** — new `api/shared/dependencies.py::require_if_match()` helper raises 428 `ETAG_REQUIRED` on missing header; returns `None` on the explicit `If-Match: *` opt-out marker (standard HTTP for "any representation"); returns the header value otherwise. Wired into all 5 mutation endpoints (`save_canvas_endpoint`, `update_floor_plan_endpoint`, `update_floor_plan_by_job_endpoint`, `rollback_version_endpoint`, `cleanup_endpoint`). The silent-skip `request.headers.get("If-Match")` pattern is gone from every route. 6 tests + sibling-miss grep pin.
+
+Frontend:
+- **Conflict-draft persistence on 412** — `handleStaleConflictIfPresent` helper writes the rejected canvas to `canvas-conflict-draft:${jobId}:${sourceFloorId}` localStorage key BEFORE the reload nukes Konva state. `sourceFloorId` is captured BEFORE the await (`postTimeSourceFloorId` for autosave, `targetFloorIdForConflict` for cross-floor) so the draft routes to the floor the save was AGAINST, not whatever `activeFloorRef` moved to. A mount effect scans the `canvas-conflict-draft:${jobId}:*` prefix on next load, picks the most recent, surfaces a Restore / Discard banner — no auto-apply. Restore re-routes through `handleChange` (full save pipeline with fresh etag). 4 tests.
+- **Autosave in-flight guard** — module-scoped `_canvasSaveInFlight` + `_canvasDeferredDuringSave` flags. If `handleChange` fires while a save is in-flight, it updates `lastCanvasRef` + sets the deferred flag + returns without POSTing. In the save's `finally`, `queueMicrotask(() => handleChangeRef.current(deferred.data))` replays — microtask scheduling ensures `reconcileSavedVersion`'s fresh etag is in cache before the replay reads it. Prevents self-412 on slow networks where POST RTT > 2s debounce. Part of the 4 INV-3/4 tests above.
+- **`If-Match: *` fallback for first-saves** — `saveCanvasVersion` sends the wildcard when no cached etag is available, so the backend's `require_if_match` doesn't 428 a legitimate creation flow.
+- **`FloorPlan.etag` narrowed** from `string | null | undefined` to `string | undefined`; new exported `hasEtag(fp)` type guard forces explicit narrowing at consumer call sites. Closes P3 #6.
+- **Dead `useSaveCanvas` hook deleted** — zero consumers, would have bypassed require-If-Match if re-wired. Test `test_use_save_canvas_hook_stays_deleted` guards against it coming back.
+
+Lessons doc:
+- **`docs/pr-review-lessons.md`** rebuilt as first-class committed doc (previous "local working notes" version was lost to a parallel-session cleanup). 21 meta-patterns across rounds 1-4 + INV-1/2/3/4 discipline + pre-PR grep checklist with round-4 additions. Any future cross-cutting contract must be preceded by a written invariant list.
+
+**Round-5 totals:** 1 new Alembic migration, 21 new pytest cases (plus 2 round-3/4 tests updated + 4 round-2 tests collapsed into 1 regression guard) — all green. Zero regressions. 214 tests total in the round-2+3+4+5 suite.
+
+Field-tool concurrent-editing matrix (what round 5 adds over round 3):
+- **Writer-A lands Case-3 fork during Writer-B's Python etag check** — round 3's Python check passed (B's view was "fresh" when B read). Round 5 catches it: `save_floor_plan_version` rejects B's RPC because the current row's `updated_at` no longer matches B's expected. 412 VERSION_STALE instead of silent demotion of A's work to frozen history.
+- **Single-user rapid-edit on slow network** — round 3 could 412 the user against their own in-flight save. Round 5 serializes via in-flight guard; the deferred second save replays with the fresh etag after the first commits.
+- **User hits 412 and reloads** — round 3 banner said "re-apply your edits" but `window.location.reload()` had nuked Konva state — the banner was lying. Round 5 persists the rejected canvas to localStorage before the reload and surfaces a restore banner on next load.
+- **Missing-header integrations (Postman, external scripts, legacy clients)** — round 3 default-allowed them (last-write-wins). Round 5 rejects with 428 `ETAG_REQUIRED`. Standard HTTP opt-out via `If-Match: *` for creation flows.
 
 Product-intent decision (carried over, still valid):
 - **R2** — linked recon shares mitigation's property-anchored data. Reviewer accepted this in round 3 with a follow-up ask for a PR-body tweak on the C6 bullet and a cross-reference comment in COPY_FIELDS.
