@@ -1,8 +1,9 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
+from api.shared.etag import etag_from_updated_at
 from api.shared.validators import validate_json_size
 
 
@@ -57,7 +58,13 @@ class FloorPlanUpdate(BaseModel):
 
 class FloorPlanResponse(BaseModel):
     """Unified floor plan response — each row IS a versioned snapshot after
-    the container/versions merge (see Alembic e1a7c9b30201)."""
+    the container/versions merge (see Alembic e1a7c9b30201).
+
+    Round 3: exposes ``etag`` (derived from ``updated_at``) so clients can
+    send it back as ``If-Match`` on saves. Backend rejects writes whose
+    etag is stale with 412 VERSION_STALE, preventing silent lost-updates
+    when two users edit concurrently.
+    """
 
     id: UUID
     property_id: UUID
@@ -73,6 +80,20 @@ class FloorPlanResponse(BaseModel):
     thumbnail_url: str | None = None
     created_at: datetime
     updated_at: datetime
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def etag(self) -> str | None:
+        """Opaque version tag for conditional writes.
+
+        Round 3 (second critical review): previously this coerced ``None``
+        to ``""``, which broke the frontend's truthy-check (``opts.etag ?
+        headers : undefined``) — an empty string is falsy, so the If-Match
+        header was silently skipped. Return ``None`` directly so the wire
+        JSON is ``"etag": null`` and the frontend can reason about
+        "missing etag" explicitly.
+        """
+        return etag_from_updated_at(self.updated_at)
 
 
 class FloorPlanListResponse(BaseModel):

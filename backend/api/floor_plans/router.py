@@ -122,7 +122,13 @@ async def update_floor_plan_endpoint(
     prop: dict = Depends(get_valid_property),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Update a floor plan (name, floor_number, canvas_data, thumbnail)."""
+    """Update a floor plan (name, floor_number, canvas_data, thumbnail).
+
+    Round 3 (second critical review): forwards the If-Match header for
+    etag optimistic-concurrency protection. Matches the save_canvas
+    endpoint so every floor_plans write path has consistent lost-update
+    semantics.
+    """
     token = _get_token(request)
     return await update_floor_plan(
         token=token,
@@ -131,6 +137,7 @@ async def update_floor_plan_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
+        if_match=request.headers.get("If-Match"),
     )
 
 
@@ -199,10 +206,9 @@ async def create_floor_plan_by_job_endpoint(
     raise_if_archived(job)
 
     token = _get_token(request)
-    property_id = job.get("property_id")
     client = await get_authenticated_client(token)
 
-    # R9 (round 2): atomic auto-link via the ensure_job_property RPC
+    # Round 3: atomic auto-link via the ensure_job_property RPC
     # (migration e9f0a1b2c3d4). The previous read→INSERT→UPDATE sequence
     # raced under concurrent first-saves (mobile double-tap, two tabs),
     # producing orphan properties and mis-pinned jobs. The RPC takes
@@ -210,16 +216,13 @@ async def create_floor_plan_by_job_endpoint(
     # serialize, idempotently returns an already-set property_id on retry,
     # and deduplicates to an existing same-address property when one
     # exists on the caller's company.
-    if not property_id:
-        # Round-2 follow-on #5: the `ensure_job_property` RPC's FOR UPDATE
-        # serializes concurrent callers on the SAME job. But two DIFFERENT
-        # jobs at the same address can both race past their respective
-        # FOR UPDATE locks and both try to INSERT — the partial unique
-        # address index (R9) rejects the loser with 23505. On retry the
-        # loser's SELECT finds the winner's row and reuses it (fast path).
-        # Without this retry the loser surfaces as a bare 500; with it, the
-        # caller's request just takes a few ms longer.
-        async def _invoke_ensure():
+    #
+    # Round-2 follow-on #5: retry once on 23505 (two DIFFERENT jobs
+    # racing at the same address past their per-job FOR UPDATE locks,
+    # losing against the partial unique address index). The retry lands
+    # in the RPC's idempotent fast path and returns the winner's row.
+    if not job.get("property_id"):
+        async def _invoke_ensure_property():
             r = await client.rpc(
                 "ensure_job_property",
                 {"p_job_id": str(job["id"])},
@@ -230,23 +233,51 @@ async def create_floor_plan_by_job_endpoint(
             return val
 
         try:
-            property_id = await _invoke_ensure()
+            property_id = await _invoke_ensure_property()
         except APIError as e:
-            if getattr(e, "code", None) == "23505":
-                # Same-address race lost — retry once. The winner's row is
-                # now visible; the helper's SELECT will return it.
+            err_code = getattr(e, "code", None)
+            if err_code == "23505":
                 try:
-                    property_id = await _invoke_ensure()
+                    property_id = await _invoke_ensure_property()
                 except APIError as retry_err:
-                    # Two-back-to-back 23505s means concurrent writers are
-                    # in a pathological loop. Surface as 409 so client retries.
-                    if getattr(retry_err, "code", None) == "23505":
+                    retry_code = getattr(retry_err, "code", None)
+                    if retry_code == "23505":
                         raise AppException(
                             status_code=409,
                             detail="Concurrent property create — retry",
                             error_code="CONCURRENT_EDIT",
                         )
+                    if retry_code == "42501":
+                        raise AppException(
+                            status_code=403,
+                            detail="Cannot resolve property for this job",
+                            error_code="JOB_NOT_MUTABLE",
+                        )
+                    if retry_code == "P0002":
+                        raise AppException(
+                            status_code=404,
+                            detail="Job not accessible",
+                            error_code="JOB_NOT_FOUND",
+                        )
                     raise
+            # Round 3 (post-review): mirror the ensure_job_floor_plan error
+            # mapping below. The sibling RPC raises the same 42501 (no JWT
+            # company) and P0002 (job not found) codes — leaving them as
+            # bare re-raises propagated as opaque 500s, so a legacy job
+            # without JWT company would confuse the caller. Same codes →
+            # same mapped errors, same shape.
+            elif err_code == "42501":
+                raise AppException(
+                    status_code=403,
+                    detail="Cannot resolve property for this job",
+                    error_code="JOB_NOT_MUTABLE",
+                )
+            elif err_code == "P0002":
+                raise AppException(
+                    status_code=404,
+                    detail="Job not accessible",
+                    error_code="JOB_NOT_FOUND",
+                )
             else:
                 raise
         if not property_id:
@@ -255,39 +286,116 @@ async def create_floor_plan_by_job_endpoint(
                 detail="ensure_job_property returned no property id",
                 error_code="DB_ERROR",
             )
-        # Imports already available at module level; no more inline imports below.
 
-    floor_plan = await create_floor_plan(
-        token=token,
-        property_id=property_id,
-        company_id=ctx.company_id,
-        user_id=ctx.user_id,
-        body=body,
-        job_id=job["id"],
-    )
+    # Round 3: idempotent floor-plan create via ensure_job_floor_plan RPC
+    # (migration b8c9d0e1f2a3). Replaces the old try-create / catch-409 /
+    # pick-plans[0] fallback — that pattern silently picked the "wrong"
+    # existing floor plan on race, and the round-3 reviewer flagged the
+    # fallback branch as regressing the R12 cache reconciliation fix.
+    #
+    # The RPC runs "return existing or create new" inside one plpgsql
+    # function with FOR UPDATE on the jobs row. Both racing callers get
+    # the same floor_plan row back. No 409 to catch.
+    #
+    # Retry-once on 23505: if two DIFFERENT jobs on the same property
+    # race past their FOR UPDATE locks on the jobs table, the partial
+    # unique index idx_floor_plans_current_unique catches the loser at
+    # INSERT time. The retry lands in the RPC's same-floor-reuse branch
+    # and returns the winner's row.
+    async def _invoke_ensure_floor_plan():
+        r = await client.rpc(
+            "ensure_job_floor_plan",
+            {
+                "p_job_id": str(job["id"]),
+                "p_floor_number": body.floor_number,
+                "p_floor_name": body.floor_name,
+                "p_user_id": str(ctx.user_id),
+            },
+        ).execute()
+        val = r.data
+        if isinstance(val, list):
+            val = val[0] if val else None
+        return val
 
-    # Pin the creating job to this v1 shell. Without this, the next save would
-    # see job.floor_plan_id=NULL, fall into Case 1, and fork v2 immediately.
-    # Non-fatal if it fails: the floor plan exists with created_by_job_id stamped,
-    # so a follow-up save would still hit Case 2 once the pin lands. We log + return
-    # so the caller doesn't 500 on a pin failure.
-    # Round-2 follow-on #7: scope the pin UPDATE by company_id too — matches the
-    # belt-and-suspenders pattern of service.py's update_floor_plan path and
-    # removes the silent trust of the embedded get_valid_job dep.
-    try:
-        await (
-            client.table("jobs")
-            .update({"floor_plan_id": floor_plan["id"]})
-            .eq("id", str(job["id"]))
-            .eq("company_id", str(ctx.company_id))
-            .execute()
+    # Round 3 (post-review) — MEDIUM #4: the RPC now raises distinct
+    # SQLSTATEs per prerequisite state so the catch blocks below can
+    # disambiguate (42501 = no JWT company, 55006 = archived/frozen,
+    # 23502 = null property). Same mapping is used on first call AND
+    # on retry — the previous retry handler caught only 23505 and
+    # bare-raised 42501/P0002, which FastAPI then translated to opaque
+    # 500s. Factored into a shared helper so retry path can't drift.
+    def _map_ensure_floor_plan_error(api_err: APIError) -> AppException:
+        code = getattr(api_err, "code", None)
+        if code == "23505":
+            return AppException(
+                status_code=409,
+                detail="Concurrent floor plan create — retry",
+                error_code="CONCURRENT_EDIT",
+            )
+        if code == "42501":
+            # Caller identity issue — JWT didn't resolve to a company.
+            return AppException(
+                status_code=403,
+                detail="Cannot create floor plan: caller has no company",
+                error_code="JOB_NOT_MUTABLE",
+            )
+        if code == "55006":
+            # Row / job not in a mutable state (archived job). Same
+            # SQLSTATE as the frozen-version trigger, which matches
+            # the semantic: the precondition for mutation isn't met.
+            return AppException(
+                status_code=403,
+                detail="Cannot create floor plan for an archived job",
+                error_code="JOB_ARCHIVED",
+            )
+        if code == "23502":
+            # Required prerequisite missing (job has no property_id).
+            # Surface as 409 because the caller can self-heal by first
+            # calling ensure_job_property to auto-link; a 400 would
+            # suggest malformed input when the input was fine.
+            return AppException(
+                status_code=409,
+                detail="Job has no property — link a property first",
+                error_code="JOB_NO_PROPERTY",
+            )
+        if code == "P0002":
+            return AppException(
+                status_code=404,
+                detail="Job not accessible",
+                error_code="JOB_NOT_FOUND",
+            )
+        logger.error(
+            "ensure_job_floor_plan RPC failed: job=%s error=%s code=%s",
+            job["id"], api_err.message, code,
         )
+        return AppException(
+            status_code=500,
+            detail=f"Failed to create floor plan: {api_err.message}",
+            error_code="DB_ERROR",
+        )
+
+    try:
+        floor_plan = await _invoke_ensure_floor_plan()
     except APIError as e:
-        logger.warning(
-            "Failed to pin job %s to new floor plan %s: %s. Auto-Main UX may show null pin until next save.",
-            job["id"],
-            floor_plan["id"],
-            e.message,
+        err_code = getattr(e, "code", None)
+        if err_code == "23505":
+            # Same-floor-number race lost — retry once against the
+            # now-visible winner row. RPC's reuse branch picks it up.
+            # Any APIError on retry (even non-23505) goes through the
+            # same mapper so JWT rotations / job archiving mid-retry
+            # surface as structured 403/404 instead of opaque 500s.
+            try:
+                floor_plan = await _invoke_ensure_floor_plan()
+            except APIError as retry_err:
+                raise _map_ensure_floor_plan_error(retry_err)
+        else:
+            raise _map_ensure_floor_plan_error(e)
+
+    if not floor_plan:
+        raise AppException(
+            status_code=500,
+            detail="ensure_job_floor_plan returned no row",
+            error_code="DB_ERROR",
         )
 
     return floor_plan
@@ -332,6 +440,7 @@ async def update_floor_plan_by_job_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
+        if_match=request.headers.get("If-Match"),
     )
 
 
@@ -422,6 +531,14 @@ async def save_canvas_endpoint(
 ):
     """Save canvas changes. Auto-creates, updates, or forks a version depending on state."""
     token = _get_token(request)
+    # Round 3: optional optimistic-concurrency guard via If-Match. Client
+    # sends the etag it received when it READ this floor plan; service
+    # compares to the row's current updated_at. Mismatch → 412 VERSION_STALE
+    # so the client can reload + merge rather than silently overwrite
+    # another user's edits. If the header is absent (older client, or
+    # the very first save on a freshly-created row), the service skips
+    # the check — backward compat during rollout.
+    if_match = request.headers.get("If-Match")
     return await save_canvas(
         token=token,
         floor_plan_id=fp["id"],
@@ -430,6 +547,7 @@ async def save_canvas_endpoint(
         user_id=ctx.user_id,
         canvas_data=body.canvas_data,
         change_summary=body.change_summary,
+        if_match=if_match,
     )
 
 
@@ -444,7 +562,12 @@ async def rollback_version_endpoint(
     fp: dict = Depends(get_valid_floor_plan),
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Rollback: create a new version from a past version's canvas_data."""
+    """Rollback: create a new version from a past version's canvas_data.
+
+    Round 3 (second critical review): forwards If-Match for etag
+    protection. A rollback that raced with a save should 412 so the
+    initiator can reconfirm against the updated state.
+    """
     token = _get_token(request)
     return await rollback_version(
         token=token,
@@ -453,6 +576,7 @@ async def rollback_version_endpoint(
         job_id=body.job_id,
         company_id=ctx.company_id,
         user_id=ctx.user_id,
+        if_match=request.headers.get("If-Match"),
     )
 
 
@@ -474,6 +598,10 @@ async def cleanup_endpoint(
     """Deterministic sketch cleanup — straighten walls, align corners, snap dimensions.
 
     No AI — uses Shapely geometric operations. Zero cost.
+
+    Round 3 (second critical review): forwards If-Match for etag
+    protection. Cleanup overwrites canvas_data, so without this a
+    Tech-B cleanup can silently wipe Tech-A's in-flight save.
     """
     token = _get_token(request)
     return await cleanup_floor_plan(
@@ -483,6 +611,7 @@ async def cleanup_endpoint(
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         client_canvas_data=body.canvas_data,
+        if_match=request.headers.get("If-Match"),
     )
 
 

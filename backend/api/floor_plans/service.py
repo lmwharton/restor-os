@@ -22,6 +22,13 @@ from api.shared.guards import assert_job_on_floor_plan_property, ensure_job_muta
 
 logger = logging.getLogger(__name__)
 
+
+# Round 3 (second critical review): the old _coerce_etag + compute_etag
+# helpers were consolidated into api/shared/etag.py to kill a
+# sibling-miss risk (the None handling had diverged between them).
+# Every etag read + compare in this module goes through that module.
+from api.shared.etag import etag_from_updated_at, etags_match  # noqa: E402
+
 # Room fill colors (semi-transparent) cycled for detected rooms
 _ROOM_COLORS = [
     "rgba(232,93,38,0.1)",
@@ -482,8 +489,16 @@ async def update_floor_plan(
     company_id: UUID,
     user_id: UUID,
     body: FloorPlanUpdate,
+    if_match: str | None = None,
 ) -> dict:
-    """Update a floor plan. Validates floor_number uniqueness if changed."""
+    """Update a floor plan. Validates floor_number uniqueness if changed.
+
+    Round 3 (second critical review): accepts ``if_match`` for etag
+    optimistic-concurrency protection. When supplied and not matching the
+    row's current ``updated_at``, raises 412 ``VERSION_STALE``. Matches
+    the save_canvas contract so every write path to floor_plans has the
+    same same-row lost-update guard.
+    """
     client = await get_authenticated_client(token)
 
     existing = await (
@@ -520,6 +535,34 @@ async def update_floor_plan(
             error_code="VERSION_FROZEN",
         )
 
+    # Round-3 etag check — see save_canvas for the same pattern + rationale.
+    # Runs AFTER the frozen-row guard so a caller editing a frozen version
+    # with a stale etag sees VERSION_FROZEN (the actionable error) directly
+    # instead of 412 first and VERSION_FROZEN only on retry.
+    #
+    # Post-review MEDIUM #3: the initial string compare here is a fast
+    # reject with a useful error body (current_etag in extra), but the
+    # actual atomicity guarantee is enforced by adding
+    # .eq("updated_at", existing_updated_at) to the UPDATE below. That
+    # closes the TOCTOU window — two concurrent renames read the same
+    # etag, both pass the string compare, but only ONE UPDATE matches
+    # the updated_at filter (trg_floor_plans_updated_at bumps it on
+    # every write). The loser's .update() returns zero rows and we
+    # surface 412 VERSION_STALE.
+    existing_updated_at = existing.data.get("updated_at")
+    if if_match is not None:
+        current_etag = etag_from_updated_at(existing_updated_at)
+        if not etags_match(current_etag, if_match):
+            raise AppException(
+                status_code=412,
+                detail=(
+                    "Floor plan was updated by another editor. Reload "
+                    "and retry with a fresh etag."
+                ),
+                error_code="VERSION_STALE",
+                extra={"current_etag": current_etag, "received_etag": if_match},
+            )
+
     if "floor_number" in updates and updates["floor_number"] != existing.data["floor_number"]:
         # Post-merge: multiple rows can share (property_id, floor_number) as versions.
         # The uniqueness rule we enforce is: only one CURRENT version per floor.
@@ -544,15 +587,50 @@ async def update_floor_plan(
         # a sibling Case 3 fork between L503 and here can flip is_current=false
         # on the target row, and the UPDATE silently mutates frozen history.
         # Zero rows matched ⇒ the row was frozen mid-flight; treat as VERSION_FROZEN.
-        result = await (
+        #
+        # Post-review MEDIUM #3: when the caller supplied If-Match, also
+        # filter on updated_at so a concurrent rename racing with us
+        # can't sneak past the compare above. trg_floor_plans_updated_at
+        # bumps updated_at on every UPDATE, so the loser's filter misses
+        # and we surface 412 (distinguished from VERSION_FROZEN below by
+        # re-reading the row's is_current state).
+        query = (
             client.table("floor_plans")
             .update(updates)
             .eq("id", str(floor_plan_id))
             .eq("company_id", str(company_id))
             .eq("is_current", True)
-            .execute()
         )
+        if if_match is not None and existing_updated_at is not None:
+            query = query.eq("updated_at", existing_updated_at)
+        result = await query.execute()
         if not result.data:
+            # Zero rows matched — either the row was frozen (is_current
+            # flipped) or a concurrent rename bumped updated_at past our
+            # if_match filter. Re-read to tell them apart so the client
+            # gets the right retry signal.
+            post = await (
+                client.table("floor_plans")
+                .select("is_current, updated_at")
+                .eq("id", str(floor_plan_id))
+                .eq("company_id", str(company_id))
+                .single()
+                .execute()
+            )
+            if post.data and post.data.get("is_current") and if_match is not None:
+                # Row still current — the updated_at filter is what kicked
+                # us out, i.e. someone else wrote between our read and
+                # our update. That's VERSION_STALE, not VERSION_FROZEN.
+                current_etag = etag_from_updated_at(post.data.get("updated_at"))
+                raise AppException(
+                    status_code=412,
+                    detail=(
+                        "Floor plan was updated by another editor. Reload "
+                        "and retry with a fresh etag."
+                    ),
+                    error_code="VERSION_STALE",
+                    extra={"current_etag": current_etag, "received_etag": if_match},
+                )
             raise AppException(
                 status_code=403,
                 detail="Floor plan was forked by another edit — retry against the current version",
@@ -698,6 +776,7 @@ async def save_canvas(
     user_id: UUID,
     canvas_data: dict,
     change_summary: str | None = None,
+    if_match: str | None = None,
 ) -> dict:
     """Save canvas changes for a job. Implements the versioning state machine:
 
@@ -711,14 +790,21 @@ async def save_canvas(
     After the container/versions merge, `floor_plan_id` is a row in the unified
     floor_plans table (i.e., a specific version). We resolve its property_id +
     floor_number to scope fork/current-flip operations to the right floor.
+
+    Round 3: optimistic-concurrency guard via ``if_match``. When present,
+    compares to the target row's ``updated_at`` (the row's etag). Mismatch
+    → 412 ``VERSION_STALE`` with the current etag in the error detail so
+    the client can fetch-and-merge without guessing. When absent (older
+    client / pre-rollout), the check is skipped for backward compat.
     """
     client = await get_authenticated_client(token)
 
-    # Resolve (property_id, floor_number) for the passed floor_plan_id — these
-    # are the "floor identity" fields we scope version history to post-merge.
+    # Resolve (property_id, floor_number, updated_at) for the passed
+    # floor_plan_id — we need updated_at too so we can enforce the
+    # round-3 If-Match etag check. Single round-trip either way.
     target_floor_result = await (
         client.table("floor_plans")
-        .select("property_id, floor_number")
+        .select("property_id, floor_number, updated_at")
         .eq("id", str(floor_plan_id))
         .single()
         .execute()
@@ -731,6 +817,7 @@ async def save_canvas(
         )
     target_property_id = target_floor_result.data["property_id"]
     target_floor_number = target_floor_result.data["floor_number"]
+    target_updated_at = target_floor_result.data.get("updated_at")
 
     # Fetch the job to get its current pinned version + property_id.
     # property_id is used to enforce W1: the passed floor_plan_id must live
@@ -764,6 +851,34 @@ async def save_canvas(
     # property_id=NULL skip this (handled by create_floor_plan_by_job_endpoint's
     # auto-link path and by R8's tightening of save_canvas itself).
     assert_job_on_floor_plan_property(job, target_property_id)
+
+    # Round 3 (post-review) — etag / If-Match optimistic-concurrency guard.
+    # Runs AFTER domain guards (archive, property cross-check) so a caller
+    # with a stale etag AND an archived-job / cross-property request sees
+    # the actionable JOB_ARCHIVED / PROPERTY_MISMATCH first instead of a
+    # shadow 412 that disappears on reload. Matching the row's real state
+    # is only meaningful once the request is otherwise eligible.
+    #
+    # Backward-compat: if_match=None skips the check. That's the intended
+    # behavior during the cross-deploy window and for very-first saves
+    # where no prior etag exists. The check is purely additive — every
+    # existing happy-path save still succeeds.
+    if if_match is not None and target_updated_at is not None:
+        current_etag = etag_from_updated_at(target_updated_at)
+        # etags_match parses both sides, so microsecond precision / timezone
+        # formatting drift (".000000+00:00" vs "+00:00") doesn't cause
+        # spurious 412s. Falls back to string equality if either side isn't
+        # parseable, covering hand-crafted inputs.
+        if not etags_match(current_etag, if_match):
+            raise AppException(
+                status_code=412,
+                detail=(
+                    "Floor plan was updated by another editor. Reload the "
+                    "page to see the latest state, then re-apply your edits."
+                ),
+                error_code="VERSION_STALE",
+                extra={"current_etag": current_etag, "received_etag": if_match},
+            )
 
     # R19 (round 2): capture a server-side snapshot of relational floor-plan
     # state (wall_segments, wall_openings, job_rooms.room_polygon,
@@ -871,7 +986,17 @@ async def save_canvas(
         # lets Postgres enforce the check atomically. If zero rows match,
         # the pin is no longer current: fall through to Case 3 and fork a
         # new version on top of whoever just became current.
-        update_result = await (
+        #
+        # Round-4 follow-through (sibling-miss of the cleanup fix): when
+        # If-Match was supplied, also filter on updated_at so two concurrent
+        # Case-2 saves on the same pinned row can't both win. Without this,
+        # both pass the etag compare above (both saw T1), both land on
+        # is_current=True, and the second UPDATE silently overwrites the
+        # first — same shape we closed in cleanup_floor_plan and
+        # update_floor_plan. target_updated_at is the value the client's
+        # If-Match vouched for, so trailing writers whose view is stale
+        # miss the filter and we disambiguate STALE vs FROZEN on zero rows.
+        update_query = (
             client.table("floor_plans")
             .update(
                 {
@@ -881,8 +1006,10 @@ async def save_canvas(
             )
             .eq("id", pinned_version["id"])
             .eq("is_current", True)
-            .execute()
         )
+        if if_match is not None and target_updated_at is not None:
+            update_query = update_query.eq("updated_at", target_updated_at)
+        update_result = await update_query.execute()
         if update_result.data:
             # Re-fetch to return updated data
             updated = await (
@@ -904,7 +1031,43 @@ async def save_canvas(
                 },
             )
             return updated.data
-        # else: row was frozen mid-flight — fall through to Case 3 (fork)
+        # Zero rows matched. Two possibilities:
+        #   (a) is_current flipped to false — row was frozen mid-flight.
+        #       Existing behavior: fall through to Case 3 and fork on top
+        #       of whoever just became current. Client's canvas is
+        #       preserved as a new version; nothing silently overwritten.
+        #   (b) if_match was supplied and updated_at changed — a concurrent
+        #       Case-2 save committed between our etag check and this
+        #       UPDATE. Row is still current, just stale. Forking here
+        #       would still preserve both canvases via versioning, but the
+        #       client vouched for a specific updated_at via If-Match and
+        #       deserves a 412 so their UI can reload + merge explicitly
+        #       instead of silently creating a fork.
+        # Re-read is_current to tell them apart; only raise STALE when
+        # if_match was supplied AND the row is still current.
+        if if_match is not None:
+            post = await (
+                client.table("floor_plans")
+                .select("is_current, updated_at")
+                .eq("id", pinned_version["id"])
+                .single()
+                .execute()
+            )
+            if post.data and post.data.get("is_current"):
+                current_etag = etag_from_updated_at(post.data.get("updated_at"))
+                raise AppException(
+                    status_code=412,
+                    detail=(
+                        "Floor plan was updated by another editor. Reload "
+                        "the page to see the latest state, then re-apply "
+                        "your edits."
+                    ),
+                    error_code="VERSION_STALE",
+                    extra={"current_etag": current_etag, "received_etag": if_match},
+                )
+        # else (or is_current=False): row was frozen mid-flight — fall
+        # through to Case 3 (fork). Client's canvas becomes the new
+        # version; the prior current row retains the other writer's work.
 
     # Case 3: Another job's version (or a different floor), or Case 2's
     # target was frozen mid-flight — fork new version.
@@ -1024,12 +1187,36 @@ async def rollback_version(
     job_id: UUID,
     company_id: UUID,
     user_id: UUID,
+    if_match: str | None = None,
 ) -> dict:
     """Rollback: create a new version from a past version's canvas_data.
 
     Does NOT delete versions — creates a new one with the rolled-back content.
     Floor identity (property_id, floor_number) is resolved from the passed row.
     Archived jobs cannot rollback — frozen-version semantics, mirrors save_canvas.
+
+    Round 3 (second critical review): accepts ``if_match`` so rollback is
+    etag-protected. Rollback creates a new version from an old snapshot,
+    which is a mutation of the floor-plan family state; without etag
+    protection, a concurrent save + rollback can produce unexpected
+    version layering. Matches the save_canvas contract.
+
+    Round-4 note — atomicity asymmetry vs ``update_floor_plan`` and
+    ``cleanup_floor_plan``: those two methods extend the ``if_match``
+    compare with an atomic ``.eq("updated_at", …)`` filter on the UPDATE
+    (closing the TOCTOU window between check and write). Rollback does
+    NOT plumb ``p_if_match`` through ``rollback_floor_plan_version_atomic``
+    because there's no silent-overwrite shape here: the RPC creates a
+    NEW is_current row from a historical snapshot and atomically flips
+    the prior current row to is_current=false. Whatever canvas was on
+    the prior current row survives as frozen history — not overwritten,
+    just demoted. A concurrent save that commits BEFORE the RPC has its
+    work preserved in the demoted row; one that commits AFTER lands on
+    a now-frozen row and is rejected at the app layer's
+    ``.eq("is_current", True)`` filter (or the 55006 trigger). Either
+    ordering is safe. The ``if_match`` check here is therefore a
+    fast-reject UX affordance so the user can reconfirm against the
+    updated state, not the atomicity mechanism.
     """
     client = await get_authenticated_client(token)
 
@@ -1057,7 +1244,7 @@ async def rollback_version(
 
     anchor = await (
         client.table("floor_plans")
-        .select("property_id, floor_number")
+        .select("property_id, floor_number, updated_at")
         .eq("id", str(floor_plan_id))
         .single()
         .execute()
@@ -1094,6 +1281,24 @@ async def rollback_version(
             detail=f"Version {version_number} not found",
             error_code="VERSION_NOT_FOUND",
         )
+
+    # Round-3 etag check (post-review: moved after domain guards). Rollback
+    # creates a new is_current row from a historic snapshot, shifting job
+    # pins. Runs AFTER archive, property cross-check, and target-version
+    # lookup so a stale caller asking to rollback to a non-existent version
+    # sees VERSION_NOT_FOUND directly instead of 412 → reload → 404.
+    if if_match is not None:
+        current_etag = etag_from_updated_at(anchor.data.get("updated_at"))
+        if not etags_match(current_etag, if_match):
+            raise AppException(
+                status_code=412,
+                detail=(
+                    "Floor plan was updated by another editor. Reload "
+                    "and reconfirm the rollback target."
+                ),
+                error_code="VERSION_STALE",
+                extra={"current_etag": current_etag, "received_etag": if_match},
+            )
 
     # F1 (round-2 follow-on): atomic rollback via a single plpgsql wrapper.
     # The wrapper RPC runs save_floor_plan_version + restore_floor_plan_relational_snapshot
@@ -1454,12 +1659,18 @@ async def cleanup_floor_plan(
     company_id: UUID,
     user_id: UUID,
     client_canvas_data: dict | None = None,
+    if_match: str | None = None,
 ) -> dict:
     """Run deterministic cleanup on a floor plan sketch.
 
     If client_canvas_data is provided, cleans the client's unsaved sketch.
     If None, fetches the saved canvas_data from the floor plan record.
     Either way, the cleaned result is saved back to the DB.
+
+    Round 3 (second critical review): accepts ``if_match`` so cleanup is
+    etag-protected too. Without this, Tech A's mid-edit work could be
+    silently wiped by Tech B clicking "Cleanup" from a stale view.
+    Matches the save_canvas contract.
 
     Returns SketchCleanupResponse with cleaned canvas_data, changes_made, event_id.
     """
@@ -1506,6 +1717,38 @@ async def cleanup_floor_plan(
             error_code="VERSION_FROZEN",
         )
 
+    # Round-3 etag check (post-review: moved after domain guards).
+    # Cleanup writes canvas_data back to the row — if another editor
+    # (save_canvas, rollback, update) wrote since the cleanup-initiator's
+    # last read, their cleaned blob would overwrite that work silently.
+    # Runs AFTER archive + property + frozen-row guards so a stale caller
+    # trying to clean a frozen version sees VERSION_FROZEN directly instead
+    # of 412 → reload → 403. Reject with 412 so the client reloads + retries.
+    #
+    # Post-review round 4 (sibling-miss on MEDIUM #3 fix): the compare
+    # below is a fast reject with a useful error body, but the actual
+    # atomicity guarantee is enforced by adding
+    # .eq("updated_at", existing_updated_at) to the UPDATE below. Without
+    # that, a concurrent save committing between this check and the UPDATE
+    # wins the race — none of (id, company_id, is_current=True) change
+    # across a Case-2 save, so the cleanup UPDATE lands and overwrites
+    # silently. trg_floor_plans_updated_at bumps updated_at on every
+    # write, so the loser's filter misses and we surface 412 VERSION_STALE.
+    # Same pattern as update_floor_plan.
+    existing_updated_at = result.data.get("updated_at")
+    if if_match is not None:
+        current_etag = etag_from_updated_at(existing_updated_at)
+        if not etags_match(current_etag, if_match):
+            raise AppException(
+                status_code=412,
+                detail=(
+                    "Floor plan was updated by another editor. Reload and "
+                    "re-run cleanup on the fresh canvas."
+                ),
+                error_code="VERSION_STALE",
+                extra={"current_etag": current_etag, "received_etag": if_match},
+            )
+
     # Use client-supplied canvas_data (unsaved edits) or fall back to saved version
     canvas_data = client_canvas_data or result.data.get("canvas_data")
     if not canvas_data or not canvas_data.get("walls"):
@@ -1550,15 +1793,24 @@ async def cleanup_floor_plan(
     # Round-2 follow-on #4: also wrap in try/except so the frozen-mutation
     # trigger's 55006 (raised if the write slips past the app-level filter
     # in a rare race) surfaces as VERSION_FROZEN too, not an opaque 500.
+    #
+    # Post-review round 4: when the caller supplied If-Match, also filter
+    # on updated_at so a concurrent save racing with us can't sneak past
+    # the compare above. trg_floor_plans_updated_at bumps updated_at on
+    # every UPDATE, so the loser's filter misses and we surface 412
+    # VERSION_STALE (distinguished from VERSION_FROZEN by a post-UPDATE
+    # re-read of is_current).
     try:
-        cleaned_update = await (
+        query = (
             client.table("floor_plans")
             .update({"canvas_data": cleaned})
             .eq("id", str(floor_plan_id))
             .eq("company_id", str(company_id))
             .eq("is_current", True)
-            .execute()
         )
+        if if_match is not None and existing_updated_at is not None:
+            query = query.eq("updated_at", existing_updated_at)
+        cleaned_update = await query.execute()
     except APIError as e:
         if getattr(e, "code", None) == "55006":
             raise AppException(
@@ -1575,6 +1827,29 @@ async def cleanup_floor_plan(
             error_code="DB_ERROR",
         )
     if not cleaned_update.data:
+        # Zero rows matched — either the row was frozen (is_current flipped
+        # by a Case-3 fork) or a concurrent save bumped updated_at past
+        # our if_match filter. Re-read to tell them apart so the client
+        # gets the right retry signal. Same pattern as update_floor_plan.
+        post = await (
+            client.table("floor_plans")
+            .select("is_current, updated_at")
+            .eq("id", str(floor_plan_id))
+            .eq("company_id", str(company_id))
+            .single()
+            .execute()
+        )
+        if post.data and post.data.get("is_current") and if_match is not None:
+            current_etag = etag_from_updated_at(post.data.get("updated_at"))
+            raise AppException(
+                status_code=412,
+                detail=(
+                    "Floor plan was updated by another editor. Reload and "
+                    "re-run cleanup on the fresh canvas."
+                ),
+                error_code="VERSION_STALE",
+                extra={"current_etag": current_etag, "received_etag": if_match},
+            )
         raise AppException(
             status_code=403,
             detail="Floor plan was forked by another edit during cleanup — retry against the current version",
