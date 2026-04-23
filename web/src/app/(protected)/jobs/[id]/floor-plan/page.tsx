@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import {
@@ -302,6 +302,13 @@ let _wallSyncInFlight = false;
 let _canvasSaveInFlight = false;
 let _canvasDeferredDuringSave = false;
 
+// Rooms whose wall-sync GET has already failed at least once in this
+// session. Stale canvas_data can reference backend rooms that were later
+// deleted — retrying their sync on every autosave just spams the console.
+// Circuit-break per-id so the first failure silences subsequent attempts
+// without blocking other rooms' sync. Cleared naturally on full refresh.
+const _wallSyncBadRoomIds = new Set<string>();
+
 async function syncWallsToBackend(
   canvasData: FloorPlanData,
   jobRooms: Array<{ id: string; room_name: string }> | undefined,
@@ -347,6 +354,10 @@ async function _syncWallsToBackendImpl(
     if (!backendRoomId) continue;
     if (syncedBackendRoomIds.has(backendRoomId)) continue;
     syncedBackendRoomIds.add(backendRoomId);
+    // Circuit-break against rooms that already failed this session (stale
+    // canvas_data → backend room was deleted). Re-trying just spams the
+    // console on every autosave and burns a request per save.
+    if (_wallSyncBadRoomIds.has(backendRoomId)) continue;
 
     const roomWalls = wallsByRoom.get(room.id) ?? [];
     if (roomWalls.length === 0) continue;
@@ -420,6 +431,10 @@ async function _syncWallsToBackendImpl(
         canvasToBackendWallId.set(w.id, created.id);
       }
     } catch (err) {
+      // First-time warn so genuine failures still surface. Mark the id as
+      // bad so subsequent autosaves skip it quietly — covers the stale
+      // canvas_data case where the backend room no longer exists.
+      _wallSyncBadRoomIds.add(backendRoomId);
       console.warn("Wall sync failed for room", backendRoomId, err);
     }
   }
@@ -1001,7 +1016,13 @@ export default function FloorPlanPage({
   // Canvas mode — Sketch (default, drawing) vs Moisture (pin placement + readings).
   // Phase 3 will add Equipment, phase 4 Photos. Driven entirely by CANVAS_MODES
   // config in components/sketch/moisture-mode.ts.
-  const [canvasMode, setCanvasMode] = useState<CanvasMode>("sketch");
+  // Honor a ?mode=moisture deeplink (used by the Drying Progress card on the
+  // job detail page) so the canvas opens directly in the mode that matches
+  // the user's intent instead of a sketch-then-switch extra tap.
+  const searchParams = useSearchParams();
+  const initialMode: CanvasMode =
+    searchParams.get("mode") === "moisture" ? "moisture" : "sketch";
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>(initialMode);
   const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
   // Signature of the most recently saved canvas geometry (rooms/walls/doors/
   // windows). Guards against save handler re-invocations with identical data
@@ -2034,7 +2055,14 @@ export default function FloorPlanPage({
           <CanvasModeSwitcher
             mode={canvasMode}
             onChange={setCanvasMode}
-            disabled={saveStatus === "saving" || isJobArchived}
+            // Do NOT disable on archived jobs. Mode switching is a
+            // pure navigation — Moisture Mode becomes an audit view
+            // (pin taps open a read-only reading sheet; writes are
+            // hidden in UI and 403'd by the backend). Blocking the
+            // switcher would leave archived-job techs unable to
+            // inspect historical drying data, which is exactly what
+            // the carrier expects them to be able to reference.
+            disabled={saveStatus === "saving"}
           />
         </div>
 
