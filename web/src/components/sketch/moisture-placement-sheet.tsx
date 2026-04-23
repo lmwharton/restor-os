@@ -36,6 +36,10 @@ interface MoisturePlacementSheetProps {
   roomMaterialFlags: string[];
   onSave: (data: PlacementSheetData) => void;
   onClose: () => void;
+  /** True while the parent's create-pin mutation is in flight. Drives
+   *  the Save button's disabled + "Saving…" label so the user sees the
+   *  click register instead of wondering if the tap landed. */
+  isSaving?: boolean;
 }
 
 const SURFACES: Surface[] = ["Floor", "Wall", "Ceiling"];
@@ -71,6 +75,7 @@ export function MoisturePlacementSheet({
   roomMaterialFlags,
   onSave,
   onClose,
+  isSaving = false,
 }: MoisturePlacementSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
@@ -349,10 +354,10 @@ export function MoisturePlacementSheet({
             <button
               type="button"
               onClick={handleSave}
-              disabled={!canSave}
+              disabled={!canSave || isSaving}
               className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[13px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all"
             >
-              Save
+              {isSaving ? "Saving…" : "Save"}
             </button>
           </div>
         </div>

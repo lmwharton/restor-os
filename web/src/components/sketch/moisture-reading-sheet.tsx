@@ -5,23 +5,26 @@
 // 3A + 3B).
 //
 // Shows pin metadata + a single input for today's reading. If today's
-// reading already exists, the input is prefilled and a small banner
-// flags it — saving a changed value triggers a confirm modal before
-// overwriting.
+// reading already exists, the input is prefilled and overwrites silently
+// on save (the history list below makes the existing value visible).
 //
-// Below the input, a History section renders a compact SVG sparkline and
-// a chronological list of prior readings (newest first). A green pill
-// above the input flags when the pin has reached dry standard, and an
-// amber banner flags a day-over-day regression.
+// Below the input, a History section renders a clinical sparkline and
+// a chronological list of prior readings (newest first). An amber banner
+// flags a day-over-day regression.
+//
+// Each history row carries a trailing trash affordance — a single tap
+// opens a ConfirmModal and the approved DELETE mutates the reading away.
+// Mid-delete rows dim to 40% + stop listening so a frantic second tap
+// can't stack a duplicate DELETE (mirrors the pin-delete pattern).
 //
 // Mobile: bottom sheet (drag-to-dismiss).
 // Desktop: centered modal. Same contents either way.
 
 import { useMemo, useRef, useState } from "react";
-import { ConfirmModal } from "@/components/confirm-modal";
 import {
   computePinColor,
   useCreatePinReading,
+  useDeletePinReading,
   usePinReadings,
   useUpdatePinReading,
 } from "@/lib/hooks/use-moisture-pins";
@@ -31,6 +34,14 @@ import type {
   MoistureMaterial,
   PinColor,
 } from "@/lib/types";
+import { ConfirmModal } from "@/components/confirm-modal";
+import { formatShortDateLocal, todayLocalIso } from "@/lib/dates";
+import {
+  deriveReadingHistory,
+  findTodayReading,
+  isChangedFromToday,
+  validateReadingInput,
+} from "@/lib/moisture-reading-history";
 
 // Human-facing names for each material. Kept local (not shared with
 // placement sheet) so the two sheets can evolve independently without
@@ -62,52 +73,42 @@ const COLOR_HEX: Record<PinColor, string> = {
   red: "#dc2626",
 };
 
-// Format an ISO date (YYYY-MM-DD) for the history list. Uses the local
-// TZ so "Apr 20" reads as the tech's day. Built from a parsed Date to
-// avoid `new Date("2026-04-20")` quirks (which gets interpreted as UTC
-// midnight and can appear as the previous day in negative offsets).
-function formatShortDate(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  if (!y || !m || !d) return iso;
-  const date = new Date(y, m - 1, d);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-// Days between two ISO dates (YYYY-MM-DD), floored. Positive when `b`
-// is later than `a`. Used to place the dry-date pill as "Day N" where
-// N = days between first reading and first dry-standard-met reading,
-// +1 (so the first reading is "Day 1", not "Day 0").
-function daysBetween(aIso: string, bIso: string): number {
-  const [ay, am, ad] = aIso.split("-").map(Number);
-  const [by, bm, bd] = bIso.split("-").map(Number);
-  const a = new Date(ay, am - 1, ad).getTime();
-  const b = new Date(by, bm - 1, bd).getTime();
-  return Math.floor((b - a) / 86400000);
-}
-
 interface MoistureReadingSheetProps {
   open: boolean;
   jobId: string;
   pin: MoisturePin;
   onClose: () => void;
+  /** Optional — when set, the header shows an Edit affordance that
+   *  calls this with the pin id so the parent can open the edit sheet
+   *  (change material / dry_standard). */
+  onEditRequest?: (pinId: string) => void;
+  /** When true, the sheet renders as a read-only history view:
+   *  the Edit chip, Save footer, and per-row trash buttons are all
+   *  hidden. Used for archived jobs (status ∈ collected) so the tech
+   *  can still audit historical drying data after a job has been
+   *  handed to the carrier. Mirrors backend behavior — archived job
+   *  reads pass, writes return 403 JOB_ARCHIVED. */
+  readOnly?: boolean;
 }
 
-// Today in the same ISO format the placement sheet uses on create. Kept
-// as UTC to stay consistent with that code path; any TZ fix belongs in
-// a shared helper, not in this file alone.
-function todayIso(): string {
-  return new Date().toISOString().slice(0, 10);
-}
 
 // Inline SVG sparkline. No chart library — readings cap out at ~30
 // points for a typical drying job, well under the threshold where
 // paying the bundle cost of a lib would be worth it.
 //
-// The y-axis auto-scales to include both the reading values and the
-// dry-standard line so the dashed threshold always reads as "where we
-// need to get to" relative to actual values. x-axis spreads readings
-// evenly by index so gapped dates don't produce distorted spacing —
-// date labels live in the history list, not the chart.
+// Layout is "clinical data chart" — restrained, precise, high-density
+// information without noise. Three label tiers carry the scale the
+// chart used to leave implicit:
+//   • Day labels (D1…DN) under each dot — anchor the x-axis so dots
+//     aren't floating abstractions.
+//   • "X% dry" at the right end of the dashed threshold line —
+//     anchors the y-scale without a full axis.
+//   • Latest-reading value floating above its dot — the one focal
+//     point, color-matched to the pin so "where am I now" reads first.
+//
+// Y auto-scales to include both readings and the dry-standard line so
+// the dashed threshold always stays in frame. X spreads evenly by
+// index (not date) — date gaps live in the history list below.
 function Sparkline({
   readingsAsc,
   dryStandard,
@@ -115,79 +116,145 @@ function Sparkline({
   readingsAsc: MoisturePinReading[];
   dryStandard: number;
 }) {
-  const width = 256;
-  const height = 56;
-  const padX = 8;
-  const padY = 6;
+  const width = 320;
+  const height = 104;
+  const padLeft = 10;
+  const padRight = 36; // room for the "X% dry" tick label
+  const padTop = 22;   // room for the latest-value callout above
+  const padBottom = 24; // room for D1/D2… labels below
 
   if (readingsAsc.length === 0) return null;
 
   const values = readingsAsc.map((r) => Number(r.reading_value));
-  // Include dryStandard in the range so the dashed line is always visible.
   const yMin = Math.min(...values, dryStandard) - 2;
   const yMax = Math.max(...values, dryStandard) + 2;
   const ySpan = Math.max(yMax - yMin, 1);
 
-  const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
+  const innerW = width - padLeft - padRight;
+  const innerH = height - padTop - padBottom;
 
   const xFor = (i: number) => {
-    if (readingsAsc.length === 1) return padX + innerW / 2;
-    return padX + (i / (readingsAsc.length - 1)) * innerW;
+    if (readingsAsc.length === 1) return padLeft + innerW / 2;
+    return padLeft + (i / (readingsAsc.length - 1)) * innerW;
   };
-  const yFor = (v: number) => padY + innerH - ((v - yMin) / ySpan) * innerH;
+  const yFor = (v: number) => padTop + innerH - ((v - yMin) / ySpan) * innerH;
 
   const dryY = yFor(dryStandard);
   const linePoints = readingsAsc
     .map((r, i) => `${xFor(i)},${yFor(Number(r.reading_value))}`)
     .join(" ");
 
+  const latestIdx = readingsAsc.length - 1;
+  const latest = readingsAsc[latestIdx];
+  const latestValue = Number(latest.reading_value);
+  const latestColor = computePinColor(latestValue, dryStandard);
+  const latestX = xFor(latestIdx);
+  const latestY = yFor(latestValue);
+
   return (
     <svg
       width={width}
       height={height}
       viewBox={`0 0 ${width} ${height}`}
-      className="w-full h-[56px]"
+      className="w-full h-[104px]"
       role="img"
-      aria-label={`Sparkline with ${readingsAsc.length} readings, dry standard ${dryStandard}%`}
+      aria-label={`Sparkline showing ${readingsAsc.length} reading${readingsAsc.length === 1 ? "" : "s"}, latest ${latestValue}%, dry standard ${dryStandard}%`}
     >
       {/* Dashed dry-standard line */}
       <line
-        x1={padX}
+        x1={padLeft}
         y1={dryY}
-        x2={width - padX}
+        x2={padLeft + innerW}
         y2={dryY}
         stroke="#16a34a"
         strokeWidth={1}
         strokeDasharray="3 3"
         opacity={0.55}
       />
-      {/* Line through readings — only drawn when we have ≥ 2 points. */}
+      {/* Dry-standard inline label at the right end of the dashed line */}
+      <text
+        x={padLeft + innerW + 4}
+        y={dryY + 3}
+        fontSize={9}
+        fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+        fill="#15803d"
+        opacity={0.85}
+      >
+        {dryStandard}%
+      </text>
+
+      {/* Connection line through readings — only drawn when we have ≥ 2 points. */}
       {readingsAsc.length >= 2 && (
         <polyline
           points={linePoints}
           fill="none"
           stroke="#64748b"
-          strokeWidth={1.5}
+          strokeWidth={1.25}
           strokeLinejoin="round"
           strokeLinecap="round"
+          opacity={0.75}
         />
       )}
-      {/* Per-reading dot, colored by its own pin-color computation. */}
+
+      {/* Per-reading dot. The latest reading gets a slightly larger
+          radius + thicker white stroke so the focal "you are here"
+          reads first without a color change. */}
       {readingsAsc.map((r, i) => {
         const color = computePinColor(Number(r.reading_value), dryStandard);
+        const isLatest = i === latestIdx;
         return (
           <circle
             key={r.id}
             cx={xFor(i)}
             cy={yFor(Number(r.reading_value))}
-            r={3}
+            r={isLatest ? 4.5 : 3}
             fill={COLOR_HEX[color]}
             stroke="#ffffff"
-            strokeWidth={1}
+            strokeWidth={isLatest ? 1.5 : 1}
           />
         );
       })}
+
+      {/* Latest-value callout — mono, color-matched to the pin, floats
+          above the latest dot. Text-anchor shifts to "end" when the dot
+          is too close to the right edge to center the label cleanly. */}
+      <text
+        x={latestX}
+        y={latestY - 9}
+        fontSize={11}
+        fontWeight={600}
+        fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+        fill={COLOR_HEX[latestColor]}
+        textAnchor={
+          latestX > padLeft + innerW - 14
+            ? "end"
+            : latestX < padLeft + 14
+              ? "start"
+              : "middle"
+        }
+      >
+        {latestValue}%
+      </text>
+
+      {/* Day labels — D1…DN — anchor the x-axis. Rendered for every
+          point; typical drying jobs run ≤10 days so spacing stays
+          comfortable. At very long horizons labels may bump visually
+          but the chart's trend-at-a-glance purpose still holds. */}
+      {readingsAsc.map((r, i) => (
+        <text
+          key={`day-${r.id}`}
+          x={xFor(i)}
+          y={height - 6}
+          fontSize={9}
+          fontFamily="var(--font-geist-mono), ui-monospace, monospace"
+          fill="#64748b"
+          opacity={0.75}
+          textAnchor="middle"
+          letterSpacing="0.04em"
+        >
+          D{i + 1}
+        </text>
+      ))}
     </svg>
   );
 }
@@ -197,16 +264,29 @@ export function MoistureReadingSheet({
   jobId,
   pin,
   onClose,
+  onEditRequest,
+  readOnly = false,
 }: MoistureReadingSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
   const currentYRef = useRef(0);
   const isDragging = useRef(false);
 
-  const today = todayIso();
+  const today = todayLocalIso();
   const readingsQuery = usePinReadings(jobId, pin.id);
   const createReading = useCreatePinReading(jobId, pin.id);
   const updateReading = useUpdatePinReading(jobId, pin.id);
+  const deleteReading = useDeletePinReading(jobId, pin.id);
+
+  // Per-row delete state. `confirmDeleteId` drives the ConfirmModal; a
+  // non-null value means the modal is open for that reading. `pendingIds`
+  // tracks rows whose DELETE is mid-flight so the UI can dim them + stop
+  // listening (prevents a frantic second tap from stacking a second 404
+  // on the freshly-gone reading — same pattern as the pin-delete layer).
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   // Coerce reading_value to Number once up front. The MoisturePinReading
   // TS type says `number`, but at runtime the backend serializes the DB
@@ -220,44 +300,22 @@ export function MoistureReadingSheet({
   }, [readingsQuery.data]);
 
   // Today's reading, if already logged. Drives prefill + overwrite flow.
-  const todayReading = useMemo(() => {
-    return normalizedReadings.find((r) => r.reading_date === today) ?? null;
-  }, [normalizedReadings, today]);
+  // Pure derivation lives in `@/lib/moisture-reading-history` — this
+  // component only wraps it in useMemo for stable references across
+  // renders.
+  const todayReading = useMemo(
+    () => findTodayReading(normalizedReadings, today),
+    [normalizedReadings, today],
+  );
 
-  // Derived history state — all 3B features share one pass over readings.
-  //
-  //   readingsAsc:  oldest → newest. Drives sparkline and day-over-day
-  //                 regression computation (each row compares to prior).
-  //   readingsDesc: newest → oldest. Drives the history list UI.
-  //   regressingIds: set of reading ids whose value > the previous day's.
-  //                  Rendered as an amber ↑ chevron on that history row.
-  //   latest / previous: most recent and second-most-recent — used by
-  //                      the latest-regression banner.
-  //   dryDay:       Day N (1-indexed from first reading) when the pin
-  //                 first hit dry standard. null while still wet.
-  const history = useMemo(() => {
-    const asc = [...normalizedReadings].sort((a, b) =>
-      a.reading_date.localeCompare(b.reading_date),
-    );
-    const desc = [...asc].reverse();
-    const regressingIds = new Set<string>();
-    for (let i = 1; i < asc.length; i++) {
-      if (asc[i].reading_value > asc[i - 1].reading_value) {
-        regressingIds.add(asc[i].id);
-      }
-    }
-    const latest = asc[asc.length - 1] ?? null;
-    const previous = asc[asc.length - 2] ?? null;
-    let dryDay: number | null = null;
-    if (asc.length > 0) {
-      const first = asc[0];
-      const firstDry = asc.find((r) => r.reading_value <= pin.dry_standard);
-      if (firstDry) {
-        dryDay = daysBetween(first.reading_date, firstDry.reading_date) + 1;
-      }
-    }
-    return { asc, desc, regressingIds, latest, previous, dryDay };
-  }, [normalizedReadings, pin.dry_standard]);
+  // Derived history state — asc/desc, regressing ids, latest/previous.
+  // Also lives in the shared history module so the adjuster portal
+  // view (Task 7) and PDF export (Task 6) can reuse the exact same
+  // algorithm without duplicating it.
+  const history = useMemo(
+    () => deriveReadingHistory(normalizedReadings),
+    [normalizedReadings],
+  );
 
   const latestRegressing =
     history.latest !== null &&
@@ -268,23 +326,24 @@ export function MoistureReadingSheet({
   // mirrors the placement sheet's approach.
   const [readingStr, setReadingStr] = useState("");
   // Track the pin we prefilled for so reopening the sheet on a
-  // different pin re-seeds the input.
-  const prefillKeyRef = useRef<string>("");
+  // different pin re-seeds the input. Keyed on `pin.id` only —
+  // earlier code also watched `todayReading?.id` and would overwrite
+  // the tech's in-progress input if a background refetch landed a
+  // today-reading between mount and save. Doesn't fire in practice
+  // today (sheet closes on save), but guarding now keeps that safe
+  // through any future refactor that leaves the sheet open.
+  const prefillPinIdRef = useRef<string>("");
 
-  const prefillKey = `${pin.id}:${todayReading?.id ?? ""}`;
-  if (prefillKey !== prefillKeyRef.current) {
-    prefillKeyRef.current = prefillKey;
+  if (pin.id !== prefillPinIdRef.current) {
+    prefillPinIdRef.current = pin.id;
     setReadingStr(todayReading ? String(todayReading.reading_value) : "");
   }
 
-  const [confirmOpen, setConfirmOpen] = useState(false);
-
-  const readNum = Number(readingStr);
-  const readValid =
-    Number.isFinite(readNum) && readNum >= 0 && readNum <= 100;
-  const changedFromToday =
-    todayReading === null || todayReading.reading_value !== readNum;
-  const canSave = readValid && readingStr !== "" && changedFromToday;
+  const validation = validateReadingInput(readingStr);
+  const readNum = validation.value ?? 0;
+  const readValid = validation.valid;
+  const changedFromToday = isChangedFromToday(validation.value, todayReading);
+  const canSave = readValid && changedFromToday;
   const saving = createReading.isPending || updateReading.isPending;
 
   // Drag-to-dismiss on mobile — identical mechanic to placement sheet.
@@ -347,18 +406,39 @@ export function MoistureReadingSheet({
 
   const handleSave = () => {
     if (!canSave || saving) return;
-    // Overwrite flow: today already has a reading AND the user typed a
-    // different value. Surface the confirm modal before replacing.
-    if (todayReading) {
-      setConfirmOpen(true);
-      return;
-    }
+    // Readings endpoint is upsert-by-date, so overwriting today's value
+    // is cheap — no ConfirmModal. The history list below the input shows
+    // the existing "Today" row, and the regression banner (if the new
+    // value goes up) makes the overwrite visible in context.
     runSave();
   };
 
-  const handleConfirm = () => {
-    setConfirmOpen(false);
-    runSave();
+  const confirmDeleteRow =
+    confirmDeleteId !== null
+      ? normalizedReadings.find((r) => r.id === confirmDeleteId) ?? null
+      : null;
+
+  const runDelete = (readingId: string) => {
+    setPendingDeleteIds((prev) => {
+      const next = new Set(prev);
+      next.add(readingId);
+      return next;
+    });
+    deleteReading.mutate(readingId, {
+      onSettled: () => {
+        // Drop from pending either way so a failed DELETE restores the
+        // row to a tappable state (query invalidation on success already
+        // removes the row from the list).
+        setPendingDeleteIds((prev) => {
+          const next = new Set(prev);
+          next.delete(readingId);
+          return next;
+        });
+      },
+      onError: (err) => {
+        console.error("moisture reading delete failed", err);
+      },
+    });
   };
 
   const dotColor = pin.color ? COLOR_BG[pin.color] : "bg-outline-variant";
@@ -395,54 +475,42 @@ export function MoistureReadingSheet({
                 </h3>
               </div>
               <p className="mt-1.5 text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                {materialLabel}
+                <span>{materialLabel}</span>
                 <span className="mx-1.5 opacity-50">·</span>
                 <span>Dry std {pin.dry_standard}%</span>
               </p>
             </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="w-8 h-8 -mr-1 -mt-1 flex items-center justify-center rounded-lg text-on-surface-variant hover:bg-surface-container-low cursor-pointer shrink-0"
-            >
-              <svg width={18} height={18} viewBox="0 0 24 24" fill="none">
-                <path
-                  d="M6 6l12 12M18 6L6 18"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                />
-              </svg>
-            </button>
-          </div>
-
-          {/* Dry-standard-met pill — only when the pin has reached the
-              dry threshold at some point. "Day N" counts from the first
-              logged reading (Day 1). Positioned above the banners so the
-              positive signal reads first when both are present. */}
-          {history.dryDay !== null && (
-            <div className="mb-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
-              <svg
-                aria-hidden
-                width={12}
-                height={12}
-                viewBox="0 0 24 24"
-                fill="none"
+            {/* Edit pill — sits in the top-right where the X close used
+                to live. Cancel in the sticky footer + backdrop tap + drag-
+                to-dismiss cover the close affordances, so the slot opens
+                up for the primary action of this header: correcting the
+                pin's material / dry_standard. */}
+            {onEditRequest && !readOnly && (
+              <button
+                type="button"
+                onClick={() => onEditRequest(pin.id)}
+                aria-label="Edit pin settings"
+                className="shrink-0 inline-flex items-center gap-1.5 h-8 px-3 rounded-lg bg-brand-accent/10 text-brand-accent text-[12px] font-semibold hover:bg-brand-accent/15 active:scale-[0.98] transition-all cursor-pointer"
               >
-                <path
-                  d="M5 12l5 5 9-10"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-              <span className="font-[family-name:var(--font-geist-mono)] font-semibold">
-                Dry on Day {history.dryDay}
-              </span>
-            </div>
-          )}
+                <svg
+                  width={13}
+                  height={13}
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden
+                >
+                  <path
+                    d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Edit
+              </button>
+            )}
+          </div>
 
           {/* Day-over-day regression banner — flagged when the latest
               reading is higher than the previous day. Distinct from the
@@ -476,68 +544,80 @@ export function MoistureReadingSheet({
             </div>
           )}
 
-          {/* "Already logged today" banner — only when today's row exists. */}
-          {todayReading && (
-            <div className="mb-3 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-[12px] text-amber-800 flex items-start gap-2">
-              <svg
-                aria-hidden
-                width={14}
-                height={14}
-                viewBox="0 0 24 24"
-                fill="none"
-                className="mt-0.5 shrink-0"
-              >
-                <path
-                  d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+          {/* Today's reading input — hidden in read-only mode (archived
+              jobs). History list + sparkline below still render so the
+              tech can audit what was logged. */}
+          {!readOnly && (
+            <div className="mb-4">
+              <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant mb-1.5">
+                Today&rsquo;s reading
+              </p>
+              <div className="relative">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  value={readingStr}
+                  onChange={(e) => setReadingStr(e.target.value)}
+                  onFocus={(e) => e.target.select()}
+                  min={0}
+                  max={100}
+                  step={0.5}
+                  placeholder="Meter value"
+                  autoFocus={!todayReading}
+                  className={`w-full h-10 px-3 pr-8 rounded-lg border-2 text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] font-semibold outline-none focus:border-brand-accent ${
+                    !readValid && readingStr !== ""
+                      ? "border-red-400"
+                      : "border-brand-accent/40"
+                  }`}
                 />
-              </svg>
-              <span>
-                Already logged today at{" "}
-                <span className="font-[family-name:var(--font-geist-mono)] font-semibold">
-                  {todayReading.reading_value}%
+                <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
+                  %
                 </span>
-                . Saving will overwrite.
-              </span>
+              </div>
             </div>
           )}
 
-          {/* Today's reading input */}
-          <div className="mb-4">
-            <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant mb-1.5">
-              Today&rsquo;s reading
-            </p>
-            <div className="relative">
-              <input
-                type="number"
-                inputMode="decimal"
-                value={readingStr}
-                onChange={(e) => setReadingStr(e.target.value)}
-                onFocus={(e) => e.target.select()}
-                min={0}
-                max={100}
-                step={0.5}
-                placeholder="Meter value"
-                autoFocus={!todayReading}
-                className={`w-full h-10 px-3 pr-8 rounded-lg border-2 text-[13px] text-on-surface font-[family-name:var(--font-geist-mono)] font-semibold outline-none focus:border-brand-accent ${
-                  !readValid && readingStr !== ""
-                    ? "border-red-400"
-                    : "border-brand-accent/40"
-                }`}
-              />
-              <span className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[10px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                %
-              </span>
+          {/* History skeleton — occupies the same vertical space as the
+              real history block so the sheet doesn't jump when the
+              readings fetch settles. Only during initial load
+              (`isPending`). If the pin has no readings at all, the
+              skeleton unmounts cleanly and the sheet stays at its
+              input-only height without flashing a "No readings yet"
+              message we don't actually render. */}
+          {readingsQuery.isPending && (
+            <div
+              className="mb-1"
+              aria-busy="true"
+              aria-label="Loading reading history"
+            >
+              <div className="flex items-baseline justify-between mb-1.5">
+                <p className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.08em] text-on-surface-variant/60">
+                  History
+                </p>
+              </div>
+              <div className="rounded-lg bg-surface-container-low h-[116px] mb-2 animate-pulse" />
+              <ul className="divide-y divide-outline-variant/20">
+                {[0, 1].map((i) => (
+                  <li
+                    key={i}
+                    className="flex items-center gap-3 py-2 animate-pulse"
+                  >
+                    <span
+                      aria-hidden
+                      className="w-2 h-2 rounded-full bg-outline-variant/40 shrink-0"
+                    />
+                    <span className="h-3 w-12 rounded bg-outline-variant/30" />
+                    <span className="ml-auto h-3 w-12 rounded bg-outline-variant/30" />
+                  </li>
+                ))}
+              </ul>
             </div>
-          </div>
+          )}
 
-          {/* History — sparkline + chronological list. Hidden entirely
-              while the pin has no readings, and while the initial query
-              is still loading (so we don't render a "No readings yet"
-              flash before the data arrives). */}
+          {/* History — sparkline + chronological list. Hidden when the
+              pin has no readings (new pin). The `isPending` branch
+              above covers the first-load flash; this branch only
+              renders once data has actually arrived. */}
           {readingsQuery.data !== undefined && history.asc.length > 0 && (
             <div className="mb-1">
               <div className="flex items-baseline justify-between mb-1.5">
@@ -562,8 +642,8 @@ export function MoistureReadingSheet({
 
               {/* Reading list — newest first. Each row: colored dot,
                   mono value, short date, optional ↑ chevron for rows
-                  whose value increased vs the previous day. Read-only
-                  in 3B; delete-reading UI is a separate follow-up. */}
+                  whose value increased vs the previous day, trailing
+                  trash affordance that opens a ConfirmModal. */}
               <ul className="divide-y divide-outline-variant/20">
                 {history.desc.map((r) => {
                   const color = computePinColor(
@@ -572,10 +652,19 @@ export function MoistureReadingSheet({
                   );
                   const regressed = history.regressingIds.has(r.id);
                   const isToday = r.reading_date === today;
+                  const isDeleting = pendingDeleteIds.has(r.id);
+                  // A pin must always have ≥ 1 reading — otherwise it
+                  // renders on canvas as a grey "no reading yet" dot and
+                  // the tech loses the pin's meaning without seeing it
+                  // disappear. Block the trash on the last survivor and
+                  // redirect them toward the pin-delete flow instead.
+                  const isLastReading = history.asc.length === 1;
                   return (
                     <li
                       key={r.id}
-                      className="flex items-center gap-3 py-2"
+                      className={`flex items-center gap-3 py-2 transition-opacity ${
+                        isDeleting ? "opacity-40 pointer-events-none" : ""
+                      }`}
                     >
                       <span
                         aria-hidden
@@ -608,8 +697,46 @@ export function MoistureReadingSheet({
                         </span>
                       )}
                       <span className="ml-auto text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                        {isToday ? "Today" : formatShortDate(r.reading_date)}
+                        {isToday ? "Today" : formatShortDateLocal(r.reading_date)}
                       </span>
+                      {!readOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setConfirmDeleteId(r.id)}
+                        disabled={isDeleting || isLastReading}
+                        aria-label={
+                          isLastReading
+                            ? "Last reading — delete the pin from the canvas to remove it"
+                            : `Delete ${Number(r.reading_value)}% reading from ${
+                                isToday
+                                  ? "today"
+                                  : formatShortDateLocal(r.reading_date)
+                              }`
+                        }
+                        title={
+                          isLastReading
+                            ? "Last reading — delete the pin instead"
+                            : undefined
+                        }
+                        className="shrink-0 w-7 h-7 -mr-1 flex items-center justify-center rounded-full text-on-surface-variant/40 [@media(hover:none)]:text-red-500/70 hover:text-red-600 hover:bg-red-100 active:text-red-600 active:bg-red-100 active:scale-[0.94] transition-all cursor-pointer disabled:cursor-default disabled:opacity-30 disabled:hover:text-on-surface-variant/40 disabled:hover:bg-transparent disabled:active:text-on-surface-variant/40 disabled:active:bg-transparent disabled:active:scale-100"
+                      >
+                        <svg
+                          aria-hidden
+                          width={14}
+                          height={14}
+                          viewBox="0 0 24 24"
+                          fill="none"
+                        >
+                          <path
+                            d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14zM10 11v6M14 11v6"
+                            stroke="currentColor"
+                            strokeWidth="1.75"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                      )}
                     </li>
                   );
                 })}
@@ -618,41 +745,61 @@ export function MoistureReadingSheet({
           )}
         </div>
 
-        {/* Sticky footer — Cancel + Save */}
+        {/* Sticky footer — Cancel + Save in edit mode; single Close
+            button in read-only mode (archived job). */}
         <div className="shrink-0 px-4 pt-3 pb-4 sm:px-5 sm:pt-3 sm:pb-4 border-t border-outline-variant/30 bg-surface-container-lowest">
-          <div className="flex gap-2">
+          {readOnly ? (
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 h-10 rounded-lg bg-surface-container-low text-[13px] font-medium text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+              className="w-full h-10 rounded-lg bg-surface-container-low text-[13px] font-medium text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
             >
-              Cancel
+              Close
             </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={!canSave || saving}
-              className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[13px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all"
-            >
-              {saving ? "Saving..." : "Save"}
-            </button>
-          </div>
+          ) : (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="flex-1 h-10 rounded-lg bg-surface-container-low text-[13px] font-medium text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!canSave || saving}
+                className="flex-1 h-10 rounded-lg bg-brand-accent text-on-primary text-[13px] font-semibold cursor-pointer disabled:opacity-40 active:scale-[0.98] transition-all"
+              >
+                {saving ? "Saving..." : "Save"}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
+      {/* Per-reading delete confirmation. Body pulls the row's value +
+          date fresh at render from `confirmDeleteRow` so the copy stays
+          correct even if the underlying cache updates underneath us. */}
       <ConfirmModal
-        open={confirmOpen}
-        title="Overwrite today's reading?"
+        open={confirmDeleteRow !== null}
+        title="Delete reading?"
         description={
-          todayReading
-            ? `This will replace today's ${todayReading.reading_value}% with ${readNum}%.`
+          confirmDeleteRow
+            ? `The ${Number(confirmDeleteRow.reading_value)}% reading from ${
+                confirmDeleteRow.reading_date === today
+                  ? "today"
+                  : formatShortDateLocal(confirmDeleteRow.reading_date)
+              } will be removed. This can't be undone.`
             : undefined
         }
-        confirmLabel="Overwrite"
-        cancelLabel="Keep"
-        variant="default"
-        onConfirm={handleConfirm}
-        onCancel={() => setConfirmOpen(false)}
+        confirmLabel="Delete"
+        variant="danger"
+        onConfirm={() => {
+          if (confirmDeleteRow) runDelete(confirmDeleteRow.id);
+          setConfirmDeleteId(null);
+        }}
+        onCancel={() => setConfirmDeleteId(null)}
       />
 
       <style jsx>{`
