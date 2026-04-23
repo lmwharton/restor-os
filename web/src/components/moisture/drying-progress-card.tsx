@@ -86,13 +86,35 @@ export function DryingProgressCard({ jobId }: { jobId: string }) {
           );
         })}
       </ul>
-      <button
-        type="button"
-        onClick={() => router.push(`/jobs/${jobId}/floor-plan?mode=moisture`)}
-        className="mt-4 text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold text-brand-accent hover:underline cursor-pointer uppercase tracking-[0.06em]"
+      {/* Two entry points from the summary: inspect pins on the canvas
+          (tech workflow) OR open the carrier-grade moisture report
+          (adjuster handoff / audit). Split as separate affordances
+          because they serve different intents — the floor-plan link
+          drops you into Moisture Mode for active work; the report
+          link opens a print-ready snapshot. Same visual weight so
+          neither feels buried on mobile. */}
+      <div
+        role="group"
+        aria-label="Drying progress actions"
+        className="mt-4 flex flex-wrap items-center gap-x-5 gap-y-2"
       >
-        View Floor Plan →
-      </button>
+        <button
+          type="button"
+          onClick={() =>
+            router.push(`/jobs/${jobId}/floor-plan?mode=moisture`)
+          }
+          className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold text-brand-accent hover:underline cursor-pointer uppercase tracking-[0.06em]"
+        >
+          View Floor Plan →
+        </button>
+        <button
+          type="button"
+          onClick={() => router.push(`/jobs/${jobId}/moisture-report`)}
+          className="text-[11px] font-[family-name:var(--font-geist-mono)] font-semibold text-brand-accent hover:underline cursor-pointer uppercase tracking-[0.06em]"
+        >
+          Open Moisture Report →
+        </button>
+      </div>
     </section>
   );
 }
