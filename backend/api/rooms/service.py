@@ -2,18 +2,24 @@
 
 Uses authenticated client (RLS-enforced) for all operations.
 Hard deletes (no deleted_at column on job_rooms).
-On delete, photos get room_id=NULL (CASCADE handles moisture readings).
+On delete, photos get room_id=NULL (CASCADE handles moisture readings + wall_segments).
 """
 
+import logging
+import math
 from decimal import Decimal
 from uuid import UUID
 
 from postgrest.exceptions import APIError
 
 from api.rooms.schemas import RoomCreate, RoomUpdate
+from api.shared.constants import CEILING_MULTIPLIERS, ROOM_TYPE_MATERIAL_DEFAULTS
 from api.shared.database import get_authenticated_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
+from api.shared.guards import ensure_job_mutable
+
+logger = logging.getLogger(__name__)
 
 VALID_WATER_CATEGORIES = {"1", "2", "3"}
 VALID_WATER_CLASSES = {"1", "2", "3", "4"}
@@ -59,6 +65,95 @@ def _serialize_decimals(data: dict) -> dict:
     return out
 
 
+def _get_material_defaults(room_type: str | None) -> list[str]:
+    """Return default material flags for a room type, or empty list."""
+    if room_type and room_type in ROOM_TYPE_MATERIAL_DEFAULTS:
+        return list(ROOM_TYPE_MATERIAL_DEFAULTS[room_type])
+    return []
+
+
+def calculate_floor_sf(
+    room_polygon: list[dict] | None,
+    floor_openings: list[dict] | None,
+    grid_size: int = 10,
+) -> float | None:
+    """Calculate floor SF from polygon vertices using the shoelace formula.
+
+    grid_size: pixels per 6 inches (10px = 6in, so 20px = 1ft).
+    Returns None if no polygon is provided.
+    """
+    if not room_polygon or len(room_polygon) < 3:
+        return None
+
+    # Shoelace formula for polygon area in pixel² units
+    points = room_polygon
+    n = len(points)
+    area = 0.0
+    for i in range(n):
+        j = (i + 1) % n
+        area += points[i].get("x", 0) * points[j].get("y", 0)
+        area -= points[j].get("x", 0) * points[i].get("y", 0)
+    gross_area_px = abs(area) / 2.0
+
+    # Convert px² to ft² (20px = 1ft, so 1ft² = 400px²)
+    px_per_ft = grid_size * 2  # 10px = 6in, 20px = 1ft
+    gross_sf = gross_area_px / (px_per_ft * px_per_ft)
+
+    # Subtract floor openings (stairwells, HVAC chases)
+    opening_sf = 0.0
+    if floor_openings:
+        for o in floor_openings:
+            w = o.get("width", 0)
+            h = o.get("height", 0)
+            opening_sf += (w / px_per_ft) * (h / px_per_ft)
+
+    return round(gross_sf - opening_sf, 1)
+
+
+def calculate_wall_sf(
+    walls: list[dict],
+    height_ft: float,
+    ceiling_type: str,
+    openings: list[dict],
+    custom_wall_sf: float | None = None,
+    grid_size: int = 10,
+) -> float:
+    """Calculate wall SF from wall segments.
+
+    If custom_wall_sf is set, returns it directly (tech override).
+    Otherwise: perimeter LF (excl. shared walls) × height × multiplier - openings.
+    """
+    if custom_wall_sf is not None:
+        return float(custom_wall_sf)
+
+    px_per_ft = grid_size * 2  # 10px = 6in, 20px = 1ft
+
+    # Perimeter LF from non-shared walls
+    perimeter_lf = 0.0
+    wall_ids = set()
+    for w in walls:
+        if w.get("shared"):
+            continue
+        dx = float(w.get("x2", 0)) - float(w.get("x1", 0))
+        dy = float(w.get("y2", 0)) - float(w.get("y1", 0))
+        length_px = math.hypot(dx, dy)
+        perimeter_lf += length_px / px_per_ft
+        wall_ids.add(w.get("id"))
+
+    # Gross wall area
+    gross_sf = perimeter_lf * height_ft
+
+    # Opening deductions (only for non-shared walls)
+    opening_sf = 0.0
+    for o in openings:
+        if o.get("wall_id") in wall_ids:
+            opening_sf += float(o.get("width_ft", 0)) * float(o.get("height_ft", 0))
+
+    net_sf = gross_sf - opening_sf
+    multiplier = CEILING_MULTIPLIERS.get(ceiling_type, 1.0)
+    return round(net_sf * multiplier, 1)
+
+
 async def create_room(
     token: str,
     job_id: UUID,
@@ -70,14 +165,14 @@ async def create_room(
     _validate_water_fields(body.water_category, body.water_class)
 
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
-    # If floor_plan_id is provided, verify it exists and belongs to this job
+    # If floor_plan_id is provided, verify it exists and belongs to this company
     if body.floor_plan_id:
         fp_check = await (
             client.table("floor_plans")
             .select("id")
             .eq("id", str(body.floor_plan_id))
-            .eq("job_id", str(job_id))
             .eq("company_id", str(company_id))
             .execute()
         )
@@ -90,6 +185,11 @@ async def create_room(
 
     square_footage = _calc_square_footage(body.length_ft, body.width_ft)
 
+    # Auto-populate material defaults from room type if not provided
+    material_flags = body.material_flags
+    if not material_flags and body.room_type:
+        material_flags = _get_material_defaults(body.room_type)
+
     row = _serialize_decimals(
         {
             "job_id": str(job_id),
@@ -100,6 +200,16 @@ async def create_room(
             "width_ft": body.width_ft,
             "height_ft": body.height_ft,
             "square_footage": square_footage,
+            # V2 fields (Spec 01H)
+            "room_type": body.room_type,
+            "ceiling_type": body.ceiling_type,
+            "floor_level": body.floor_level,
+            "affected": body.affected,
+            "material_flags": material_flags,
+            "room_polygon": body.room_polygon,
+            "floor_openings": body.floor_openings,
+            "custom_wall_sf": body.custom_wall_sf,
+            # Existing fields
             "water_category": body.water_category,
             "water_class": body.water_class,
             "dry_standard": body.dry_standard,
@@ -197,6 +307,7 @@ async def update_room(
 ) -> dict:
     """Update a room. Re-calculates square_footage if dimensions change."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
     # Get existing room
     existing = await (
@@ -234,7 +345,6 @@ async def update_room(
             client.table("floor_plans")
             .select("id")
             .eq("id", str(updates["floor_plan_id"]))
-            .eq("job_id", str(job_id))
             .eq("company_id", str(company_id))
             .execute()
         )
@@ -245,6 +355,17 @@ async def update_room(
                 error_code="FLOOR_PLAN_NOT_FOUND",
             )
         updates["floor_plan_id"] = str(updates["floor_plan_id"])
+
+    # If room_type changed to a non-null value and material_flags not explicitly
+    # provided, auto-populate defaults. When room_type is cleared (set to null)
+    # we DON'T wipe materials — the user may want to keep their custom flags
+    # even after removing the type label.
+    if (
+        "room_type" in updates
+        and updates["room_type"]
+        and "material_flags" not in updates
+    ):
+        updates["material_flags"] = _get_material_defaults(updates["room_type"])
 
     # Re-calculate square_footage if length or width changed
     length = updates.get("length_ft", existing.data.get("length_ft"))
@@ -276,6 +397,20 @@ async def update_room(
         )
 
     room = result.data[0]
+
+    # R16 (round 2): recompute cached wall_square_footage if any formula
+    # input changed at the room level. Closes the last drift gap that the
+    # per-wall/opening CRUD recalc (walls/service.py) doesn't cover —
+    # the stored SF is keyed to the row's current height/ceiling/override
+    # regardless of which endpoint mutated them.
+    # Lazy import: walls.service imports calculate_wall_sf from this module,
+    # so a top-level import would be circular.
+    wall_sf_inputs = {"height_ft", "ceiling_type", "custom_wall_sf"}
+    if wall_sf_inputs.intersection(updates):
+        from api.walls.service import _recalculate_room_wall_sf
+        fresh_sf = await _recalculate_room_wall_sf(client, room_id, company_id)
+        if fresh_sf is not None:
+            room["wall_square_footage"] = fresh_sf
 
     # Fetch reading stats for this room
     readings = await (
@@ -309,6 +444,7 @@ async def delete_room(
 ) -> None:
     """Hard delete a room. Photos get room_id=NULL, CASCADE handles moisture readings."""
     client = await get_authenticated_client(token)
+    await ensure_job_mutable(client, job_id, company_id)
 
     # Verify room exists
     existing = await (

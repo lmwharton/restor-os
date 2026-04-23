@@ -12,6 +12,7 @@ from api.events.router import router as events_router
 from api.floor_plans.router import router as floor_plans_router
 from api.jobs.router import router as jobs_router
 from api.moisture.router import router as moisture_router
+from api.notifications.router import router as notifications_router
 from api.photos.router import router as photos_router
 from api.properties.router import router as properties_router
 from api.recon_phases.router import router as recon_phases_router
@@ -19,8 +20,8 @@ from api.reports.router import router as reports_router
 from api.rooms.router import router as rooms_router
 from api.shared.exceptions import AppException, app_exception_handler
 from api.shared.logging import generate_request_id, request_id_var, setup_logging
-from api.notifications.router import router as notifications_router
 from api.sharing.router import router as sharing_router
+from api.walls.router import router as walls_router
 
 # Health check log throttle — log at INFO once per hour, DEBUG otherwise
 _last_health_log: float = 0.0
@@ -42,7 +43,12 @@ app.add_middleware(
     allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    # If-Match carries the round-3 optimistic-concurrency etag on every
+    # POST /v1/floor-plans/{id}/versions (and the other mutation endpoints).
+    # Browser CORS preflight rejects the actual request if the header name
+    # isn't in this list — rounds 3 shipped the client side without allowing
+    # it here, so every save failed at preflight with no HTTP status.
+    allow_headers=["Authorization", "Content-Type", "If-Match"],
     max_age=3600,
 )
 
@@ -88,12 +94,18 @@ async def request_context(request: Request, call_next):
             else:
                 _last_health_log = now
 
-        logger.log(level, "request", extra={"extra_data": {
-            "method": request.method,
-            "path": path,
-            "status": status,
-            "duration_ms": duration_ms,
-        }})
+        logger.log(
+            level,
+            "request",
+            extra={
+                "extra_data": {
+                    "method": request.method,
+                    "path": path,
+                    "status": status,
+                    "duration_ms": duration_ms,
+                }
+            },
+        )
 
     return response
 
@@ -111,6 +123,7 @@ app.include_router(reports_router, prefix="/v1")
 app.include_router(rooms_router, prefix="/v1")
 app.include_router(recon_phases_router, prefix="/v1")
 app.include_router(sharing_router, prefix="/v1")
+app.include_router(walls_router, prefix="/v1")
 
 
 @app.get("/")

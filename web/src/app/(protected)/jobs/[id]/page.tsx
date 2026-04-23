@@ -11,6 +11,7 @@ import {
   useDeleteJob,
   useCreateShareLink,
   useFloorPlans,
+  useFloorPlanHistory,
   useUpdateJob,
 
   useCreateRoom,
@@ -42,6 +43,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
+import { isJobArchived } from "@/lib/job-status";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -54,6 +56,14 @@ interface CanvasWall {
   y2: number;
 }
 
+interface CanvasFloorOpening {
+  id?: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 interface CanvasRoom {
   id: string;
   x: number;
@@ -62,6 +72,8 @@ interface CanvasRoom {
   height: number;
   name: string;
   fill: string;
+  points?: Array<{ x: number; y: number }>;
+  floor_openings?: CanvasFloorOpening[];
 }
 
 interface CanvasData {
@@ -228,7 +240,7 @@ function TrashIcon({ size = 18 }: { size?: number }) {
 /*  Floor Plan Preview (SVG thumbnail)                                 */
 /* ------------------------------------------------------------------ */
 
-function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
+function FloorPlanPreview({ canvasData, hasFloorPlan = false }: { canvasData: CanvasData | null; hasFloorPlan?: boolean }) {
   const rawWalls = canvasData?.walls;
   const walls = Array.isArray(rawWalls) ? rawWalls : [];
   const rawRooms = canvasData?.rooms;
@@ -251,7 +263,12 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
             <rect x="3" y="3" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.5" />
             <path d="M3 9h18M9 3v18" stroke="currentColor" strokeWidth="1.5" />
           </svg>
-          <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">No floor plan yet</span>
+          {/* If a floor plan row exists but the canvas is empty, the user has
+              created a floor (e.g. via auto-Main) but hasn't drawn anything
+              yet. Saying "No floor plan yet" is misleading in that case. */}
+          <span className="text-[12px] font-[family-name:var(--font-geist-mono)]">
+            {hasFloorPlan ? "Tap to start drawing" : "No floor plan yet"}
+          </span>
         </div>
       </>
     );
@@ -282,45 +299,80 @@ function FloorPlanPreview({ canvasData }: { canvasData: CanvasData | null }) {
         preserveAspectRatio="xMidYMid meet"
         aria-label="Floor plan preview"
       >
-        {rooms.map((room) => (
-          <g key={room.id}>
-            <rect
-              x={room.x}
-              y={room.y}
-              width={room.width}
-              height={room.height}
-              fill={room.fill ?? "rgba(232,93,38,0.08)"}
-              stroke="#e85d26"
-              strokeWidth={Math.max(1, vbW / 200)}
-            />
-            {room.name && (
-              <>
-                <text
-                  x={room.x + room.width / 2}
-                  y={room.y + room.height / 2 - 5}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
-                  fill="#6b6560"
-                  fontFamily="var(--font-geist-mono), monospace"
-                >
-                  {room.name}
-                </text>
-                <text
-                  x={room.x + room.width / 2}
-                  y={room.y + room.height / 2 + 7}
-                  textAnchor="middle"
-                  dominantBaseline="middle"
-                  fontSize={7}
-                  fill="#8a847e"
-                  fontFamily="var(--font-geist-mono), monospace"
-                >
-                  {Math.round((room.width / gs) * (room.height / gs))} SF
-                </text>
-              </>
-            )}
-          </g>
-        ))}
+        {rooms.map((room) => {
+          // Net floor SF: subtract cutouts from polygon (or bbox) area.
+          // Shoelace for polygons; bbox for rectangles.
+          let areaPx: number;
+          if (Array.isArray(room.points) && room.points.length >= 3) {
+            let sum = 0;
+            for (let i = 0; i < room.points.length; i++) {
+              const a = room.points[i];
+              const b = room.points[(i + 1) % room.points.length];
+              sum += a.x * b.y - b.x * a.y;
+            }
+            areaPx = Math.abs(sum) / 2;
+          } else {
+            areaPx = room.width * room.height;
+          }
+          const cutoutsPx = (room.floor_openings ?? []).reduce(
+            (s, o) => s + Math.abs(o.width * o.height),
+            0,
+          );
+          const netSf = Math.max(0, (areaPx - cutoutsPx) / (gs * gs));
+          return (
+            <g key={room.id}>
+              <rect
+                x={room.x}
+                y={room.y}
+                width={room.width}
+                height={room.height}
+                fill={room.fill ?? "rgba(232,93,38,0.08)"}
+                stroke="#e85d26"
+                strokeWidth={Math.max(1, vbW / 200)}
+              />
+              {/* Floor cutouts — dashed white rectangles inside the room */}
+              {(room.floor_openings ?? []).map((op, i) => (
+                <rect
+                  key={op.id ?? `cut-${i}`}
+                  x={op.x}
+                  y={op.y}
+                  width={op.width}
+                  height={op.height}
+                  fill="#ffffff"
+                  stroke="#6b6560"
+                  strokeWidth={Math.max(0.5, vbW / 300)}
+                  strokeDasharray={`${Math.max(1, vbW / 120)} ${Math.max(1, vbW / 150)}`}
+                />
+              ))}
+              {room.name && (
+                <>
+                  <text
+                    x={room.x + room.width / 2}
+                    y={room.y + room.height / 2 - 5}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={Math.max(8, Math.min(14, Math.min(room.width, room.height) / 6))}
+                    fill="#6b6560"
+                    fontFamily="var(--font-geist-mono), monospace"
+                  >
+                    {room.name}
+                  </text>
+                  <text
+                    x={room.x + room.width / 2}
+                    y={room.y + room.height / 2 + 7}
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    fontSize={7}
+                    fill="#8a847e"
+                    fontFamily="var(--font-geist-mono), monospace"
+                  >
+                    {Math.round(netSf)} SF
+                  </text>
+                </>
+              )}
+            </g>
+          );
+        })}
         {walls.map((w, i) => (
           <line
             key={`wall-${i}`}
@@ -1257,7 +1309,14 @@ function RoomRow({
   onUpdateRoom,
   onDeleteRoom,
 }: {
-  room: { id: string; room_name: string; width_ft: number | null; length_ft: number | null };
+  room: {
+    id: string;
+    room_name: string;
+    width_ft: number | null;
+    length_ft: number | null;
+    square_footage?: number | null;
+    floor_openings?: Array<{ width: number; height: number }> | null;
+  };
   onUpdateRoom: (data: Record<string, unknown>) => void;
   onDeleteRoom: () => void;
 }) {
@@ -1328,9 +1387,22 @@ function RoomRow({
         className="h-7 w-full px-1.5 rounded bg-surface-container text-[12px] font-[family-name:var(--font-geist-mono)] text-on-surface text-center outline-none focus:ring-1 focus:ring-brand-accent/40 placeholder:text-on-surface-variant/40 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
       />
 
-      {/* Square footage */}
-      <span className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center">
-        {room.width_ft && room.length_ft ? Math.round(room.width_ft * room.length_ft) : "—"}
+      {/* Square footage — prefers the backend-stored net SF (which accounts
+          for polygon shape + floor cutouts). Falls back to width × length
+          only if nothing has populated square_footage yet. */}
+      <span
+        className="text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant tabular-nums text-center"
+        title={
+          (room.floor_openings?.length ?? 0) > 0
+            ? `Net after ${room.floor_openings!.length} cutout${room.floor_openings!.length === 1 ? "" : "s"}`
+            : undefined
+        }
+      >
+        {typeof room.square_footage === "number" && room.square_footage > 0
+          ? Math.round(room.square_footage)
+          : room.width_ft && room.length_ft
+            ? Math.round(room.width_ft * room.length_ft)
+            : "—"}
       </span>
 
       {/* Delete */}
@@ -1541,9 +1613,71 @@ export default function JobDetailPage() {
 
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
-  const { data: floorPlans } = useFloorPlans(jobId);
+  const { data: floorPlans, isLoading: floorPlansLoading } = useFloorPlans(jobId);
+  const isArchived = isJobArchived(job?.status);
+  // Archived jobs prefer anchoring on their own pin so the resolved floor
+  // matches the frozen view. When the pin is missing (legacy row without
+  // floor_plan_id set), fall back to the first is_current row — list_versions
+  // scopes by (property, floor_number), so ANY row on a floor this job
+  // touched will surface all versions including the ones this job created,
+  // enabling the created_by_job_id fallback in bestFloorPlan below.
+  const primaryFloorPlanId =
+    (isArchived && job?.floor_plan_id) ||
+    floorPlans?.[0]?.id ||
+    "";
+  const { data: fpVersions, isLoading: fpVersionsLoading } = useFloorPlanHistory(primaryFloorPlanId);
   const bestFloorPlan = useMemo(() => {
     if (!floorPlans?.length) return null;
+    if (!job) return null;
+
+    // Linear history rule for thumbnail (archived jobs):
+    //   1. Pin — frozen audit view, exactly what was submitted.
+    //   2. Version this job created (latest) — fallback when the pin is
+    //      legacy/stale (e.g., shell created but never re-pinned after a
+    //      Case 3 fork before today's backend fix).
+    //   3. Floor with most content from floorPlans — last resort for very
+    //      old archived data where neither pin nor created_by_job_id resolves.
+    //      Not strictly the "frozen" canvas, but guarantees users see SOMETHING
+    //      rather than the misleading "Tap to start drawing" empty state on
+    //      a job they obviously drew on.
+    //
+    // Active jobs always show the is_current snapshot (floorPlans filters
+    // server-side).
+    const hasContent = (cd: CanvasData | null | undefined): boolean => {
+      if (!cd) return false;
+      const r = Array.isArray(cd.rooms) ? cd.rooms.length : 0;
+      const w = Array.isArray(cd.walls) ? cd.walls.length : 0;
+      return r > 0 || w > 0;
+    };
+    if (isArchived) {
+      if (!fpVersions) return null; // wait for history
+      // 1. Pin
+      if (job.floor_plan_id) {
+        const pinned = fpVersions.find((v) => v.id === job.floor_plan_id);
+        const cd = pinned?.canvas_data as CanvasData | null | undefined;
+        if (hasContent(cd)) return cd as CanvasData;
+      }
+      // 2. Latest version created_by this job
+      const ownVersion = [...fpVersions]
+        .filter((v) => v.created_by_job_id === job.id)
+        .sort((a, b) => b.version_number - a.version_number)[0];
+      const ownCd = ownVersion?.canvas_data as CanvasData | null | undefined;
+      if (hasContent(ownCd)) return ownCd as CanvasData;
+      // 3. Any is_current floor with content (legacy-data safety net).
+      // KNOWN LIMITATION: this CAN leak sibling job content into an archived
+      // job's preview when pins were lost to legacy bugs. Accept for now so
+      // the preview shows *something* rather than a misleading empty state.
+      // FOLLOW-UP (tracked in spec 01H Phase 1 TODO): data migration to
+      // backfill archived jobs' pins (`jobs.floor_plan_id`) from
+      // `created_by_job_id` on floor_plans rows. Once pins are clean, remove
+      // this tier so archived previews strictly reflect the frozen snapshot.
+      for (const fp of floorPlans) {
+        const cd = fp.canvas_data as CanvasData | null;
+        if (hasContent(cd)) return cd as CanvasData;
+      }
+      return null;
+    }
+
     let best: CanvasData | null = null;
     let bestCount = 0;
     for (const fp of floorPlans) {
@@ -1552,7 +1686,7 @@ export default function JobDetailPage() {
       if (count > bestCount) { best = cd; bestCount = count; }
     }
     return best;
-  }, [floorPlans]);
+  }, [floorPlans, fpVersions, job, isArchived]);
   const { data: photos } = usePhotos(jobId);
   const { data: events } = useJobEvents(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
@@ -1874,7 +2008,25 @@ export default function JobDetailPage() {
                 onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") router.push(`/jobs/${jobId}/floor-plan`); }}
                 className="relative bg-surface-container-high rounded-lg min-h-[140px] sm:min-h-[200px] flex items-center justify-center overflow-hidden cursor-pointer hover:bg-surface-container-high/80 transition-colors group"
               >
-                <FloorPlanPreview canvasData={bestFloorPlan} />
+                {jobLoading || floorPlansLoading || (isArchived && fpVersionsLoading) ? (
+                  /* Loading shimmer while fetches resolve — prevents the
+                     "No floor plan yet" flash on reload when data is still
+                     in flight from the backend. Archived jobs additionally
+                     wait on fpVersions so the pinned-version canvas resolves
+                     before rendering (avoids an empty-state flash before the
+                     frozen snapshot arrives). */
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-full h-full bg-gradient-to-r from-surface-container-high via-surface-container to-surface-container-high animate-pulse rounded-lg" />
+                    <span className="relative text-[11px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/40">
+                      Loading…
+                    </span>
+                  </div>
+                ) : (
+                  <FloorPlanPreview
+                    canvasData={bestFloorPlan}
+                    hasFloorPlan={!!floorPlans && floorPlans.length > 0}
+                  />
+                )}
               </div>
               {/* View Plan link — below preview to avoid overlap */}
               <div
@@ -1891,51 +2043,46 @@ export default function JobDetailPage() {
 
               {/* Room list grouped by floor */}
               {rooms && rooms.length > 0 && (() => {
-                // Build floor → room name mapping from canvas data
-                const floorRoomNames = new Map<string, Set<string>>();
-                floorPlans?.forEach((fp) => {
-                  const cd = fp.canvas_data as CanvasData | null;
-                  if (cd?.rooms) {
-                    const names = new Set(cd.rooms.map((r: { name?: string }) => r.name).filter(Boolean) as string[]);
-                    floorRoomNames.set(fp.floor_name, names);
-                  }
-                });
-
-                // Group rooms: assign each room to its floor, or "Unassigned"
-                const grouped: Array<{ floorName: string; floorRooms: typeof rooms }> = [];
+                // Group by floor_plan.id (stable, unique) — NOT floor_name
+                // (legacy data can have duplicate "Floor 1" rows from before
+                // the preset-naming refactor, which would crash React with
+                // duplicate keys).
+                const grouped: Array<{ key: string; floorName: string; floorRooms: typeof rooms }> = [];
                 const assigned = new Set<string>();
 
                 floorPlans?.forEach((fp) => {
-                  const names = floorRoomNames.get(fp.floor_name);
-                  if (names && names.size > 0) {
-                    const floorRooms = rooms.filter((r) => names.has(r.room_name));
-                    if (floorRooms.length > 0) {
-                      grouped.push({ floorName: fp.floor_name, floorRooms });
-                      floorRooms.forEach((r) => assigned.add(r.id));
-                    }
+                  const cd = fp.canvas_data as CanvasData | null;
+                  const names = cd?.rooms
+                    ? new Set(cd.rooms.map((r: { name?: string }) => r.name).filter(Boolean) as string[])
+                    : new Set<string>();
+                  if (names.size === 0) return;
+                  const floorRooms = rooms.filter((r) => names.has(r.room_name) && !assigned.has(r.id));
+                  if (floorRooms.length > 0) {
+                    grouped.push({ key: fp.id, floorName: fp.floor_name, floorRooms });
+                    floorRooms.forEach((r) => assigned.add(r.id));
                   }
                 });
 
                 const unassigned = rooms.filter((r) => !assigned.has(r.id));
                 if (unassigned.length > 0) {
-                  grouped.push({ floorName: grouped.length === 0 ? "Rooms" : "Not on floor plan", floorRooms: unassigned });
+                  grouped.push({ key: "__unassigned", floorName: grouped.length === 0 ? "Rooms" : "Not on floor plan", floorRooms: unassigned });
                 }
 
                 // If no floor plans at all, just show "Rooms"
                 if (grouped.length === 0) {
-                  grouped.push({ floorName: "Rooms", floorRooms: rooms });
+                  grouped.push({ key: "__all", floorName: "Rooms", floorRooms: rooms });
                 }
 
                 return (
                   <div className="space-y-4">
-                    {grouped.map(({ floorName, floorRooms }) => (
-                      <div key={floorName} className="space-y-0.5">
+                    {grouped.map(({ key, floorName, floorRooms }) => (
+                      <div key={key} className="space-y-0.5">
                         <p className="text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/70 mb-1.5 px-1">
                           {floorName}
                         </p>
-                        {/* Header row */}
+                        {/* Header row — room name column has no label (the floor header above labels this block) */}
                         <div className="grid grid-cols-[1fr_60px_60px_50px_28px] gap-1.5 px-1 mb-1">
-                          <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">Room</span>
+                          <span />
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">W ft</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">L ft</span>
                           <span className="text-[9px] font-[family-name:var(--font-geist-mono)] uppercase tracking-wider text-on-surface-variant/50">SF</span>

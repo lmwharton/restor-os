@@ -500,7 +500,7 @@ function MobileBottomNav() {
       className="md:hidden fixed bottom-0 left-0 right-0 z-50 backdrop-blur-xl bg-surface/80 border-t border-outline-variant/30 pb-[env(safe-area-inset-bottom)]"
       aria-label="Mobile navigation"
     >
-      <div className="flex items-center justify-around h-16">
+      <div className="flex items-center justify-around h-12">
         {navItems.map(({ href, label, Icon }) => {
           const isActive =
             pathname === href || pathname?.startsWith(href + "/");
@@ -508,17 +508,17 @@ function MobileBottomNav() {
             <Link
               key={href}
               href={href}
-              className="flex flex-col items-center gap-1 min-w-[48px] min-h-[48px] justify-center"
+              className="flex flex-col items-center gap-0.5 min-w-[44px] min-h-[40px] justify-center"
               aria-current={isActive ? "page" : undefined}
             >
               <div className="relative">
-                <Icon size={22} className={isActive ? "text-brand-accent" : "text-outline"} />
+                <Icon size={18} className={isActive ? "text-brand-accent" : "text-outline"} />
                 {isActive && (
-                  <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-brand-accent" />
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 rounded-full bg-brand-accent" />
                 )}
               </div>
               <span
-                className={`text-[10px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.06em] ${
+                className={`text-[8px] font-[family-name:var(--font-geist-mono)] uppercase tracking-[0.06em] ${
                   isActive ? "text-brand-accent" : "text-outline"
                 }`}
               >
@@ -538,6 +538,18 @@ function MobileBottomNav() {
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const { data: user = null } = useMe() as { data: UserProfile | null | undefined };
+  const pathname = usePathname();
+  // Full-bleed routes: hide mobile header + bottom nav so the content owns
+  // the full viewport. Desktop top bar is already hidden for /jobs/* routes.
+  //
+  // Job detail + sub-routes (/jobs/<id>, /jobs/<id>/photos, etc.) are focused
+  // task views — the sub-header's back arrow is the only nav the user needs.
+  // /jobs (list) and /jobs/new (form) keep the full chrome.
+  const isFloorPlan = pathname?.includes("/floor-plan");
+  const isJobDetail =
+    !!pathname?.startsWith("/jobs/") && !pathname.startsWith("/jobs/new");
+  const hideMobileNav = isFloorPlan || isJobDetail;
+  const hideMobileHeader = isFloorPlan || isJobDetail;
 
   return (
     <div className="min-h-screen bg-surface flex flex-col">
@@ -545,13 +557,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       <DesktopSidebar user={user} />
       <DesktopTopBar user={user} />
 
-      {/* Mobile/Tablet: full header */}
-      <MobileHeader user={user} />
+      {/* Mobile/Tablet: full header (hidden on floor-plan for more canvas) */}
+      {!hideMobileHeader && <MobileHeader user={user} />}
 
       {/* Main content — offset for sidebar on lg: */}
-      <main className="flex-1 pb-20 md:pb-0 lg:ml-56">{children}</main>
+      <main className={`flex-1 lg:ml-56 ${hideMobileNav ? "" : "pb-20 md:pb-0"}`}>{children}</main>
 
-      <MobileBottomNav />
+      {!hideMobileNav && <MobileBottomNav />}
     </div>
   );
 }

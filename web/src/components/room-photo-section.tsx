@@ -67,7 +67,7 @@ function PhotoLightbox({ photo, onClose }: { photo: Photo; onClose: () => void }
 /*  Direct upload — no staging, uploads immediately                    */
 /* ------------------------------------------------------------------ */
 
-function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomId: string; roomName: string }) {
+function DirectUploadButtons({ jobId, roomId, roomName, variant = "sidebar" }: { jobId: string; roomId: string; roomName: string; variant?: "sidebar" | "card" }) {
   const uploadPhoto = useUploadPhoto(jobId);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
@@ -123,14 +123,18 @@ function DirectUploadButtons({ jobId, roomId, roomName }: { jobId: string; roomI
         onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
       <input ref={galleryRef} type="file" accept="image/jpeg,image/png" multiple className="hidden"
         onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
-      <div className="flex gap-1.5">
+      <div className="flex gap-2">
         <button type="button" onClick={() => captureRef.current?.click()}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer">
-          <Camera size={12} /> Capture
+          className={variant === "card"
+            ? "inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] text-brand-accent font-semibold bg-brand-accent/10 active:bg-brand-accent/20 transition-colors cursor-pointer"
+            : "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"}>
+          <Camera size={variant === "card" ? 16 : 12} /> Capture
         </button>
         <button type="button" onClick={() => galleryRef.current?.click()}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer">
-          <Upload size={12} /> Gallery
+          className={variant === "card"
+            ? "inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] text-brand-accent font-semibold bg-brand-accent/10 active:bg-brand-accent/20 transition-colors cursor-pointer"
+            : "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"}>
+          <Upload size={variant === "card" ? 16 : 12} /> Gallery
         </button>
       </div>
     </>
@@ -146,11 +150,13 @@ function CapturePanel({
   roomId,
   roomName,
   onDone,
+  variant = "sidebar",
 }: {
   jobId: string;
   roomId: string;
   roomName: string;
   onDone: () => void;
+  variant?: "sidebar" | "card";
 }) {
   const uploadPhoto = useUploadPhoto(jobId);
   const [uploading, setUploading] = useState(false);
@@ -223,27 +229,33 @@ function CapturePanel({
           </p>
         </div>
       ) : (
-        <div className="flex gap-1.5">
+        <div className={variant === "card" ? "flex gap-2" : "flex gap-1.5"}>
           <button
             type="button"
             onClick={() => captureRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"
+            className={variant === "card"
+              ? "inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] text-brand-accent font-semibold bg-brand-accent/10 active:bg-brand-accent/20 transition-colors cursor-pointer"
+              : "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"}
           >
-            <Camera size={12} />
+            <Camera size={variant === "card" ? 16 : 12} />
             Capture
           </button>
           <button
             type="button"
             onClick={() => galleryRef.current?.click()}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"
+            className={variant === "card"
+              ? "inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] text-brand-accent font-semibold bg-brand-accent/10 active:bg-brand-accent/20 transition-colors cursor-pointer"
+              : "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"}
           >
-            <Upload size={12} />
+            <Upload size={variant === "card" ? 16 : 12} />
             Gallery
           </button>
           <button
             type="button"
             onClick={onDone}
-            className="flex items-center px-2.5 py-1 rounded-lg text-[11px] text-on-surface-variant font-medium bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer ml-auto"
+            className={variant === "card"
+              ? "inline-flex items-center h-10 px-4 rounded-full text-[13px] text-on-surface-variant font-medium bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer ml-auto"
+              : "flex items-center px-2.5 py-1 rounded-lg text-[11px] text-on-surface-variant font-medium bg-surface-container-low active:bg-surface-container-high transition-colors cursor-pointer ml-auto"}
           >
             Done
           </button>
@@ -334,21 +346,24 @@ export function RoomPhotoSection({ jobId, roomId, roomName, photos, variant, dir
 
       {/* Add photos */}
       {directUpload ? (
-        <DirectUploadButtons jobId={jobId} roomId={roomId} roomName={roomName} />
+        <DirectUploadButtons jobId={jobId} roomId={roomId} roomName={roomName} variant={variant} />
       ) : showCapture ? (
         <CapturePanel
           jobId={jobId}
           roomId={roomId}
           roomName={roomName}
           onDone={() => setShowCapture(false)}
+          variant={variant}
         />
       ) : (
         <button
           type="button"
           onClick={() => setShowCapture(true)}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"
+          className={variant === "card"
+            ? "inline-flex items-center gap-2 h-10 px-4 rounded-full text-[13px] text-brand-accent font-semibold bg-brand-accent/10 active:bg-brand-accent/20 transition-colors cursor-pointer"
+            : "flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] text-brand-accent font-semibold bg-brand-accent/8 active:bg-brand-accent/15 transition-colors cursor-pointer"}
         >
-          <Plus size={12} />
+          <Plus size={variant === "card" ? 16 : 12} />
           Add Photos
         </button>
       )}
