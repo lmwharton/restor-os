@@ -1,14 +1,21 @@
 """One-off seed for testing Spec 01H Phase 2 Block 3B (history + sparkline).
 
-Inserts 5 back-dated moisture readings for a hard-coded pin so the
-reading sheet shows a populated history without waiting days of real
-logging. Idempotent: re-running overwrites values on the same
+Inserts 5 back-dated moisture readings for a pin so the reading sheet
+shows a populated history without waiting days of real logging.
+Idempotent: re-running overwrites values on the same
 (pin_id, reading_date) instead of erroring.
 
-Run: cd backend && source .venv/bin/activate && python scripts/seed_moisture_history.py
+Run:
+  cd backend && source .venv/bin/activate
+  python scripts/seed_moisture_history.py <PIN_ID>
+
+Find the pin id by opening DevTools → Network, tapping the pin, and
+copying the id from the /moisture-pins response (or from the PATCH URL
+when you drag it).
 """
 
 import os
+import sys
 
 import psycopg2
 from dotenv import load_dotenv
@@ -18,7 +25,9 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
     raise SystemExit("DATABASE_URL not set in backend/.env")
 
-PIN_ID = "7b57efac-cf00-4cc2-b0b6-9906cea7a55f"
+if len(sys.argv) != 2:
+    raise SystemExit("Usage: python scripts/seed_moisture_history.py <PIN_ID>")
+PIN_ID = sys.argv[1]
 
 # (days_ago, reading_value). Drying arc with a deliberate bump at Day 4
 # so the history list shows the ↑ up chevron on one row and the
