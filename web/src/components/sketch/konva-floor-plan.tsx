@@ -1138,23 +1138,22 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     [displayRooms, propertyRooms, moisturePins, queuePinCoordUpdate, triggerNudge],
   );
 
-  // Pin tap: in Moisture Mode. With Delete tool, remove the pin via
-  // ConfirmModal-equivalent. With Pin tool, open the reading sheet.
+  // Pin tap: in Moisture Mode. With Delete tool active, the tap
+  // performs the destructive action (canonical pin-delete path).
+  // With ANY OTHER tool — including Pin or a transient/unset tool
+  // state during a mode switch — the reading sheet opens. The
+  // permissive default fixes the silent no-op the user reported
+  // when the toolbar happened to land in a non-Pin / non-Delete
+  // state mid-transition.
   //
-  // On archived (read-only) jobs, ONLY the pin-tap → reading-sheet
-  // flow is allowed — the reading sheet itself renders in read-only
-  // mode when passed `readOnly`. All write tools (delete, drop-new)
-  // stay blocked so a tech can audit historical drying data on a
-  // handed-off job without mutating anything.
+  // On archived (read-only) jobs, ALL pin taps open the sheet in
+  // read-only mode — the Delete tool is hidden / inert anyway, but
+  // we explicitly skip it so a stale in-memory tool=delete from a
+  // pre-archive session can't trigger a destructive mutation.
   const handlePinTap = useCallback(
     (pinId: string) => {
       if (canvasMode !== "moisture") return;
       if (readOnly) {
-        // View-only path: any pin tap opens the sheet; Delete is a
-        // no-op. Don't gate on `tool` — archived jobs don't expose
-        // tool controls to the tech anyway, but a stale in-memory
-        // tool=delete from a pre-archive session shouldn't trigger
-        // a destructive mutation.
         setReadingPinId(pinId);
         return;
       }
@@ -1180,9 +1179,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         });
         return;
       }
-      if (tool === "pin") {
-        setReadingPinId(pinId);
-      }
+      // Default for Pin tool + any other state: open the reading sheet.
+      setReadingPinId(pinId);
     },
     [canvasMode, readOnly, tool, deletePin],
   );
@@ -2400,6 +2398,14 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           scaleY={stageScale}
           x={stagePos.x}
           y={stagePos.y}
+          // Konva default `dragDistance` is 0 — any pixel of movement
+          // triggers drag resolution, which on touch causes the first
+          // tap on a draggable child (e.g. a moisture pin) to be
+          // swallowed by the stage's drag-vs-tap arbitration. Result:
+          // user taps pin once (no modal), taps again (modal opens).
+          // Setting a small threshold lets static taps fire as taps
+          // immediately while preserving normal pan + pin-drag behavior.
+          dragDistance={5}
           // Stage panning: enabled for any tool whose primary interaction is a
           // SINGLE TAP (place on wall, delete target, select empty). Disabled
           // for tools that use tap-drag to draw (room, cutout) or multi-click
