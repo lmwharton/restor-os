@@ -10,7 +10,29 @@
 // portal view in Phase 2 Task 7, or a PDF export path in Task 6)
 // should pull from this module rather than re-deriving.
 
-import type { MoisturePinReading } from "./types";
+import type { MoisturePinReading, PinColor } from "./types";
+
+/**
+ * Compute a pin's color category from a reading value against its
+ * dry standard. Mirrors the backend's `compute_pin_color`:
+ *
+ *   green  — reading ≤ dry_standard
+ *   amber  — reading ≤ dry_standard + 10
+ *   red    — reading > dry_standard + 10
+ *
+ * Lives in `lib/` (pure, no React) so any derivation module can import
+ * it without pulling the React/query-client/API graph transitively.
+ * The `hooks/use-moisture-pins` module re-exports this symbol for
+ * back-compat with existing import paths.
+ */
+export function computePinColor(
+  reading: number,
+  dryStandard: number,
+): PinColor {
+  if (reading <= dryStandard) return "green";
+  if (reading <= dryStandard + 10) return "amber";
+  return "red";
+}
 
 /**
  * Shape of the component's input readings once `reading_value` has
@@ -20,6 +42,25 @@ import type { MoisturePinReading } from "./types";
  * commentary on why naked `>`/`<` on raw strings is unsafe.
  */
 export type NormalizedReading = MoisturePinReading;
+
+export interface DryMilestone {
+  /** `YYYY-MM-DD` of the first reading that met dry standard. */
+  firstDryDate: string;
+  /** Sequence position (1-indexed) of the first-dry reading within
+   *  the pin's own ascending reading array. If a pin was dry on its
+   *  first reading, this is 1; the second reading is 2; etc.
+   *
+   *  This is a **reading-count index**, not a calendar-day delta —
+   *  the summary table's D1…DN headers across the job are also
+   *  sequence-indexed into the distinct reading dates, and keeping
+   *  both on the same idiom means a row's Dry Date cell never shows
+   *  a day number that disagrees with the column it falls under on a
+   *  pin with skipped days (e.g. readings Apr 18, Apr 22, Apr 24 —
+   *  a dry on Apr 22 is D2 in both views, not D5 vs D2). */
+  firstDryDayNumber: number;
+  /** The reading id that achieved dry standard first. */
+  firstDryReadingId: string;
+}
 
 export interface ReadingHistory {
   /** Oldest → newest. Drives sparkline x-axis + day-over-day regression. */
@@ -32,6 +73,16 @@ export interface ReadingHistory {
   latest: NormalizedReading | null;
   /** Second-most-recent reading, or null with < 2 readings. */
   previous: NormalizedReading | null;
+  /**
+   * First-hit dry-standard milestone per Brett §8.5 — "green checkmark
+   * appears when dry standard is met, with the date it was achieved."
+   * Null while the pin has never hit dry standard. **Does NOT reset
+   * on regression** — the milestone records that drying was achieved
+   * at some point, which is the compliance-relevant fact. A pin that
+   * dried and then went back above standard still reports the original
+   * dry date.
+   */
+  dryMilestone: DryMilestone | null;
 }
 
 /**
@@ -43,9 +94,13 @@ export interface ReadingHistory {
  * Regression = strictly greater than the previous day (`>`, not `≥`),
  * matching the backend's `compute_pin_color` behavior and the
  * designed UX: "equal means stable, not worse."
+ *
+ * `dryStandard` is required so the helper can compute the
+ * dry-milestone (Brett §8.5). Pass the pin's `dry_standard` value.
  */
 export function deriveReadingHistory(
   normalized: ReadonlyArray<NormalizedReading>,
+  dryStandard: number,
 ): ReadingHistory {
   const asc = [...normalized].sort((a, b) =>
     a.reading_date.localeCompare(b.reading_date),
@@ -59,7 +114,62 @@ export function deriveReadingHistory(
   }
   const latest = asc[asc.length - 1] ?? null;
   const previous = asc[asc.length - 2] ?? null;
-  return { asc, desc, regressingIds, latest, previous };
+
+  // First-hit dry milestone. Linear scan is fine — series is bounded
+  // (~30 readings per pin in a typical drying job). First match wins;
+  // regressions after this point DO NOT reset the milestone. Day
+  // number is the sequence index within `asc` so it aligns with the
+  // summary table's D{i+1} column headers.
+  let dryMilestone: DryMilestone | null = null;
+  if (asc.length > 0) {
+    const firstDryIndex = asc.findIndex(
+      (r) => r.reading_value <= dryStandard,
+    );
+    if (firstDryIndex >= 0) {
+      const firstDry = asc[firstDryIndex];
+      dryMilestone = {
+        firstDryDate: firstDry.reading_date,
+        firstDryDayNumber: firstDryIndex + 1,
+        firstDryReadingId: firstDry.id,
+      };
+    }
+  }
+
+  return { asc, desc, regressingIds, latest, previous, dryMilestone };
+}
+
+/**
+ * Compute the color a pin "would have been" at the close of a given
+ * calendar day. Drives the user-selected date snapshot on the moisture
+ * report view (Brett §8.6) — the table and the canvas overlay both
+ * need to show each pin's status AS OF the picked date, not as of the
+ * latest reading.
+ *
+ * Semantics: the pin's color on date D is determined by the LATEST
+ * reading whose `reading_date <= D`. Returns `null` when no reading
+ * exists on or before D (the pin didn't exist yet, or was placed
+ * without a reading — both are "no snapshot available" cases; the
+ * renderer shows a neutral grey dot).
+ *
+ * `readingsAsc` must be sorted ascending by `reading_date`. This
+ * function does NOT sort — pass the `asc` array from
+ * `deriveReadingHistory` directly, or pre-sort if calling elsewhere.
+ * Linear scan is fine; per-pin reading volume is bounded (~30).
+ */
+export function computePinColorAsOf(
+  readingsAsc: ReadonlyArray<NormalizedReading>,
+  isoDate: string,
+  dryStandard: number,
+): PinColor | null {
+  // Walk from the newest end and pick the first reading <= isoDate.
+  // Matches "latest reading that happened on or before the snapshot
+  // date" semantics from Brett §8.6.
+  for (let i = readingsAsc.length - 1; i >= 0; i--) {
+    if (readingsAsc[i].reading_date <= isoDate) {
+      return computePinColor(readingsAsc[i].reading_value, dryStandard);
+    }
+  }
+  return null;
 }
 
 /**

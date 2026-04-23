@@ -363,6 +363,18 @@ export interface MoisturePin {
   color: PinColor | null;
   is_regressing: boolean;
   reading_count: number;
+  /** Full reading history for this pin — DESC by reading_date.
+   *  Present on the list-pins-by-job response (populated since the
+   *  moisture-report view needs every reading without N follow-up
+   *  queries). Absent on individual pin responses (PATCH / DELETE
+   *  etc.) — check before indexing. */
+  readings?: MoisturePinReading[];
+  /** The floor plan id of the pin's host room, joined via
+   *  `moisture_pins.room_id → job_rooms.floor_plan_id` server-side.
+   *  Present on list responses; null when the host room has no
+   *  floor_plan_id (legacy data). Lets the frontend filter pins
+   *  per floor without a separate useRooms round-trip. */
+  floor_plan_id?: string | null;
 }
 
 // ─── Events ───────────────────────────────────────────────────────────

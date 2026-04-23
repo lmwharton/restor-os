@@ -185,11 +185,8 @@ export const DRY_STANDARDS: Record<MoistureMaterial, number> = {
   block_wall: 10,
 };
 
-export function computePinColor(
-  reading: number,
-  dryStandard: number,
-): "red" | "amber" | "green" {
-  if (reading <= dryStandard) return "green";
-  if (reading <= dryStandard + 10) return "amber";
-  return "red";
-}
+// Re-exported from lib/moisture-reading-history so existing callers
+// that import from `hooks/use-moisture-pins` keep working while pure
+// derivation modules in lib/ can consume it without pulling the hooks
+// graph (React, query client, API wrappers) into their dep tree.
+export { computePinColor } from "../moisture-reading-history";
