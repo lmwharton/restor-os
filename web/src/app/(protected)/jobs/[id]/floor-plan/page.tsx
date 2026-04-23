@@ -825,6 +825,11 @@ export default function FloorPlanPage({
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
+  // Forward-declared ref for the active floor id — its value is synced
+  // below (after the useState is declared) and read inside
+  // handleCreateRoom so the mutation carries floor_plan_id without
+  // depending on a closure over a variable not yet in scope.
+  const activeFloorIdRef = useRef<string | null>(null);
   const handleCreateRoom = useCallback((
     name: string,
     dimensions?: { width: number; height: number },
@@ -853,6 +858,16 @@ export default function FloorPlanPage({
     createRoom.mutate(
       {
         room_name: name,
+        // Critical: link the new job_rooms row to the floor the tech
+        // just drew it on. Without this, `job_rooms.floor_plan_id`
+        // lands as NULL and every downstream per-floor query (the
+        // moisture-report view, the adjuster portal, anything that
+        // buckets data by floor) can't attribute the room to its
+        // floor. Room creation before this fix silently produced
+        // orphan rows that rendered fine in the editor — because the
+        // editor keys off canvas_data, not `job_rooms.floor_plan_id`
+        // — but broke every join-based consumer.
+        floor_plan_id: activeFloorIdRef.current ?? undefined,
         length_ft: dimensions?.height ?? null,
         width_ft: dimensions?.width ?? null,
         // Persist the form's metadata so floor_level / room_type / ceiling / etc.
@@ -1234,7 +1249,9 @@ export default function FloorPlanPage({
   // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
   activeFloorRef.current = activeFloor;
-  const activeFloorIdRef = useRef(activeFloorId);
+  // Sync the forward-declared ref (see where handleCreateRoom is
+  // defined) so the create-room mutation always carries the current
+  // floor_plan_id, not a stale closure value.
   activeFloorIdRef.current = activeFloorId;
 
   const wasPendingRef = useRef(false);
