@@ -41,6 +41,7 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { DryingProgressCard } from "@/components/moisture/drying-progress-card";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 import { isJobArchived } from "@/lib/job-status";
 
@@ -2144,9 +2145,12 @@ export default function JobDetailPage() {
             <ReconPhasesSection phases={reconPhases ?? []} jobId={jobId} />
           )}
 
-          {/* Section 4: Moisture is rendered on the floor plan (Phase 2) — */}
-          {/* compact drying-progress rollup lands here in a follow-up commit. */}
-
+          {/* Section 4: Drying Progress — room-level dry/drying/wet rollup
+              for mitigation jobs (silent on recon jobs and on mitigation
+              jobs with no pins placed yet). */}
+          {job.job_type === "mitigation" && (
+            <DryingProgressCard jobId={jobId} />
+          )}
 
           {/* Section 5: Tech Notes */}
           <TechNotesSection
