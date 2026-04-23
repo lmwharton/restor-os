@@ -349,6 +349,93 @@ describe("today identification uses local date", () => {
     // render — assert on the DOM value, not React state.
     expect(input.value).toBe("18");
   });
+
+  it("re-seeds the input when today's reading arrives AFTER mount (cold open)", () => {
+    // Regression guard: prior logic keyed prefill on pin.id alone.
+    // On cold open the readings query is pending at mount —
+    // todayReading is null, input seeds to "". When data arrives
+    // with a today-row, the old logic didn't re-seed (pin.id
+    // unchanged) and the tech saw an empty input even though the
+    // DB had 67% for today. Now we track todayReading.id too and
+    // re-seed once, before the user touches the input.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 3, 22, 10, 0, 0));
+
+    // First render: query still pending.
+    mockedUsePinReadings.mockReturnValue(
+      readingsQueryResult({ data: undefined, isPending: true }),
+    );
+    const { rerender } = renderSheet();
+    const inputBefore = screen.getByPlaceholderText(/meter value/i) as HTMLInputElement;
+    expect(inputBefore.value).toBe("");
+
+    // Second render: query settles with today's reading at 67%.
+    mockedUsePinReadings.mockReturnValue(
+      readingsQueryResult({
+        data: [
+          makeReading({
+            id: "today-row",
+            reading_date: "2026-04-22",
+            reading_value: 67,
+          }),
+        ],
+        isPending: false,
+      }),
+    );
+    rerender(
+      <MoistureReadingSheet
+        open
+        jobId="job-1"
+        pin={makePin()}
+        onClose={vi.fn()}
+      />,
+    );
+    const inputAfter = screen.getByPlaceholderText(/meter value/i) as HTMLInputElement;
+    expect(inputAfter.value).toBe("67");
+  });
+
+  it("does NOT re-seed after the user has typed (guards the L3 case)", () => {
+    // The cold-open re-seed must NOT stomp an in-progress typed
+    // value if the tech started typing before the query settled.
+    // This is the exact regression that motivated the original L3
+    // fix; the 2-key logic preserves it via userTypedRef.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 3, 22, 10, 0, 0));
+
+    mockedUsePinReadings.mockReturnValue(
+      readingsQueryResult({ data: undefined, isPending: true }),
+    );
+    const { rerender } = renderSheet();
+    const input = screen.getByPlaceholderText(/meter value/i) as HTMLInputElement;
+
+    // Tech types "42" while the query is still pending.
+    fireEvent.change(input, { target: { value: "42" } });
+    expect(input.value).toBe("42");
+
+    // Data arrives — MUST NOT overwrite the typed 42 with the
+    // stored today-reading.
+    mockedUsePinReadings.mockReturnValue(
+      readingsQueryResult({
+        data: [
+          makeReading({
+            id: "today-row",
+            reading_date: "2026-04-22",
+            reading_value: 67,
+          }),
+        ],
+        isPending: false,
+      }),
+    );
+    rerender(
+      <MoistureReadingSheet
+        open
+        jobId="job-1"
+        pin={makePin()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(input.value).toBe("42");
+  });
 });
 
 // ─── Read-only mode (archived jobs) ────────────────────────────────────

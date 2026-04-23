@@ -313,8 +313,8 @@ export function MoistureReadingSheet({
   // view (Task 7) and PDF export (Task 6) can reuse the exact same
   // algorithm without duplicating it.
   const history = useMemo(
-    () => deriveReadingHistory(normalizedReadings),
-    [normalizedReadings],
+    () => deriveReadingHistory(normalizedReadings, pin.dry_standard),
+    [normalizedReadings, pin.dry_standard],
   );
 
   const latestRegressing =
@@ -325,17 +325,41 @@ export function MoistureReadingSheet({
   // String state so the user can type intermediate values ("4.", "") —
   // mirrors the placement sheet's approach.
   const [readingStr, setReadingStr] = useState("");
-  // Track the pin we prefilled for so reopening the sheet on a
-  // different pin re-seeds the input. Keyed on `pin.id` only —
-  // earlier code also watched `todayReading?.id` and would overwrite
-  // the tech's in-progress input if a background refetch landed a
-  // today-reading between mount and save. Doesn't fire in practice
-  // today (sheet closes on save), but guarding now keeps that safe
-  // through any future refactor that leaves the sheet open.
+  // Prefill coordination for the "Today's reading" input. Two cases
+  // both need to seed the field:
+  //
+  //   (a) Pin changed — user opened a different pin's sheet, wipe + reseed.
+  //   (b) Cold open where data arrives AFTER mount — sheet opens,
+  //       readingsQuery is still pending so todayReading is null at
+  //       first render, input seeds to "". When the fetch settles
+  //       with a today-reading present we MUST re-seed (the initial
+  //       "empty" seed was wrong-until-data-arrived, not a user
+  //       choice). Without this, techs saw an empty "Today's
+  //       reading" input even though the pin already had a reading
+  //       for today.
+  //
+  // The protection L3 added (background refetch can't stomp typed
+  // input) is preserved via `userTypedRef` — once the tech has
+  // touched the input, no further auto-seed fires for this pin.
   const prefillPinIdRef = useRef<string>("");
+  const prefillReadingIdRef = useRef<string>("");
+  const userTypedRef = useRef(false);
 
+  // Pin change: full reset — including the user-typed lock, since
+  // the new pin's typed-input wasn't typed for THIS pin.
   if (pin.id !== prefillPinIdRef.current) {
+    userTypedRef.current = false;
+  }
+
+  const currentReadingId = todayReading?.id ?? "";
+  const needsSeed =
+    pin.id !== prefillPinIdRef.current
+    || (currentReadingId !== prefillReadingIdRef.current
+        && !userTypedRef.current);
+
+  if (needsSeed) {
     prefillPinIdRef.current = pin.id;
+    prefillReadingIdRef.current = currentReadingId;
     setReadingStr(todayReading ? String(todayReading.reading_value) : "");
   }
 
@@ -512,6 +536,36 @@ export function MoistureReadingSheet({
             )}
           </div>
 
+          {/* Dry-standard-met milestone per Brett §8.5 — green
+              checkmark chip with the date drying was achieved. Does
+              NOT reset when the pin regresses after dry; compliance-
+              relevant historical fact. Same datum feeds the Dry Date
+              column in the moisture-report summary table. */}
+          {history.dryMilestone && (
+            <div className="mb-3 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-50 border border-emerald-200 text-[12px] text-emerald-800">
+              <svg
+                aria-hidden
+                width={12}
+                height={12}
+                viewBox="0 0 24 24"
+                fill="none"
+              >
+                <path
+                  d="M5 12l5 5 9-10"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span className="font-[family-name:var(--font-geist-mono)] font-semibold">
+                Dry on Day {history.dryMilestone.firstDryDayNumber}
+                {" · "}
+                {formatShortDateLocal(history.dryMilestone.firstDryDate)}
+              </span>
+            </div>
+          )}
+
           {/* Day-over-day regression banner — flagged when the latest
               reading is higher than the previous day. Distinct from the
               "already logged today" banner below (which is about
@@ -557,7 +611,14 @@ export function MoistureReadingSheet({
                   type="number"
                   inputMode="decimal"
                   value={readingStr}
-                  onChange={(e) => setReadingStr(e.target.value)}
+                  onChange={(e) => {
+                    // Mark that the tech has touched the input so a
+                    // later background refetch doesn't overwrite
+                    // their in-progress value (paired with the
+                    // prefill logic above — see that comment block).
+                    userTypedRef.current = true;
+                    setReadingStr(e.target.value);
+                  }}
                   onFocus={(e) => e.target.select()}
                   min={0}
                   max={100}
