@@ -109,6 +109,12 @@ class MoisturePinResponse(BaseModel):
     color: PinColor | None = None  # null when no readings exist yet
     is_regressing: bool = False
     reading_count: int = 0
+    # List-endpoint-only fields. Populated by list_pins_by_job (which
+    # embeds both via PostgREST) so the moisture-report view + adjuster
+    # portal can render without N+1 queries. Default to None/empty on
+    # responses that don't populate them (PATCH / DELETE paths).
+    readings: list[MoisturePinReadingResponse] | None = None
+    floor_plan_id: UUID | None = None
 
 
 class MoisturePinListResponse(BaseModel):

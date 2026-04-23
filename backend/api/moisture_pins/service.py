@@ -343,28 +343,54 @@ async def list_pins_by_job(
     """List all pins for a job, decorated with latest reading + color.
 
     Single PostgREST call embeds readings pre-sorted desc by
-    reading_date. Per-job pin volume is bounded (~15–50 typical),
-    but pushing the sort into the embed avoids a fragile Python-side
-    lexicographic compare that works for DATE strings but would
-    silently break if ``reading_date`` ever shifts to TIMESTAMPTZ.
+    reading_date via ``foreign_table=`` on the outer order. Per-job
+    pin volume is bounded (~15–50 typical); pushing the sort into
+    PostgREST avoids a fragile Python-side lexicographic compare
+    that works for DATE strings but would silently break if
+    ``reading_date`` ever shifts to TIMESTAMPTZ.
+
+    Note on syntax: inline ``order(...)`` inside the select string
+    is NOT valid PostgREST — that slot is reserved for aggregate
+    functions (``sum``, ``avg``, etc.). Embedded-resource ordering
+    goes through a separate ``.order(..., foreign_table=...)`` call.
     """
     client = await get_authenticated_client(token)
 
+    # Embed readings AND the parent room's floor_plan_id on each pin.
+    # The report view needs to bucket pins per floor; doing that join
+    # on the frontend via a separate useRooms query was fragile (null
+    # floor_plan_id + data-load ordering caused cross-floor leak).
+    # Inlining the floor_plan_id here makes the frontend filter a
+    # trivial `pin.floor_plan_id === selectedFloor.id`.
     pins_res = await (
         client.table("moisture_pins")
         .select(
-            "*, readings:moisture_pin_readings(*, order(reading_date.desc))",
+            "*, "
+            "readings:moisture_pin_readings(*), "
+            "room:job_rooms!room_id(floor_plan_id)",
         )
         .eq("job_id", str(job_id))
         .eq("company_id", str(company_id))
         .order("created_at", desc=False)
+        .order("reading_date", desc=True, foreign_table="readings")
         .execute()
     )
 
     items = []
     for pin in pins_res.data or []:
         readings = pin.pop("readings", []) or []
-        items.append(_decorate_pin(pin, readings))
+        room_embed = pin.pop("room", None)
+        decorated = _decorate_pin(pin, readings)
+        decorated["readings"] = readings
+        # Flatten the room embed into a scalar for the frontend:
+        # postgrest returns either a single dict (for !inner / ?select
+        # with a single FK) or a list. Defensively unwrap either shape.
+        if isinstance(room_embed, list):
+            room_embed = room_embed[0] if room_embed else None
+        decorated["floor_plan_id"] = (
+            room_embed.get("floor_plan_id") if room_embed else None
+        )
+        items.append(decorated)
 
     return {"items": items, "total": len(items)}
 
