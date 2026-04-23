@@ -14,8 +14,6 @@ boundaries, auth requirements on protected endpoints.
 import hashlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
-
-from tests.conftest import AsyncSupabaseMock
 from uuid import uuid4
 
 import jwt
@@ -25,6 +23,7 @@ from fastapi.testclient import TestClient
 from api.config import settings
 from api.main import app
 from api.sharing.service import _hash_token
+from tests.conftest import AsyncSupabaseMock
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -210,7 +209,7 @@ def _shared_view_table_router(mock_admin, link_data, job_data, photos=None):
                 MagicMock(data=job_data)
             )
             return t
-        if name in ("job_rooms", "moisture_readings"):
+        if name == "job_rooms":
             t = AsyncSupabaseMock()
             t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                 MagicMock(data=[])
@@ -239,12 +238,17 @@ def _shared_view_table_router(mock_admin, link_data, job_data, photos=None):
 
 def _shared_view_table_router_with_data(
     mock_admin, link_data, job_data, rooms=None, photos=None,
-    moisture_readings=None, line_items=None, company=None,
+    line_items=None, company=None,
 ):
-    """Fully configurable table router for shared view tests."""
+    """Fully configurable table router for shared view tests.
+
+    The ``moisture_readings`` kwarg was removed in Spec 01H Phase 2 —
+    the sharing service no longer queries that table (see
+    ``api/sharing/service.py`` + ``schemas.py``; pin-based moisture is
+    a Phase 2C addition that ships with its own shared-view integration).
+    """
     rooms = rooms or []
     photos = photos or []
-    moisture_readings = moisture_readings or []
     line_items = line_items or []
     company = company or {"name": "DryPros", "phone": "555-0000", "logo_url": None}
 
@@ -271,12 +275,6 @@ def _shared_view_table_router_with_data(
             t = AsyncSupabaseMock()
             t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                 MagicMock(data=photos)
-            )
-            return t
-        if name == "moisture_readings":
-            t = AsyncSupabaseMock()
-            t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-                MagicMock(data=moisture_readings)
             )
             return t
         if name == "line_items":
@@ -1092,7 +1090,7 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """photos_only scope returns empty moisture_readings and line_items."""
+        """photos_only scope returns empty line_items and excludes moisture."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "e" * 32
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1100,14 +1098,15 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="photos_only"
         )
 
-        # Use the detailed router so we can verify moisture/line_items are NOT fetched
+        # Use the detailed router so we can verify line_items is NOT fetched.
+        # moisture was removed from the shared payload in Spec 01H Phase 2 —
+        # no longer a key on the response, so no assertion needed here.
         _shared_view_table_router_with_data(
             mock_admin,
             link_data,
             {**mock_job_data},
             rooms=[{"id": str(uuid4()), "name": "Living Room", "sort_order": 1}],
             photos=[{"id": str(uuid4()), "storage_url": None, "created_at": "2026-03-25T10:00:00Z"}],
-            moisture_readings=[{"id": str(uuid4()), "value": 42}],
             line_items=[{"id": str(uuid4()), "code": "WTR DRYOUT"}],
         )
 
@@ -1115,12 +1114,13 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            # photos_only scope should NOT include moisture readings or line items
-            assert data["moisture_readings"] == []
+            # photos_only scope should NOT include line items
             assert data["line_items"] == []
             # But job, rooms, photos, company should still be present
             assert data["job"] is not None
             assert len(data["rooms"]) == 1
+            # moisture_readings key no longer in the payload at all
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_restoration_only_scope(
         self,
@@ -1129,7 +1129,8 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """restoration_only scope includes moisture readings and line items."""
+        """restoration_only scope includes line items (moisture shipped
+        separately via pin-based payload in Phase 2C)."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "f" * 32
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1137,14 +1138,12 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="restoration_only"
         )
 
-        moisture = [{"id": str(uuid4()), "value": 42, "reading_date": "2026-03-25"}]
         items = [{"id": str(uuid4()), "code": "WTR DRYOUT", "quantity": 1}]
 
         _shared_view_table_router_with_data(
             mock_admin,
             link_data,
             {**mock_job_data},
-            moisture_readings=moisture,
             line_items=items,
         )
 
@@ -1152,8 +1151,8 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            assert len(data["moisture_readings"]) == 1
             assert len(data["line_items"]) == 1
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_full_scope_includes_all(
         self,
@@ -1162,7 +1161,8 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """full scope includes moisture readings and line items."""
+        """full scope includes line items + rooms (moisture shipped
+        separately via pin-based payload in Phase 2C)."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "abcd" * 8
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1170,7 +1170,6 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="full"
         )
 
-        moisture = [{"id": str(uuid4()), "value": 55, "reading_date": "2026-03-26"}]
         items = [{"id": str(uuid4()), "code": "DRYWLL RR", "quantity": 2}]
         rooms = [{"id": str(uuid4()), "name": "Bedroom", "sort_order": 1}]
 
@@ -1179,7 +1178,6 @@ class TestPublicSharedView:
             link_data,
             {**mock_job_data},
             rooms=rooms,
-            moisture_readings=moisture,
             line_items=items,
         )
 
@@ -1187,9 +1185,9 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            assert len(data["moisture_readings"]) == 1
             assert len(data["line_items"]) == 1
             assert len(data["rooms"]) == 1
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_with_photos_and_signed_urls(
         self,
@@ -1240,12 +1238,6 @@ class TestPublicSharedView:
                 t = AsyncSupabaseMock()
                 t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                     MagicMock(data=photos)
-                )
-                return t
-            if name == "moisture_readings":
-                t = AsyncSupabaseMock()
-                t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-                    MagicMock(data=[])
                 )
                 return t
             if name == "line_items":
@@ -1397,7 +1389,7 @@ class TestPublicSharedView:
                     MagicMock(data={**mock_job_data})
                 )
                 return t
-            if name in ("job_rooms", "moisture_readings"):
+            if name == "job_rooms":
                 t = AsyncSupabaseMock()
                 t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                     MagicMock(data=[])
