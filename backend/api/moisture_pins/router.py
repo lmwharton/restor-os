@@ -150,12 +150,13 @@ async def list_pin_readings_endpoint(
 ):
     """List all readings for a pin, ascending by date (sparkline order).
 
-    The `job` dependency enforces that the caller owns the parent job; RLS
-    on moisture_pin_readings enforces company scope, so a pin_id from
-    another company returns an empty list rather than 403.
+    The ``job`` dependency enforces that the caller owns the URL's parent
+    job; the service layer additionally asserts the pin belongs to that
+    job (prevents intra-company cross-job reads). Reads are allowed on
+    archived jobs — the archive guard only gates mutations.
     """
     token = _get_token(request)
-    return await list_readings(token, pin_id=pin_id)
+    return await list_readings(token, pin_id=pin_id, job_id=job["id"])
 
 
 @router.post(
@@ -175,6 +176,7 @@ async def create_pin_reading_endpoint(
     return await create_reading(
         token,
         pin_id=pin_id,
+        job_id=job["id"],
         company_id=ctx.company_id,
         user_id=ctx.user_id,
         body=body,
@@ -199,6 +201,8 @@ async def update_pin_reading_endpoint(
         token,
         reading_id=reading_id,
         pin_id=pin_id,
+        job_id=job["id"],
+        company_id=ctx.company_id,
         body=body,
     )
 
@@ -215,4 +219,11 @@ async def delete_pin_reading_endpoint(
     ctx: AuthContext = Depends(get_auth_context),
 ):
     token = _get_token(request)
-    await delete_reading(token, reading_id=reading_id, pin_id=pin_id)
+    await delete_reading(
+        token,
+        reading_id=reading_id,
+        pin_id=pin_id,
+        job_id=job["id"],
+        company_id=ctx.company_id,
+        user_id=ctx.user_id,
+    )
