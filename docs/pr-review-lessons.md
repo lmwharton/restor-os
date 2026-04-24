@@ -6,8 +6,44 @@ Authoritative home for:
 - meta-patterns extracted from reviewer feedback
 - pre-PR grep checklist (runnable before every push)
 - per-round scoreboard + honesty ledger
+- start-of-task invariants brief (pre-implementation discipline)
 
 > Note: an earlier copy of this file was scoped as "local working notes" and got wiped in a parallel cleanup. Treat this as permanent — commit changes like any other doc.
+
+---
+
+## Start-of-task invariants brief (pre-implementation)
+
+Before writing code for any new feature, endpoint, or spec, produce a short **invariants brief** and get Samhith's approval. This catches the class of bug that survives casual "does it work?" testing — invariants that must hold across sibling sites, not just the one the feature names.
+
+This discipline was added 2026-04-23 after the Phase 2 PR review caught 2 CRITICAL + 3 HIGH findings, all of which were invariant-scope sibling-misses of rules already documented here. **The fix isn't better review — it's deriving the rules up front, once.**
+
+### What the brief contains
+
+Three short lists, ~10 lines total:
+
+1. **Rules that apply to this task.** Scan this doc's meta-patterns (§"The meta-patterns that bit us") plus the numbered lessons (§1–§15 and onward). Examples of rules that might apply:
+   - archive guard (lesson R6 / §1) — every write on job-scoped data must call `raise_if_archived` / `ensure_job_mutable`
+   - cross-job binding (§4) — URL `job_id` must match data's `job_id` via explicit check, not RLS alone
+   - name-match safety (§2/§5) — any lookup that falls back to `room_name === name` must go through `canvas-room-resolver` or be grep-banned
+   - atomic multi-write (§4) — sequential `.insert` calls that must succeed together belong in one plpgsql RPC, not Python-layer composition
+   - calendar-day vs instant (§15) — `DATE` columns use local wall clock; `TIMESTAMPTZ` uses UTC. Consolidate helpers in `web/src/lib/dates.ts`.
+   - URL shape matches operation shape — if the URL says "job A's pin," the service must verify it
+
+2. **Sibling-site grep checklist — run after implementation.** Copy the exact commands so the invariant is grep-pinned. Examples:
+   ```bash
+   grep -rn "ensure_job_mutable" backend/api/<new-module>/
+   grep -rn "propertyRooms.*find" web/src/components/sketch/
+   grep -rn "toISOString().slice(0,\s*10)" web/src/
+   ```
+
+3. **Pin-the-invariant tests.** Which tests will fail on regression of the rule (not just the happy path)? Archive-guard per endpoint, cross-job rejection, polygon boundary, RPC atomic rollback — one each, scripted fake-client style, no live Supabase needed.
+
+### Why this works
+
+Reviewer findings in Round 1 + Round 2 of Phase 2 all shared one shape: a rule was applied at the code-location the feature named, and missed at one or more sibling locations that used the same pattern. Post-hoc `/critical-review` catches them, but each finding costs a review round. Deriving the rules before writing code — then grep-verifying them after — closes the gap without extra review rounds.
+
+This brief lives WHERE `/critical-review` already reads from, so the skill inherits it automatically in future verification passes.
 
 ---
 
@@ -158,6 +194,213 @@ Before writing code for a cross-cutting feature like etag, write an **invariant 
 - **INV-4.** At most one in-flight write per target at any moment.
 
 Then every write path is checked against all four invariants. Every reviewer comment is traced back to which invariant it violates (not which file). When the invariant is stated, the siblings are grep-able.
+
+---
+
+## Round 5 — Spec 01H Phase 2 (2026-04-23)
+
+### 22. Calendar-day vs instant — pick the right clock
+`moisture_pin_readings.reading_date` is a PostgreSQL `DATE` column (no TZ). Two places on the frontend wrote "today" with `new Date().toISOString().slice(0, 10)` — UTC. The display helper parsed it back with local date components. At 8 PM US Pacific, a Tuesday reading got written as Wednesday, rendered as Wednesday, and the next morning's real Wednesday log silently upserted-over the 8 PM entry via `UNIQUE(pin_id, reading_date)`.
+
+**Rule:** anything written to a `DATE` column, or compared as "is this today?", uses the wall clock (local date components). Anything written to a `TIMESTAMPTZ` column uses UTC (`toISOString()`). The two are not interchangeable. Consolidate both helpers in one module (`web/src/lib/dates.ts`) so future consumers inherit the decision instead of re-deriving it.
+
+**Grep before adding dates to a new flow:**
+```bash
+grep -rn "toISOString().slice(0,\s*10)" web/src/   # UTC day-string — almost always wrong for DATE columns
+grep -rn "new Date(.*-.*-.*)" web/src/             # UTC-midnight trap on DATE strings
+```
+
+### 23. Scripted fake clients don't validate wire format
+Two bugs this round hit production (well, a user session) because they were shaped as Python-valid but PostgREST-invalid, and our fake-client fixtures only exercise the Python side:
+
+- **Embedded-order syntax** — `.select("*, readings:moisture_pin_readings(*, order(reading_date.desc))")` parses fine in the fake client (which returns canned rows regardless of the select string) but PostgREST rejects it as `PGRST100` — that slot is reserved for aggregate functions (`sum`, `avg`, `count`, `max`, `min`). The correct idiom is `.order("reading_date", desc=True, foreign_table="readings")` — a separate call after `.select()`.
+- **RPC schema-cache drift** — the backend called `save_floor_plan_version` with 9 params after a migration added `p_expected_updated_at`. The DB had the 9-arg function installed; PostgREST's internal function-signature cache had the old 8-arg one. Fake clients don't involve PostgREST at all, so unit tests passed; the real endpoint 500'd with "could not find the function … in the schema cache."
+
+Both classes share a shape: the fake client tests that Python can construct the request; it does NOT test that PostgREST will accept it.
+
+**Rule:** for every PostgREST query builder chain that uses non-trivial features (embedded order, foreign-table filters, RPC with renamed/added params), add one smoke-test path that hits the real dev DB or schedule a manual smoke-check step in the PR workflow. Unit tests over a scripted fake client are necessary but not sufficient for query-string correctness.
+
+**Recovery moves when this fires in dev:**
+- PostgREST schema cache miss: `psql "$DATABASE_URL" -c "NOTIFY pgrst, 'reload schema';"` — forces a reload without restarting Supabase.
+- Verify RPC signature in DB: `SELECT proname, pronargs, pg_get_function_identity_arguments(oid) FROM pg_proc WHERE proname = '<name>';` — confirms the DB has what the client expects before chasing the caller.
+
+**Grep before shipping a new PostgREST query:**
+```bash
+grep -rn "order(.*)" backend/api/*/service.py          # inline order() inside select is wrong — must be foreign_table=
+grep -rn "\.rpc(" backend/api/                         # every RPC call, cross-check against latest migration's RETURNS
+```
+
+### 24. FastAPI `response_model` silently drops undeclared fields
+Added `readings` + `floor_plan_id` to the `list_pins_by_job` service-layer dict. The service-layer log proved both were in the returned value. The browser still saw the pre-change shape — no error, no warning, just missing keys. Two hours of chasing "uvicorn isn't running my code" before spotting it.
+
+Cause: the endpoint is declared `@router.get(..., response_model=MoisturePinListResponse)`. FastAPI pipes the return value through `MoisturePinListResponse.model_validate(...)` before serializing. Pydantic's default behavior on output validation is to **silently strip any field not declared on the model**. Since `MoisturePinResponse` didn't declare `readings` or `floor_plan_id`, both evaporated between the service log and the HTTP wire.
+
+**Rule:** every field you attach to a service return dict must be declared on the corresponding FastAPI `response_model` Pydantic schema. Service-layer log shape ≠ HTTP response shape; the `response_model` is the gate in between. This is the response-side sibling of lesson #23 — fake-client tests over service functions will pass even when the HTTP response is wrong, because they bypass FastAPI's serialization layer.
+
+**Grep before adding a new field to a service return dict:**
+```bash
+# For every endpoint that returns this dict, find its response_model
+# and add the field there too. Otherwise the backend log lies about
+# what the browser sees.
+grep -rn "response_model=" backend/api/<module>/router.py
+# Then open each referenced schema and make sure the new field exists.
+```
+
+Diagnostic for "backend log shows the field but browser doesn't":
+1. `curl` the endpoint directly — if field is missing, FastAPI is stripping it (schema problem), not the browser cache
+2. `curl` the same query against Supabase PostgREST directly — if field is present there, the strip is in FastAPI not the DB layer
+3. Check `response_model=...` on the endpoint, then check the schema — add the field
+
+### 25. Denormalized truth in one consumer masks a missing FK everywhere else
+`handleCreateRoom` on the floor-plan page called `POST /v1/jobs/:id/rooms` WITHOUT `floor_plan_id`. Every room created via the canvas got `job_rooms.floor_plan_id = NULL`. The floor-plan editor worked fine — it hydrates rooms from `floor_plans.canvas_data` (JSONB). The moisture-report view, sharing payload, per-floor pin filters, room-level photo counts — every RELATIONAL consumer saw orphaned rooms + cross-floor pin leaks. The bug predated Phase 2 but was invisible until a new consumer relied on the FK.
+
+**Rule:** when introducing an FK column, every CREATE path must populate it. "Did the editor render OK?" is not the same as "did the data land correctly." If a column has multiple read consumers and one is a denormalized copy (like canvas_data JSONB), confirm the relational column is populated too.
+
+**Grep before shipping a new FK column:**
+```bash
+# Every table insert path should mention every NOT NULL / FK column.
+grep -rn "INSERT INTO job_rooms\|insert.*job_rooms" backend/
+grep -rn "apiPost.*'/v1/jobs/[^']*/rooms'\|useCreateRoom" web/src/
+# Then cross-check each call passes every FK column the schema declares.
+```
+
+**Detection after the fact:**
+```sql
+-- Any job_rooms row without a floor_plan_id is a latent cross-consumer bug.
+SELECT COUNT(*) FROM job_rooms WHERE floor_plan_id IS NULL;
+```
+
+Also instructive: the floor-plan editor's JSONB-first design (read rooms from `canvas_data`, not from the relational table) is exactly why this bug hid. When a denormalized store works independently of the normalized store, the two WILL drift — usually silently.
+
+---
+
+### 26. Sibling-miss in the SAME function (narrow form of #3)
+Lesson #3 covers PR-wide sibling-miss across files. This is the narrower repeat-prone version: **when you change a pattern in a function, grep the entire function (not just the named block) for siblings.**
+
+**Real example.** Round 1 of the Phase 2 critical review flagged H2: two new `except Exception: pass` blocks in `sharing/service.py`'s `get_shared_job` (one for `moisture_pins`, one for `floor_plans`). Both narrowed correctly to `except APIError` + tolerated PGRST codes + log + re-raise. **A third block — the pre-existing `line_items` query — sat three lines below, still `except Exception: pass`.** Round 2 caught it as a HIGH sibling-miss. Same function, same anti-pattern, same fix shape — missed because the round-1 task was scoped to the named blocks, not "all blocks of this shape in this function."
+
+**Rule:** before committing a fix that narrows / restructures error handling on a block, grep the *file or function* for the same pattern and either:
+1. Fix every sibling occurrence in the same commit, OR
+2. Explicitly carry forward the sibling case in the PR description ("known follow-up: line N has the same shape, deferred because X").
+
+Never silently leave a sibling broken — the next reviewer (or the next reader six months later) will assume it was deliberate.
+
+**Grep template (adapt to your fix shape):**
+```bash
+# After narrowing `except Exception: pass`, find every other instance
+# in the same file and decide explicitly per-block.
+grep -n "except Exception" path/to/file.py
+```
+
+This is also why "check the whole file" beats "check the immediate context" as a default reading habit. Three lines below your edit is still the same function.
+
+---
+
+### 27. Helpers with `.some()` / `.every()` need an explicit mixed-case branch
+A boolean gate driving a fallback (`anyHas = arr.some(predicate)` → branch on true/false) silently collapses three real states into two: **all match, none match, mixed.** The "mixed" state usually drops the items that don't match — the bug is invisible on small fixtures and only surfaces on legacy or partially-migrated data.
+
+**Real example.** `buildMoistureReportProps` had:
+```ts
+const anyPinHasFloorId = pins.some((p) => !!p.floor_plan_id);
+const floors = floorPlans.map((fp) => ({
+  ...
+  pins: anyPinHasFloorId
+    ? pins.filter((p) => p.floor_plan_id === fp.id)   // strict
+    : fp.id === resolvedPrimaryId ? [...pins] : [],   // crammed
+}));
+```
+For a multi-floor job where SOME pins had `floor_plan_id` (post-backfill resolved rows) and SOME didn't (multi-floor-ambiguous rows the migration intentionally left NULL), the `anyPinHasFloorId === true` branch ran and filter-mismatched pins silently disappeared from the report. The unit tests passed because every fixture was uniform — all pins had IDs OR all pins didn't.
+
+**Rule:** any time you write `arr.some(...)` or `arr.every(...)` to drive a fallback, write the truth table **on paper or in a comment** before coding the branches:
+
+| Case | What's true | What this branch does |
+|---|---|---|
+| All match | every item | strict path |
+| None match | no item | full fallback |
+| **Mixed** | some yes / some no | **explicit decision required** |
+
+Pick the third row's behavior deliberately. If the answer is "drop the unmatched silently," a reviewer will catch that and you'll lose a sprint. The honest answers are usually: (a) bucket the unmatched into an `orphan` output, (b) hard-error so the upstream bug surfaces, or (c) merge both with an explicit precedence rule.
+
+**Test pin:** add a fixture with at least one item in each of the three states. The drift bug is invisible without it.
+
+---
+
+### 28. Discriminants should enumerate failure modes BEFORE picking enum values
+When you introduce an enum-typed discriminant (`status: "pending" | "ready" | "error"`), the failure mode is usually that the enum collapses two distinguishable cases into one — and the consumer can't tell them apart. The fix is later, costlier, and breaks API back-compat.
+
+**Real example.** Round 1 H3 added `moisture_access: "denied" | "empty" | "present"` to the shared payload so the portal could branch empty-state copy correctly:
+- `denied` → "ask the sender for restoration access"
+- `empty` → "no readings logged yet"
+- `present` → render the report
+
+Round 2 caught a fourth distinguishable cause: `moisture_pins` query raised PGRST205 (table missing — backend misconfigured). The narrowed `except APIError` correctly returned `[]`, the discriminant computed `empty`, the portal told an adjuster "no readings yet — check back in a day." **The real state was "backend broken, ops needs to reload the schema cache."** The wrong copy fired because the enum had no value for "data should exist but the query failed."
+
+Fix: added a fourth state `unavailable`, threaded a `moisture_unavailable` flag from the except block, surfaced "Moisture data temporarily unavailable" in the portal.
+
+**Rule:** when introducing a discriminant, before picking enum values, write down every distinguishable cause from the consumer's perspective:
+
+| Cause | Consumer should... |
+|---|---|
+| You don't have permission | Ask for a different link |
+| Permission is fine, no data exists yet | Wait, check back |
+| Permission is fine, data exists but query failed | Retry, alert ops |
+| Permission is fine, data is here | Render |
+
+Each row that should produce different UI copy is a separate enum value. If two rows would produce the same copy, they can collapse — but verify that's still true after the next review of the consumer code.
+
+Symmetrically: when reviewing a discriminant someone else added, ask "what other reasons could the empty list have?" If you can name a third cause that gets the same UI as the other two, that's the missing enum value.
+
+---
+
+### 29. Every relational `floor_plan_id` stamp must be re-stamped on fork
+
+Narrower, repeat-prone variant of #25 — specific to the floor-plan versioning
+state machine. When `save_floor_plan_version` forks a new row (Case 3, and
+also Case 1 on a floor's first save), `jobs.floor_plan_id` is atomically
+retargeted to the new version. Every OTHER table that stamps a
+`floor_plan_id` for the caller job on the same floor **must also be
+retargeted in the same transaction**.
+
+**Why this is repeat-prone.** Phase 1 designed the versioning around two
+sources of truth: `jobs.floor_plan_id` (the pin) and `floor_plans.canvas_data`
+(the JSONB blob the editor reads). The editor works off canvas_data, so
+stale relational stamps are invisible to it. Consumers that filter by
+**current-version** `floor_plan_id` (moisture-report UI, Xactimate line-item
+aggregation, carrier report attribution appendix) are the ones that surface
+the drift. Every phase that adds a new `floor_plan_id`-stamped column
+inherits the gap unless the RPC's fork body is updated.
+
+History: Phase 1B added `job_rooms.floor_plan_id` without updating the fork.
+Phase 3 Step 2 added `moisture_pins.floor_plan_id` and inherited the same
+gap via the backfill. The moisture-report view was the first consumer that
+filtered by current-version id, which is where we finally hit it.
+
+**Rule:** any PR that adds a `floor_plan_id` column to a job-scoped
+relational table (future candidates: `equipment_placements.floor_plan_id`
+expansion, `annotations.floor_plan_id`, any new stamped-location table)
+must update `save_floor_plan_version`'s body to include a matching
+`UPDATE` in the fork transaction, scoped to `(job_id, property_id,
+floor_number)`. The scope is critical: sibling jobs pinned to older
+versions keep their own stamps (frozen-version semantics, Phase 1 rule).
+
+**Pre-PR grep when adding a stamped column:**
+```bash
+# Every stamped FK on a job-scoped table needs a fork-time UPDATE.
+grep -rn "ADD COLUMN floor_plan_id" backend/alembic/versions/
+# For each hit, confirm save_floor_plan_version updates that table on fork.
+grep -n "UPDATE <your_table>" backend/alembic/versions/*save_floor_plan_version*.py
+```
+
+**Pin-the-invariant test:** `backend/tests/integration/test_fork_restamp_invariant.py`
+introspects the installed RPC body via `pg_get_functiondef(oid)` and
+asserts each known stamped table has a matching UPDATE clause. A later
+CREATE OR REPLACE that drops any of these UPDATEs trips the test before
+the PR ships.
+
+**Cross-spec dependency:** future tables that stamp `floor_plan_id`
+(Phase 3 equipment, Phase 5 annotations) must extend that integration test
+with their own UPDATE assertion. The test is the one place that enumerates
+the full set of tables that must stay in sync on fork.
 
 ---
 
