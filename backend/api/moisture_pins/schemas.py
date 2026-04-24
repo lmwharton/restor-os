@@ -5,7 +5,7 @@ includes latest_reading, color, and is_regressing so the frontend renders
 the canvas in one round trip without per-pin follow-up calls.
 """
 
-from datetime import date, datetime
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID
@@ -32,14 +32,17 @@ PinColor = Literal["red", "amber", "green"]
 
 class MoisturePinReadingCreate(BaseModel):
     reading_value: Decimal = Field(..., ge=0, le=100)
-    reading_date: date
+    # Spec 01H Phase 3 Step 3: TIMESTAMPTZ replaces DATE so multiple
+    # readings per pin per day are allowed and the Step 4 dry-check trigger
+    # has strict ordering.
+    taken_at: datetime
     meter_photo_url: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=2000)
 
 
 class MoisturePinReadingUpdate(BaseModel):
     reading_value: Decimal | None = Field(default=None, ge=0, le=100)
-    reading_date: date | None = None
+    taken_at: datetime | None = None
     meter_photo_url: str | None = Field(default=None, max_length=500)
     notes: str | None = Field(default=None, max_length=2000)
 
@@ -48,7 +51,7 @@ class MoisturePinReadingResponse(BaseModel):
     id: UUID
     pin_id: UUID
     reading_value: Decimal
-    reading_date: date
+    taken_at: datetime
     recorded_by: UUID | None
     meter_photo_url: str | None
     notes: str | None
@@ -104,6 +107,11 @@ class MoisturePinResponse(BaseModel):
     created_by: UUID | None
     created_at: datetime
     updated_at: datetime
+    # Spec 01H Phase 3 Step 2: "is this pin currently dry" signal. Trigger
+    # sets it when the latest reading hits dry_standard; clears on re-wet.
+    # Must be declared here or FastAPI's response_model strips it on the
+    # wire even if the service dict carries it (lesson #24).
+    dry_standard_met_at: datetime | None = None
     # Decorated fields — computed at read time from readings
     latest_reading: MoisturePinReadingResponse | None = None
     color: PinColor | None = None  # null when no readings exist yet

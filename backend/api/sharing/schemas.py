@@ -56,7 +56,7 @@ class SharedJobResponse(BaseModel):
     # Pin-based moisture data (replaces the legacy moisture_readings
     # list dropped in Phase 2). Scope-gated: included on `full` +
     # `restoration_only`, excluded on `photos_only`. Each pin carries
-    # its full `readings` array (DESC by reading_date) so the
+    # its full `readings` array (DESC by taken_at) so the
     # adjuster-portal moisture-report view renders without needing
     # per-pin follow-up queries (Brett §8.6).
     moisture_pins: list[dict]
@@ -77,6 +77,18 @@ class SharedJobResponse(BaseModel):
     # basement) while the tech saw the job's pinned floor — same job,
     # two different starting screens.
     primary_floor_id: UUID | None = None
+    # Review round-2 H2 completion: the job's IANA timezone, hoisted
+    # onto the top-level response. Anchors every local-day extraction
+    # on the adjuster portal (Day-N axis, snapshot filter, firstDryDate)
+    # to the job's clock — NOT the adjuster's browser. An Atlanta
+    # adjuster reviewing a Hawaiian job sees the same Day-5 the tech
+    # on-site sees. The top-level position is deliberate: `job: dict`
+    # is untyped, so consumers relying on TypeScript-level guarantees
+    # can't safely assert the field; declaring it at the response level
+    # makes the contract explicit and survives response_model round-trip
+    # (lesson #24). Default matches jobs.timezone's DB default for pre-
+    # PR-D jobs where the zip resolver hasn't populated yet.
+    timezone: str = "America/New_York"
 
 
 class ShareResolveRequest(BaseModel):

@@ -158,7 +158,7 @@ class TestArchiveGuardOnMutations:
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,
-                "reading_date": "2026-04-22",
+                "taken_at": "2026-04-22T12:00:00-04:00",
             },
         )
         with _patch_client(fake):
@@ -216,7 +216,7 @@ class TestArchiveGuardOnMutations:
             pin_row=_pin_row(ids["pin_id"], ids["job_id"]),
         )
         body = MoisturePinReadingCreate(
-            reading_value=18, reading_date="2026-04-23",
+            reading_value=18, taken_at="2026-04-23T12:00:00-04:00",
         )
         with _patch_client(fake):
             with pytest.raises(AppException) as exc:
@@ -323,7 +323,7 @@ class TestCrossJobPinRejection:
             pin_row=_pin_row(ids["pin_id"], ids["job_id"]),
         )
         body = MoisturePinReadingCreate(
-            reading_value=18, reading_date="2026-04-23",
+            reading_value=18, taken_at="2026-04-23T12:00:00-04:00",
         )
         with _patch_client(fake):
             with pytest.raises(AppException) as exc:
@@ -653,7 +653,7 @@ class TestUpdatePinPlacementValidation:
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,
-                "reading_date": "2026-04-22",
+                "taken_at": "2026-04-22T12:00:00-04:00",
             },
         )
         with _patch_client(_FakeClient()):
@@ -669,16 +669,25 @@ class TestUpdatePinPlacementValidation:
         assert exc.value.status_code == 400
 
     @pytest.mark.asyncio
-    async def test_create_reading_returns_409_on_duplicate_date(self, ids):
-        # M2 — unique (pin_id, reading_date) enforcement. Frontend
-        # detects same-day collisions before posting (upserts via
-        # update_reading instead), but this is the database-level
-        # safety net. We simulate the Postgres 23505 and assert the
-        # service maps it to HTTP 409 READING_ALREADY_EXISTS.
-        from postgrest.exceptions import APIError as PostgrestAPIError
-
+    async def test_create_reading_allows_multiple_readings_same_day(self, ids):
+        # Phase 3 Step 3 (regression pin): the UNIQUE(pin_id, reading_date)
+        # index was dropped so Brett's post-demo re-inspection workflow can
+        # log a 2nd reading on the same pin later the same day without the
+        # 2nd save being silently rejected. Asserts the 23505/409 path is
+        # gone: a second same-day insert flows through unchanged.
         job_row = _active_job_row(ids["job_id"], ids["company_id"])
         pin_row = _pin_row(ids["pin_id"], ids["job_id"])
+        inserted_row = {
+            "id": "00000000-0000-0000-0000-000000000099",
+            "pin_id": ids["pin_id"],
+            "company_id": ids["company_id"],
+            "reading_value": 18,
+            "taken_at": "2026-04-22T15:30:00-04:00",
+            "recorded_by": ids["user_id"],
+            "meter_photo_url": None,
+            "notes": None,
+            "created_at": "2026-04-22T19:30:00Z",
+        }
 
         class _QB:
             def __init__(self, name):
@@ -703,35 +712,26 @@ class TestUpdatePinPlacementValidation:
                 if self.name == "moisture_pins":
                     return _result([pin_row])
                 if self.name == "moisture_pin_readings" and self.inserting:
-                    # Simulate the Postgres unique constraint firing
-                    # on (pin_id, reading_date).
-                    err = PostgrestAPIError(
-                        {
-                            "message": "duplicate key value violates unique constraint",
-                            "code": "23505",
-                        },
-                    )
-                    raise err
+                    return _result([inserted_row])
                 return _result([])
 
         class _FakeClient:
             def table(self, name): return _QB(name)
 
         body = MoisturePinReadingCreate(
-            reading_value=18, reading_date="2026-04-22",
+            reading_value=18, taken_at="2026-04-22T15:30:00-04:00",
         )
         with _patch_client(_FakeClient()):
-            with pytest.raises(AppException) as exc:
-                await mp_service.create_reading(
-                    "tok",
-                    pin_id=ids["pin_id"],
-                    job_id=ids["job_id"],
-                    company_id=ids["company_id"],
-                    user_id=ids["user_id"],
-                    body=body,
-                )
-        assert exc.value.error_code == "READING_ALREADY_EXISTS"
-        assert exc.value.status_code == 409
+            result = await mp_service.create_reading(
+                "tok",
+                pin_id=ids["pin_id"],
+                job_id=ids["job_id"],
+                company_id=ids["company_id"],
+                user_id=ids["user_id"],
+                body=body,
+            )
+        assert result["taken_at"] == "2026-04-22T15:30:00-04:00"
+        assert result["reading_value"] == 18
 
     @pytest.mark.asyncio
     async def test_create_pin_propagates_rpc_failure_as_db_error(self, ids):
@@ -790,7 +790,7 @@ class TestUpdatePinPlacementValidation:
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,
-                "reading_date": "2026-04-22",
+                "taken_at": "2026-04-22T12:00:00-04:00",
             },
         )
         with _patch_client(_FakeClient()):

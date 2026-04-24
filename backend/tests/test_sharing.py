@@ -289,7 +289,7 @@ def _shared_view_table_router_with_data(
             return t
         if name == "moisture_pins":
             # Mirror the service's query shape: .select(…).eq(job_id)
-            # .eq(company_id).order("created_at").order(reading_date, foreign_table).execute()
+            # .eq(company_id).order("created_at").order(taken_at, foreign_table).execute()
             # The fake just returns whatever moisture_pins was set to;
             # the service unwraps `.data` and passes through.
             t = AsyncSupabaseMock()
@@ -1543,6 +1543,74 @@ class TestPublicSharedView:
             assert data["moisture_access"] == "unavailable"
             assert data["moisture_pins"] == []
 
+    def test_public_shared_view_includes_timezone_top_level(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """Review round-2 H2 regression pin.
+
+        The adjuster portal's local-day bucketing (Day-N axis, snapshot
+        filter, firstDryDate) MUST read the job's timezone to match the
+        tech-on-site view. If this field silently drops out of the wire
+        payload, the portal falls back to browser-local and an Atlanta
+        adjuster sees a different Day-5 than the Hawaiian tech does.
+        Carrier-rejection material per spec §S7.
+
+        The field is hoisted to the top level (not nested inside `job`)
+        because `job: dict` is untyped and the frontend SharedPayload
+        type can't safely assert sub-fields. Default matches DB default.
+        """
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "tz" * 16
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="full"
+        )
+        # Job explicitly carries a non-default TZ so the test proves the
+        # service passes it through rather than hard-coding the default.
+        _shared_view_table_router_with_data(
+            mock_admin,
+            link_data,
+            {**mock_job_data, "timezone": "America/Los_Angeles"},
+        )
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            # Top-level hoist — not nested inside data["job"].
+            assert data.get("timezone") == "America/Los_Angeles"
+
+    def test_public_shared_view_timezone_falls_back_to_default(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """Negative pin for the fallback branch. A job row missing
+        `timezone` (hypothetical future data shape drift) must still
+        produce a renderable payload — the service coalesces to the DB
+        default instead of letting the frontend receive `null` and
+        crash on `Intl.DateTimeFormat(undefined)`."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "dz" * 16
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="full"
+        )
+        job_without_tz = {k: v for k, v in mock_job_data.items() if k != "timezone"}
+        _shared_view_table_router_with_data(mock_admin, link_data, job_without_tz)
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data.get("timezone") == "America/New_York"
+
     def test_public_shared_view_photos_only_omits_primary_floor_id(
         self,
         client,
@@ -1654,7 +1722,7 @@ class TestPublicSharedView:
                     {
                         "id": str(uuid4()),
                         "reading_value": 18,
-                        "reading_date": "2026-04-22",
+                        "taken_at": "2026-04-22T12:00:00-04:00",
                     },
                 ],
             },

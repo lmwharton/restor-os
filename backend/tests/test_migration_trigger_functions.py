@@ -31,6 +31,10 @@ _ALLOWED_FUNCTIONS = {
     # frozen (is_current=false) floor_plans rows. Defined in the same
     # migration that installs the trigger.
     "floor_plans_prevent_frozen_mutation",
+    # Phase 3 Step 4 (f4c7e1b9a5d2): maintains moisture_pins.dry_standard_met_at
+    # on every moisture_pin_readings INSERT. Sets on first dry reading,
+    # clears on re-wet. Out-of-order guard via COALESCE(-infinity).
+    "moisture_pin_dry_check",
 }
 
 

@@ -76,31 +76,31 @@ class TestComputeIsRegressing:
     def test_latest_higher_than_previous_is_regression(self):
         # Sorted DESC: [0] is latest, [1] is previous.
         readings = [
-            {"reading_value": 28, "reading_date": "2026-04-20"},
-            {"reading_value": 22, "reading_date": "2026-04-19"},
+            {"reading_value": 28, "taken_at": "2026-04-20T12:00:00+00:00"},
+            {"reading_value": 22, "taken_at": "2026-04-19T12:00:00+00:00"},
         ]
         assert compute_is_regressing(readings) is True
 
     def test_latest_lower_than_previous_is_not_regression(self):
         readings = [
-            {"reading_value": 22, "reading_date": "2026-04-20"},
-            {"reading_value": 28, "reading_date": "2026-04-19"},
+            {"reading_value": 22, "taken_at": "2026-04-20T12:00:00+00:00"},
+            {"reading_value": 28, "taken_at": "2026-04-19T12:00:00+00:00"},
         ]
         assert compute_is_regressing(readings) is False
 
     def test_latest_equal_to_previous_is_not_regression(self):
         readings = [
-            {"reading_value": 22, "reading_date": "2026-04-20"},
-            {"reading_value": 22, "reading_date": "2026-04-19"},
+            {"reading_value": 22, "taken_at": "2026-04-20T12:00:00+00:00"},
+            {"reading_value": 22, "taken_at": "2026-04-19T12:00:00+00:00"},
         ]
         assert compute_is_regressing(readings) is False
 
     def test_only_latest_two_matter(self):
         # Older readings don't affect the flag.
         readings = [
-            {"reading_value": 22, "reading_date": "2026-04-20"},
-            {"reading_value": 28, "reading_date": "2026-04-19"},
-            {"reading_value": 100, "reading_date": "2026-04-18"},
+            {"reading_value": 22, "taken_at": "2026-04-20T12:00:00+00:00"},
+            {"reading_value": 28, "taken_at": "2026-04-19T12:00:00+00:00"},
+            {"reading_value": 100, "taken_at": "2026-04-18T12:00:00+00:00"},
         ]
         assert compute_is_regressing(readings) is False
 

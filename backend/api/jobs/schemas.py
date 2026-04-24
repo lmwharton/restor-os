@@ -126,6 +126,11 @@ class JobResponse(BaseModel):
     home_year_built: int | None = Field(None, ge=1600, le=2100)
     status: str
     floor_plan_id: UUID | None = None
+    # Spec 01H Phase 3 (PR-A, Step 1): IANA timezone for distinct-local-
+    # calendar-day billing math. Must be declared here or FastAPI's
+    # response_model strips it between the service return dict and the
+    # HTTP wire, even though the DB column is populated (lesson #24).
+    timezone: str = "America/New_York"
     assigned_to: UUID | None = None
     notes: str | None = None
     tech_notes: str | None = None

@@ -7,8 +7,9 @@ Key rules (from Spec 01H Phase 2):
   at the API layer (Q6 product decision).
 - dry_standard is stored on the pin. DRY_STANDARDS provides the default
   at creation time; the tech can override per pin (and update later).
-- One reading per pin per day, enforced by UNIQUE(pin_id, reading_date).
-  POST raises 409 on conflict; the frontend detects + routes to PATCH.
+- Readings carry a taken_at TIMESTAMPTZ. Multiple readings per pin per day
+  are allowed (post-demo re-inspection workflow). Ordering for dry-check
+  and sparkline uses taken_at strictly.
 """
 
 import logging
@@ -71,7 +72,7 @@ def compute_pin_color(reading: Decimal, dry_standard: Decimal) -> PinColor:
 def compute_is_regressing(readings: list[dict]) -> bool:
     """True when the most recent reading is higher than the previous one.
 
-    `readings` must be sorted DESCENDING by reading_date — index 0 is the
+    `readings` must be sorted DESCENDING by taken_at — index 0 is the
     latest, index 1 is the previous. With fewer than 2 readings, regression
     cannot be computed → False.
     """
@@ -214,7 +215,7 @@ async def _assert_pin_on_job_and_mutable(
 
 def _decorate_pin(pin: dict, readings: list[dict]) -> dict:
     """Attach latest_reading, color, is_regressing, and reading_count to a
-    pin dict. `readings` must be sorted DESCENDING by reading_date."""
+    pin dict. `readings` must be sorted DESCENDING by taken_at."""
     pin["reading_count"] = len(readings)
     if not readings:
         pin["latest_reading"] = None
@@ -295,16 +296,16 @@ async def create_pin(
                 "p_dry_standard": float(dry_standard),
                 "p_created_by": str(user_id),
                 "p_reading_value": float(body.initial_reading.reading_value),
-                "p_reading_date": body.initial_reading.reading_date.isoformat(),
+                "p_taken_at": body.initial_reading.taken_at.isoformat(),
                 "p_meter_photo_url": body.initial_reading.meter_photo_url,
                 "p_notes": body.initial_reading.notes,
             },
         ).execute()
     except APIError as e:
-        # Unique violation on (pin_id, reading_date) is impossible on
-        # a brand-new pin, so any 23505 here is a schema-level
-        # integrity issue worth bubbling. All other failures are
-        # already rolled back atomically inside the RPC.
+        # After Phase 3 Step 3, there's no per-day unique index on readings
+        # — multiple readings per pin per day are now allowed. Any RPC
+        # failure here is already rolled back atomically inside the
+        # function; bubble as a generic DB_ERROR.
         raise AppException(
             status_code=500,
             detail=f"Failed to create pin: {e.message}",
@@ -343,11 +344,11 @@ async def list_pins_by_job(
     """List all pins for a job, decorated with latest reading + color.
 
     Single PostgREST call embeds readings pre-sorted desc by
-    reading_date via ``foreign_table=`` on the outer order. Per-job
+    taken_at via ``foreign_table=`` on the outer order. Per-job
     pin volume is bounded (~15–50 typical); pushing the sort into
-    PostgREST avoids a fragile Python-side lexicographic compare
-    that works for DATE strings but would silently break if
-    ``reading_date`` ever shifts to TIMESTAMPTZ.
+    PostgREST avoids a fragile Python-side compare and keeps the
+    latest-reading-first contract stable even when multiple readings
+    share a calendar day (Phase 3 Step 3).
 
     Note on syntax: inline ``order(...)`` inside the select string
     is NOT valid PostgREST — that slot is reserved for aggregate
@@ -372,7 +373,7 @@ async def list_pins_by_job(
         .eq("job_id", str(job_id))
         .eq("company_id", str(company_id))
         .order("created_at", desc=False)
-        .order("reading_date", desc=True, foreign_table="readings")
+        .order("taken_at", desc=True, foreign_table="readings")
         .execute()
     )
 
@@ -486,7 +487,7 @@ async def update_pin(
         client.table("moisture_pin_readings")
         .select("*")
         .eq("pin_id", str(pin_id))
-        .order("reading_date", desc=True)
+        .order("taken_at", desc=True)
         .execute()
     )
     readings = readings_res.data or []
@@ -564,7 +565,7 @@ async def list_readings(
         client.table("moisture_pin_readings")
         .select("*")
         .eq("pin_id", str(pin_id))
-        .order("reading_date", desc=False)
+        .order("taken_at", desc=False)
         .execute()
     )
     return {"items": res.data or [], "total": len(res.data or [])}
@@ -579,9 +580,12 @@ async def create_reading(
     user_id: UUID,
     body: MoisturePinReadingCreate,
 ) -> dict:
-    """Create a new reading. Raises 409 on UNIQUE(pin_id, reading_date)
-    conflict — the frontend detects collisions before posting, but this
-    is the database-level safety net."""
+    """Create a new reading.
+
+    Post-Phase-3 Step 3: no per-day unique index. Multiple readings per pin
+    per day are allowed (post-demo re-inspection workflow). Any insert
+    failure is bubbled as a generic DB_ERROR — there's no 409 path.
+    """
     client = await get_authenticated_client(token)
 
     # Cross-check pin→job + archive guard before the write.
@@ -589,30 +593,21 @@ async def create_reading(
         client, pin_id=pin_id, job_id=job_id, company_id=company_id,
     )
 
-    try:
-        res = await (
-            client.table("moisture_pin_readings")
-            .insert(
-                {
-                    "pin_id": str(pin_id),
-                    "company_id": str(company_id),
-                    "reading_value": float(body.reading_value),
-                    "reading_date": body.reading_date.isoformat(),
-                    "recorded_by": str(user_id),
-                    "meter_photo_url": body.meter_photo_url,
-                    "notes": body.notes,
-                }
-            )
-            .execute()
+    res = await (
+        client.table("moisture_pin_readings")
+        .insert(
+            {
+                "pin_id": str(pin_id),
+                "company_id": str(company_id),
+                "reading_value": float(body.reading_value),
+                "taken_at": body.taken_at.isoformat(),
+                "recorded_by": str(user_id),
+                "meter_photo_url": body.meter_photo_url,
+                "notes": body.notes,
+            }
         )
-    except APIError as e:
-        if getattr(e, "code", None) == "23505":
-            raise AppException(
-                status_code=409,
-                detail="A reading already exists for this pin on this date",
-                error_code="READING_ALREADY_EXISTS",
-            ) from e
-        raise
+        .execute()
+    )
 
     return res.data[0]
 
@@ -626,7 +621,7 @@ async def update_reading(
     company_id: UUID,
     body: MoisturePinReadingUpdate,
 ) -> dict:
-    """Update a reading's value / date / photo / notes."""
+    """Update a reading's value / taken_at / photo / notes."""
     client = await get_authenticated_client(token)
 
     await _assert_pin_on_job_and_mutable(
@@ -636,8 +631,8 @@ async def update_reading(
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if "reading_value" in updates:
         updates["reading_value"] = float(updates["reading_value"])
-    if "reading_date" in updates:
-        updates["reading_date"] = updates["reading_date"].isoformat()
+    if "taken_at" in updates:
+        updates["taken_at"] = updates["taken_at"].isoformat()
 
     if not updates:
         res = await (

@@ -312,7 +312,7 @@ async def get_shared_job(token: str) -> dict:
                 .eq("company_id", company_id)
                 .order("created_at", desc=False)
                 .order(
-                    "reading_date",
+                    "taken_at",
                     desc=True,
                     foreign_table="readings",
                 )
@@ -488,4 +488,11 @@ async def get_shared_job(token: str) -> dict:
             if scope in ("full", "restoration_only")
             else None
         ),
+        # Round-2 H2 — hoist the job's IANA timezone to the response top
+        # level so the adjuster portal can bucket days in the job's TZ
+        # instead of the viewer's browser TZ. NOT scope-gated — timezone
+        # is operational metadata, not customer-sensitive. Default
+        # matches jobs.timezone's DB default for the unusual case where
+        # an older row is missing the column.
+        "timezone": job.get("timezone") or "America/New_York",
     }
