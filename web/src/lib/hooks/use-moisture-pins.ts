@@ -37,7 +37,8 @@ export interface CreateMoisturePinBody {
   dry_standard?: number;
   initial_reading: {
     reading_value: number;
-    reading_date: string; // ISO date (YYYY-MM-DD)
+    /** TIMESTAMPTZ ISO string, e.g. `new Date().toISOString()`. */
+    taken_at: string;
     meter_photo_url?: string | null;
     notes?: string | null;
   };
@@ -109,7 +110,8 @@ export function usePinReadings(jobId: string, pinId: string) {
 
 export interface CreatePinReadingBody {
   reading_value: number;
-  reading_date: string;
+  /** TIMESTAMPTZ ISO string, e.g. `new Date().toISOString()`. */
+  taken_at: string;
   meter_photo_url?: string | null;
   notes?: string | null;
 }
@@ -131,7 +133,7 @@ export function useCreatePinReading(jobId: string, pinId: string) {
 
 export interface UpdatePinReadingBody {
   reading_value?: number;
-  reading_date?: string;
+  taken_at?: string;
   meter_photo_url?: string | null;
   notes?: string | null;
 }

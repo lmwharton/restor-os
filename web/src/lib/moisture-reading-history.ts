@@ -10,6 +10,7 @@
 // portal view in Phase 2 Task 7, or a PDF export path in Task 6)
 // should pull from this module rather than re-deriving.
 
+import { localDateFromTimestamp } from "./dates";
 import type { MoisturePinReading, PinColor } from "./types";
 
 /**
@@ -88,22 +89,29 @@ export interface ReadingHistory {
 /**
  * Derive the full history view state from a pin's readings.
  *
- * Sort is on the `reading_date` string via `localeCompare` — safe
- * because `reading_date` is `YYYY-MM-DD` from a Postgres DATE column,
- * which is lexicographically ordered the same as chronologically.
- * Regression = strictly greater than the previous day (`>`, not `≥`),
- * matching the backend's `compute_pin_color` behavior and the
- * designed UX: "equal means stable, not worse."
+ * Sort is on the `taken_at` string via `localeCompare` — safe because
+ * ISO 8601 timestamps are lexicographically ordered the same as
+ * chronologically (Phase 3 Step 3 replaced the prior `reading_date`
+ * DATE with a TIMESTAMPTZ, so sub-day precision is preserved in the
+ * sort). Regression = strictly greater than the previous reading
+ * (`>`, not `≥`), matching the backend's `compute_pin_color` behavior
+ * and the designed UX: "equal means stable, not worse."
  *
  * `dryStandard` is required so the helper can compute the
  * dry-milestone (Brett §8.5). Pass the pin's `dry_standard` value.
+ *
+ * `jobTimezone` (review round-1 H2) anchors the first-dry-date extraction
+ * to the job's IANA TZ so carrier-facing output doesn't vary by viewer
+ * location. Optional — when omitted, falls back to viewer-local, which is
+ * correct for tech-facing surfaces (tech + job site share a clock).
  */
 export function deriveReadingHistory(
   normalized: ReadonlyArray<NormalizedReading>,
   dryStandard: number,
+  jobTimezone?: string,
 ): ReadingHistory {
   const asc = [...normalized].sort((a, b) =>
-    a.reading_date.localeCompare(b.reading_date),
+    a.taken_at.localeCompare(b.taken_at),
   );
   const desc = [...asc].reverse();
   const regressingIds = new Set<string>();
@@ -119,7 +127,9 @@ export function deriveReadingHistory(
   // (~30 readings per pin in a typical drying job). First match wins;
   // regressions after this point DO NOT reset the milestone. Day
   // number is the sequence index within `asc` so it aligns with the
-  // summary table's D{i+1} column headers.
+  // summary table's D{i+1} column headers. `firstDryDate` is the
+  // local calendar day of that reading — carrier docs show a day, not
+  // an instant, even though the underlying column is TIMESTAMPTZ.
   let dryMilestone: DryMilestone | null = null;
   if (asc.length > 0) {
     const firstDryIndex = asc.findIndex(
@@ -128,7 +138,7 @@ export function deriveReadingHistory(
     if (firstDryIndex >= 0) {
       const firstDry = asc[firstDryIndex];
       dryMilestone = {
-        firstDryDate: firstDry.reading_date,
+        firstDryDate: localDateFromTimestamp(firstDry.taken_at, jobTimezone),
         firstDryDayNumber: firstDryIndex + 1,
         firstDryReadingId: firstDry.id,
       };
@@ -146,26 +156,28 @@ export function deriveReadingHistory(
  * latest reading.
  *
  * Semantics: the pin's color on date D is determined by the LATEST
- * reading whose `reading_date <= D`. Returns `null` when no reading
- * exists on or before D (the pin didn't exist yet, or was placed
- * without a reading — both are "no snapshot available" cases; the
- * renderer shows a neutral grey dot).
+ * reading whose local calendar day is on or before D. Returns `null`
+ * when no reading exists on or before D (pin didn't exist yet, or was
+ * placed without a reading — renderer shows a neutral grey dot).
  *
- * `readingsAsc` must be sorted ascending by `reading_date`. This
- * function does NOT sort — pass the `asc` array from
- * `deriveReadingHistory` directly, or pre-sort if calling elsewhere.
- * Linear scan is fine; per-pin reading volume is bounded (~30).
+ * `readingsAsc` must be sorted ascending by `taken_at`. Pass the `asc`
+ * array from `deriveReadingHistory`. Linear scan is fine; per-pin
+ * reading volume is bounded (~30).
+ *
+ * Phase 3 Step 3: the underlying column is TIMESTAMPTZ now, so we
+ * normalize each reading's instant to the viewer's local calendar day
+ * via `localDateFromTimestamp` before comparing. Raw lex compare
+ * against `isoDate` (a `YYYY-MM-DD` string) would be wrong — see
+ * lesson #22 in pr-review-lessons.md.
  */
 export function computePinColorAsOf(
   readingsAsc: ReadonlyArray<NormalizedReading>,
   isoDate: string,
   dryStandard: number,
+  jobTimezone?: string,
 ): PinColor | null {
-  // Walk from the newest end and pick the first reading <= isoDate.
-  // Matches "latest reading that happened on or before the snapshot
-  // date" semantics from Brett §8.6.
   for (let i = readingsAsc.length - 1; i >= 0; i--) {
-    if (readingsAsc[i].reading_date <= isoDate) {
+    if (localDateFromTimestamp(readingsAsc[i].taken_at, jobTimezone) <= isoDate) {
       return computePinColor(readingsAsc[i].reading_value, dryStandard);
     }
   }
@@ -173,16 +185,31 @@ export function computePinColorAsOf(
 }
 
 /**
- * Find the reading whose `reading_date` matches the given local-day
- * string (`YYYY-MM-DD`). Paired with `todayLocalIso()` from
+ * Find the most-recent reading whose local calendar day matches the
+ * given `YYYY-MM-DD` string. Paired with `todayLocalIso()` from
  * `@/lib/dates` — pass the two together and you get the "already
  * logged today" row the sheet uses for prefill + overwrite.
+ *
+ * Phase 3 Step 3: multiple readings per pin per day are now allowed
+ * (post-demo re-inspection workflow). When that happens, "today's
+ * reading" is the latest same-day reading — we scan the normalized
+ * array from the end so we pick the newest match, assuming the caller
+ * passes an ascending-sorted series (the `asc` output of
+ * `deriveReadingHistory` satisfies this; the raw input usually does
+ * too since the API returns DESC and most callers just reverse once).
+ * If ordering isn't guaranteed at the call site, pre-sort first.
  */
 export function findTodayReading(
   normalized: ReadonlyArray<NormalizedReading>,
   today: string,
+  jobTimezone?: string,
 ): NormalizedReading | null {
-  return normalized.find((r) => r.reading_date === today) ?? null;
+  for (let i = normalized.length - 1; i >= 0; i--) {
+    if (localDateFromTimestamp(normalized[i].taken_at, jobTimezone) === today) {
+      return normalized[i];
+    }
+  }
+  return null;
 }
 
 export interface ReadingInputValidation {

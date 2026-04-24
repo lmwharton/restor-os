@@ -58,14 +58,16 @@ export function buildMoistureReportProps({
 }: BuildMoistureReportPropsInput): BuildMoistureReportPropsOutput {
   // Normalize reading shape: backend serializes NUMERIC as string
   // ("7.00"); downstream math needs numbers. Also re-sort ASC by
-  // reading_date — the API returns DESC for the tech UI but the
+  // taken_at — the API returns DESC for the tech UI but the
   // report's derivation (dry milestone, color-as-of) expects ASC.
+  // ISO 8601 timestamps sort lexicographically the same as
+  // chronologically, so localeCompare on the raw string is correct.
   const readingsByPinId = new Map<string, MoisturePinReading[]>();
   for (const pin of pins) {
     const raw = pin.readings ?? [];
     const asc = raw
       .slice()
-      .sort((a, b) => a.reading_date.localeCompare(b.reading_date))
+      .sort((a, b) => a.taken_at.localeCompare(b.taken_at))
       .map((r) => ({ ...r, reading_value: Number(r.reading_value) }));
     readingsByPinId.set(pin.id, asc);
   }

@@ -76,7 +76,7 @@ function makePin(over: Partial<MoisturePin> = {}): MoisturePin {
 function makeReading(
   over: Partial<MoisturePinReading> & {
     id: string;
-    reading_date: string;
+    taken_at: string;
     reading_value: number;
   },
 ): MoisturePinReading {
@@ -85,7 +85,7 @@ function makeReading(
     recorded_by: null,
     meter_photo_url: null,
     notes: null,
-    created_at: `${over.reading_date}T12:00:00Z`,
+    created_at: `${over.taken_at.slice(0,10)}T12:00:00Z`,
     ...over,
   };
 }
@@ -139,9 +139,9 @@ describe("MoistureReportView", () => {
   it("renders header, date picker, and summary table for a multi-reading pin", () => {
     const pin = makePin();
     const readings = [
-      makeReading({ id: "r1", reading_date: "2026-04-20", reading_value: 30 }),
-      makeReading({ id: "r2", reading_date: "2026-04-22", reading_value: 18 }),
-      makeReading({ id: "r3", reading_date: "2026-04-24", reading_value: 14 }),
+      makeReading({ id: "r1", taken_at: "2026-04-20T12:00:00Z", reading_value: 30 }),
+      makeReading({ id: "r2", taken_at: "2026-04-22T12:00:00Z", reading_value: 18 }),
+      makeReading({ id: "r3", taken_at: "2026-04-24T12:00:00Z", reading_value: 14 }),
     ];
     renderView({
       pins: [pin],
@@ -171,8 +171,8 @@ describe("MoistureReportView", () => {
   it("calls onSelectedDateChange when the date picker changes", () => {
     const pin = makePin();
     const readings = [
-      makeReading({ id: "r1", reading_date: "2026-04-20", reading_value: 30 }),
-      makeReading({ id: "r2", reading_date: "2026-04-22", reading_value: 18 }),
+      makeReading({ id: "r1", taken_at: "2026-04-20T12:00:00Z", reading_value: 30 }),
+      makeReading({ id: "r2", taken_at: "2026-04-22T12:00:00Z", reading_value: 18 }),
     ];
     const onSelectedDateChange = vi.fn();
     renderView({
@@ -194,9 +194,9 @@ describe("MoistureReportView", () => {
     // the date-picker contract (Brett §8.6).
     const pin = makePin();
     const readings = [
-      makeReading({ id: "r1", reading_date: "2026-04-20", reading_value: 30 }),
-      makeReading({ id: "r2", reading_date: "2026-04-22", reading_value: 18 }),
-      makeReading({ id: "r3", reading_date: "2026-04-24", reading_value: 14 }),
+      makeReading({ id: "r1", taken_at: "2026-04-20T12:00:00Z", reading_value: 30 }),
+      makeReading({ id: "r2", taken_at: "2026-04-22T12:00:00Z", reading_value: 18 }),
+      makeReading({ id: "r3", taken_at: "2026-04-24T12:00:00Z", reading_value: 14 }),
     ];
 
     // Snapshot on Apr 22 — pin NOT yet dry. The rollup renders its
@@ -240,8 +240,8 @@ describe("MoistureReportView", () => {
     // date it was achieved."
     const pin = makePin();
     const readings = [
-      makeReading({ id: "r1", reading_date: "2026-04-21", reading_value: 30 }),
-      makeReading({ id: "r2", reading_date: "2026-04-22", reading_value: 14 }),
+      makeReading({ id: "r1", taken_at: "2026-04-21T12:00:00Z", reading_value: 30 }),
+      makeReading({ id: "r2", taken_at: "2026-04-22T12:00:00Z", reading_value: 14 }),
     ];
     renderView({
       pins: [pin],

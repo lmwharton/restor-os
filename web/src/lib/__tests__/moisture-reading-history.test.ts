@@ -16,7 +16,7 @@ import {
 function makeReading(
   overrides: Partial<NormalizedReading> & {
     id: string;
-    reading_date: string;
+    taken_at: string;
     reading_value: number;
   },
 ): NormalizedReading {
@@ -44,7 +44,7 @@ describe("deriveReadingHistory", () => {
   it("handles a single reading — latest set, previous null, no regression", () => {
     const r = makeReading({
       id: "r1",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 15,
     });
     const h = deriveReadingHistory([r], 16);
@@ -58,12 +58,12 @@ describe("deriveReadingHistory", () => {
   it("flags the newer reading as regressing when value strictly increases", () => {
     const older = makeReading({
       id: "r1",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 12,
     });
     const newer = makeReading({
       id: "r2",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 18,
     });
     const h = deriveReadingHistory([older, newer], 16);
@@ -76,17 +76,17 @@ describe("deriveReadingHistory", () => {
   it("does NOT flag regression when the series is purely decreasing", () => {
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 25,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 18,
     });
     const r3 = makeReading({
       id: "r3",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 14,
     });
     const h = deriveReadingHistory([r1, r2, r3], 16);
@@ -100,12 +100,12 @@ describe("deriveReadingHistory", () => {
     // plateau day as a regression.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 16,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 16,
     });
     const h = deriveReadingHistory([r1, r2], 16);
@@ -116,42 +116,42 @@ describe("deriveReadingHistory", () => {
     // Values: 10 → 12 (up, flag r2) → 8 (down) → 14 (up, flag r4)
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-19",
+      taken_at: "2026-04-19T12:00:00Z",
       reading_value: 10,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 12,
     });
     const r3 = makeReading({
       id: "r3",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 8,
     });
     const r4 = makeReading({
       id: "r4",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 14,
     });
     const h = deriveReadingHistory([r1, r2, r3, r4], 16);
     expect(Array.from(h.regressingIds).sort()).toEqual(["r2", "r4"]);
   });
 
-  it("sorts out-of-order input by reading_date ascending", () => {
+  it("sorts out-of-order input by taken_at ascending", () => {
     const apr22 = makeReading({
       id: "r-apr22",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 10,
     });
     const apr20 = makeReading({
       id: "r-apr20",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 20,
     });
     const apr21 = makeReading({
       id: "r-apr21",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 15,
     });
     const h = deriveReadingHistory([apr22, apr20, apr21], 16);
@@ -172,12 +172,12 @@ describe("deriveReadingHistory", () => {
   it("does not mutate its input array", () => {
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 10,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 20,
     });
     const input = [r1, r2];
@@ -193,12 +193,12 @@ describe("deriveReadingHistory", () => {
     // All readings above dry_standard of 16 → never dry.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 30,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 22,
     });
     const h = deriveReadingHistory([r1, r2], 16);
@@ -211,17 +211,17 @@ describe("deriveReadingHistory", () => {
     // series, so r3 is Day 3.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 30,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 20,
     });
     const r3 = makeReading({
       id: "r3",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 14,
     });
     const h = deriveReadingHistory([r1, r2, r3], 16);
@@ -238,17 +238,17 @@ describe("deriveReadingHistory", () => {
     // regressions keep the ORIGINAL dry date for carrier documentation.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 14,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 18,
     });
     const r3 = makeReading({
       id: "r3",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 20,
     });
     const h = deriveReadingHistory([r1, r2, r3], 16);
@@ -262,7 +262,7 @@ describe("deriveReadingHistory", () => {
     // Without inclusivity a pin exactly at 16% would never be flagged dry.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-20",
+      taken_at: "2026-04-20T12:00:00Z",
       reading_value: 16,
     });
     const h = deriveReadingHistory([r1], 16);
@@ -275,7 +275,7 @@ describe("deriveReadingHistory", () => {
     // correct — count from the first reading regardless.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 12,
     });
     const h = deriveReadingHistory([r1], 16);
@@ -292,17 +292,17 @@ describe("deriveReadingHistory", () => {
     // allDates index, so the two never conflict.
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-18",
+      taken_at: "2026-04-18T12:00:00Z",
       reading_value: 30,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 14,
     });
     const r3 = makeReading({
       id: "r3",
-      reading_date: "2026-04-24",
+      taken_at: "2026-04-24T12:00:00Z",
       reading_value: 12,
     });
     const h = deriveReadingHistory([r1, r2, r3], 16);
@@ -318,12 +318,12 @@ describe("findTodayReading", () => {
   it("returns the reading whose date matches today", () => {
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 12,
     });
     const r2 = makeReading({
       id: "r2",
-      reading_date: "2026-04-22",
+      taken_at: "2026-04-22T12:00:00Z",
       reading_value: 18,
     });
     expect(findTodayReading([r1, r2], "2026-04-22")).toBe(r2);
@@ -332,7 +332,7 @@ describe("findTodayReading", () => {
   it("returns null when no reading matches today", () => {
     const r1 = makeReading({
       id: "r1",
-      reading_date: "2026-04-21",
+      taken_at: "2026-04-21T12:00:00Z",
       reading_value: 12,
     });
     expect(findTodayReading([r1], "2026-04-22")).toBeNull();
@@ -387,7 +387,7 @@ describe("validateReadingInput", () => {
 describe("isChangedFromToday", () => {
   const existing = makeReading({
     id: "today",
-    reading_date: "2026-04-22",
+    taken_at: "2026-04-22T12:00:00Z",
     reading_value: 16,
   });
 
@@ -420,17 +420,17 @@ describe("isChangedFromToday", () => {
 describe("computePinColorAsOf", () => {
   const r1 = makeReading({
     id: "r1",
-    reading_date: "2026-04-20",
+    taken_at: "2026-04-20T12:00:00Z",
     reading_value: 30, // red (30 > 16 + 10)
   });
   const r2 = makeReading({
     id: "r2",
-    reading_date: "2026-04-22",
+    taken_at: "2026-04-22T12:00:00Z",
     reading_value: 18, // amber (16 < 18 ≤ 26)
   });
   const r3 = makeReading({
     id: "r3",
-    reading_date: "2026-04-24",
+    taken_at: "2026-04-24T12:00:00Z",
     reading_value: 14, // green (14 ≤ 16)
   });
   const series = [r1, r2, r3];

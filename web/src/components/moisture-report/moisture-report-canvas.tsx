@@ -21,6 +21,7 @@ import type {
 } from "@/components/sketch/floor-plan-tools";
 import type { MoisturePin, MoisturePinReading } from "@/lib/types";
 import { computePinColorAsOf } from "@/lib/moisture-reading-history";
+import { localDateFromTimestamp } from "@/lib/dates";
 
 // Pin colors match the Konva layer in the main editor so the report
 // visually matches what the tech sees in the field. Neutral grey is
@@ -37,12 +38,17 @@ const PIN_NO_DATA_HEX = "#9ca3af";
 export interface MoistureReportCanvasProps {
   canvas: FloorPlanData;
   pins: ReadonlyArray<MoisturePin>;
-  /** Map of pinId → all readings for that pin, ascending by reading_date.
-   *  The canvas picks the latest reading ≤ `snapshotDate` per pin via
-   *  `computePinColorAsOf`. */
+  /** Map of pinId → all readings for that pin, ascending by taken_at.
+   *  The canvas picks the latest reading whose local calendar day is
+   *  ≤ `snapshotDate` per pin via `computePinColorAsOf`. */
   readingsByPinId: ReadonlyMap<string, ReadonlyArray<MoisturePinReading>>;
   /** YYYY-MM-DD. Drives per-pin color + the in-pin value label. */
   snapshotDate: string;
+  /** IANA timezone of the job (review round-1 H2). Anchors the local-day
+   *  extraction on every reading to the job's clock so pin colors on the
+   *  shared portal don't vary by viewer location. Omit for tech-on-site
+   *  contexts where browser-local is correct. */
+  jobTimezone?: string;
 }
 
 /** Preferred aspect ratio for the plan image (4:3). Height derives
@@ -58,9 +64,12 @@ const CANVAS_MAX_WIDTH = 760;
 function readingAsOf(
   readings: ReadonlyArray<MoisturePinReading>,
   snapshotDate: string,
+  jobTimezone?: string,
 ): MoisturePinReading | null {
   for (let i = readings.length - 1; i >= 0; i--) {
-    if (readings[i].reading_date <= snapshotDate) return readings[i];
+    if (localDateFromTimestamp(readings[i].taken_at, jobTimezone) <= snapshotDate) {
+      return readings[i];
+    }
   }
   return null;
 }
@@ -70,6 +79,7 @@ export function MoistureReportCanvas({
   pins,
   readingsByPinId,
   snapshotDate,
+  jobTimezone,
 }: MoistureReportCanvasProps) {
   // Responsive sizing: on mobile the parent container is narrower
   // than CANVAS_MAX_WIDTH, so we measure the container and let the
@@ -221,11 +231,11 @@ export function MoistureReportCanvas({
               {pins.map((pin) => {
                 const readings = readingsByPinId.get(pin.id) ?? [];
                 // Skip pins created after the snapshot date — the
-                // earliest reading date is the pin's "born on" proxy
-                // (pins always ship with an initial reading per the
-                // atomic create RPC).
+                // earliest reading's local calendar day is the pin's
+                // "born on" proxy (pins always ship with an initial
+                // reading per the atomic create RPC).
                 const earliestDate = readings.length
-                  ? readings[0].reading_date
+                  ? localDateFromTimestamp(readings[0].taken_at, jobTimezone)
                   : null;
                 if (earliestDate && earliestDate > snapshotDate) return null;
 
@@ -233,9 +243,10 @@ export function MoistureReportCanvas({
                   readings,
                   snapshotDate,
                   Number(pin.dry_standard),
+                  jobTimezone,
                 );
                 const fill = color ? PIN_COLOR_HEX[color] : PIN_NO_DATA_HEX;
-                const reading = readingAsOf(readings, snapshotDate);
+                const reading = readingAsOf(readings, snapshotDate, jobTimezone);
                 const valueText = reading
                   ? String(Math.round(Number(reading.reading_value)))
                   : "—";

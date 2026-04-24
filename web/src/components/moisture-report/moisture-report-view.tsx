@@ -17,7 +17,7 @@ import { useMemo } from "react";
 
 import type { FloorPlanData } from "@/components/sketch/floor-plan-tools";
 import type { MoisturePin, MoisturePinReading } from "@/lib/types";
-import { formatShortDateLocal } from "@/lib/dates";
+import { formatShortDateLocal, localDateFromTimestamp } from "@/lib/dates";
 import { deriveReadingHistory } from "@/lib/moisture-reading-history";
 
 import { MoistureReportCanvas } from "./moisture-report-canvas";
@@ -75,7 +75,7 @@ export interface MoistureReportViewProps {
    *  each floor as its own section with its own canvas snapshot;
    *  the summary table at the bottom aggregates across all floors. */
   floors: ReadonlyArray<MoistureReportFloor>;
-  /** Reading history per pin, ascending by reading_date. Keyed by
+  /** Reading history per pin, ascending by taken_at. Keyed by
    *  pin id so the summary table doesn't care which floor a pin
    *  lives on. */
   readingsByPinId: ReadonlyMap<string, ReadonlyArray<MoisturePinReading>>;
@@ -98,6 +98,13 @@ export interface MoistureReportViewProps {
    *  data state surfaces honestly instead of being silently dropped
    *  or crammed onto the primary floor. Defaults to empty. */
   orphanPins?: ReadonlyArray<MoisturePin>;
+  /** IANA timezone of the job (e.g. `"America/Denver"`), sourced from
+   *  `jobs.timezone`. Review round-1 H2: anchors every local-day
+   *  extraction (Day-N axis, snapshot-as-of comparisons, firstDryDate)
+   *  to the job's clock so a carrier viewing the shared portal from a
+   *  different TZ sees the same days as the tech on-site. Omit on
+   *  tech-only surfaces where viewer and job share a clock. */
+  jobTimezone?: string;
 }
 
 export function MoistureReportView({
@@ -111,6 +118,7 @@ export function MoistureReportView({
   onSelectedFloorChange,
   generatedAt,
   orphanPins = [],
+  jobTimezone,
 }: MoistureReportViewProps) {
   // Resolve which floor the canvas shows. If the caller didn't thread
   // `selectedFloorId` (single-floor jobs, or wrapper hasn't wired the
@@ -126,10 +134,11 @@ export function MoistureReportView({
   }, [floors, selectedFloorId]);
 
   // Pins that existed on or before the selected snapshot date. Uses
-  // each pin's earliest reading_date as a "born on" proxy (every pin
-  // ships with an initial reading per the atomic create RPC). Drives
-  // the canvas, reading log, AND rollup — all three surfaces show a
-  // consistent slice of the floor "as of that day" (Brett §8.6).
+  // each pin's earliest reading's local calendar day as a "born on"
+  // proxy (every pin ships with an initial reading per the atomic
+  // create RPC). Phase 3 Step 3: taken_at is TIMESTAMPTZ, so we
+  // extract the local day before comparing against the snapshot date
+  // (a YYYY-MM-DD string). Drives the canvas, reading log, AND rollup.
   const visiblePins = useMemo(() => {
     if (!selectedFloor) return [];
     return selectedFloor.pins.filter((pin) => {
@@ -139,7 +148,7 @@ export function MoistureReportView({
         // rather than render as a stale grey dot.
         return false;
       }
-      return readings[0].reading_date <= selectedDate;
+      return localDateFromTimestamp(readings[0].taken_at, jobTimezone) <= selectedDate;
     });
   }, [selectedFloor, readingsByPinId, selectedDate]);
 
@@ -152,7 +161,7 @@ export function MoistureReportView({
     return orphanPins.filter((pin) => {
       const readings = readingsByPinId.get(pin.id) ?? [];
       if (readings.length === 0) return false;
-      return readings[0].reading_date <= selectedDate;
+      return localDateFromTimestamp(readings[0].taken_at, jobTimezone) <= selectedDate;
     });
   }, [orphanPins, readingsByPinId, selectedDate]);
 
@@ -168,7 +177,10 @@ export function MoistureReportView({
     for (const pin of selectedFloor.pins) {
       const readings = readingsByPinId.get(pin.id);
       if (!readings) continue;
-      for (const r of readings) set.add(r.reading_date);
+      for (const r of readings) {
+        const localDay = localDateFromTimestamp(r.taken_at, jobTimezone);
+        if (localDay) set.add(localDay);
+      }
     }
     return [...set].sort();
   }, [selectedFloor, readingsByPinId]);
@@ -188,6 +200,7 @@ export function MoistureReportView({
       const history = deriveReadingHistory(
         normalized,
         Number(pin.dry_standard),
+        jobTimezone,
       );
       if (
         history.dryMilestone
@@ -387,6 +400,7 @@ export function MoistureReportView({
                 pins={visiblePins}
                 readingsByPinId={readingsByPinId}
                 snapshotDate={selectedDate}
+                jobTimezone={jobTimezone}
               />
             </div>
             {selectedFloor.pins.length === 0 && (
@@ -428,6 +442,7 @@ export function MoistureReportView({
               <MoistureReportSummaryTable
                 pins={[...visiblePins, ...visibleOrphanPins]}
                 readingsByPinId={readingsByPinId}
+                jobTimezone={jobTimezone}
               />
             </section>
           )}

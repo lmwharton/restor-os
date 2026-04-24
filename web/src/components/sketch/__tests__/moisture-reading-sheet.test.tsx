@@ -64,7 +64,7 @@ function makePin(overrides: Partial<MoisturePin> = {}): MoisturePin {
 function makeReading(
   overrides: Partial<MoisturePinReading> & {
     id: string;
-    reading_date: string;
+    taken_at: string;
     reading_value: number;
   },
 ): MoisturePinReading {
@@ -168,12 +168,12 @@ describe("loading state", () => {
         data: [
           makeReading({
             id: "r1",
-            reading_date: "2026-04-21",
+            taken_at: "2026-04-21T12:00:00Z",
             reading_value: 14,
           }),
           makeReading({
             id: "r2",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 18,
           }),
         ],
@@ -201,7 +201,7 @@ describe("last-reading delete guard", () => {
         data: [
           makeReading({
             id: "only",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 15,
           }),
         ],
@@ -223,12 +223,12 @@ describe("last-reading delete guard", () => {
         data: [
           makeReading({
             id: "r1",
-            reading_date: "2026-04-21",
+            taken_at: "2026-04-21T12:00:00Z",
             reading_value: 14,
           }),
           makeReading({
             id: "r2",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 18,
           }),
         ],
@@ -255,12 +255,12 @@ describe("delete reading flow", () => {
         data: [
           makeReading({
             id: "r1",
-            reading_date: "2026-04-21",
+            taken_at: "2026-04-21T12:00:00Z",
             reading_value: 14,
           }),
           makeReading({
             id: "r2",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 18,
           }),
         ],
@@ -334,7 +334,7 @@ describe("today identification uses local date", () => {
         data: [
           makeReading({
             id: "today-row",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 18,
           }),
         ],
@@ -375,7 +375,7 @@ describe("today identification uses local date", () => {
         data: [
           makeReading({
             id: "today-row",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 67,
           }),
         ],
@@ -419,7 +419,7 @@ describe("today identification uses local date", () => {
         data: [
           makeReading({
             id: "today-row",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 67,
           }),
         ],
@@ -447,12 +447,12 @@ describe("read-only mode", () => {
         data: [
           makeReading({
             id: "r1",
-            reading_date: "2026-04-21",
+            taken_at: "2026-04-21T12:00:00Z",
             reading_value: 14,
           }),
           makeReading({
             id: "r2",
-            reading_date: "2026-04-22",
+            taken_at: "2026-04-22T12:00:00Z",
             reading_value: 18,
           }),
         ],

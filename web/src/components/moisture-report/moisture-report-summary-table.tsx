@@ -11,7 +11,7 @@
 // show blank cells for earlier days.
 
 import type { MoisturePin, MoisturePinReading } from "@/lib/types";
-import { formatShortDateLocal } from "@/lib/dates";
+import { formatShortDateLocal, localDateFromTimestamp } from "@/lib/dates";
 import { deriveReadingHistory } from "@/lib/moisture-reading-history";
 
 const COLOR_BG: Record<"red" | "amber" | "green", string> = {
@@ -23,6 +23,11 @@ const COLOR_BG: Record<"red" | "amber" | "green", string> = {
 export interface MoistureReportSummaryTableProps {
   pins: ReadonlyArray<MoisturePin>;
   readingsByPinId: ReadonlyMap<string, ReadonlyArray<MoisturePinReading>>;
+  /** IANA timezone of the job (review round-1 H2). Anchors the Day-N
+   *  axis + firstDryDate computation to the job's clock so adjusters
+   *  in a different TZ see the same days as the on-site tech.
+   *  Omit for tech-only contexts where browser-local is correct. */
+  jobTimezone?: string;
 }
 
 /** Material label lookup — same catalog as the placement / edit sheets,
@@ -41,6 +46,7 @@ const MATERIAL_LABEL: Record<string, string> = {
 export function MoistureReportSummaryTable({
   pins,
   readingsByPinId,
+  jobTimezone,
 }: MoistureReportSummaryTableProps) {
   if (pins.length === 0) {
     return (
@@ -50,12 +56,20 @@ export function MoistureReportSummaryTable({
     );
   }
 
-  // Collect every distinct reading_date across all pins — that's the
-  // Day-N axis. Sort ascending so Day 1 is the earliest reading in
-  // the job, regardless of which pin took it.
+  // Collect every distinct local calendar day a reading fell on across
+  // all pins — that's the Day-N axis. Phase 3 Step 3 made taken_at a
+  // TIMESTAMPTZ; bucket to local day so two sub-day readings on the
+  // same pin collapse into one column. Sort ascending so Day 1 is the
+  // earliest reading in the job, regardless of which pin took it.
+  // Skip readings whose `taken_at` doesn't parse (stale cached data
+  // after a field rename, empty strings from defensive helpers) — a
+  // blank column header crashes formatShortDateLocal downstream.
   const allDatesSet = new Set<string>();
   for (const readings of readingsByPinId.values()) {
-    for (const r of readings) allDatesSet.add(r.reading_date);
+    for (const r of readings) {
+      const localDay = localDateFromTimestamp(r.taken_at, jobTimezone);
+      if (localDay) allDatesSet.add(localDay);
+    }
   }
   const allDates = [...allDatesSet].sort();
 
@@ -107,9 +121,13 @@ export function MoistureReportSummaryTable({
                 reading_value: Number(r.reading_value),
               })),
               Number(pin.dry_standard),
+              jobTimezone,
             );
+            // If a pin has >1 reading on the same local day (post-demo
+            // re-inspection), the LATER reading wins the cell — callers
+            // scan asc, so overwriting on collision keeps the latest.
             const byDate = new Map(
-              history.asc.map((r) => [r.reading_date, r]),
+              history.asc.map((r) => [localDateFromTimestamp(r.taken_at, jobTimezone), r]),
             );
             const materialLabel =
               MATERIAL_LABEL[pin.material] ?? pin.material;

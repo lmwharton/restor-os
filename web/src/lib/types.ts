@@ -339,7 +339,12 @@ export interface MoisturePinReading {
   id: string;
   pin_id: string;
   reading_value: number;
-  reading_date: string;
+  /** Phase 3 Step 3: TIMESTAMPTZ ISO string (e.g.
+   *  `"2026-04-22T14:32:15-07:00"`). Replaced the `reading_date` DATE
+   *  field. Compare "on this day" via `localDateFromTimestamp(taken_at)`
+   *  in `@/lib/dates` — raw lex compare against a `YYYY-MM-DD` string
+   *  is wrong. */
+  taken_at: string;
   recorded_by: string | null;
   meter_photo_url: string | null;
   notes: string | null;
@@ -363,7 +368,7 @@ export interface MoisturePin {
   color: PinColor | null;
   is_regressing: boolean;
   reading_count: number;
-  /** Full reading history for this pin — DESC by reading_date.
+  /** Full reading history for this pin — DESC by taken_at.
    *  Present on the list-pins-by-job response (populated since the
    *  moisture-report view needs every reading without N follow-up
    *  queries). Absent on individual pin responses (PATCH / DELETE

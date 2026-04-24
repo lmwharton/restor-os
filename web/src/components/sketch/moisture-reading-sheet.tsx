@@ -35,7 +35,7 @@ import type {
   PinColor,
 } from "@/lib/types";
 import { ConfirmModal } from "@/components/confirm-modal";
-import { formatShortDateLocal, todayLocalIso } from "@/lib/dates";
+import { formatShortDateLocal, localDateFromTimestamp, todayLocalIso } from "@/lib/dates";
 import {
   deriveReadingHistory,
   findTodayReading,
@@ -417,7 +417,7 @@ export function MoistureReadingSheet({
       );
     } else {
       createReading.mutate(
-        { reading_value: readNum, reading_date: today },
+        { reading_value: readNum, taken_at: new Date().toISOString() },
         {
           onSuccess: () => onClose(),
           onError: (err) => {
@@ -712,7 +712,8 @@ export function MoistureReadingSheet({
                     pin.dry_standard,
                   );
                   const regressed = history.regressingIds.has(r.id);
-                  const isToday = r.reading_date === today;
+                  const rLocalDate = localDateFromTimestamp(r.taken_at);
+                  const isToday = rLocalDate === today;
                   const isDeleting = pendingDeleteIds.has(r.id);
                   // A pin must always have ≥ 1 reading — otherwise it
                   // renders on canvas as a grey "no reading yet" dot and
@@ -758,7 +759,7 @@ export function MoistureReadingSheet({
                         </span>
                       )}
                       <span className="ml-auto text-[11px] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                        {isToday ? "Today" : formatShortDateLocal(r.reading_date)}
+                        {isToday ? "Today" : formatShortDateLocal(rLocalDate)}
                       </span>
                       {!readOnly && (
                       <button
@@ -771,7 +772,7 @@ export function MoistureReadingSheet({
                             : `Delete ${Number(r.reading_value)}% reading from ${
                                 isToday
                                   ? "today"
-                                  : formatShortDateLocal(r.reading_date)
+                                  : formatShortDateLocal(rLocalDate)
                               }`
                         }
                         title={
@@ -847,11 +848,11 @@ export function MoistureReadingSheet({
         title="Delete reading?"
         description={
           confirmDeleteRow
-            ? `The ${Number(confirmDeleteRow.reading_value)}% reading from ${
-                confirmDeleteRow.reading_date === today
-                  ? "today"
-                  : formatShortDateLocal(confirmDeleteRow.reading_date)
-              } will be removed. This can't be undone.`
+            ? (() => {
+                const localDay = localDateFromTimestamp(confirmDeleteRow.taken_at);
+                const label = localDay === today ? "today" : formatShortDateLocal(localDay);
+                return `The ${Number(confirmDeleteRow.reading_value)}% reading from ${label} will be removed. This can't be undone.`;
+              })()
             : undefined
         }
         confirmLabel="Delete"

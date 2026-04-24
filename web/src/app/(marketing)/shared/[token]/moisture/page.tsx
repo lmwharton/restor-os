@@ -56,6 +56,11 @@ interface SharedPayload {
   // field fall back to the legacy derive-from-arrays behavior so a
   // portal deploy ahead of a backend deploy keeps working.
   moisture_access?: "denied" | "unavailable" | "empty" | "present";
+  // IANA timezone of the job, hoisted to the top level of the shared
+  // payload so the portal doesn't have to dig into `job` (which is
+  // untyped on the wire) to find it. Review round-2 H2 fix. See
+  // backend `SharedJobResponse.timezone` for the contract.
+  timezone?: string;
   // Job's pinned floor_plan_id, hoisted so portal picks the same
   // primary floor as the tech view.
   primary_floor_id?: string | null;
@@ -254,6 +259,12 @@ export default function PortalMoistureReportPage() {
           onSelectedDateChange={setSelectedDate}
           selectedFloorId={selectedFloorId}
           onSelectedFloorChange={setSelectedFloorId}
+          // Review round-2 H2 completion: sharing payload now hoists
+          // `timezone` to the top level (see backend
+          // SharedJobResponse.timezone). Preserved fallback to the DB
+          // default so a frontend deploy ahead of a backend deploy
+          // keeps rendering instead of crashing on `undefined`.
+          jobTimezone={payload.timezone ?? "America/New_York"}
         />
       </div>
     </div>

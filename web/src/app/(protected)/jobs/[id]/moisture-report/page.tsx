@@ -154,6 +154,16 @@ export default function MoistureReportPage() {
           onSelectedDateChange={setSelectedDate}
           selectedFloorId={selectedFloorId}
           onSelectedFloorChange={setSelectedFloorId}
+          // Review round-1 H2 — carrier-facing surfaces bucket days by
+          // the job's timezone, not the browser. Falls back to the DB
+          // default if the field isn't on the payload (backward-compat
+          // during the post-deploy warmup while everyone picks up the
+          // new schema); after PR-D's zip resolver lands, this will
+          // reflect the property's actual zone.
+          jobTimezone={
+            (job as { timezone?: string }).timezone
+            ?? "America/New_York"
+          }
         />
       </div>
     </div>

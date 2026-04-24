@@ -88,7 +88,7 @@ interface CanvasData {
 
 function daysSinceLoss(lossDate: string | null): number {
   if (!lossDate) return 0;
-  // Use date-only arithmetic to match backend: (reading_date - loss_date) + 1
+  // Date-only arithmetic: (today_local - loss_date) + 1
   const loss = new Date(lossDate + "T00:00:00");
   const today = new Date();
   today.setHours(0, 0, 0, 0);

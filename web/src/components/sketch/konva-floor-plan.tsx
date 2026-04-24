@@ -41,7 +41,6 @@ import { useCreateMoisturePin, useMoisturePins, useUpdateMoisturePin, useDeleteM
 import { useQueryClient } from "@tanstack/react-query";
 import type { MoisturePin } from "@/lib/types";
 import { deriveRoomStatus, ROOM_STATUS_COPY } from "@/lib/moisture-room-status";
-import { todayLocalIso } from "@/lib/dates";
 import {
   resolveCanvasRoomBackendRow,
   resolveCanvasRoomCandidateIds,
@@ -1191,7 +1190,6 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const handlePlacementSave = useCallback(
     (data: PlacementSheetData) => {
       if (!jobId || !placement) return;
-      const todayIso = todayLocalIso();
       createPin.mutate(
         {
           room_id: placement.roomId,
@@ -1202,7 +1200,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           dry_standard: data.dry_standard,
           initial_reading: {
             reading_value: data.initial_reading,
-            reading_date: todayIso,
+            // Phase 3 Step 3: taken_at is TIMESTAMPTZ now. Server wall
+            // clock via toISOString() captures the instant; the server
+            // will display it on the correct local day via the job's
+            // timezone.
+            taken_at: new Date().toISOString(),
           },
         },
         {
