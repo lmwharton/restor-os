@@ -27,7 +27,7 @@ Amendments applied after a full sweep of `docs/research/*` + cross-spec checks (
 
 | # | Amendment | Why | Where |
 |---|---|---|---|
-| A1 | `equipment_size` column (`std`, `large`, `xl`, `xxl`, NULL) | Xactimate has 4 dehu codes (WTRDHM, WTRDHM>, WTRDHM>>, WTRDHM>>>) + 2 air-mover variants. TPAs explicitly downgrade size in review (`tpa-carrier-guidelines.md:31`). Single `equipment_type` can't map to the right line-item code. | §2.1, §3.1, §3.3, §8.3, §10 |
+| A1 | `equipment_size` column (`std`, `axial`, `large`, `xl`, `xxl`, NULL) | Xactimate has 4 dehu codes (WTRDHM, WTRDHM>, WTRDHM>>, WTRDHM>>>) + 2 air-mover variants (WTRDRY std, WTRDRY+ axial). TPAs explicitly downgrade size in review (`tpa-carrier-guidelines.md:31`). Single `equipment_type` can't map to the right line-item code. | §2.1, §3.1, §3.3, §8.3, §10 |
 | A2 (C1) | Harden existing `equipment_placements.floor_plan_id` FK: change `ON DELETE SET NULL` → `ON DELETE RESTRICT`, stamp from `jobs.floor_plan_id` at create, declare immutable. Uses merged `floor_plans` table (Phase 1 migration `e1a7c9b30201` removed `floor_plan_versions`). | Phase 1 pins jobs to a version. Equipment is positional; without immutable stamping, a later plan edit ghost-moves equipment on prior day reports. | §3.1, §3.3, §10 |
 | A3 | Move `billable_days` computation to backend (`compute_placement_billable_days` Postgres function + thin `GET /billable-days` wrapper) | Authoritative money math must not live in `web/src/lib/dates.ts`. | §8.1, §10 |
 | A4 | Auto-close on `dry_standard_met_at` with 24h undo (no manual tech confirm) | Manual confirm step will silently skip → overbilling. | §6.3, §10 |
@@ -56,7 +56,7 @@ Phase 2 (moisture pins + readings) is the prerequisite this proposal builds on. 
 2. **`jobs.timezone`:** add `TEXT NOT NULL DEFAULT 'America/New_York'`, populate from property zip on job-create (resolver in spec 01F or a new utility). (B2)
 3. **`moisture_pins.floor_plan_id`:** add `UUID REFERENCES floor_plans(id) ON DELETE RESTRICT`, stamped at pin-create from `jobs.floor_plan_id`, re-stamped on pin-move with an audit row. **C1:** uses `floor_plans` (the merged table from Phase 1 migration `e1a7c9b30201_spec01h_merge_floor_plans_versions.py`), not the removed `floor_plan_versions`. (S3)
 4. **`moisture_pins.dry_standard_met_at`:** add `TIMESTAMPTZ` column (nullable — NULL means "still drying"). **C2:** was referenced by A4/S5 but never added to schema. Column only exists after this migration lands. (S5, C2)
-5. **Dry-standard trigger:** Postgres trigger `trg_moisture_pin_dry_check` on `moisture_pin_readings` insert — reads `moisture_pins.dry_standard` (the **per-pin overridable** threshold, `01H-floor-plan-v2.md:601`), sets `moisture_pins.dry_standard_met_at = NEW.taken_at` when `NEW.reading_value <= dry_standard`, clears it when `NEW.reading_value > dry_standard`. **C3:** reads from `moisture_pins.dry_standard` (per-pin override), NOT material-type defaults — otherwise pins with carrier-accepted override thresholds would auto-close at the wrong reading. Trigger also guards against out-of-order inserts: only applies if `NEW.taken_at > (SELECT MAX(taken_at) FROM moisture_pin_readings WHERE pin_id = NEW.pin_id AND id != NEW.id)`. (S5)
+5. **Dry-standard trigger:** Postgres trigger `trg_moisture_pin_dry_check` on `moisture_pin_readings` insert — reads `moisture_pins.dry_standard` (the **per-pin overridable** threshold, `01H-floor-plan-v2.md:601`), sets `moisture_pins.dry_standard_met_at = NEW.taken_at` when `NEW.reading_value <= dry_standard`, clears it when `NEW.reading_value > dry_standard`. **C3:** reads from `moisture_pins.dry_standard` (per-pin override), NOT material-type defaults — otherwise pins with carrier-accepted override thresholds would auto-close at the wrong reading. Out-of-order guard (must handle first-reading NULL correctly): `NEW.taken_at >= COALESCE((SELECT MAX(taken_at) FROM moisture_pin_readings WHERE pin_id = NEW.pin_id AND id != NEW.id), '-infinity'::TIMESTAMPTZ)`. Using `>=` plus `COALESCE` ensures the first reading for a pin fires the trigger (prior max is NULL → `-infinity`, always `<=` NEW) and that simultaneous readings are both honored. (S5)
 6. **`meter_photo_url` wiring:** Phase 2 UX must capture on reading entry; Phase 2 PDF export must render thumbnail; Phase 3 appendix cross-links this. (S4)
 
 ### 0.5 Codex review fixes (2026-04-23)
@@ -73,6 +73,20 @@ After `/codex review` ran against PR #13, eight additional issues were surfaced.
 | C6 | P2 | `CHECK chk_equipment_size_valid` enforces per-type valid sizes (`axial` only for air_mover; `large`/`xl`/`xxl` only for dehumidifier) | Original CHECK only enforced non-null. Allowed impossible combos like `dehumidifier + axial` that would break Xactimate code mapping. | §3.1 |
 | C7 | P2 | `place_equipment_with_pins` validates `array_length(p_asset_tags) IN (NULL, p_quantity)` and same for `p_serial_numbers` | Arrays were silently sliced/padded with NULLs by `generate_series` — inventory metadata could misalign with physical units. | §3.3 RPC |
 | C8 | P2 | `validate_pins_for_assignment` rejects pins with `dry_standard_met_at IS NOT NULL` (new SQLSTATE `22P02` for "dry pin") | Previously only checked job/archive/tenant. Tech could re-assign equipment to a dry pin, which would silently bill until the next wet reading. | §3.3 RPC |
+
+### 0.6 Copilot review fixes (2026-04-24)
+
+After Copilot bot reviewed PR #13 and PR #14, seven additional items were surfaced (two were not covered by the Codex pass). All applied:
+
+| # | Severity | Fix | Applied |
+|---|---|---|---|
+| CP1 | P1 | **`ensure_job_mutable` plpgsql helper must be created** — currently only exists as a Python guard (`backend/api/shared/guards.py:33`). Option (a) create plpgsql twin, option (b) inline at call sites. Recommend (a). Also scopes to `get_my_company_id()` and archived-status check per `ARCHIVED_JOB_STATUSES`. | §3.3 (impl note added) |
+| CP2 | P1 | **`generate_series(1, N) AS i` is a table alias** — `p_asset_tags[i]` can't resolve. Fixed to `generate_series(1, N) AS g(i)` so `i` is a column alias. | §3.3 |
+| CP3 | P1 | **Out-of-order-insert guard was NULL-unsafe** — `NEW.taken_at > (SELECT MAX(...))` returns NULL on first reading; `IF NULL` is false so first reading was silently skipped. Fixed with `COALESCE(max_taken_at, '-infinity'::TIMESTAMPTZ)` and `>=` to include first-reading case. | §0.2 #5 |
+| CP4 | P2 | **`p_floor_plan_id` parameter was unused** after C1 — stamp now derived from `jobs.floor_plan_id`. Removed from RPC signature (not kept-with-validation; simpler). | §3.3 |
+| CP5 | P2 | **`validate_placement_billable_days` returned empty on cross-tenant** — misinterpretable as "no billable days." Now raises `42501` to match `compute_placement_billable_days`. | §8.4 |
+| CP6 | Doc | A1 amendment-table row missing `axial` from value list | §0.1 |
+| CP7 | Doc | Checklist referenced old `chk_equipment_size_matches_type`; replaced with the canonical `chk_equipment_size_valid` name | §10.2 |
 
 ### 0.3 Explicitly out-of-scope (with deferral notes)
 
@@ -242,10 +256,11 @@ CREATE POLICY epa_tenant ON equipment_pin_assignments USING (
 
 Creating N placements + `N × pins_selected` assignments is a multi-write that must succeed atomically. Composing at the Python layer caused the R19 regression; this lives in one plpgsql function.
 
+**Implementation note (Copilot #PR13-2):** `ensure_job_mutable` currently exists only as a Python guard at `backend/api/shared/guards.py:33`. The RPCs below reference a plpgsql equivalent that **must be created first** as part of the Phase 3 migration bundle — either (a) a plpgsql twin that enforces the same archive-guard semantics, or (b) inline the job lookup + archived-status check at every call site. Option (a) is recommended to avoid drift between the Python and SQL paths. The plpgsql helper should also enforce tenant: `ensure_job_mutable(p_job_id UUID)` raises `42501` if the job is not in `get_my_company_id()` or is archived (status in `ARCHIVED_JOB_STATUSES`, per `backend/api/shared/constants.py`).
+
 ```sql
 CREATE OR REPLACE FUNCTION place_equipment_with_pins(
     p_job_id             UUID,
-    p_floor_plan_id      UUID,
     p_room_id            UUID,
     p_equipment_type     TEXT,
     p_equipment_size     TEXT,            -- A1: required for air_mover/dehu, NULL otherwise
@@ -267,7 +282,7 @@ DECLARE
     v_placement_ids      UUID[] := ARRAY[]::UUID[];
     v_count              INT := 0;
 BEGIN
-    PERFORM ensure_job_mutable(p_job_id);           -- archive guard
+    PERFORM ensure_job_mutable(p_job_id);           -- archive guard (plpgsql helper — see impl note above)
 
     -- C1: snapshot the job's pinned floor_plan_id (Phase 1 merged versions into floor_plans
     -- so jobs.floor_plan_id IS the version pointer).
@@ -318,6 +333,9 @@ BEGIN
 
     -- Batch-insert N placements using generate_series (O(1) round trip).
     -- C1: floor_plan_id column is the version stamp (no separate floor_plan_version_id).
+    -- Note: `g(i)` is a **column** alias (not a table alias) — required for `p_asset_tags[i]`
+    -- array subscripting to resolve. `FROM generate_series(1, N) AS i` would make `i` a
+    -- record alias and array subscripts would fail.
     WITH new_placements AS (
         INSERT INTO equipment_placements (
             job_id, room_id, company_id, floor_plan_id,
@@ -327,10 +345,10 @@ BEGIN
         SELECT p_job_id, p_room_id, v_company_id, v_floor_plan_id,
                p_equipment_type, p_equipment_size, v_billing_scope,
                p_canvas_x, p_canvas_y,
-               COALESCE(p_asset_tags[i], NULL),
-               COALESCE(p_serial_numbers[i], NULL),
+               p_asset_tags[i],           -- NULL-safe: unsubscripted NULL array returns NULL
+               p_serial_numbers[i],
                auth.uid()
-        FROM generate_series(1, p_quantity) AS i
+        FROM generate_series(1, p_quantity) AS g(i)
         RETURNING id
     )
     SELECT array_agg(id) INTO v_placement_ids FROM new_placements;
@@ -603,10 +621,29 @@ LANGUAGE plpgsql
 STABLE
 SECURITY DEFINER
 SET search_path = public, pg_temp
--- C5: scope read to caller tenant via `WHERE ep.company_id = get_my_company_id()`
--- on the opening placement SELECT. Returns empty set on cross-tenant placement UUIDs.
--- Returns one row per billable day; `supported = true` iff ≥1 reading exists on
--- any attributed pin for that day (and S4: flags has_meter_photo = false).
+AS $$
+DECLARE
+    v_company_id UUID := get_my_company_id();
+    v_exists     BOOLEAN;
+BEGIN
+    -- C5 + Copilot PR#14-3: RAISE 42501 on cross-tenant placement UUID — NOT silent empty.
+    -- Empty-set return on cross-tenant looks like "no billable days" and can be misinterpreted
+    -- as success. Match compute_placement_billable_days behavior (raise, non-leaky message).
+    SELECT EXISTS (
+        SELECT 1 FROM equipment_placements
+         WHERE id = p_placement_id AND company_id = v_company_id
+    ) INTO v_exists;
+
+    IF NOT v_exists THEN
+        RAISE EXCEPTION 'placement not found in caller tenant'
+            USING ERRCODE = '42501';
+    END IF;
+
+    -- Returns one row per billable day; `supported = true` iff ≥1 reading exists on
+    -- any attributed pin for that day (and S4: flags has_meter_photo = false).
+    RETURN QUERY
+    SELECT /* ... implementation per §8.1 billable-day enumeration joined to readings ... */;
+END;
 $$;
 ```
 
@@ -682,9 +719,8 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 
 **Schema**
 - [ ] `ALTER TABLE equipment_placements ADD COLUMN billing_scope`
-- [ ] **A1:** `ADD COLUMN equipment_size` + `CHECK chk_equipment_size_matches_type`
+- [ ] **A1 (C6):** `ADD COLUMN equipment_size` + per-type valid-sizes CHECK (`chk_equipment_size_valid` — see §3.1 for the full predicate)
 - [ ] **A2 (C1):** harden existing `floor_plan_id` FK — `ON DELETE RESTRICT`, stamped from `jobs.floor_plan_id` at create, immutable
-- [ ] **C6:** replace the simple non-null CHECK with per-type valid-sizes CHECK (`chk_equipment_size_valid`)
 - [ ] **S6:** `ADD COLUMN asset_tag`, `ADD COLUMN serial_number` + index `idx_equip_asset_tag`
 - [ ] `equipment_pin_assignments` table (with `note` column per §0.4 Q3, `equipment_moved` reason per S2) + indexes + RLS
 
