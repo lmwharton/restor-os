@@ -9,7 +9,9 @@
 
 ## 0. Reviewer amendments (2026-04-23, Lakshman)
 
-Amendments applied after a full sweep of `docs/research/*` + cross-spec checks (Phase 1 schema, Phase 2 moisture model, `10-reports.md` report pipeline, `restoros-consumer-workflows-v1.md`). Organized by severity. Section §0.1 lists each change; §0.2 lists Phase 2 schema deltas this forces; §0.3 lists what's explicitly out-of-scope + deferred.
+**Updated 2026-04-23 (codex review):** 8 additional fixes applied after `/codex review`. Fixes C1-C5 are P1 blockers (schema references, tenant hardening); C6-C8 are P2. See §0.5 for the fix list.
+
+Amendments applied after a full sweep of `docs/research/*` + cross-spec checks (Phase 1 schema, Phase 2 moisture model, `10-reports.md` report pipeline, `restoros-consumer-workflows-v1.md`). Organized by severity. Section §0.1 lists each change; §0.2 lists Phase 2 schema deltas this forces; §0.3 lists what's explicitly out-of-scope + deferred; §0.5 lists the codex-review fixes.
 
 ### 0.1 Amendments
 
@@ -26,14 +28,14 @@ Amendments applied after a full sweep of `docs/research/*` + cross-spec checks (
 | # | Amendment | Why | Where |
 |---|---|---|---|
 | A1 | `equipment_size` column (`std`, `large`, `xl`, `xxl`, NULL) | Xactimate has 4 dehu codes (WTRDHM, WTRDHM>, WTRDHM>>, WTRDHM>>>) + 2 air-mover variants. TPAs explicitly downgrade size in review (`tpa-carrier-guidelines.md:31`). Single `equipment_type` can't map to the right line-item code. | §2.1, §3.1, §3.3, §8.3, §10 |
-| A2 | `floor_plan_version_id` FK on `equipment_placements` | Phase 1 pins jobs to a version. Equipment is positional; without the stamp, a later plan edit ghost-moves equipment on prior day reports. | §3.1, §3.3, §10 |
+| A2 (C1) | Harden existing `equipment_placements.floor_plan_id` FK: change `ON DELETE SET NULL` → `ON DELETE RESTRICT`, stamp from `jobs.floor_plan_id` at create, declare immutable. Uses merged `floor_plans` table (Phase 1 migration `e1a7c9b30201` removed `floor_plan_versions`). | Phase 1 pins jobs to a version. Equipment is positional; without immutable stamping, a later plan edit ghost-moves equipment on prior day reports. | §3.1, §3.3, §10 |
 | A3 | Move `billable_days` computation to backend (`compute_placement_billable_days` Postgres function + thin `GET /billable-days` wrapper) | Authoritative money math must not live in `web/src/lib/dates.ts`. | §8.1, §10 |
 | A4 | Auto-close on `dry_standard_met_at` with 24h undo (no manual tech confirm) | Manual confirm step will silently skip → overbilling. | §6.3, §10 |
 | S1 | Daily-reading validator — flag billable-days where an active assignment has no reading on any attributed pin that day | Directly addresses the TPA rule `tpa-carrier-guidelines.md:41` ("Daily moisture readings required to justify each equipment day") and rejection trigger #2 (`:47`). Without this, Phase 3's "carrier defensibility" claim is unenforced. | §8.4 (new), §10 |
 | S2 | Equipment move-between-rooms — explicit `move_equipment_placement` RPC (closes pin assignments, updates `room_id` + canvas, reopens new assignments atomically) | Workflow spec (`restoros-consumer-workflows-v1.md:830`) lists this as a core tech action. `room_id` is currently locked as physical-location metadata with no move path. | §6.6 (new), §10 |
-| S3 | `floor_plan_version_id` FK on `moisture_pins` (mirror A2) | PDF with `?date=YYYY-MM-DD` ghost-moves pins otherwise. Consistent with A2's premise. | §0.2 (Phase 2 delta) |
+| S3 (C1) | `floor_plan_id` FK on `moisture_pins` referencing merged `floor_plans` table (mirror A2) | PDF with `?date=YYYY-MM-DD` ghost-moves pins otherwise. Consistent with A2's premise. | §0.2 (Phase 2 delta) |
 | S4 | Wire `meter_photo_url` end-to-end (reading camera flow, sparkline thumbnail, PDF inclusion, "no photo" warning badge) | Brett: *"I take pictures of my moisture readings"* (`competitive-analysis.md:1465`). TPA rejects readings without photo evidence (`:49`). Column exists but unused. | §0.2 + §8.4 |
-| S5 | Dry-standard state transition explicit — Postgres trigger on `moisture_pin_readings` insert sets/clears `moisture_pins.dry_standard_met_at` | A4 auto-closes on this timestamp, but the trigger that sets/clears it is unspecified. Re-wet detection (§6.4) has no defined signal otherwise. | §6.3, §6.4 (rewrite) |
+| S5 (C2, C3) | Dry-standard state transition explicit — Postgres trigger on `moisture_pin_readings` insert sets/clears `moisture_pins.dry_standard_met_at` (column **added** by C2), reads threshold from `moisture_pins.dry_standard` per-pin override (C3), guards against out-of-order inserts | A4 auto-closes on this timestamp, but the trigger that sets/clears it is unspecified. Re-wet detection (§6.4) has no defined signal otherwise. | §0.2 #4-#5, §6.3, §6.4 |
 | S6 | `asset_tag TEXT` + `serial_number TEXT` optional columns on `equipment_placements` | Larger tenants (>Brett's 1-man shop) track inventory this way (`competitive-analysis.md:1412`). Hook to future equipment-library table. | §3.1, §10 |
 | S7 | Unify billing math — per-room equipment also uses distinct local calendar days in `jobs.timezone` (not `ceil(24h buckets)`) | Same job emitting inconsistent day counts across equipment types is a carrier rejection flag. | §8.2 (rewrite) |
 
@@ -52,9 +54,25 @@ Phase 2 (moisture pins + readings) is the prerequisite this proposal builds on. 
 
 1. **`moisture_pin_readings`:** replace `reading_date DATE` with `taken_at TIMESTAMPTZ NOT NULL DEFAULT now()`; drop `UNIQUE(pin_id, reading_date)`. (B1, B3)
 2. **`jobs.timezone`:** add `TEXT NOT NULL DEFAULT 'America/New_York'`, populate from property zip on job-create (resolver in spec 01F or a new utility). (B2)
-3. **`moisture_pins.floor_plan_version_id`:** add `UUID REFERENCES floor_plan_versions(id)`, stamped at pin-create, re-stamped on pin-move with an audit row. (S3)
-4. **Dry-standard trigger:** Postgres trigger `trg_moisture_pin_dry_check` on `moisture_pin_readings` insert — reads current pin's dry-standard threshold from material type, sets `moisture_pins.dry_standard_met_at = NEW.taken_at` when met, clears it when subsequent reading exceeds threshold. (S5)
-5. **`meter_photo_url` wiring:** Phase 2 UX must capture on reading entry; Phase 2 PDF export must render thumbnail; Phase 3 appendix cross-links this. (S4)
+3. **`moisture_pins.floor_plan_id`:** add `UUID REFERENCES floor_plans(id) ON DELETE RESTRICT`, stamped at pin-create from `jobs.floor_plan_id`, re-stamped on pin-move with an audit row. **C1:** uses `floor_plans` (the merged table from Phase 1 migration `e1a7c9b30201_spec01h_merge_floor_plans_versions.py`), not the removed `floor_plan_versions`. (S3)
+4. **`moisture_pins.dry_standard_met_at`:** add `TIMESTAMPTZ` column (nullable — NULL means "still drying"). **C2:** was referenced by A4/S5 but never added to schema. Column only exists after this migration lands. (S5, C2)
+5. **Dry-standard trigger:** Postgres trigger `trg_moisture_pin_dry_check` on `moisture_pin_readings` insert — reads `moisture_pins.dry_standard` (the **per-pin overridable** threshold, `01H-floor-plan-v2.md:601`), sets `moisture_pins.dry_standard_met_at = NEW.taken_at` when `NEW.reading_value <= dry_standard`, clears it when `NEW.reading_value > dry_standard`. **C3:** reads from `moisture_pins.dry_standard` (per-pin override), NOT material-type defaults — otherwise pins with carrier-accepted override thresholds would auto-close at the wrong reading. Trigger also guards against out-of-order inserts: only applies if `NEW.taken_at > (SELECT MAX(taken_at) FROM moisture_pin_readings WHERE pin_id = NEW.pin_id AND id != NEW.id)`. (S5)
+6. **`meter_photo_url` wiring:** Phase 2 UX must capture on reading entry; Phase 2 PDF export must render thumbnail; Phase 3 appendix cross-links this. (S4)
+
+### 0.5 Codex review fixes (2026-04-23)
+
+After `/codex review` ran against PR #13, eight additional issues were surfaced. All applied:
+
+| # | Severity | Fix | Root cause | Applied |
+|---|---|---|---|---|
+| C1 | P1 | `floor_plan_versions(id)` → `floor_plans(id)`; `jobs.floor_plan_version_id` → `jobs.floor_plan_id` | Phase 1 migration `e1a7c9b30201_spec01h_merge_floor_plans_versions.py` merged the two tables — `floor_plans` now IS the versioned table, `jobs.floor_plan_id` pins a specific historical row. Original A2/S3 referenced objects that don't exist. | §0.2 #3, §3.1, §3.3 |
+| C2 | P1 | Add `moisture_pins.dry_standard_met_at TIMESTAMPTZ` column explicitly in Phase 2 delta | Trigger + A4 auto-close depended on this column, but it was never added to the schema. | §0.2 #4 (new item), §6.3 |
+| C3 | P1 | Trigger reads `moisture_pins.dry_standard` (per-pin override), not material-type defaults | Phase 2 schema (`01H-floor-plan-v2.md:601`) stores an overridable threshold per pin. Reading material defaults would auto-close at wrong readings when overrides exist. | §0.2 #5, §6.3 |
+| C4 | P1 | `move_equipment_placement` RPC scoped to caller's tenant (`WHERE id = p_placement_id AND company_id = get_my_company_id()`) | SECURITY DEFINER bypasses RLS. Without JWT-derived tenant filter, any authenticated user with a placement UUID could move another company's equipment. Phase 1's `c7f8a9b0d1e2_spec01h_rpc_tenant_hardening.py` explicitly closed this pattern — I reintroduced it. | §6.6 RPC |
+| C5 | P1 | `compute_placement_billable_days` + `validate_placement_billable_days` scoped to caller's tenant | Same cross-tenant read leak as C4 for read paths. | §8.1, §8.4 |
+| C6 | P2 | `CHECK chk_equipment_size_valid` enforces per-type valid sizes (`axial` only for air_mover; `large`/`xl`/`xxl` only for dehumidifier) | Original CHECK only enforced non-null. Allowed impossible combos like `dehumidifier + axial` that would break Xactimate code mapping. | §3.1 |
+| C7 | P2 | `place_equipment_with_pins` validates `array_length(p_asset_tags) IN (NULL, p_quantity)` and same for `p_serial_numbers` | Arrays were silently sliced/padded with NULLs by `generate_series` — inventory metadata could misalign with physical units. | §3.3 RPC |
+| C8 | P2 | `validate_pins_for_assignment` rejects pins with `dry_standard_met_at IS NOT NULL` (new SQLSTATE `22P02` for "dry pin") | Previously only checked job/archive/tenant. Tech could re-assign equipment to a dry pin, which would silently bill until the next wet reading. | §3.3 RPC |
 
 ### 0.3 Explicitly out-of-scope (with deferral notes)
 
@@ -128,9 +146,16 @@ ALTER TABLE equipment_placements
   ADD COLUMN equipment_size TEXT
     CHECK (equipment_size IN ('std', 'axial', 'large', 'xl', 'xxl'));
 
--- A2: floor plan version stamp (mirrors Phase 1 discipline on jobs.floor_plan_version_id)
+-- A2 (C1 fix): floor_plan_id already exists on equipment_placements (see 01H-floor-plan-v2.md:685);
+-- the stamp discipline is DOCUMENTED here, not a new column. Phase 1's e1a7c9b30201 migration
+-- merged floor_plan_versions INTO floor_plans, so `floor_plans` IS the versioned table.
+-- Harden the existing FK: change ON DELETE SET NULL → ON DELETE RESTRICT so the historical stamp
+-- cannot be silently nulled when a plan row is deleted.
 ALTER TABLE equipment_placements
-  ADD COLUMN floor_plan_version_id UUID REFERENCES floor_plan_versions(id);
+  DROP CONSTRAINT IF EXISTS equipment_placements_floor_plan_id_fkey;
+ALTER TABLE equipment_placements
+  ADD CONSTRAINT equipment_placements_floor_plan_id_fkey
+    FOREIGN KEY (floor_plan_id) REFERENCES floor_plans(id) ON DELETE RESTRICT;
 
 -- S6: optional inventory hooks (future equipment-library FK)
 ALTER TABLE equipment_placements
@@ -143,12 +168,15 @@ ALTER TABLE equipment_placements
   ADD COLUMN billing_scope TEXT NOT NULL DEFAULT 'per_pin'
     CHECK (billing_scope IN ('per_pin', 'per_room'));
 
--- CHECK: size required for dehu + air_mover, must be NULL for others (A1)
+-- C6: CHECK enforces per-type valid sizes (not just non-null).
+-- axial is air-mover-only; large/xl/xxl are dehu-only; std is valid for both; non-drying types must be NULL.
 ALTER TABLE equipment_placements
-  ADD CONSTRAINT chk_equipment_size_matches_type CHECK (
-    (equipment_type IN ('air_mover', 'dehumidifier') AND equipment_size IS NOT NULL)
+  ADD CONSTRAINT chk_equipment_size_valid CHECK (
+    (equipment_type = 'air_mover'    AND equipment_size IN ('std', 'axial'))
     OR
-    (equipment_type NOT IN ('air_mover', 'dehumidifier') AND equipment_size IS NULL)
+    (equipment_type = 'dehumidifier' AND equipment_size IN ('std', 'large', 'xl', 'xxl'))
+    OR
+    (equipment_type IN ('air_scrubber', 'hydroxyl_generator', 'heater') AND equipment_size IS NULL)
   );
 
 -- Default billing_scope derived from equipment_type at insert time (enforced at service layer + RPC).
@@ -163,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_equip_asset_tag
 
 `room_id` stays on `equipment_placements` as **physical location metadata**. For per-room billing it's authoritative; for per-pin billing it's informational (canvas hints, warehouse tracking) — the pin assignments drive billing. Room changes go through the `move_equipment_placement` RPC (§6.6, S2), not bare UPDATE.
 
-`floor_plan_version_id` is stamped at placement create from `jobs.floor_plan_version_id` and **never mutated** — it captures the plan version the placement was drawn on, so historical exports render correctly (A2).
+`floor_plan_id` is stamped at placement create from `jobs.floor_plan_id` and **never mutated** after create — it captures the floor-plan version the placement was drawn on (each row in `floor_plans` IS a version after Phase 1's merge), so historical exports render correctly (A2). ON DELETE RESTRICT prevents the stamp from being silently nulled (C1).
 
 ### 3.2 New table `equipment_pin_assignments`
 
@@ -235,14 +263,22 @@ AS $$
 DECLARE
     v_company_id         UUID := get_my_company_id();   -- tenant from JWT, NOT a param
     v_billing_scope      TEXT;
-    v_version_id         UUID;
+    v_floor_plan_id      UUID;
     v_placement_ids      UUID[] := ARRAY[]::UUID[];
     v_count              INT := 0;
 BEGIN
     PERFORM ensure_job_mutable(p_job_id);           -- archive guard
 
-    -- A2: snapshot the job's current floor plan version at placement time
-    SELECT floor_plan_version_id INTO v_version_id FROM jobs WHERE id = p_job_id;
+    -- C1: snapshot the job's pinned floor_plan_id (Phase 1 merged versions into floor_plans
+    -- so jobs.floor_plan_id IS the version pointer).
+    SELECT floor_plan_id INTO v_floor_plan_id
+      FROM jobs
+     WHERE id = p_job_id
+       AND company_id = v_company_id;              -- tenant check (C4 pattern)
+    IF v_floor_plan_id IS NULL THEN
+        RAISE EXCEPTION 'job has no pinned floor plan or is not in caller tenant'
+            USING ERRCODE = '42501';
+    END IF;
 
     v_billing_scope := CASE p_equipment_type
         WHEN 'air_mover'     THEN 'per_pin'
@@ -264,17 +300,31 @@ BEGIN
             USING ERRCODE = '22023';
     END IF;
 
-    -- Validate pins ONCE up front, not per loop iteration (perf)
+    -- C7: array length validation for inventory metadata
+    IF p_asset_tags IS NOT NULL AND array_length(p_asset_tags, 1) != p_quantity THEN
+        RAISE EXCEPTION 'p_asset_tags length must equal p_quantity (got % vs %)',
+            array_length(p_asset_tags, 1), p_quantity
+            USING ERRCODE = '22023';
+    END IF;
+    IF p_serial_numbers IS NOT NULL AND array_length(p_serial_numbers, 1) != p_quantity THEN
+        RAISE EXCEPTION 'p_serial_numbers length must equal p_quantity (got % vs %)',
+            array_length(p_serial_numbers, 1), p_quantity
+            USING ERRCODE = '22023';
+    END IF;
+
+    -- Validate pins ONCE up front, not per loop iteration (perf).
+    -- C8: validate_pins_for_assignment also rejects pins with dry_standard_met_at IS NOT NULL.
     PERFORM validate_pins_for_assignment(p_job_id, p_moisture_pin_ids);
 
-    -- Batch-insert N placements using generate_series (O(1) round trip)
+    -- Batch-insert N placements using generate_series (O(1) round trip).
+    -- C1: floor_plan_id column is the version stamp (no separate floor_plan_version_id).
     WITH new_placements AS (
         INSERT INTO equipment_placements (
-            job_id, room_id, company_id, floor_plan_id, floor_plan_version_id,
+            job_id, room_id, company_id, floor_plan_id,
             equipment_type, equipment_size, billing_scope,
             canvas_x, canvas_y, asset_tag, serial_number, placed_by
         )
-        SELECT p_job_id, p_room_id, v_company_id, p_floor_plan_id, v_version_id,
+        SELECT p_job_id, p_room_id, v_company_id, v_floor_plan_id,
                p_equipment_type, p_equipment_size, v_billing_scope,
                p_canvas_x, p_canvas_y,
                COALESCE(p_asset_tags[i], NULL),
@@ -302,7 +352,7 @@ END;
 $$;
 ```
 
-The pin-validation helper (`validate_pins_for_assignment`) raises `42501` if any pin belongs to a different `job_id`, archived pin, or cross-tenant pin — closing the cross-job bypass shape flagged in `pr-review-lessons.md` §4. **Perf note:** validation runs once before the write block, and placements are inserted in one batch via `generate_series` (O(1) DB round trips regardless of quantity).
+The pin-validation helper (`validate_pins_for_assignment`) raises `42501` if any pin belongs to a different `job_id`, archived pin, or cross-tenant pin — closing the cross-job bypass shape flagged in `pr-review-lessons.md` §4. **C8:** also raises `22P02` ("dry pin assignment rejected") if any requested pin has `dry_standard_met_at IS NOT NULL` — otherwise a tech could silently re-assign equipment to a dry pin and bill until the next wet reading arrives. **Perf note:** validation runs once before the write block, and placements are inserted in one batch via `generate_series` (O(1) DB round trips regardless of quantity).
 
 **`auth.uid()` in service contexts:** when the RPC is called from a background job (dry-check, re-wet trigger), `auth.uid()` returns NULL. That's acceptable — `placed_by`/`assigned_by` are nullable. Background paths that need an explicit actor should use a dedicated service-role function, not this one.
 
@@ -344,10 +394,11 @@ Existing pull flow + closes all open assignments with `unassigned_at = pulled_at
 
 ### 6.3 Pin hits dry standard (A4 + S5 — auto-close, no manual confirm)
 
-Phase 2 Postgres trigger (`trg_moisture_pin_dry_check`, §0.2 delta #4) fires on every `moisture_pin_readings` INSERT:
-1. Reads the pin's dry-standard threshold from its material type.
-2. If `NEW.reading_value` meets threshold and `moisture_pins.dry_standard_met_at` is NULL → set `dry_standard_met_at = NEW.taken_at`.
-3. Immediately auto-closes all active assignments for this pin with `unassigned_at = NEW.taken_at`, `unassign_reason = 'pin_dry_standard_met'`, `unassigned_by = NULL` (service context).
+Phase 2 Postgres trigger (`trg_moisture_pin_dry_check`, §0.2 delta #5) fires on every `moisture_pin_readings` INSERT:
+1. **C3:** reads the pin's dry-standard threshold from `moisture_pins.dry_standard` (the per-pin overridable column at `01H-floor-plan-v2.md:601`), NOT from material-type defaults. Otherwise pins with carrier-accepted overrides would auto-close at the wrong reading.
+2. Guards against out-of-order inserts: only acts if `NEW.taken_at` is the newest reading for this pin (backfill / late-sync readings don't retroactively close active assignments).
+3. If `NEW.reading_value <= moisture_pins.dry_standard` and `moisture_pins.dry_standard_met_at` is NULL → set `dry_standard_met_at = NEW.taken_at`.
+4. Immediately auto-closes all active assignments for this pin with `unassigned_at = NEW.taken_at`, `unassign_reason = 'pin_dry_standard_met'`, `unassigned_by = NULL` (service context).
 
 The tech sees a non-blocking notification: **"Dry standard met on Pin 1 (Kitchen subfloor). Equipment auto-released: Dehu A, Dehu B. Undo?"** — with a **24-hour undo window**. The undo path reopens the closed assignments by creating new rows with `note = 'undo: premature dry-close'`, preserving the original closed rows for audit.
 
@@ -355,7 +406,7 @@ Why auto-close + undo instead of manual confirm (original §6.3 behavior): the m
 
 ### 6.4 Re-wetting (S5 — explicit trigger semantics)
 
-The same `trg_moisture_pin_dry_check` trigger handles re-wet: when `NEW.reading_value` exceeds the dry-standard threshold and `moisture_pins.dry_standard_met_at IS NOT NULL`:
+The same `trg_moisture_pin_dry_check` trigger handles re-wet: when `NEW.reading_value > moisture_pins.dry_standard` (C3: per-pin override), `NEW.taken_at` is the newest reading (out-of-order guard), and `moisture_pins.dry_standard_met_at IS NOT NULL`:
 1. Clear `dry_standard_met_at` (pin is wet again).
 2. Emit a realtime notification to the job's active users: *"Pin 1 is wet again. Reassign equipment?"*
 3. Do NOT auto-open assignments — re-wet is a human decision (different equipment may be needed, the leak may need investigation first).
@@ -382,9 +433,22 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_placement equipment_placements%ROWTYPE;
+    v_company_id UUID := get_my_company_id();    -- C4: tenant from JWT
+    v_placement  equipment_placements%ROWTYPE;
 BEGIN
-    SELECT * INTO v_placement FROM equipment_placements WHERE id = p_placement_id;
+    -- C4: scope the SELECT to the caller's tenant. SECURITY DEFINER bypasses RLS,
+    -- so without this filter any authenticated caller with a placement UUID could
+    -- move another company's equipment. Phase 1's c7f8a9b0d1e2 hardening already
+    -- established this pattern — mirror it here.
+    SELECT * INTO v_placement
+      FROM equipment_placements
+     WHERE id = p_placement_id
+       AND company_id = v_company_id;
+
+    IF v_placement.id IS NULL THEN
+        RAISE EXCEPTION 'placement not found in caller tenant'
+            USING ERRCODE = '42501';
+    END IF;
 
     PERFORM ensure_job_mutable(v_placement.job_id);
     PERFORM validate_pins_for_assignment(v_placement.job_id, p_new_moisture_pin_ids);
@@ -397,7 +461,7 @@ BEGIN
      WHERE equipment_placement_id = p_placement_id
        AND unassigned_at IS NULL;
 
-    -- Update placement location (floor_plan_version_id stays — the unit is the same)
+    -- Update placement location (floor_plan_id stays — the unit is the same, same version stamp)
     UPDATE equipment_placements
        SET room_id  = p_new_room_id,
            canvas_x = p_new_canvas_x,
@@ -450,15 +514,25 @@ SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
 DECLARE
-    v_tz     TEXT;
-    v_scope  TEXT;
-    v_days   INT;
+    v_company_id UUID := get_my_company_id();    -- C5: tenant from JWT
+    v_tz         TEXT;
+    v_scope      TEXT;
+    v_days       INT;
 BEGIN
+    -- C5: scope read to caller's tenant. SECURITY DEFINER bypasses RLS.
+    -- Without this filter, any authenticated caller with a placement UUID could
+    -- read another company's billable-day totals.
     SELECT j.timezone, ep.billing_scope
       INTO v_tz, v_scope
       FROM equipment_placements ep
       JOIN jobs j ON j.id = ep.job_id
-     WHERE ep.id = p_placement_id;
+     WHERE ep.id = p_placement_id
+       AND ep.company_id = v_company_id;
+
+    IF v_tz IS NULL THEN
+        RAISE EXCEPTION 'placement not found in caller tenant'
+            USING ERRCODE = '42501';
+    END IF;
 
     IF v_scope = 'per_pin' THEN
         -- Union of all assignment spans, then count distinct local dates
@@ -527,8 +601,12 @@ CREATE OR REPLACE FUNCTION validate_placement_billable_days(
 )
 LANGUAGE plpgsql
 STABLE
--- ...returns one row per billable day; `supported = true` iff ≥1 reading exists
--- on any attributed pin for that day (and S4: flags has_meter_photo = false).
+SECURITY DEFINER
+SET search_path = public, pg_temp
+-- C5: scope read to caller tenant via `WHERE ep.company_id = get_my_company_id()`
+-- on the opening placement SELECT. Returns empty set on cross-tenant placement UUIDs.
+-- Returns one row per billable day; `supported = true` iff ≥1 reading exists on
+-- any attributed pin for that day (and S4: flags has_meter_photo = false).
 $$;
 ```
 
@@ -595,7 +673,8 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 - [ ] **B1:** `moisture_pin_readings.reading_date DATE` → `taken_at TIMESTAMPTZ NOT NULL DEFAULT now()`; drop `UNIQUE(pin_id, reading_date)`
 - [ ] **B2:** `ALTER TABLE jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/New_York'`; populate from property zip at job-create (01F hook)
 - [ ] **B3:** Phase 2 UX + PDF accept N readings per pin per day ordered by `taken_at`
-- [ ] **S3:** `moisture_pins.floor_plan_version_id UUID REFERENCES floor_plan_versions(id)` — stamped on create + move
+- [ ] **S3 (C1):** `moisture_pins.floor_plan_id UUID REFERENCES floor_plans(id) ON DELETE RESTRICT` — stamped on create + move (uses the merged `floor_plans` table from Phase 1)
+- [ ] **C2:** `moisture_pins.dry_standard_met_at TIMESTAMPTZ` nullable column
 - [ ] **S4:** `meter_photo_url` wired into reading entry UI, sparkline thumbnail, PDF export, "no photo" warning flag
 - [ ] **S5:** `trg_moisture_pin_dry_check` trigger on `moisture_pin_readings` INSERT — sets/clears `dry_standard_met_at`, auto-closes assignments on dry-met
 
@@ -604,16 +683,17 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 **Schema**
 - [ ] `ALTER TABLE equipment_placements ADD COLUMN billing_scope`
 - [ ] **A1:** `ADD COLUMN equipment_size` + `CHECK chk_equipment_size_matches_type`
-- [ ] **A2:** `ADD COLUMN floor_plan_version_id UUID REFERENCES floor_plan_versions(id)` — stamped on create, immutable
+- [ ] **A2 (C1):** harden existing `floor_plan_id` FK — `ON DELETE RESTRICT`, stamped from `jobs.floor_plan_id` at create, immutable
+- [ ] **C6:** replace the simple non-null CHECK with per-type valid-sizes CHECK (`chk_equipment_size_valid`)
 - [ ] **S6:** `ADD COLUMN asset_tag`, `ADD COLUMN serial_number` + index `idx_equip_asset_tag`
 - [ ] `equipment_pin_assignments` table (with `note` column per §0.4 Q3, `equipment_moved` reason per S2) + indexes + RLS
 
 **RPCs**
-- [ ] `place_equipment_with_pins` (A1 + A2 + S6 params, `generate_series` batch insert, validation-outside-loop)
-- [ ] `validate_pins_for_assignment` (cross-job + archive check)
-- [ ] **S2:** `move_equipment_placement` (close old + reopen new assignments atomically)
-- [ ] **A3:** `compute_placement_billable_days` (unified math for per-pin and per-room, in `jobs.timezone`)
-- [ ] **S1:** `validate_placement_billable_days` (flags days with no supporting reading)
+- [ ] `place_equipment_with_pins` (A1 + A2 + S6 + **C1 (floor_plan_id stamp)** + **C7 (array length check)** params, `generate_series` batch insert, validation-outside-loop)
+- [ ] `validate_pins_for_assignment` (cross-job + archive + **C8 (dry-pin rejection, SQLSTATE `22P02`)**)
+- [ ] **S2 (C4):** `move_equipment_placement` — tenant-scoped SELECT via `get_my_company_id()`, closes old + reopens new assignments atomically
+- [ ] **A3 (C5):** `compute_placement_billable_days` — tenant-scoped read, unified math per-pin + per-room in `jobs.timezone`
+- [ ] **S1 (C5):** `validate_placement_billable_days` — SECURITY DEFINER with tenant-scoped read
 - [ ] Amend Phase 2 `archive_moisture_pin` RPC to bulk-close assignments (§7)
 
 **API**
@@ -630,7 +710,7 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 - [ ] **S2:** Move-equipment gesture (long-press drag into new room triggers `move_equipment_placement`)
 
 **Tests**
-- [ ] All pin-the-invariant tests from §9.3 + new: `test_move_equipment_preserves_billable_day_continuity`, `test_dry_standard_auto_close_and_undo`, `test_equipment_size_required_for_dehu`, `test_floor_plan_version_stamped_and_immutable`, `test_unified_day_math_per_pin_and_per_room_equivalent`
+- [ ] All pin-the-invariant tests from §9.3 + new: `test_move_equipment_preserves_billable_day_continuity`, `test_dry_standard_auto_close_and_undo`, `test_equipment_size_required_for_dehu`, `test_floor_plan_id_stamped_immutable_and_restrict_delete` (C1), `test_unified_day_math_per_pin_and_per_room_equivalent`, `test_move_equipment_rejects_cross_tenant_placement_id` (C4), `test_compute_billable_days_rejects_cross_tenant_placement_id` (C5), `test_equipment_size_check_rejects_dehu_plus_axial` (C6), `test_place_rpc_rejects_mismatched_asset_tag_array_length` (C7), `test_validate_pins_rejects_dry_pin_with_22P02` (C8), `test_trigger_reads_per_pin_dry_standard_override` (C3), `test_trigger_ignores_out_of_order_reading_insert` (C3), `test_dry_standard_met_at_column_exists_and_nullable` (C2)
 - [ ] Sibling-site grep checklist from §9.2
 
 ### 10.3 Cross-spec dependencies (call out in respective specs)
@@ -650,7 +730,8 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 All changes additive (column additions + new tables + new RPCs). No backfill for Phase 3 since no prod data exists. Phase 2 deltas (§0.2) **do** require a migration:
 - B1 `reading_date → taken_at`: add `taken_at` column, backfill `taken_at = reading_date + '12:00:00'::time AT TIME ZONE 'America/New_York'`, drop old column + unique index.
 - B2 `jobs.timezone`: default + backfill via property zip lookup.
-- S3 `moisture_pins.floor_plan_version_id`: add, backfill from pin's job's version.
+- S3/C1 `moisture_pins.floor_plan_id`: add `UUID REFERENCES floor_plans(id) ON DELETE RESTRICT`, backfill from pin's `jobs.floor_plan_id`.
+- C2 `moisture_pins.dry_standard_met_at`: add nullable `TIMESTAMPTZ`. No backfill (NULL = still drying, correct default for any existing rows).
 
 `equipment_placements.placed_at` / `pulled_at` remain as physical on-site metadata. Per unified §8.1 math, they are the span boundary for `per_room` rows only.
 
@@ -669,7 +750,7 @@ All three originally-flagged open questions are resolved in §0.4. No open quest
 | Idle-day handling | Billed | Not billed |
 | Carrier justification | Manual cross-check | Structured per-pin appendix (§8.2) + daily-reading validator (S1) |
 | Xactimate-code mapping | Ambiguous (single `equipment_type`) | Explicit via `(type, size)` tuple (A1) |
-| Floor-plan version stamping | None | `equipment_placements.floor_plan_version_id` (A2); `moisture_pins.floor_plan_version_id` (S3) |
+| Floor-plan version stamping | None | `equipment_placements.floor_plan_id` immutable + RESTRICT (A2, C1); `moisture_pins.floor_plan_id` (S3, C1) — both reference merged `floor_plans` table |
 | Equipment move between rooms | Undefined (pull + re-place splits billing) | `move_equipment_placement` RPC preserves billing continuity (S2) |
 | Dry-standard closing | Manual confirm | Trigger-driven auto-close with 24h undo (A4 + S5) |
 | Meter-photo evidence | Column exists, unused | Required UX; warning badge on missing (S4) |
@@ -677,9 +758,9 @@ All three originally-flagged open questions are resolved in §0.4. No open quest
 | Billing authority | N/A | Backend Postgres function `compute_placement_billable_days` (A3) |
 | Daily-reading validator | None | `validate_placement_billable_days` + carrier-appendix warning (S1) |
 | Net new tables | 0 | 1 (`equipment_pin_assignments`) |
-| Net new columns on `equipment_placements` | 0 | 5 (`billing_scope`, `equipment_size`, `floor_plan_version_id`, `asset_tag`, `serial_number`) |
-| Phase 2 column changes forced | 0 | 3 (`readings.taken_at` replaces `reading_date`, `pins.floor_plan_version_id`, `jobs.timezone`) |
-| New RPCs | 0 | 5 (`place_equipment_with_pins`, `validate_pins_for_assignment`, `move_equipment_placement`, `compute_placement_billable_days`, `validate_placement_billable_days`) + 1 trigger (`trg_moisture_pin_dry_check`) |
+| Net new columns on `equipment_placements` | 0 | 4 (`billing_scope`, `equipment_size`, `asset_tag`, `serial_number`) — existing `floor_plan_id` FK is hardened, not added (C1) |
+| Phase 2 column changes forced | 0 | 4 (`readings.taken_at` replaces `reading_date`, `pins.floor_plan_id`, `pins.dry_standard_met_at` (C2), `jobs.timezone`) |
+| New RPCs | 0 | 5 (`place_equipment_with_pins`, `validate_pins_for_assignment`, `move_equipment_placement`, `compute_placement_billable_days`, `validate_placement_billable_days`) + 1 trigger (`trg_moisture_pin_dry_check`). All SECURITY DEFINER RPCs scoped to caller tenant via `get_my_company_id()` (C4, C5). |
 | New endpoints | 0 | 8 |
 | Invariants brief | N/A | §9 |
-| Pin-the-invariant tests | N/A | 15 (§9.3 base 10 + 5 new in §10.2) |
+| Pin-the-invariant tests | N/A | 24 (§9.3 base 10 + 5 original + 9 codex-fix tests in §10.2) |
