@@ -2,8 +2,9 @@
 // Uses Supabase JWT from the browser session
 
 import { createClient } from "@/lib/supabase/client";
+import { API_URL } from "@/lib/api-url";
 
-export const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export { API_URL };
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const supabase = createClient();

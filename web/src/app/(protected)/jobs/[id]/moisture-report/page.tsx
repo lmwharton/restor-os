@@ -44,10 +44,6 @@ export default function MoistureReportPage() {
     router.replace(`/jobs/${jobId}/moisture-report?${sp.toString()}`);
   };
 
-  // Floor selector state — in the URL so printing reflects the
-  // chosen floor. Undefined → the view falls back to the first
-  // floor in the list.
-  const selectedFloorId = searchParams.get("floor") ?? undefined;
   const setSelectedFloorId = (id: string) => {
     const sp = new URLSearchParams(searchParams.toString());
     sp.set("floor", id);
@@ -58,7 +54,7 @@ export default function MoistureReportPage() {
   // and the tech view stay aligned on primary-floor resolution, pin
   // bucketing, and reading normalization. See
   // `lib/build-moisture-report-props.ts` for the full contract.
-  const { floors: floorsList, readingsByPinId, orphanPins } = useMemo(
+  const { floors: floorsList, readingsByPinId, orphanPins, defaultFloorId } = useMemo(
     () =>
       buildMoistureReportProps({
         pins: pins ?? [],
@@ -67,6 +63,12 @@ export default function MoistureReportPage() {
       }),
     [pins, floorPlans, job?.floor_plan_id],
   );
+
+  // URL `?floor=` wins, then the job's pinned floor (defaultFloorId).
+  // Without the second fallback, multi-floor jobs pinned to upper
+  // opened on the basement until the user manually switched.
+  const selectedFloorId =
+    searchParams.get("floor") ?? defaultFloorId ?? undefined;
 
   if (jobLoading || !job) {
     return (

@@ -1,6 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_URL } from "@/lib/api-url";
 
 /**
  * Authenticated fetch wrapper. Automatically extracts the Supabase JWT

@@ -282,6 +282,13 @@ async def create_pin(
     # with no readings and rendered on canvas as a grey "no reading
     # yet" dot. Function-level transaction rolls BOTH back on any
     # failure inside the function — pr-review-lessons #4.
+    # Pass Decimal values as strings, not floats. PostgREST encodes
+    # the args as JSON; floats round-trip through IEEE 754 which can
+    # turn Decimal("7.05") into 7.049999999999999. The receiving
+    # NUMERIC columns parse the string form losslessly. Cheap precision
+    # hygiene — no behavior change in current fixtures, but eliminates
+    # a class of "off by 0.0001" surprises if the caller ever pushes
+    # higher-precision Decimals.
     try:
         rpc_res = await client.rpc(
             "create_moisture_pin_with_reading",
@@ -289,13 +296,13 @@ async def create_pin(
                 "p_job_id": str(job_id),
                 "p_room_id": str(body.room_id),
                 "p_company_id": str(company_id),
-                "p_canvas_x": float(body.canvas_x),
-                "p_canvas_y": float(body.canvas_y),
+                "p_canvas_x": str(body.canvas_x),
+                "p_canvas_y": str(body.canvas_y),
                 "p_location_name": body.location_name,
                 "p_material": body.material,
-                "p_dry_standard": float(dry_standard),
+                "p_dry_standard": str(dry_standard),
                 "p_created_by": str(user_id),
-                "p_reading_value": float(body.initial_reading.reading_value),
+                "p_reading_value": str(body.initial_reading.reading_value),
                 "p_taken_at": body.initial_reading.taken_at.isoformat(),
                 "p_meter_photo_url": body.initial_reading.meter_photo_url,
                 "p_notes": body.initial_reading.notes,
@@ -363,6 +370,13 @@ async def list_pins_by_job(
     # floor_plan_id + data-load ordering caused cross-floor leak).
     # Inlining the floor_plan_id here makes the frontend filter a
     # trivial `pin.floor_plan_id === selectedFloor.id`.
+    # Defensive cap on the readings embed. Spec-bounded in practice
+    # (~1–3 readings/pin/day × ~30 days = ~90 readings/pin worst-case),
+    # but an unbounded embed grows linearly with the longest-running
+    # job and the slowest fetch becomes the caller's response budget.
+    # 500 is well above the worst-case-per-pin bound, so a real job
+    # never trips it; a runaway data anomaly (test fixture, ingest
+    # bug) gets capped instead of OOMing the response.
     pins_res = await (
         client.table("moisture_pins")
         .select(
@@ -374,6 +388,7 @@ async def list_pins_by_job(
         .eq("company_id", str(company_id))
         .order("created_at", desc=False)
         .order("taken_at", desc=True, foreign_table="readings")
+        .limit(500, foreign_table="readings")
         .execute()
     )
 
@@ -440,7 +455,25 @@ async def update_pin(
     # Merge the patch against the existing pin's values so a partial
     # patch (e.g. only canvas_x) still validates against current y/room.
     if any(k in updates for k in ("canvas_x", "canvas_y", "room_id")):
-        target_room_id = UUID(updates.get("room_id", str(existing_pin["room_id"])))
+        # Orphan-pin guard. `moisture_pins.room_id ON DELETE SET NULL`
+        # means deleting a room nulls every pin's parent_id. Before
+        # this guard, dragging an orphaned pin tried to validate against
+        # `UUID(str(None))` → ValueError 500. Now we require the patch
+        # to supply a `room_id` (re-attach to a different room) before
+        # any canvas/coord change is allowed; the pin stays visible in
+        # the meantime so the tech can still see it and re-assign it
+        # rather than losing the reading history.
+        target_room_raw = updates.get("room_id", existing_pin.get("room_id"))
+        if not target_room_raw:
+            raise AppException(
+                status_code=409,
+                detail=(
+                    "This pin's room was deleted. Assign it to a new room "
+                    "before moving it on the canvas."
+                ),
+                error_code="PIN_ORPHANED",
+            )
+        target_room_id = UUID(str(target_room_raw))
         target_x = updates.get("canvas_x", float(existing_pin["canvas_x"]))
         target_y = updates.get("canvas_y", float(existing_pin["canvas_y"]))
         await _validate_pin_placement(
@@ -609,7 +642,26 @@ async def create_reading(
         .execute()
     )
 
-    return res.data[0]
+    reading = res.data[0]
+
+    # Audit-trail parity with create_pin / update_pin / delete_pin /
+    # delete_reading. Reading mutations are the highest-frequency
+    # action on a job (~1 reading per pin per day × ~30 days), so a
+    # missing log_event here is the biggest gap in the timeline /
+    # compliance feed.
+    await log_event(
+        company_id,
+        "moisture_reading_created",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "reading_id": str(reading["id"]),
+            "pin_id": str(pin_id),
+            "reading_value": float(body.reading_value),
+        },
+    )
+
+    return reading
 
 
 async def update_reading(
@@ -619,6 +671,7 @@ async def update_reading(
     pin_id: UUID,
     job_id: UUID,
     company_id: UUID,
+    user_id: UUID,
     body: MoisturePinReadingUpdate,
 ) -> dict:
     """Update a reading's value / taken_at / photo / notes."""
@@ -664,6 +717,22 @@ async def update_reading(
             detail="Reading not found",
             error_code="READING_NOT_FOUND",
         )
+
+    # Audit-trail parity with create_reading / delete_reading. The
+    # event_data records which fields changed (not the new values) so
+    # the timeline shows "tech edited reading" without leaking the
+    # whole row into the event log.
+    await log_event(
+        company_id,
+        "moisture_reading_updated",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "reading_id": str(reading_id),
+            "pin_id": str(pin_id),
+            "fields_updated": sorted(updates.keys()),
+        },
+    )
     return res.data[0]
 
 
@@ -696,10 +765,10 @@ async def delete_reading(
             error_code="READING_NOT_FOUND",
         )
 
-    # Audit trail parity with create_pin / update_pin / delete_pin /
-    # create_reading / update_reading. Without this, reading deletions
-    # leave no timeline entry and no compliance record — the review
-    # flagged the gap as an observability bug.
+    # Audit-trail parity with create_pin / update_pin / delete_pin /
+    # create_reading / update_reading. Reading mutations are the
+    # highest-frequency action on a job; the timeline / compliance
+    # feed depends on every create / update / delete logging here.
     await log_event(
         company_id,
         "moisture_reading_deleted",

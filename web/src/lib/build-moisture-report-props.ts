@@ -41,6 +41,17 @@ export interface BuildMoistureReportPropsOutput {
    *  cramming them all onto the primary floor and falsely
    *  concentrating the damage picture. */
   orphanPins: MoisturePin[];
+  /** The floor the wrapper should land on when there's no `?floor=`
+   *  URL param. Resolved in this order:
+   *  1. `primaryFloorId` if it matches a row in `floorPlans`
+   *  2. The first `is_current` floor (sorted by `floor_number`)
+   *  3. The first floor by `floor_number`
+   *  4. `null` when there are no floors at all
+   *  Without this, multi-floor jobs whose pinned floor isn't
+   *  `floor_number=0` opened on the wrong canvas (basement) until the
+   *  user manually switched. The tech view and the adjuster portal
+   *  now agree on the same starting screen. */
+  defaultFloorId: string | null;
 }
 
 const DEFAULT_CANVAS: FloorPlanData = {
@@ -86,11 +97,11 @@ export function buildMoistureReportProps({
   // backfill migration this should be rare (only multi-floor jobs
   // that were unpinned at room-creation time can land here).
   //
-  // primaryFloorId is still resolved + threaded through (currently
-  // used by the wrapper for the default floor selection in the URL
-  // param) but no longer drives pin attribution.
-  void primaryFloorId; // referenced for future floor-selector default
-
+  // primaryFloorId no longer drives pin attribution (mixed-case bug
+  // fixed in critical-review round 2 — see the H3 fixture). It DOES
+  // still drive the default-floor resolution returned to the wrapper
+  // so the tech view and adjuster portal land on the same starting
+  // canvas instead of both defaulting to floors[0].
   const validFloorIds = new Set(floorPlans.map((fp) => fp.id));
   const orphanPins: MoisturePin[] = [];
   const pinsByFloorId = new Map<string, MoisturePin[]>();
@@ -115,5 +126,22 @@ export function buildMoistureReportProps({
     }))
     .sort((a, b) => a.floorNumber - b.floorNumber);
 
-  return { floors, readingsByPinId, orphanPins };
+  // Three-step resolution. The order matters: a job pinned to its
+  // upper floor must NOT default to the basement just because
+  // floor_number=0 sorts first.
+  let defaultFloorId: string | null = null;
+  if (primaryFloorId && validFloorIds.has(primaryFloorId)) {
+    defaultFloorId = primaryFloorId;
+  } else {
+    const firstCurrent = floorPlans
+      .filter((fp) => fp.is_current)
+      .sort((a, b) => a.floor_number - b.floor_number)[0];
+    if (firstCurrent) {
+      defaultFloorId = firstCurrent.id;
+    } else if (floors.length > 0) {
+      defaultFloorId = floors[0].floorPlanId;
+    }
+  }
+
+  return { floors, readingsByPinId, orphanPins, defaultFloorId };
 }

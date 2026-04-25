@@ -395,7 +395,7 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
             Add Photo
           </Link>
           <Link
-            href={`/jobs/${job.id}/readings`}
+            href={`/jobs/${job.id}/floor-plan?mode=moisture`}
             className="w-full h-10 rounded-lg text-sm font-medium text-on-surface bg-surface-container-lowest border border-outline-variant/30 flex items-center justify-center gap-2 hover:bg-surface-container-low transition-colors active:scale-[0.98]"
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">

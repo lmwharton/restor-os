@@ -17,6 +17,7 @@ interface SharedJobResponse {
   rooms: Room[];
   photos: Photo[];
   company: SharedCompany;
+  moisture_access?: "denied" | "unavailable" | "empty" | "present";
 }
 
 // ─── Metadata ──────────────────────────────────────────────────────────
@@ -28,7 +29,7 @@ export const metadata: Metadata = {
 
 // ─── Data fetching ─────────────────────────────────────────────────────
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_URL } from "@/lib/api-url";
 
 async function fetchSharedJob(token: string): Promise<SharedJobResponse | null> {
   try {
@@ -122,7 +123,7 @@ export default async function SharedJobPage({
     );
   }
 
-  const { job, rooms, photos, company } = data;
+  const { job, rooms, photos, company, moisture_access } = data;
 
   return (
     <div className="min-h-dvh bg-surface">
@@ -265,7 +266,34 @@ export default async function SharedJobPage({
           </section>
         )}
 
-        {/* Moisture floor plan + pin history renders here in Phase 2C (portal view). */}
+        {moisture_access === "present" && (
+          <section className="space-y-3">
+            <h3 className="text-base font-semibold text-on-surface">
+              Moisture Report
+            </h3>
+            <a
+              href={`/shared/${token}/moisture`}
+              className="flex items-center justify-between gap-3 rounded-xl border border-outline-variant/30 bg-surface-container-lowest px-4 py-4 hover:bg-surface-container-low transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-brand-accent/10 text-brand-accent">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M12 3v18M3 8h6M3 14h6M3 20h6M15 12h6M15 18h6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-on-surface">
+                    View moisture report
+                  </p>
+                  <p className="text-xs text-on-surface-variant">
+                    Floor plan with moisture readings and drying progress
+                  </p>
+                </div>
+              </div>
+              <span aria-hidden="true" className="text-on-surface-variant">&rarr;</span>
+            </a>
+          </section>
+        )}
       </div>
 
       {/* ── Footer ───────────────────────────────────────────── */}

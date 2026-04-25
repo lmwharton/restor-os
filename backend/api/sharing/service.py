@@ -36,6 +36,50 @@ from api.sharing.schemas import VALID_SCOPES, ShareLinkCreate
 #              at the database level — older migration state on this cluster)
 _POSTGREST_MISSING_TABLE_CODES = {"PGRST205", "PGRST204", "42P01"}
 
+# Public-payload allowlists for the unauthenticated adjuster portal
+# (`GET /v1/shared/{token}`). Hoisted to module level so they're
+# importable for unit tests — the test layer can assert PII columns
+# are absent without needing the (mock) DB to honor PostgREST's
+# `.select()` filtering. See `pr-review-lessons.md` lesson #35.
+#
+# Excluded by design:
+#   * jobs: customer_phone / customer_email / claim_number (PII),
+#     adjuster_* (carrier-side contact), notes / tech_notes
+#     (tech-internal observations), loss_cause (free-text often
+#     contains private context), home_year_built / latitude /
+#     longitude (locational privacy), assigned_to / created_by /
+#     updated_by (tech UUIDs — combined with multiple shares would
+#     enumerate the company's roster), linked_job_id / job_type
+#     (internal workflow state).
+#   * job_rooms: notes (tech-internal), room_sketch_data /
+#     room_polygon / floor_openings / wall_square_footage /
+#     custom_wall_sf / material_flags (V2 sketch internals),
+#     dry_standard / room_type / ceiling_type / floor_level /
+#     affected (workflow internals), company_id / created_by /
+#     updated_by (tech UUIDs).
+#   * photos: company_id, filename (tech-named, can leak job-internal
+#     labels), selected_for_ai (internal AI scoping flag),
+#     created_by / updated_by.
+#   * line_items: table doesn't exist yet (Spec 02); when it lands,
+#     every column added must be intentionally adjuster-visible.
+_PUBLIC_JOB_COLUMNS = (
+    "id, company_id, property_id, job_number, address_line1, city, state, zip, "
+    "customer_name, carrier, loss_type, loss_category, loss_class, loss_date, "
+    "status, floor_plan_id, timezone, created_at, updated_at"
+)
+_PUBLIC_ROOM_COLUMNS = (
+    "id, job_id, floor_plan_id, room_name, length_ft, width_ft, height_ft, "
+    "square_footage, water_category, water_class, equipment_air_movers, "
+    "equipment_dehus, sort_order, created_at, updated_at"
+)
+_PUBLIC_PHOTO_COLUMNS = (
+    "id, job_id, room_id, room_name, storage_url, caption, photo_type, uploaded_at"
+)
+_PUBLIC_LINE_ITEM_COLUMNS = (
+    "id, job_id, room_id, code, description, units, quantity, "
+    "unit_price, total, created_at"
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -135,7 +179,22 @@ async def _create_share_link_fallback(
     token_hash: str,
     expires_at: datetime,
 ) -> dict:
-    """Fallback: non-atomic share link creation when RPC is not available."""
+    """Fallback: non-atomic share link creation when RPC is not available.
+
+    Audit-trail caveat: ``log_event`` is intentionally fire-and-forget
+    (``api/shared/events.py`` swallows on failure to avoid taking the
+    primary operation down with it). On the atomic path
+    (``rpc_create_share_link``) the audit row is inserted inside the
+    same SECURITY DEFINER function as the share-link row, so they
+    succeed-or-fail together. Here they don't — if ``log_event``
+    fails after the insert lands, the share link exists with no audit
+    record. We surface a loud warning so ops can correlate it after
+    the fact, but we deliberately don't roll the insert back: a
+    missing audit row is preferable to a dropped share link the user
+    has already seen the URL for. This branch only fires on
+    pre-migration deploy states (RPC not installed yet), so the
+    window is narrow.
+    """
     row = {
         "job_id": str(job_id),
         "company_id": str(company_id),
@@ -146,6 +205,19 @@ async def _create_share_link_fallback(
     }
     result = await client.table("share_links").insert(row).execute()
     link = result.data[0]
+
+    logger.warning(
+        "share_link_created_via_fallback_path",
+        extra={
+            "extra_data": {
+                "link_id": link["id"],
+                "job_id": str(job_id),
+                "scope": body.scope,
+                "reason": "rpc_create_share_link not installed; audit "
+                "trail is best-effort on this path",
+            }
+        },
+    )
 
     await log_event(
         company_id,
@@ -253,25 +325,32 @@ async def get_shared_job(token: str) -> dict:
     company_id = link["company_id"]
     scope = link.get("scope", "full")
 
-    # Fetch job (redact sensitive fields)
-    job_result = await admin.table("jobs").select("*").eq("id", job_id).single().execute()
+    # Fetch job — explicit allowlist instead of `SELECT *` + pop
+    # blacklist. The allowlist constants live at module level (see top
+    # of file) so test code can assert PII columns are excluded.
+    job_result = await (
+        admin.table("jobs").select(_PUBLIC_JOB_COLUMNS).eq("id", job_id).single().execute()
+    )
     if not job_result.data:
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
     job = job_result.data
-    # Redact sensitive customer fields
-    for field in ("customer_phone", "customer_email", "claim_number"):
-        job.pop(field, None)
 
-    # Fetch rooms
     rooms_result = await (
-        admin.table("job_rooms").select("*").eq("job_id", job_id).order("sort_order").execute()
+        admin.table("job_rooms")
+        .select(_PUBLIC_ROOM_COLUMNS)
+        .eq("job_id", job_id)
+        .order("sort_order")
+        .execute()
     )
     rooms = rooms_result.data or []
 
-    # Fetch photos with signed URLs (batch call to avoid N+1)
     photos_result = await (
-        admin.table("photos").select("*").eq("job_id", job_id).order("uploaded_at").execute()
+        admin.table("photos")
+        .select(_PUBLIC_PHOTO_COLUMNS)
+        .eq("job_id", job_id)
+        .order("uploaded_at")
+        .execute()
     )
     photos = photos_result.data or []
     storage_paths = [p["storage_url"] for p in photos if p.get("storage_url")]
@@ -301,11 +380,23 @@ async def get_shared_job(token: str) -> dict:
     moisture_unavailable = False
     if scope in ("full", "restoration_only"):
         try:
+            # Allowlist on the readings embed — `notes` (tech-authored,
+            # 2000 chars) and `recorded_by` (tech UUID) shouldn't ride
+            # to adjusters. Combined with `jobs.created_by` /
+            # `assigned_to` across multiple shares, recorded_by could
+            # enumerate the tech roster. Pin columns stay on `*` since
+            # MoisturePin's user-facing fields (location_name,
+            # canvas_x/y, material, dry_standard) are all spec'd as
+            # adjuster-visible; `created_by` on pins is the same risk
+            # but the portal's report header references it nowhere
+            # currently — flag for follow-up if it surfaces.
             pins_result = await (
                 admin.table("moisture_pins")
                 .select(
                     "*, "
-                    "readings:moisture_pin_readings(*), "
+                    "readings:moisture_pin_readings("
+                    "id, pin_id, reading_value, taken_at, meter_photo_url, created_at"
+                    "), "
                     "room:job_rooms!room_id(floor_plan_id)",
                 )
                 .eq("job_id", job_id)
@@ -316,6 +407,7 @@ async def get_shared_job(token: str) -> dict:
                     desc=True,
                     foreign_table="readings",
                 )
+                .limit(500, foreign_table="readings")
                 .execute()
             )
             # Flatten the room embed into a scalar `floor_plan_id` on
@@ -408,11 +500,18 @@ async def get_shared_job(token: str) -> dict:
     # attributable-to-nothing. Previously this was a bare `except
     # Exception: pass` — siblings of the H2 fix landed but this one
     # was missed, flagged in review round 2.
+    # line_items allowlist hoisted to module level. Pre-Spec-02 the
+    # table doesn't exist and this query falls through to the
+    # PGRST205-tolerated branch; the explicit column list documents
+    # the public contract for Spec 02 to honor.
     line_items: list[dict] = []
     if scope in ("full", "restoration_only"):
         try:
             items_result = await (
-                admin.table("line_items").select("*").eq("job_id", job_id).execute()
+                admin.table("line_items")
+                .select(_PUBLIC_LINE_ITEM_COLUMNS)
+                .eq("job_id", job_id)
+                .execute()
             )
             line_items = items_result.data or []
         except APIError as e:

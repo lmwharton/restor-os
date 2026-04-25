@@ -1,11 +1,11 @@
+import { API_URL } from "@/lib/api-url";
+
 /**
  * Determines the correct redirect destination for an authenticated user.
  * Returns "/jobs" if user has a company, "/onboarding" if no company (404),
  * or "/jobs" as fallback if backend is unreachable (don't block existing users).
  */
 export async function getAuthenticatedRedirect(accessToken: string): Promise<string> {
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
   try {
     const res = await fetch(`${API_URL}/v1/company`, {
       headers: { Authorization: `Bearer ${accessToken}` },

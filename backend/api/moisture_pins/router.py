@@ -203,6 +203,7 @@ async def update_pin_reading_endpoint(
         pin_id=pin_id,
         job_id=job["id"],
         company_id=ctx.company_id,
+        user_id=ctx.user_id,
         body=body,
     )
 

@@ -15,10 +15,9 @@ export function useMoisturePins(jobId: string) {
   return useQuery<MoisturePin[]>({
     queryKey: ["moisture-pins", jobId],
     queryFn: async () => {
-      const data = await apiGet<MoisturePin[] | PaginatedResponse<MoisturePin>>(
+      const data = await apiGet<PaginatedResponse<MoisturePin>>(
         `/v1/jobs/${jobId}/moisture-pins`,
       );
-      if (Array.isArray(data)) return data;
       return data.items ?? [];
     },
     enabled: !!jobId,
@@ -96,10 +95,9 @@ export function usePinReadings(jobId: string, pinId: string) {
   return useQuery<MoisturePinReading[]>({
     queryKey: ["moisture-pin-readings", pinId],
     queryFn: async () => {
-      const data = await apiGet<
-        MoisturePinReading[] | PaginatedResponse<MoisturePinReading>
-      >(`/v1/jobs/${jobId}/moisture-pins/${pinId}/readings`);
-      if (Array.isArray(data)) return data;
+      const data = await apiGet<PaginatedResponse<MoisturePinReading>>(
+        `/v1/jobs/${jobId}/moisture-pins/${pinId}/readings`,
+      );
       return data.items ?? [];
     },
     enabled: !!jobId && !!pinId,

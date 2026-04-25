@@ -7,11 +7,11 @@ import { AddressAutocomplete } from "@/components/address-autocomplete";
 import { useMe } from "@/lib/hooks/use-me";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { API_URL } from "@/lib/api-url";
+
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 async function getAuthHeaders() {
   const supabase = createClient();

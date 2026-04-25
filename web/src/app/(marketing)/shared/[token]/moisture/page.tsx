@@ -20,12 +20,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { MoistureReportView } from "@/components/moisture-report/moisture-report-view";
 import { todayLocalIso } from "@/lib/dates";
 import { buildMoistureReportProps } from "@/lib/build-moisture-report-props";
+import { API_URL } from "@/lib/api-url";
 import type {
   FloorPlanData,
 } from "@/components/sketch/floor-plan-tools";
 import type { MoisturePin } from "@/lib/types";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface SharedPayload {
   job: {
@@ -85,7 +84,6 @@ export default function PortalMoistureReportPage() {
     sp.set("date", iso);
     router.replace(`/shared/${token}/moisture?${sp.toString()}`);
   };
-  const selectedFloorId = searchParams.get("floor") ?? undefined;
   const setSelectedFloorId = (id: string) => {
     const sp = new URLSearchParams(searchParams.toString());
     sp.set("floor", id);
@@ -127,7 +125,7 @@ export default function PortalMoistureReportPage() {
     };
   }, [token]);
 
-  const { floors: floorsList, readingsByPinId, orphanPins } = useMemo(
+  const { floors: floorsList, readingsByPinId, orphanPins, defaultFloorId } = useMemo(
     () =>
       buildMoistureReportProps({
         pins: payload?.moisture_pins ?? [],
@@ -136,6 +134,8 @@ export default function PortalMoistureReportPage() {
       }),
     [payload],
   );
+  const selectedFloorId =
+    searchParams.get("floor") ?? defaultFloorId ?? undefined;
 
   if (loading) {
     return (

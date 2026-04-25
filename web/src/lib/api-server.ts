@@ -3,8 +3,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { ApiError } from "@/lib/api";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import { API_URL } from "@/lib/api-url";
 
 export async function apiGetServer<T>(path: string): Promise<T> {
   const supabase = await createClient();

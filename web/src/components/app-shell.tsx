@@ -9,6 +9,7 @@ import { HealthStatusBadge } from "@/components/health-status-badge";
 import NotificationDropdown from "@/components/notification-dropdown";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import { useMe } from "@/lib/hooks/use-me";
+import { API_URL } from "@/lib/api-url";
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -57,7 +58,6 @@ const navItems = [
 /*  Helpers                                                            */
 /* ------------------------------------------------------------------ */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 const MONO = "font-[family-name:var(--font-geist-mono)]";
 
 async function getAuthHeaders() {
