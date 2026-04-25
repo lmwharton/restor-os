@@ -35,6 +35,10 @@ _ALLOWED_FUNCTIONS = {
     # on every moisture_pin_readings INSERT. Sets on first dry reading,
     # clears on re-wet. Out-of-order guard via COALESCE(-infinity).
     "moisture_pin_dry_check",
+    # Phase 3 PR-B2 Step 2 (d2a3b4c5e6f7): enforces chain integrity on
+    # equipment_placements.restarted_from_placement_id — same job, type,
+    # size, and parent must be pulled. Fires BEFORE INSERT OR UPDATE.
+    "equipment_chain_integrity",
 }
 
 

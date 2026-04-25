@@ -4,6 +4,14 @@ Pins the load-bearing constraints and indexes. Runtime behavior (RLS
 isolation, FK cascade, CHECK enforcement on real inserts) is verified
 by the integration test later in PR-B once the RPCs that write to the
 table land.
+
+PR-B2 note: the ``billing_scope`` column was dropped in migration
+d1a2b3c4e5f6 as part of the pin-attachment rollback. Tests that asserted
+on billing_scope have been removed. The column still appears in the
+ORIGINAL migration text (c2e4a6b8d0f3) because we never edit old
+migrations, which is why some assertions below still reference it in
+"what this migration declares" — those remain valid for this migration
+in isolation. The current DB schema no longer has the column.
 """
 
 from __future__ import annotations
