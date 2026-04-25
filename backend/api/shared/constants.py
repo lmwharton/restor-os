@@ -58,3 +58,24 @@ VALID_OPENING_TYPES: set[str] = {"door", "window", "missing_wall"}
 # wall_openings). Single source of truth so walls/rooms/floor_plans services
 # agree on what "archived" means.
 ARCHIVED_JOB_STATUSES: frozenset[str] = frozenset({"collected"})
+
+
+# Equipment is frozen at a STRICTER threshold than floor-plan data. The moment
+# the tech taps "Mark Job Complete" (status -> 'complete'), billing finalizes
+# and every equipment mutation (place / restart / pull / move) must raise.
+# Admins can reopen a complete job to resume drying — that flips status back
+# to 'drying' and equipment becomes mutable again.
+#
+# The broader {submitted, collected} states are included because once a job
+# has been sent to the carrier or payment collected, the billing surface must
+# not shift underneath downstream consumers (carrier documentation, line-item
+# exports). Spec 01H Phase 3 PR-B2.
+#
+# Enforced by two symmetric surfaces (lesson §3 — sibling enforcement):
+# - Python: api.shared.guards.ensure_equipment_mutable (pre-flight check)
+# - SQL:    ensure_equipment_mutable(UUID) RPC (atomic transaction guard,
+#           migration d5a6b7c8e9f0)
+# A drift-check test asserts the Python and SQL sets match byte-for-byte.
+EQUIPMENT_FROZEN_STATUSES: frozenset[str] = frozenset(
+    {"complete", "submitted", "collected"}
+)

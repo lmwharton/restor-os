@@ -11,7 +11,7 @@ endpoints cannot bypass save_canvas's archive gate.
 
 from uuid import UUID
 
-from api.shared.constants import ARCHIVED_JOB_STATUSES
+from api.shared.constants import ARCHIVED_JOB_STATUSES, EQUIPMENT_FROZEN_STATUSES
 from api.shared.exceptions import AppException
 
 
@@ -27,6 +27,35 @@ def raise_if_archived(job: dict) -> None:
             status_code=403,
             detail="Cannot modify floor plan data for an archived job",
             error_code="JOB_ARCHIVED",
+        )
+
+
+def raise_if_equipment_frozen(job: dict) -> None:
+    """Stricter sibling of ``raise_if_archived`` for equipment writes.
+
+    Equipment billing freezes the moment a job transitions to ``complete``
+    (tech tapped Mark Job Complete). Floor plans + pins remain editable
+    in that state so the tech can finalize documentation; equipment does
+    not, because billing math must stop drifting.
+
+    Distinct error_code (``JOB_EQUIPMENT_FROZEN``) so the frontend can
+    branch copy between the two freeze states — "reopen this job to
+    edit equipment" vs. "this job is archived."
+    """
+    if job.get("deleted_at") is not None:
+        raise AppException(
+            status_code=404,
+            detail="Job not found",
+            error_code="JOB_NOT_FOUND",
+        )
+    if job.get("status") in EQUIPMENT_FROZEN_STATUSES:
+        raise AppException(
+            status_code=403,
+            detail=(
+                "Equipment is frozen on a completed/submitted/collected job. "
+                "Owner can reopen the job if editing is required."
+            ),
+            error_code="JOB_EQUIPMENT_FROZEN",
         )
 
 
@@ -58,6 +87,44 @@ async def ensure_job_mutable(
             error_code="JOB_NOT_FOUND",
         )
     raise_if_archived(result.data)
+    return result.data
+
+
+async def ensure_equipment_mutable(
+    client,
+    job_id: UUID,
+    company_id: UUID,
+) -> dict:
+    """Pre-flight equipment-mutation guard. Returns the fetched job dict.
+
+    Stricter sibling of ``ensure_job_mutable``. Use from equipment service
+    methods BEFORE calling the equipment RPC — gives a fast 403 without
+    round-tripping to the RPC. The RPC (SQL side) repeats the check atomically
+    so the two-tier defense survives a race where status flips between the
+    Python check and the RPC call.
+
+    Two-tier rationale (lesson §3):
+    - Python pre-flight: user-friendly error (specific error_code), no RPC
+      round-trip for the obvious rejection case.
+    - SQL atomic guard inside the RPC: the real enforcement. If a flip
+      happens between the two, the SQL guard catches it.
+    """
+    result = await (
+        client.table("jobs")
+        .select("id, status, deleted_at, company_id, property_id")
+        .eq("id", str(job_id))
+        .eq("company_id", str(company_id))
+        .is_("deleted_at", "null")
+        .single()
+        .execute()
+    )
+    if not result.data:
+        raise AppException(
+            status_code=404,
+            detail="Job not found",
+            error_code="JOB_NOT_FOUND",
+        )
+    raise_if_equipment_frozen(result.data)
     return result.data
 
 

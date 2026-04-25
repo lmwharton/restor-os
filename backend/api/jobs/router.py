@@ -6,8 +6,26 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobListResponse, JobUpdate
-from api.jobs.service import create_job, create_linked_recon, delete_job, get_job, list_jobs, update_job
+from api.jobs.schemas import (
+    JobCompleteRequest,
+    JobCompleteResponse,
+    JobCreate,
+    JobDetailResponse,
+    JobListResponse,
+    JobReopenRequest,
+    JobReopenResponse,
+    JobUpdate,
+)
+from api.jobs.service import (
+    complete_job,
+    create_job,
+    create_linked_recon,
+    delete_job,
+    get_job,
+    list_jobs,
+    reopen_job,
+    update_job,
+)
 from api.shared.dependencies import _get_token
 from api.shared.exceptions import AppException
 
@@ -103,3 +121,43 @@ async def delete_job_endpoint(
         )
     await delete_job(ctx.company_id, ctx.user_id, job_id)
     return {"deleted": True}
+
+
+# --- Spec 01H Phase 3 PR-B2: job completion lifecycle ---
+
+
+@router.post("/{job_id}/complete", response_model=JobCompleteResponse)
+async def complete_job_endpoint(
+    job_id: UUID,
+    body: JobCompleteRequest,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Mark a job complete. Flips status to 'complete', stamps completed_at,
+    auto-pulls active equipment placements, appends an audit event.
+
+    Response includes auto_pulled_count so the UI can surface "3 pieces of
+    equipment were still running — they've been pulled at completion."
+    """
+    token = _get_token(request)
+    return await complete_job(
+        token, ctx.company_id, ctx.user_id, job_id, body.notes
+    )
+
+
+@router.post("/{job_id}/reopen", response_model=JobReopenResponse)
+async def reopen_job_endpoint(
+    job_id: UUID,
+    body: JobReopenRequest,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Reopen a complete job. Owner-only. Reverts status to 'drying',
+    clears completed_at/completed_by, stamps reopened_at on the latest
+    completion event. Does NOT un-pull equipment (historical pulled_at
+    stamps stay).
+    """
+    token = _get_token(request)
+    return await reopen_job(
+        token, ctx.company_id, ctx.user_id, ctx.role, job_id, body.reason
+    )

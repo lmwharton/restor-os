@@ -833,13 +833,42 @@ async def update_job(
 
     updates["updated_by"] = str(user_id)
 
+    # HIGH #2 (round 1 review) — status transitions into/out of the
+    # equipment-frozen set must go through the dedicated lifecycle
+    # endpoints (complete_job / reopen_job), never via PATCH. A direct
+    # PATCH to status='complete' would bypass the completed_at stamp,
+    # auto-pull of active equipment, and the append to
+    # job_completion_events — leaving the job frozen via
+    # ensure_equipment_mutable but without the corresponding audit row.
+    # reopen_job would then raise "audit log out of sync" and the job
+    # would be stuck unreachably complete.
+    #
+    # Reject BOTH directions: can't enter the frozen set via PATCH, and
+    # can't leave it (which would un-freeze equipment without logging
+    # the reopen). 'collected' stays blocked here too even though
+    # ensure_job_mutable already covers it — symmetry makes the rule
+    # obvious to reviewers.
+    if "status" in updates:
+        new_status = updates["status"]
+        if new_status in {"complete", "submitted", "collected"}:
+            raise AppException(
+                status_code=409,
+                detail=(
+                    "Status transitions into 'complete', 'submitted', or "
+                    "'collected' must go through the lifecycle endpoints "
+                    "(POST /v1/jobs/{id}/complete, carrier submission flow, "
+                    "or collection flow) — not PATCH."
+                ),
+                error_code="STATUS_TRANSITION_FORBIDDEN",
+            )
+
     client = await get_authenticated_client(token)
 
     # Validate status against job type if status is being changed
     if "status" in updates:
         current = await (
             client.table("jobs")
-            .select("job_type")
+            .select("job_type, status")
             .eq("id", str(job_id))
             .eq("company_id", str(company_id))
             .is_("deleted_at", "null")
@@ -848,6 +877,22 @@ async def update_job(
         )
         if current.data:
             jtype = current.data.get("job_type", "mitigation")
+            # Symmetric check: a PATCH cannot LEAVE the frozen set either —
+            # reopen_job is the only path out of 'complete'. This prevents
+            # a PATCH from dropping status='complete' back to 'drying'
+            # without stamping reopened_at on the completion event.
+            current_status = current.data.get("status")
+            if current_status in {"complete", "submitted", "collected"}:
+                raise AppException(
+                    status_code=409,
+                    detail=(
+                        f"Cannot transition out of '{current_status}' via PATCH. "
+                        "Use POST /v1/jobs/{id}/reopen (owner-only) for "
+                        "'complete' → 'drying'. 'submitted' and 'collected' "
+                        "have their own unwind flows."
+                    ),
+                    error_code="STATUS_TRANSITION_FORBIDDEN",
+                )
             allowed = MITIGATION_STATUSES if jtype == "mitigation" else RECONSTRUCTION_STATUSES
             if updates["status"] not in allowed:
                 raise AppException(
@@ -953,3 +998,162 @@ async def _delete_job_fallback(
         job_id=job_id,
         user_id=user_id,
     )
+
+
+# ============================================================================
+# Spec 01H Phase 3 PR-B2: job completion lifecycle
+#
+# complete_job and reopen_job are thin wrappers around plpgsql RPCs
+# (migration d6a7b8c9e0f1). The RPCs do the heavy lifting:
+#   - complete_job: flip status, stamp completed_at, auto-pull equipment,
+#     append to job_completion_events.
+#   - reopen_job: owner-only, revert status, clear stamps, stamp
+#     reopened_at on latest event row (NOT un-pull equipment).
+# Python here is mostly APIError → AppException mapping + logging.
+# ============================================================================
+
+
+async def complete_job(
+    token: str,
+    company_id: UUID,
+    user_id: UUID,
+    job_id: UUID,
+    notes: str | None,
+) -> dict:
+    """Mark a job complete. Transitions status to 'complete', stamps
+    completed_at on jobs row, auto-pulls active equipment placements,
+    appends an audit event.
+
+    Returns the RPC response dict. Not a Pydantic model — the caller
+    (router) validates via response_model=JobCompleteResponse.
+
+    Error mapping:
+      55006 "Job cannot be marked complete from status: X" →
+             409 JOB_ALREADY_COMPLETE
+      P0002 "Job not found or not accessible" →
+             404 JOB_NOT_FOUND
+    """
+    client = await get_authenticated_client(token)
+
+    try:
+        result = await client.rpc(
+            "complete_job",
+            {
+                "p_job_id": str(job_id),
+                "p_notes": notes,
+            },
+        ).execute()
+    except APIError as e:
+        err_code = getattr(e, "code", None)
+        err_msg = getattr(e, "message", "") or str(e)
+        if err_code == "55006":
+            raise AppException(
+                status_code=409,
+                detail=err_msg,
+                error_code="JOB_ALREADY_COMPLETE",
+            ) from e
+        if err_code == "P0002":
+            raise AppException(
+                status_code=404,
+                detail="Job not found",
+                error_code="JOB_NOT_FOUND",
+            ) from e
+        logger.warning("complete_job RPC failed: %s (code=%s)", err_msg, err_code)
+        raise
+
+    payload = result.data or {}
+
+    await log_event(
+        company_id,
+        "job_completed",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "auto_pulled_count": payload.get("auto_pulled_count", 0),
+            "completion_event_id": payload.get("completion_event_id"),
+        },
+    )
+
+    return payload
+
+
+async def reopen_job(
+    token: str,
+    company_id: UUID,
+    user_id: UUID,
+    role: str,
+    job_id: UUID,
+    reason: str,
+) -> dict:
+    """Reopen a complete job. Owner-only. Reverts status to 'drying',
+    clears completed_at/completed_by, stamps reopened_at on the latest
+    job_completion_events row. Does NOT un-pull equipment — pulled rows
+    keep their pulled_at timestamps (billing stays locked).
+
+    The role check here is a pre-flight fast path; the RPC itself also
+    checks ``users.role = 'owner'`` via auth.uid() lookup. Two-tier
+    defense (lesson §3): Python rejects the obvious case before the
+    network hop; SQL enforces the real boundary inside the txn.
+
+    Error mapping:
+      42501 "Only the company owner..." → 403 JOB_REOPEN_FORBIDDEN
+      55006 "Only complete jobs..." → 409 JOB_NOT_COMPLETE
+      P0002 → 404 JOB_NOT_FOUND
+    """
+    # Python-side fast path. Matches the RPC's users.role='owner' check.
+    if role != "owner":
+        raise AppException(
+            status_code=403,
+            detail="Only the company owner can reopen a completed job",
+            error_code="JOB_REOPEN_FORBIDDEN",
+        )
+
+    client = await get_authenticated_client(token)
+
+    try:
+        result = await client.rpc(
+            "reopen_job",
+            {
+                "p_job_id": str(job_id),
+                "p_reason": reason,
+            },
+        ).execute()
+    except APIError as e:
+        err_code = getattr(e, "code", None)
+        err_msg = getattr(e, "message", "") or str(e)
+        if err_code == "42501":
+            raise AppException(
+                status_code=403,
+                detail=err_msg,
+                error_code="JOB_REOPEN_FORBIDDEN",
+            ) from e
+        if err_code == "55006":
+            raise AppException(
+                status_code=409,
+                detail=err_msg,
+                error_code="JOB_NOT_COMPLETE",
+            ) from e
+        if err_code == "P0002":
+            raise AppException(
+                status_code=404,
+                detail="Job not found",
+                error_code="JOB_NOT_FOUND",
+            ) from e
+        logger.warning("reopen_job RPC failed: %s (code=%s)", err_msg, err_code)
+        raise
+
+    payload = result.data or {}
+
+    await log_event(
+        company_id,
+        "job_reopened",
+        job_id=job_id,
+        user_id=user_id,
+        event_data={
+            "reason": reason,
+            "previous_completed_at": payload.get("previous_completed_at"),
+            "completion_event_id": payload.get("completion_event_id"),
+        },
+    )
+
+    return payload

@@ -131,6 +131,12 @@ class JobResponse(BaseModel):
     # response_model strips it between the service return dict and the
     # HTTP wire, even though the DB column is populated (lesson #24).
     timezone: str = "America/New_York"
+    # Spec 01H Phase 3 PR-B2 Step 5: current-completion stamps. NULL while
+    # the job is active; set by complete_job RPC; cleared by reopen_job RPC.
+    # Historical cycles live in job_completion_events (insert-only log).
+    # Declared here so FastAPI's response_model doesn't silently strip them.
+    completed_at: datetime | None = None
+    completed_by: UUID | None = None
     assigned_to: UUID | None = None
     notes: str | None = None
     tech_notes: str | None = None
@@ -152,3 +158,52 @@ class JobDetailResponse(JobResponse):
 class JobListResponse(BaseModel):
     items: list[JobDetailResponse]
     total: int
+
+
+# --- Spec 01H Phase 3 PR-B2: job completion lifecycle ---
+
+
+class JobCompleteRequest(BaseModel):
+    """Body for POST /v1/jobs/{id}/complete.
+
+    ``notes`` is optional — the tech may add a comment ("customer confirmed
+    drying acceptable") that gets stored on the job_completion_events row.
+    """
+
+    notes: str | None = None
+
+
+class JobCompleteResponse(BaseModel):
+    """Return payload from complete_job RPC.
+
+    Declared on response_model so all five fields reach the wire (lesson #24).
+    ``auto_pulled_count`` surfaces how many active equipment placements the
+    RPC auto-pulled — the UI uses it for a confirmation toast.
+    """
+
+    job_id: UUID
+    completed_at: datetime
+    auto_pulled_count: int
+    completion_event_id: UUID
+
+
+class JobReopenRequest(BaseModel):
+    """Body for POST /v1/jobs/{id}/reopen.
+
+    ``reason`` is REQUIRED — reopening erases the completion stamp on the
+    jobs row (history is preserved in job_completion_events). The reason
+    field forces the admin to record WHY so the audit trail is useful.
+    Enforced at both the Pydantic layer (min_length=1) and the DB RPC
+    (trimmed length > 0).
+    """
+
+    reason: str = Field(min_length=1)
+
+
+class JobReopenResponse(BaseModel):
+    """Return payload from reopen_job RPC."""
+
+    job_id: UUID
+    reopened_at: datetime
+    previous_completed_at: datetime
+    completion_event_id: UUID
