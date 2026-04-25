@@ -1,9 +1,87 @@
-# Phase 3 (Revised): Equipment Pins — Attributed to Moisture Pins
+# Phase 3: Equipment on Canvas — Per-Room Billing (PR-B2 Revision)
 
-**Status:** Draft proposal — amendment to `01H-floor-plan-v2.md` Phase 3
+**Status:** PR-A shipped. PR-B shipped. **PR-B2 (rollback + room-model + job-completion) implemented 2026-04-25.** 7 new migrations (`d1a2b3c4e5f6` → `d7a8b9c0e1f2`). Alembic head: `d7a8b9c0e1f2`. PR-C and PR-D ahead.
 **Author:** Samhith
-**Date:** 2026-04-23
-**Review bar:** Must pass the gate defined in `docs/pr-review-lessons.md` (invariants brief + sibling-site grep + pinned tests). Brief included in §9 of this doc.
+**Date:** 2026-04-23 (proposal), 2026-04-24 (PR-A / PR-B), 2026-04-25 (PR-B2 scope reversal)
+**Review bar:** Must pass the gate defined in `docs/pr-review-lessons.md` (invariants brief + sibling-site grep + pinned tests).
+
+---
+
+## ⚠️ PR-B2 SCOPE REVERSAL — Read this first (2026-04-25)
+
+A call with Lakshman + Brett after PR-B shipped reversed the pin-attachment thesis. **The rest of this document describes the pin-attached design that no longer ships.** It's preserved for historical context and the lessons it produced. The actual shipping model is:
+
+**1. Equipment is tied to ROOMS, not pins.** All five types (air_mover, dehumidifier, air_scrubber, hydroxyl_generator, heater) bill the same way: on-site time per unit, per room. Sizes still matter (Xactimate codes) for air_mover + dehumidifier only.
+
+**2. No junction table, no validator RPC, no per-pin billing.** PR-B2 Step 1 (`d1a2b3c4e5f6`) rolled back `equipment_pin_assignments`, `validate_pins_for_assignment`, `place_equipment_with_pins`, and the `billing_scope` column in one atomic migration. Downgrade byte-for-byte restores every dropped object.
+
+**3. Units pause / restart via a lineage chain.** `equipment_placements.restarted_from_placement_id` self-FK links a resumed unit to its pulled predecessor. Integrity trigger enforces same-job + same-type + same-size + parent-must-be-pulled. UI renders the chain as one icon with a timeline; billing sums each row independently — chain membership is transparent to billing math.
+
+**4. Explicit job completion.** `complete_job(job_id, notes)` flips `jobs.status = 'drying' → 'complete'`, stamps `completed_at`, auto-pulls every active equipment row (using the same timestamp for a clean edge), and appends an audit row to `job_completion_events` (insert-only log). `reopen_job(job_id, reason)` is **owner-only**, reverts to `'drying'`, clears `completed_at`, stamps `reopened_at` on the latest event row. **Does NOT un-pull equipment** — historical `pulled_at` stamps are immutable, so billing for past spans is frozen forever.
+
+**5. Equipment has a stricter freeze than floor-plan data.** `EQUIPMENT_FROZEN_STATUSES = {complete, submitted, collected}` vs `ARCHIVED_JOB_STATUSES = {collected}`. Equipment RPCs call `ensure_equipment_mutable`; floor-plan + pin RPCs call the looser `ensure_job_mutable`. A drift-check test (`tests/test_equipment_frozen_drift.py`) enforces Python ↔ SQL parity.
+
+### PR-B2 migrations
+
+| Rev | Summary |
+|---|---|
+| `d1a2b3c4e5f6` | Rollback: drop junction, validator, place_with_pins, billing_scope. Simplify move + billable_days RPCs. |
+| `d2a3b4c5e6f7` | Equipment chain column + integrity trigger + partial index. |
+| `d3a4b5c6e7f8` | New RPCs: `place_equipment`, `restart_equipment_placement`, `pull_equipment_placement`. |
+| `d4a5b6c7e8f9` | `job_completion_events` append-only audit table. |
+| `d5a6b7c8e9f0` | `jobs.completed_at` + `completed_by` columns + `ensure_equipment_mutable` helper. |
+| `d6a7b8c9e0f1` | `complete_job` + `reopen_job` RPCs. Reopen is owner-only. |
+| `d7a8b9c0e1f2` | Swap all 4 equipment RPCs to stricter guard (sibling-symmetry, lesson §32). |
+
+### Python service layer (PR-B2)
+
+- `api.shared.constants.EQUIPMENT_FROZEN_STATUSES` — frozenset mirror of the SQL literal
+- `api.shared.guards.raise_if_equipment_frozen` + `ensure_equipment_mutable` — pre-flight guards for equipment service methods
+- `api.jobs.service.complete_job` + `reopen_job` — thin RPC wrappers
+- `api.jobs.schemas.JobCompleteRequest / Response / JobReopenRequest / Response` — Pydantic schemas declared on `response_model` (lesson #24)
+- `api.jobs.router` — `POST /v1/jobs/{id}/complete` + `POST /v1/jobs/{id}/reopen`
+
+### Tests (PR-B2)
+
+- 5 new test files (`test_migration_pr_b2_*.py`, `test_equipment_frozen_drift.py`) — 49 tests
+- 5 dead pin-attachment tests deleted (junction, validator, place_with_pins, old move, old billable_days)
+- Full migration test bucket: 129 passing. Drift-check asserts `EQUIPMENT_FROZEN_STATUSES` stays in sync between Python and SQL
+
+### What's still open
+
+- **Frontend (PR-C):** ~60% of the v2 design artboards (§R3-1 fan-out as pin inspector, §R3-2 toast, §R3-3 re-wet chip, §3 halos, §2 mixed-state pip) are out of scope after the reversal. Remaining artboards ship in PR-C.
+- **Xactimate aggregation (PR-D):** still needed — groups `equipment_placements` by `(type, size)` and outputs billable days per group.
+- **Idle-job nudge banner (optional, PR-C):** "3 days no activity — ready to close?" non-blocking reminder.
+- **Equipment API surface (PR-C):** no `api/equipment/` module exists yet. PR-C adds the place/restart/pull/move endpoints consuming the Step 3 + Step 7 RPCs.
+
+### Lessons produced
+
+- **Lesson #33** — scope-reversal rollback as one atomic migration with byte-for-byte downgrade restore. A piecewise rollback leaves the RPC graph broken mid-chain (e.g., billable_days referencing a dropped junction).
+- **Lesson #34** — status literal drift. The status `'job_complete'` was renamed to `'complete'` in migration `785e9f316e2b`. New code must read the current CHECK constraint, not guess from older migrations. Grep-check before hardcoding status literals.
+
+Everything below this block is the original pin-attached design. Preserved for lessons.
+
+---
+
+**PR-A summary (committed on branch):** 6 migrations (`7a1f3b2c9d0e` jobs.timezone → `b2d4e6f8a1c3` moisture_pins columns → `c8f1a3d5b7e9` reading_date→taken_at → `d3e5a7c9b1f4` one-shot stale-stamp repair → `e7b9c2f4a8d6` permanent fork-restamp → `f4c7e1b9a5d2` dry-check trigger). 87 backend tests green. Backend + frontend atomic swap; nothing mid-flight. Lesson #29 added to `pr-review-lessons.md` + `tests/integration/test_fork_restamp_invariant.py` locks the fork-restamp invariant against future regression.
+
+**PR-B summary (uncommitted — scoped for the critical review pass):** 8 migrations (`a1d3c5e7b9f2` ensure_job_mutable twin → `c2e4a6b8d0f3` equipment_placements table → `d4f6b8a0c2e5` equipment_pin_assignments junction → `e6a8c0b2d4f7` validate_pins_for_assignment → `f2a4c6e8b0d3` place_equipment_with_pins → `a3c5e7b9d1f4` move_equipment_placement → `c5e7a9b1d3f6` billable-day math → `b7d9f1a3c5e8` fork-restamp extension for equipment). Zero Python service or frontend code — SQL + plpgsql only. PR-C wires these RPCs to HTTP endpoints + UI. Alembic head after PR-B: `b7d9f1a3c5e8`.
+
+**Round-1 critical review fixes (applied in place on the uncommitted migrations):**
+- **H1** cross-job room_id binding added to `place_equipment_with_pins` + `move_equipment_placement` — mirrors Phase 1's `assert_job_on_floor_plan_property`. Lesson #30 added to `pr-review-lessons.md`.
+- **H2** `validate_placement_billable_days` JOIN now time-bounds readings by `(epa.assigned_at, epa.unassigned_at]` — prevents late-reading false-support against a closed assignment window. Lesson #31 added.
+- **H3** `move_equipment_placement` now raises `22023` on per-room + pin_ids (mirror of place-RPC). Lesson #32 added.
+- **M2** `equipment_placements.floor_plan_id` marked `NOT NULL` — closes direct-PostgREST-insert bypass.
+- **M3** spec §3.1 + §13 updated to reflect `CREATE TABLE` (table didn't pre-exist).
+- **M4** `FOR SHARE` row-lock on pins in `validate_pins_for_assignment` closes TOCTOU between validate + assignment insert.
+- **M5** `SELECT DISTINCT` dedup in `place_equipment_with_pins` CROSS JOIN — duplicate pin ids no longer trip raw 23505.
+- **L1** spec §6.2 updated — pull RPC explicitly deferred to PR-C as plpgsql, not Python composition.
+- **L2** RLS policies on both new tables now use `get_my_company_id()` helper, matching Phase 1 shape.
+- **L3** `move_equipment_placement` accepts `p_note TEXT DEFAULT NULL` + stamps on closed + opened rows for after-the-fact correction narratives (§0.4 Q3).
+
+144 backend PR-B tests green after round-1 fixes (9 migration text-scan files + 6 runtime integration files). All fixes carry regression pins — a later change that drops the fix trips a named test.
+
+**Round-2 verdict: PASS.** All 3 HIGHs + 4 of 5 MEDIUMs + 2 of 3 LOWs CLOSED. Three doc/spec items closed in the same batch that delivered the verdict (M3 spec wording drift, L1 pull atomicity language). One item intentionally deferred: **M1** `jobs.timezone` IANA validator — tracked in §10.5 as PR-D scope because it's only exercisable after PR-D's zip resolver writes non-default values.
 
 ---
 
@@ -152,7 +230,22 @@ Equipment is **billed once per physical unit**, regardless of how many pins it s
 
 ## 3. Schema
 
-### 3.1 Modify `equipment_placements`
+### 3.1 `equipment_placements` — CREATE (final shape)
+
+> **Implementation note (round-1 review M3):** the proposal originally
+> assumed `equipment_placements` existed from the original Phase 3
+> spec and showed `ALTER TABLE` deltas. In practice the table had never
+> been built. PR-B migration `c2e4a6b8d0f3` does a single `CREATE TABLE`
+> with every column + constraint in final shape instead of creating
+> a plain version and altering it — simpler review surface, no pointless
+> intermediate state. The SQL snippets below are kept as the delta spec
+> for readers used to the prior doc; the actual ship shape is the
+> migration's full `CREATE TABLE` block with `equipment_size`,
+> `billing_scope`, `asset_tag`, `serial_number`, `floor_plan_id UUID
+> NOT NULL REFERENCES floor_plans(id) ON DELETE RESTRICT`, and
+> `chk_equipment_size_valid` all declared at creation.
+
+Original delta-style SQL (retained for readability):
 
 ```sql
 -- A1: equipment size (carries Xactimate code mapping)
@@ -160,11 +253,13 @@ ALTER TABLE equipment_placements
   ADD COLUMN equipment_size TEXT
     CHECK (equipment_size IN ('std', 'axial', 'large', 'xl', 'xxl'));
 
--- A2 (C1 fix): floor_plan_id already exists on equipment_placements (see 01H-floor-plan-v2.md:685);
--- the stamp discipline is DOCUMENTED here, not a new column. Phase 1's e1a7c9b30201 migration
--- merged floor_plan_versions INTO floor_plans, so `floor_plans` IS the versioned table.
--- Harden the existing FK: change ON DELETE SET NULL → ON DELETE RESTRICT so the historical stamp
--- cannot be silently nulled when a plan row is deleted.
+-- A2 (C1 fix — updated in PR-B round-1 M3): equipment_placements is
+-- CREATED fresh by migration c2e4a6b8d0f3 (the table had never been
+-- built despite earlier assumptions). The final-shape CREATE TABLE
+-- declares floor_plan_id UUID NOT NULL REFERENCES floor_plans(id)
+-- ON DELETE RESTRICT from the start. No ALTER / hardening step
+-- required; Phase 1's e1a7c9b30201 merged floor_plan_versions into
+-- floor_plans, so `floor_plans` IS the versioned table.
 ALTER TABLE equipment_placements
   DROP CONSTRAINT IF EXISTS equipment_placements_floor_plan_id_fkey;
 ALTER TABLE equipment_placements
@@ -408,7 +503,15 @@ Tap equipment pin → "Update pins served" sheet. Add pin → new assignment row
 
 ### 6.2 Pull equipment
 
-Existing pull flow + closes all open assignments with `unassigned_at = pulled_at`, `unassign_reason = 'equipment_pulled'`. Done in the same RPC as the pull (atomic).
+Existing pull flow + closes all open assignments with `unassigned_at = pulled_at`, `unassign_reason = 'equipment_pulled'`.
+
+**Implementation note (PR-B round-1 L1):** this must land as a plpgsql
+RPC (`pull_equipment_placement`) in PR-C — NOT a Python-layer compose
+of "UPDATE placement then UPDATE assignments." Cross-statement
+atomicity doesn't compose across the Python boundary (lesson #4).
+The pull RPC is deferred out of PR-B's scope (no PR-B migration
+installs it) but the PR-C implementer must follow the same atomic
+pattern as `place_equipment_with_pins` and `move_equipment_placement`.
 
 ### 6.3 Pin hits dry standard (A4 + S5 — auto-close, no manual confirm)
 
@@ -501,6 +604,12 @@ $$;
 Billing implication: distinct-local-calendar-days math naturally handles the move — if Dehu A is moved mid-day, both the old-room span and new-room span cover that day, which counts once (union semantics).
 
 ## 7. Phase 2 archive-RPC delta
+
+> **⚠️ OBSOLETE (PR-B2 reversal, 2026-04-25):** this section describes a
+> bulk-close hook into `equipment_pin_assignments`. That table no
+> longer exists — PR-B2 Step 1 (`d1a2b3c4e5f6`) dropped it with CASCADE.
+> Pin archival no longer needs to touch equipment anywhere. The rest
+> of this section is preserved as historical context only.
 
 Single-line amendment to the Phase 2 `archive_moisture_pin` RPC:
 
@@ -707,46 +816,96 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 
 ### 10.1 Phase 2 prerequisites (§0.2 deltas — land before Phase 3 starts)
 
-- [ ] **B1:** `moisture_pin_readings.reading_date DATE` → `taken_at TIMESTAMPTZ NOT NULL DEFAULT now()`; drop `UNIQUE(pin_id, reading_date)`
-- [ ] **B2:** `ALTER TABLE jobs ADD COLUMN timezone TEXT NOT NULL DEFAULT 'America/New_York'`; populate from property zip at job-create (01F hook)
-- [ ] **B3:** Phase 2 UX + PDF accept N readings per pin per day ordered by `taken_at`
-- [ ] **S3 (C1):** `moisture_pins.floor_plan_id UUID REFERENCES floor_plans(id) ON DELETE RESTRICT` — stamped on create + move (uses the merged `floor_plans` table from Phase 1)
-- [ ] **C2:** `moisture_pins.dry_standard_met_at TIMESTAMPTZ` nullable column
-- [ ] **S4:** `meter_photo_url` wired into reading entry UI, sparkline thumbnail, PDF export, "no photo" warning flag
-- [ ] **S5:** `trg_moisture_pin_dry_check` trigger on `moisture_pin_readings` INSERT — sets/clears `dry_standard_met_at`, auto-closes assignments on dry-met
+**PR-A status (feature/01h-floor-plan-v2-phase2, 2026-04-24):** all schema + backend
+deltas shipped; frontend rename to `taken_at` landed with defensive helpers; live DB
+migration applied and verified via 87 backend tests (26/26 readings backfilled,
+30/30 job_rooms + 4/4 pins repointed to current versions via the d3e5a7c9b1f4
+one-shot sweep; permanent fix in e7b9c2f4a8d6 closes the root cause).
+
+**Migration landing order** (dependency order, not §0.2 numbering — B2 → S3+C2 → B1 → sweep → fork-fix → S5):
+`7a1f3b2c9d0e` (Step 1, B2 jobs.timezone) → `b2d4e6f8a1c3` (Step 2, S3+C2 moisture_pins columns + RPC stamp) → `c8f1a3d5b7e9` (Step 3, B1 reading_date→taken_at) → `d3e5a7c9b1f4` (one-shot repair of historical drift) → `e7b9c2f4a8d6` (permanent fork-restamp fix, lesson #29) → `f4c7e1b9a5d2` (Step 4, S5 dry-check trigger).
+
+- [x] **B1** (Step 3, migration `c8f1a3d5b7e9`): `reading_date DATE` → `taken_at TIMESTAMPTZ NOT NULL DEFAULT now()`; dropped `UNIQUE(pin_id, reading_date)`; backfilled noon Eastern (26/26 rows). RPC signature `p_reading_date DATE` → `p_taken_at TIMESTAMPTZ` with DROP-before-CREATE to avoid dual-overload drift (lesson #23).
+- [x] **B2** (Step 1, migration `7a1f3b2c9d0e`): `jobs.timezone TEXT NOT NULL DEFAULT 'America/New_York'`. **Zip-resolver still deferred to PR-D / spec 01F hook** — default is correct for US-Eastern jobs but over/undercounts billable days for other TZ jobs until the resolver populates at create time.
+- [x] **B3** (Step 3, frontend): sparkline + moisture-report + reading sheet all sort by `taken_at` and bucket to local day via `localDateFromTimestamp`. Multi-same-day readings collapse to one column in the summary table (latest wins); reading history list shows all same-day entries.
+- [x] **S3 / C1** (Step 2, migration `b2d4e6f8a1c3`): `moisture_pins.floor_plan_id UUID REFERENCES floor_plans(id) ON DELETE RESTRICT`. Stamped on create inside the atomic `create_moisture_pin_with_reading` RPC by looking up the room's `floor_plan_id` within the same transaction.
+- [x] **C2** (Step 2, migration `b2d4e6f8a1c3`): `moisture_pins.dry_standard_met_at TIMESTAMPTZ` nullable. Declared on `MoisturePinResponse` Pydantic schema (lesson #24 — FastAPI would otherwise strip it).
+- [ ] **S4:** `meter_photo_url` wired into reading entry UI, sparkline thumbnail, PDF export, "no photo" warning flag. **Deferred to a follow-up UX PR** — the column is populated when readings carry it, but the capture/display flow isn't live. Not blocking Phase 3 (equipment doesn't read meter photos directly); carrier-defensibility will surface the gap.
+- [x] **S5** (Step 4, migration `f4c7e1b9a5d2`): `trg_moisture_pin_dry_check` trigger on `moisture_pin_readings` INSERT — sets `dry_standard_met_at = NEW.taken_at` when pin crosses threshold, clears on re-wet. Per-pin override honored (C3); COALESCE(-infinity) guard on first-reading (CP3); out-of-order late-sync readings skipped. 6 runtime integration tests green. Equipment auto-close (PR-B) consumes this signal.
+
+**PR-A additions beyond the original §0.2 list:**
+- [x] **Fork re-stamp permanent fix** (migration `e7b9c2f4a8d6`): `save_floor_plan_version` now atomically re-stamps `job_rooms` + `moisture_pins` when it forks a new version. Closes the `floor_plan_id` drift that caused every pin to fall into the orphan bucket after multiple floor-plan edits. Lesson #29 in `pr-review-lessons.md` + integration test (`test_fork_restamp_invariant.py`) blocks regression from future CREATE OR REPLACE that drops the UPDATEs. **Extension rule:** new `floor_plan_id`-stamped columns (Phase 3 equipment, Phase 5 annotations) must append to `EXPECTED_RESTAMP_TABLES` in that test, forcing the fork RPC to carry matching UPDATEs.
+- [x] **Stale stamp one-shot repair** (migration `d3e5a7c9b1f4`): swept historical drift produced by the Phase 1 gap before the permanent fix landed. Idempotent — re-applying is a no-op.
 
 ### 10.2 Phase 3 — equipment + pin attribution
 
-**Schema**
-- [ ] `ALTER TABLE equipment_placements ADD COLUMN billing_scope`
-- [ ] **A1 (C6):** `ADD COLUMN equipment_size` + per-type valid-sizes CHECK (`chk_equipment_size_valid` — see §3.1 for the full predicate)
-- [ ] **A2 (C1):** harden existing `floor_plan_id` FK — `ON DELETE RESTRICT`, stamped from `jobs.floor_plan_id` at create, immutable
-- [ ] **S6:** `ADD COLUMN asset_tag`, `ADD COLUMN serial_number` + index `idx_equip_asset_tag`
-- [ ] `equipment_pin_assignments` table (with `note` column per §0.4 Q3, `equipment_moved` reason per S2) + indexes + RLS
+> **⚠️ CHECKLIST OBSOLETE (PR-B2 reversal, 2026-04-25):** the PR-B rows
+> below tick off pin-attachment work that was ROLLED BACK by PR-B2.
+> `place_equipment_with_pins`, `validate_pins_for_assignment`,
+> `equipment_pin_assignments`, and `billing_scope` no longer exist as
+> of Alembic head `d7a8b9c0e1f2`. Treat `[x]` marks in this subsection
+> as historical — the current shipping shape is in the "PR-B2 SCOPE
+> REVERSAL" block at the very top of this document. PR-C / PR-D
+> planning should read from that block, not from here.
 
-**RPCs**
-- [ ] `place_equipment_with_pins` (A1 + A2 + S6 + **C1 (floor_plan_id stamp)** + **C7 (array length check)** params, `generate_series` batch insert, validation-outside-loop)
-- [ ] `validate_pins_for_assignment` (cross-job + archive + **C8 (dry-pin rejection, SQLSTATE `22P02`)**)
-- [ ] **S2 (C4):** `move_equipment_placement` — tenant-scoped SELECT via `get_my_company_id()`, closes old + reopens new assignments atomically
-- [ ] **A3 (C5):** `compute_placement_billable_days` — tenant-scoped read, unified math per-pin + per-room in `jobs.timezone`
-- [ ] **S1 (C5):** `validate_placement_billable_days` — SECURITY DEFINER with tenant-scoped read
-- [ ] Amend Phase 2 `archive_moisture_pin` RPC to bulk-close assignments (§7)
+Each block is tagged with its PR so progress is trackable inline as we land PR-B → PR-C → PR-D. PR-A (Phase 2 deltas + permanent fork-restamp fix) is fully tracked above in §10.1.
 
-**API**
+**PR-B — Schema** (implemented, uncommitted on branch) ~~**[SUPERSEDED BY PR-B2]**~~
+
+All items below land in a single migration, `c2e4a6b8d0f3` (equipment_placements) and `d4f6b8a0c2e5` (equipment_pin_assignments), plus the invariant-test extension in the same PR.
+
+- [x] `billing_scope TEXT NOT NULL DEFAULT 'per_pin'` CHECK in ('per_pin', 'per_room') — derived from equipment_type at insert time (`c2e4a6b8d0f3`).
+- [x] **A1 (C6):** `equipment_size TEXT` + `chk_equipment_size_valid` CHECK pairing type↔size (air_mover ∈ {std, axial}; dehumidifier ∈ {std, large, xl, xxl}; non-drying types must be NULL) (`c2e4a6b8d0f3`).
+- [x] **A2 (C1):** `floor_plan_id UUID REFERENCES floor_plans(id) ON DELETE RESTRICT`; stamped from `jobs.floor_plan_id` at insert inside `place_equipment_with_pins`; treated as immutable thereafter (`c2e4a6b8d0f3`).
+- [x] **S6:** `asset_tag TEXT`, `serial_number TEXT` + partial index `idx_equip_asset_tag` on `(company_id, asset_tag) WHERE asset_tag IS NOT NULL` (`c2e4a6b8d0f3`).
+- [x] `equipment_pin_assignments` table with 5-value `unassign_reason` CHECK, `note TEXT` (§0.4 Q3), `chk_assign_order` strict-`>` duration CHECK, partial `uniq_active_assignment` (re-opens allowed after close), RESTRICT FKs on placement + pin (audit preservation), CASCADE FKs on job + company (denorm handles), RLS policy scoping by JWT (`d4f6b8a0c2e5`).
+- [x] **Lesson #29 extension:** `equipment_placements` appended to `EXPECTED_RESTAMP_TABLES` in `tests/integration/test_fork_restamp_invariant.py` so the fork RPC is now forced to re-stamp equipment on fork. Covered by the matching RPC amendment in `b7d9f1a3c5e8`.
+
+**PR-B — RPCs** (implemented, uncommitted)
+- [x] `ensure_job_mutable(p_job_id UUID)` plpgsql twin (CP1, `a1d3c5e7b9f2`) — mirror of the Python guard at `api/shared/guards.py`. Raises `P0002` for not-found/cross-tenant/soft-deleted; `42501` for archived status in `ARCHIVED_JOB_STATUSES`. Tenant derived from JWT via `get_my_company_id()`; no `p_company_id` param. 17 text-scan + runtime tests.
+- [x] `validate_pins_for_assignment(p_job_id, p_moisture_pin_ids[])` (`e6a8c0b2d4f7`) — collapsed `42501` for access failures (not-found/cross-tenant/cross-job) to prevent existence leak; dedicated `22P02` for dry-pin rejection (C8). Empty array no-ops so per-room equipment flows through without branch-per-caller. 17 tests.
+- [x] `place_equipment_with_pins(...)` (`f2a4c6e8b0d3`) — atomic N placements + N×M assignments. `generate_series(...) AS g(i)` for `p_asset_tags[g.i]` array subscripting (CP2); array-length validation (C7); floor_plan_id stamp from job (C1); type↔size + pin-scope mismatches rejected (`22023`); users.id lookup from `auth.uid()` before FK-stamped placed_by/assigned_by. 24 tests.
+- [x] **S2 (C4):** `move_equipment_placement(...)` (`a3c5e7b9d1f4`) — tenant-scoped SELECT via `get_my_company_id()`; `FOR NO KEY UPDATE` lock on placement row serializes concurrent moves per placement (PR-A M2 pattern); refuses to move a pulled placement; closes old assignments with reason `equipment_moved`; updates room + canvas coords; opens fresh assignments. `floor_plan_id` stamp preserved (drift would contradict `jobs.floor_plan_id`). 19 tests.
+- [x] **A3 (C5):** `compute_placement_billable_days(p_placement_id)` (`c5e7a9b1d3f6`) — STABLE SECURITY DEFINER, tenant-scoped read, unified math per-pin (union assignment spans) and per-room (placement's own span) using `AT TIME ZONE jobs.timezone` for distinct-local-day count. Cross-tenant raises `42501` rather than returning empty (CP5 — empty is misleading as "0 billable days").
+- [x] **S1 (C5):** `validate_placement_billable_days(p_placement_id)` (`c5e7a9b1d3f6`) — returns `TABLE(day, supported, reading_count, has_meter_photo)` per billable day. Per-pin: LEFT-JOINs readings taken on any pin assigned to this placement; per-room: returns all days as `supported=false` (no pin attribution; evidence chain is a `10-reports.md` follow-up). 21 tests cover both RPCs.
+- [ ] ~~Amend Phase 2 `archive_moisture_pin` RPC to bulk-close assignments (§7)~~ **Blocked** — see §10.5 "Pin archive mechanism missing" item. The RPC doesn't exist in Phase 2.
+- [x] Amend `save_floor_plan_version` to re-stamp `equipment_placements.floor_plan_id` on fork (`b7d9f1a3c5e8`) — symmetric with the PR-A `job_rooms` + `moisture_pins` re-stamps; lesson #29 extension. Invariant integration test now parametrizes over all three tables and passes.
+
+**PR-C — API**
 - [ ] Placement endpoints (POST/PATCH/DELETE/pull/move/billable-days) + `GET /billable-days` wraps A3 RPC
-- [ ] Bulk-close endpoint for pin archive path (dry-standard is now trigger-driven, S5)
+- [ ] Bulk-close endpoint for pin archive path (dry-standard is now trigger-driven — S5 shipped in PR-A migration `f4c7e1b9a5d2`)
 - [ ] Listing: equipment-serving-pin + pins-served-by-equipment
 
-**UX (per-pin)**
+**PR-C — UX (per-pin)**
 - [ ] Placement card: type, size selector (A1), quantity, pin multi-select (hidden for per-room)
 - [ ] Canvas: tap moisture pin → lists equipment currently serving it
 - [ ] Canvas: tap equipment → lists pins served + size badge
 - [ ] Canvas: orange "unassigned" warning for per-pin equipment with zero active assignments
-- [ ] **A4:** Auto-close toast on dry-standard hit + 24h undo window
+- [ ] **A4:** Auto-close toast on dry-standard hit + 24h undo window (frontend reacts to `moisture_pins.dry_standard_met_at` flipping non-NULL — the DB-side signal is already live from PR-A Step 4)
 - [ ] **S2:** Move-equipment gesture (long-press drag into new room triggers `move_equipment_placement`)
 
-**Tests**
-- [ ] All pin-the-invariant tests from §9.3 + new: `test_move_equipment_preserves_billable_day_continuity`, `test_dry_standard_auto_close_and_undo`, `test_equipment_size_required_for_dehu`, `test_floor_plan_id_stamped_immutable_and_restrict_delete` (C1), `test_unified_day_math_per_pin_and_per_room_equivalent`, `test_move_equipment_rejects_cross_tenant_placement_id` (C4), `test_compute_billable_days_rejects_cross_tenant_placement_id` (C5), `test_equipment_size_check_rejects_dehu_plus_axial` (C6), `test_place_rpc_rejects_mismatched_asset_tag_array_length` (C7), `test_validate_pins_rejects_dry_pin_with_22P02` (C8), `test_trigger_reads_per_pin_dry_standard_override` (C3), `test_trigger_ignores_out_of_order_reading_insert` (C3), `test_dry_standard_met_at_column_exists_and_nullable` (C2)
+**PR-B / PR-C — Tests**
+
+Shipped in PR-A (Phase 2 deltas):
+- [x] `test_trigger_reads_per_pin_dry_standard_override` (C3) — `tests/integration/test_dry_check_trigger_integration.py::test_per_pin_dry_standard_override_honored`
+- [x] `test_trigger_ignores_out_of_order_reading_insert` (C3) — `tests/integration/test_dry_check_trigger_integration.py::test_out_of_order_dry_reading_does_not_overwrite_wet_state`
+- [x] `test_dry_standard_met_at_column_exists_and_nullable` (C2) — `tests/test_migration_moisture_pins_floor_plan_dry_met.py::test_upgrade_adds_dry_standard_met_at_nullable`
+
+Shipped in PR-B (implementation uncommitted, tests land with the migrations):
+- [x] **C1 floor_plan_id RESTRICT + immutable stamp** — `test_migration_equipment_placements_table.py::test_floor_plan_id_fk_is_restrict_not_set_null` (file-level) + `test_place_equipment_with_pins_integration.py::test_floor_plan_id_stamped_from_job` (runtime).
+- [x] **C4 move rejects cross-tenant** — `test_move_equipment_placement_integration.py::test_bogus_placement_id_raises_P0002` (cross-tenant and not-found are deliberately collapsed to the same code to prevent existence leak).
+- [x] **C5 compute billable-days rejects cross-tenant** — `test_billable_days_rpcs_integration.py::test_bogus_placement_id_raises_42501`.
+- [x] **C6 size CHECK rejects type↔size mismatch** — `test_migration_equipment_placements_table.py::test_chk_equipment_size_valid_pairs_type_and_size` pins the CHECK predicate; runtime coverage via `test_place_equipment_with_pins_integration.py::test_per_pin_without_size_raises_22023` + `test_per_room_with_size_raises_22023`. (Dedicated dehu+axial integration test can be added in PR-C as it's caller-context-specific.)
+- [x] **C7 asset_tag array length mismatch** — `test_place_equipment_with_pins_integration.py::test_asset_tags_wrong_length_raises_22023` + `test_asset_tags_matching_length_succeeds` (positive-path order preservation).
+- [x] **C8 dry-pin rejection with 22P02** — `test_validate_pins_for_assignment_integration.py::test_dry_pin_raises_22P02` + `test_place_equipment_with_pins_integration.py::test_dry_pin_rejection_rolls_back` (atomic rollback verified).
+
+Owed in PR-C (end-to-end):
+- [ ] `test_move_equipment_preserves_billable_day_continuity`
+- [ ] `test_dry_standard_auto_close_and_undo`
+- [ ] `test_equipment_size_required_for_dehu`
+- [ ] `test_unified_day_math_per_pin_and_per_room_equivalent`
+
+General (any PR touching it):
 - [ ] Sibling-site grep checklist from §9.2
 
 ### 10.3 Cross-spec dependencies (call out in respective specs)
@@ -760,6 +919,107 @@ grep -rn "return.*# legacy\|# silently" backend/api/equipment/
 - **A5:** WTREQ monitoring labor — new spec
 - **N1:** Equipment-sizing suggestion engine (S500 calc from room dims) — new spec, Brett's competitive-moat ask
 - **N3:** Atmospheric/dehu-output readings — documentation-only delta in Phase 2 confirming co-existence path (not schema work)
+
+### 10.5 PR-E cleanup (post-PR-D follow-up)
+
+Tracked carry-forward items that surfaced during PR-B work but aren't in
+PR-B/C/D scope. Landing them after PR-D rather than slotting into an
+existing PR because they each need both a schema change AND a UX
+confirmation flow — paired deliveries land cleaner than split ones.
+
+**Room-delete cascade behavior** (surfaced during PR-B Step 3 review):
+- Current: `moisture_pins.room_id ON DELETE SET NULL` +
+  `equipment_placements.room_id ON DELETE SET NULL`. Pre-existing from
+  Phase 2; PR-B inherited the pattern on the new table.
+- Problem: deleting a room orphans pins + placements (row survives with
+  `room_id = NULL`, invisible on canvas but still in the DB). No data
+  corruption, but dead rows linger forever and billing evidence can be
+  silently orphaned.
+- Fix: both FKs → `ON DELETE RESTRICT`, plus a delete-room confirmation
+  modal that enumerates affected pins + placements + readings and
+  forces the tech to acknowledge the destruction before the DB
+  allows the delete to proceed.
+- Scope: 1 migration (FK behavior change) + 1 frontend modal
+  component + delete-room flow update. Both pieces belong together;
+  splitting them leaves either a silent-cascade window or a UI that
+  can't delete rooms.
+
+**Same-spot placement UX nudge** (surfaced during PR-B Step 4 review):
+- Moisture pins: no DB uniqueness on `(room_id, canvas_x, canvas_y)`.
+  Sometimes legitimate (e.g., drywall + wood subfloor at the same
+  corner), sometimes a misclick. Today: silently creates a duplicate.
+- Equipment: same-spot placement of the SAME type is intentional (the
+  "6 air movers in the kitchen" pattern). Same-spot placement of
+  DIFFERENT types needs auto-offset or cluster rendering.
+- Fix: frontend tolerance check on drop ("dropped within 15px of an
+  existing pin/placement — merge, nudge, or create a new one?"). No
+  DB change.
+
+**Cross-type overlap rendering** (surfaced during PR-B Step 4 review):
+- Moisture pin + equipment at the same spot is a data-valid state (two
+  different tables, different purposes). Visually the two icons would
+  overlap.
+- Fix: canvas rendering in PR-C gives them a fixed vertical offset
+  (moisture pin above, equipment below, e.g.) so both are always
+  visible. Pure visual polish, no data concern.
+
+**Duplicated auth.uid() → users.id lookup** (surfaced during PR-B Steps 5 + 6):
+- `place_equipment_with_pins` and `move_equipment_placement` each have
+  an identical 5-line SELECT to resolve the caller's internal
+  `users.id` from `auth.uid()`. Every future write RPC that needs to
+  stamp `placed_by` / `assigned_by` / `unassigned_by` will need the
+  same block.
+- Fix: extract a small plpgsql helper `get_my_user_id()` that mirrors
+  `get_my_company_id()`. One-line call, one place to update the
+  soft-delete filter. Pure DRY refactor — no behavior change.
+- Non-blocking: current duplication is 10 lines total across two
+  functions. Worth extracting before it becomes 50 lines across five.
+
+**Equipment placement auto-offset for stacked units** (re-affirmed in
+PR-B Step 5):
+- Same-type stacking at identical coordinates is intentional ("6 air
+  movers in the kitchen" → 6 rows all at the same canvas_x/y, rendered
+  as one icon with a "6" badge). This is the CORE pattern, not a gap.
+- But different-type stacking (dehu + air scrubber at the same spot)
+  falls under the "same-spot placement UX nudge" item above. Flagged
+  here only so the PR-C canvas work sees both items side-by-side and
+  resolves them consistently.
+
+**`jobs.timezone` IANA validator** (surfaced in PR-B round-1 M1 review):
+- `jobs.timezone TEXT NOT NULL DEFAULT 'America/New_York'` has no CHECK
+  or domain constraint. A PR-D zip-resolver bug could write an invalid
+  IANA name (empty string, typo like `America/Neverland`, deprecated
+  zone) and every `AT TIME ZONE v_tz` call in the billing RPCs would
+  fail at runtime — blocking the job's billing flow with an opaque
+  error.
+- Why non-blocking today: the default `'America/New_York'` is valid
+  and no other code path writes the column yet. The first bad write
+  can only come from PR-D's zip resolver.
+- Fix (when PR-D lands): add a trigger that validates the value
+  against `pg_timezone_names` on INSERT/UPDATE, raising a specific
+  error code PR-D can catch. Alternative: do the validation inside
+  the resolver and keep the column unconstrained.
+- Belongs in PR-D's scope, not PR-E, because the gap only matters
+  once PR-D writes non-default values.
+
+**Pin archive mechanism missing** (surfaced during PR-B Step 9 attempt):
+- The proposal §7 amendment assumed a Phase 2 RPC called
+  `archive_moisture_pin` existed and needed a one-line bulk-close
+  added for equipment-pin assignments. It doesn't — `moisture_pins`
+  has no `archived_at` / `deleted_at` column and no archive RPC.
+- Phase 2 shipped with hard-delete only. An accidental "Delete Pin"
+  click removes the row + readings + (now) cascades through the
+  equipment_pin_assignments RESTRICT check (which blocks the delete
+  loudly — safe for audit, but a rough UX).
+- Fix (needs own design work): decide whether pins get an
+  `archived_at TIMESTAMPTZ` (soft-delete with audit trail) or stay
+  hard-delete with RESTRICT guards. If soft-delete, build
+  `archive_moisture_pin` RPC that nulls `dry_standard_met_at` and
+  bulk-closes all open assignments with `unassign_reason =
+  'pin_archived'`. Design question, not a mechanical fix.
+
+None of these block PR-B, PR-C, or PR-D. They're the known pile for
+PR-E to clear.
 
 ## 11. Migration path
 
@@ -793,8 +1053,8 @@ All three originally-flagged open questions are resolved in §0.4. No open quest
 | Inventory hooks | None | `asset_tag`, `serial_number` optional columns (S6) |
 | Billing authority | N/A | Backend Postgres function `compute_placement_billable_days` (A3) |
 | Daily-reading validator | None | `validate_placement_billable_days` + carrier-appendix warning (S1) |
-| Net new tables | 0 | 1 (`equipment_pin_assignments`) |
-| Net new columns on `equipment_placements` | 0 | 4 (`billing_scope`, `equipment_size`, `asset_tag`, `serial_number`) — existing `floor_plan_id` FK is hardened, not added (C1) |
+| Net new tables | 0 | 2 (`equipment_placements` CREATE + `equipment_pin_assignments` CREATE — see §3.1 note re: M3) |
+| Net new columns on `equipment_placements` | n/a (table didn't exist) | n/a — table CREATEd fresh with all columns in final shape by migration `c2e4a6b8d0f3` (round-1 M3 correction). |
 | Phase 2 column changes forced | 0 | 4 (`readings.taken_at` replaces `reading_date`, `pins.floor_plan_id`, `pins.dry_standard_met_at` (C2), `jobs.timezone`) |
 | New RPCs | 0 | 5 (`place_equipment_with_pins`, `validate_pins_for_assignment`, `move_equipment_placement`, `compute_placement_billable_days`, `validate_placement_billable_days`) + 1 trigger (`trg_moisture_pin_dry_check`). All SECURITY DEFINER RPCs scoped to caller tenant via `get_my_company_id()` (C4, C5). |
 | New endpoints | 0 | 8 |
