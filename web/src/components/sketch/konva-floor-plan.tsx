@@ -88,6 +88,14 @@ interface KonvaFloorPlanProps {
      *  drywall to the top of the material dropdown. Optional because Phase 1
      *  room creation may not have captured them. */
     material_flags?: string[];
+    /** `job_rooms.floor_plan_id` for the room. Used by the moisture pin
+     *  layer as a secondary floor-resolution path: when a pin's joined
+     *  `floor_plan_id` is missing on the response, we fall back to the
+     *  room's recorded floor here so the strict floor gate still works.
+     *  Without this fallback a freshly-created pin's optimistic cache
+     *  entry (no floor_plan_id field) would leak onto every floor's
+     *  canvas via the name-match resolver. */
+    floor_plan_id?: string | null;
   }>;
   onCreateRoom?: (
     name: string,
@@ -127,6 +135,15 @@ interface KonvaFloorPlanProps {
    *  no floor active. Parent should open the pick-floor modal. */
   onDrawAttemptWithoutFloor?: () => void;
   jobId?: string;
+  /** Floor plan id of the active floor. When set, the moisture pin layer
+   *  filters strictly: only pins whose backend-joined `floor_plan_id`
+   *  matches are eligible for render. This closes the cross-floor leak
+   *  where a same-named room on another floor would, via the name-match
+   *  fallback in `resolveCanvasRoomCandidateIds`, pull pins onto the
+   *  wrong canvas (visible as floating pins outside any room polygon).
+   *  Pins with a null `floor_plan_id` (legacy / unbackfilled) bypass the
+   *  strict check and rely on the existing room-id resolution. */
+  activeFloorPlanId?: string | null;
   onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => void;
   onEditRoom?: () => void;
   /** Canvas mode — "sketch" (default) or "moisture". Drives tool filtering in
@@ -336,7 +353,7 @@ function MobileOpeningEditor({ type, isOpening, width, height, onWidthChange, on
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, onSelectionChange, onEditRoom, canvasMode = "sketch" }, ref) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, activeFloorPlanId, onSelectionChange, onEditRoom, canvasMode = "sketch" }, ref) {
   const modeConfig = CANVAS_MODES[canvasMode];
   // Only "sketch" mode permits sketch-entity interactions. In non-sketch modes
   // the sketch layer is read-only context; clicks on rooms/walls/doors/windows/
@@ -539,6 +556,34 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   // Pins whose room lives on another floor would otherwise render at
   // their original coordinates on top of an empty or unrelated canvas
   // — a pin without a surrounding room polygon.
+  //
+  // Floor-scoped property rooms — the same job_rooms list, narrowed to
+  // candidates safe to associate with the active floor. Used only by
+  // the pin RENDER and pin-FOLLOW paths (not by placement) as a
+  // safety net for already-corrupted data: pins whose room belongs to
+  // another floor stay hidden / un-translated even when the canvas
+  // room's `propertyRoomId` is wrong.
+  //
+  // The placement resolver intentionally does NOT use this list. The
+  // root-cause fix lives in `handleCreateRoom` (page.tsx): each canvas
+  // room now reliably owns a unique backend UUID, so the placement
+  // resolver's `propertyRoomId`-first path is correct without scoping.
+  // Floor-scoping placement on top of that just blocks the user from
+  // dropping pins on rooms drawn before the dedupe fix shipped.
+  //
+  // Three buckets, two get through:
+  //   1. floor_plan_id === activeFloorPlanId  →  KEEP
+  //   2. floor_plan_id IS NULL                →  KEEP (legacy)
+  //   3. floor_plan_id === some other floor   →  DROP
+  const floorScopedPropertyRooms = useMemo(() => {
+    if (!activeFloorPlanId || !propertyRooms) return propertyRooms;
+    return propertyRooms.filter(
+      (pr) =>
+        pr.floor_plan_id == null
+        || pr.floor_plan_id === activeFloorPlanId,
+    );
+  }, [propertyRooms, activeFloorPlanId]);
+
   const createPin = useCreateMoisturePin(jobId ?? "");
   const updatePin = useUpdateMoisturePin(jobId ?? "");
   const deletePin = useDeleteMoisturePin(jobId ?? "");
@@ -635,7 +680,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       // when the name is non-unique ("Bedroom 1 / Bedroom 2") — guards
       // the HIGH #5 regression where dragging Bedroom 2 would
       // translate pins on Bedroom 1 via the first-match-wins trap.
-      const candidateIds = resolveCanvasRoomCandidateIds(room, propertyRooms);
+      const candidateIds = resolveCanvasRoomCandidateIds(room, floorScopedPropertyRooms);
       if (candidateIds.size === 0) continue;
 
       // Collect pins to move so we do a single cache update before
@@ -646,6 +691,24 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       const pinsToMove: MoisturePin[] = [];
       for (const pin of moisturePins) {
         if (!pin.room_id || !candidateIds.has(pin.room_id)) continue;
+        // Same strict floor gate as the render filter — otherwise a
+        // same-named room on another floor would, via the name-match
+        // candidate, drag pins that don't live on this canvas. Two-
+        // step resolution mirrors the render filter so a freshly-
+        // created pin (no joined floor_plan_id yet) is still gated.
+        if (activeFloorPlanId) {
+          let pinFloorId: string | null | undefined = pin.floor_plan_id;
+          if (!pinFloorId && propertyRooms) {
+            const room = propertyRooms.find((pr) => pr.id === pin.room_id);
+            pinFloorId = room?.floor_plan_id;
+          }
+          // Only reject when we *know* the pin is on a different
+          // floor. Null floor_plan_id (legacy) falls through — the
+          // candidate-id check above is already floor-scoped, so the
+          // pin can only land here if its room genuinely matches one
+          // on this canvas.
+          if (pinFloorId && pinFloorId !== activeFloorPlanId) continue;
+        }
         pinsToMove.push(pin);
       }
       if (pinsToMove.length === 0) continue;
@@ -675,7 +738,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         });
       }
     }
-  }, [state.rooms, moisturePins, propertyRooms, queuePinCoordUpdate, pinQueryClient, jobId]);
+  }, [state.rooms, moisturePins, floorScopedPropertyRooms, queuePinCoordUpdate, pinQueryClient, jobId, activeFloorPlanId]);
 
   // Long-press resize mode for mobile
   const [resizeActive, setResizeActive] = useState(false);
@@ -1055,8 +1118,28 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         // match is unambiguous. If BOTH the propertyRoomId AND the
         // safe name match fail we nudge.
         const canvasRoom = displayRooms.find((r) => r.id === roomId);
+        // Resolve against the FLOOR-SCOPED property-rooms list. The
+        // resolver's propertyRoomId-first path (handles already-
+        // backfilled rooms) is unaffected; only the name-match
+        // FALLBACK uses this list. Scoping the fallback is required
+        // because of orphan canvas rooms — drawn rectangles whose
+        // `propertyRoomId` never got backfilled (race / stale state /
+        // legacy data). For those, an unscoped name fallback can
+        // resolve to a same-named row on a different floor, and the
+        // pin lands cross-floor. Examples:
+        //
+        //   basement canvas: "Bathroom" with propertyRoomId=null
+        //   main canvas:     "Bathroom" with propertyRoomId=null
+        //   backend `680a78a7…`: "Bathroom" on main
+        //
+        // Unscoped resolver returns `680a78a7…` for both basement
+        // and main taps → every pin lands on main and leaks. Scoped
+        // resolver returns null on basement → triggers `onCreateRoom`
+        // for the orphan canvas room, which POSTs a new basement
+        // Bathroom row, backfills the canvas room's propertyRoomId,
+        // and the next tap places correctly.
         const propertyRoom = canvasRoom
-          ? resolveCanvasRoomBackendRow(canvasRoom, propertyRooms)
+          ? resolveCanvasRoomBackendRow(canvasRoom, floorScopedPropertyRooms)
           : undefined;
         if (!propertyRoom) {
           // Canvas room has no backend twin (never synced, or stale
@@ -1086,7 +1169,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         });
       }
     },
-    [isSketchMode, tool, canvasMode, readOnly, stagePos, stageScale, propertyRooms, displayRooms, deleteElement, triggerNudge, onCreateRoom],
+    [isSketchMode, tool, canvasMode, readOnly, stagePos, stageScale, propertyRooms, floorScopedPropertyRooms, displayRooms, deleteElement, triggerNudge, onCreateRoom],
   );
 
   // Drag a pin to fine-tune its position. The drag updates the Konva
@@ -1512,6 +1595,15 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     // canvas. Hand off to the parent, which merges the room into the target
     // floor's canvas and switches. We clear local state so the rectangle
     // doesn't briefly appear on this (wrong) canvas before the remount.
+    //
+    // Gated on `activeFloorLevel` being truthy: a fresh property with no
+    // floors uses the regular `onCreateRoom` path (the parent's
+    // ensure-floor logic seeds the floor + canvas before saving the
+    // first room). The race that used to land `job_rooms.floor_plan_id`
+    // as NULL on first-room creates is closed at the parent via the
+    // `floorPlanIdOverride` parameter on `handleCreateRoom` plus the
+    // dedupe-by-(name, floor, unclaimed) check — neither of which
+    // requires this branch to fire on a fresh property.
     if (
       data.floorLevel
       && activeFloorLevel
@@ -2490,7 +2582,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               // translation + visibility filters (HIGH #5).
               const linkedPropertyRoom = resolveCanvasRoomBackendRow(
                 room,
-                propertyRooms,
+                floorScopedPropertyRooms,
               );
               const isAffected = !!linkedPropertyRoom?.affected;
               const isDimmed = affectedOverlay && !isAffected;
@@ -3878,6 +3970,35 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               {moisturePins
                 .filter((pin) => {
                   if (!pin.room_id) return false;
+                  // Strict floor gate. When the active floor id is
+                  // known, the pin must resolve to the same floor.
+                  // Resolution order:
+                  //   1. `pin.floor_plan_id` from the backend join
+                  //      (`job_rooms.floor_plan_id` via the embed in
+                  //      `list_pins`). Authoritative when present.
+                  //   2. Look up `pin.room_id` in `propertyRooms` and
+                  //      use that row's `floor_plan_id`. Covers the
+                  //      window where a freshly-created pin lands in
+                  //      the cache before the list refetch decorates
+                  //      it with the joined floor id.
+                  //   3. Neither resolves → unknown floor. Don't
+                  //      reject (legacy / unbackfilled rooms would
+                  //      vanish entirely); fall through to the
+                  //      room-id resolver below, which is itself
+                  //      floor-scoped via `floorScopedPropertyRooms`.
+                  if (activeFloorPlanId) {
+                    let pinFloorId: string | null | undefined =
+                      pin.floor_plan_id;
+                    if (!pinFloorId && propertyRooms) {
+                      const room = propertyRooms.find(
+                        (pr) => pr.id === pin.room_id,
+                      );
+                      pinFloorId = room?.floor_plan_id;
+                    }
+                    if (pinFloorId && pinFloorId !== activeFloorPlanId) {
+                      return false;
+                    }
+                  }
                   // Visible if pin.room_id hits any candidate id for
                   // any canvas room on this floor. The shared
                   // resolver merges propertyRoomId (backfilled) with
@@ -3889,7 +4010,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                   for (const canvasRoom of displayRooms) {
                     const ids = resolveCanvasRoomCandidateIds(
                       canvasRoom,
-                      propertyRooms,
+                      floorScopedPropertyRooms,
                     );
                     if (ids.has(pin.room_id)) return true;
                   }

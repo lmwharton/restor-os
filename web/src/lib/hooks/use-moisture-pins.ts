@@ -71,9 +71,42 @@ export function useUpdateMoisturePin(jobId: string) {
       ...body
     }: UpdateMoisturePinBody & { pinId: string }) =>
       apiPatch<MoisturePin>(`/v1/jobs/${jobId}/moisture-pins/${pinId}`, body),
-    onSuccess: (_pin, { pinId }) => {
-      qc.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
-      qc.invalidateQueries({ queryKey: ["moisture-pin-readings", pinId] });
+    onSuccess: (_pin, variables) => {
+      // Coord-only PATCHes (the pin-follow drag path: dragging a room
+      // translates each child pin via canvas_x/canvas_y) skip the
+      // moisture-pins invalidation. Three reasons:
+      //
+      //   1. The pin-follow effect already wrote the new positions
+      //      optimistically via `setQueryData`; the PATCH succeeded,
+      //      so the server agrees. There is no drift for the
+      //      invalidation to repair.
+      //
+      //   2. The invalidation triggers a refetch. During a multi-pin
+      //      drag, PATCHes fire serially via `queuePinCoordUpdate` —
+      //      pin A succeeds and refetches BEFORE pin B's PATCH lands,
+      //      so the refetch returns pin B at its pre-drag position.
+      //      The cache snaps back to mixed pre/post-drag positions
+      //      and the canvas re-renders that way. This is exactly the
+      //      "some pins follow, some don't" flakiness Samhith reported.
+      //
+      //   3. A canvas auto-save Case-3 fork remounts KonvaFloorPlan
+      //      via `key={activeFloor?.id}`. The remount re-reads pin
+      //      positions from the React Query cache. If the cache was
+      //      mid-refetch (or finished with a stale value), pins
+      //      render at wrong positions despite the room being at the
+      //      correct new spot — the visible "out-of-sync after
+      //      refresh" symptom.
+      //
+      // The reading-history cache stays invalidated because reading
+      // mutations (separate hooks) can change the latest_reading
+      // embedded on a pin row.
+      const isCoordOnly = Object.keys(variables).every(
+        (k) => k === "pinId" || k === "canvas_x" || k === "canvas_y",
+      );
+      if (!isCoordOnly) {
+        qc.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
+        qc.invalidateQueries({ queryKey: ["moisture-pin-readings", variables.pinId] });
+      }
     },
   });
 }

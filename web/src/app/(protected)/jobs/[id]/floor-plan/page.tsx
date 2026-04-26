@@ -842,15 +842,79 @@ export default function FloorPlanPage({
       affected?: boolean;
     },
     canvasRoomId?: string,
+    /** Explicit floor_plan_id to attach the new room to. Overrides
+     *  `activeFloorIdRef.current`. Callers that just resolved a floor
+     *  via `ensureFloor()` (the cross-floor create path on a fresh
+     *  property, in particular) should pass `targetFloor.id` here so
+     *  the POST doesn't race the ref update — `activeFloorId` only
+     *  syncs on re-render after the active-floor switch effect runs,
+     *  which is *after* this synchronous create call.
+     *  Without this override, fresh-property first-room creates POSTed
+     *  with `floor_plan_id = NULL`, producing the orphan-room data
+     *  corruption that leaks pins across every floor referencing the
+     *  orphan UUID. */
+    floorPlanIdOverride?: string,
   ) => {
-    // If the room already exists in Property Layout, link the just-drawn
-    // canvas room to it and skip create. Without this backfill, the canvas
-    // room sits with propertyRoomId=undefined and the save loop falls back
-    // to name-match — which fails when two canvas rooms share a name (both
-    // collapse onto the same backend row, producing duplicate PATCHes and
-    // duplicate wall-sync cycles). Spec 01C H3/CF3 calls for ID matching;
-    // this closes the creation-path gap where the ID was never piped back.
-    const existing = jobRooms?.find((r) => r.room_name === name);
+    // ── Hard guard: refuse to create a room without a resolved
+    //    floor_plan_id. ──────────────────────────────────────────
+    // Every pin's floor membership is derived through the join
+    // `moisture_pins.room_id → job_rooms.floor_plan_id`. A room
+    // persisted with `floor_plan_id = NULL` produces pins whose floor
+    // membership the render filter can't determine, and they leak
+    // visually across every floor whose canvas references them.
+    //
+    // We resolve the floor in this priority order:
+    //   1. `floorPlanIdOverride` — explicit, post-`ensureFloor` value.
+    //   2. `activeFloorIdRef.current` — the active floor at call time.
+    // If neither resolves, bail loudly so a future regression to the
+    // create path surfaces as a console.warn instead of corrupt data.
+    const resolvedFloorPlanId =
+      floorPlanIdOverride ?? activeFloorIdRef.current;
+    if (!resolvedFloorPlanId) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        "[handleCreateRoom] aborting: no floor_plan_id resolved. A path bypassed the pick-floor gate.",
+        { name, canvasRoomId },
+      );
+      return;
+    }
+
+    // Hard rule (per Samhith): every canvas room must own a unique
+    // `job_rooms` UUID. Pins reference rooms by `room_id`, never by
+    // name, and two canvas rooms can never share that UUID — otherwise
+    // a pin placed on one renders on the other.
+    //
+    // We still want to BIND a freshly-drawn canvas room to a pre-
+    // declared Property Layout row when the user finally draws it
+    // (otherwise we'd duplicate the row), but only when nothing else
+    // already owns that row. The dedupe key is therefore three-part:
+    //
+    //   1. Same room name.
+    //   2. Same floor (`floor_plan_id`, or null for legacy / pre-
+    //      multi-floor rows we can't prove a floor for).
+    //   3. UNCLAIMED — no other canvas room on this floor has already
+    //      bound to that backend UUID. This is the part that broke
+    //      same-floor same-name placements: two "Bedroom"s on main
+    //      used to collapse onto the same backend row because the
+    //      old check stopped at (1) + (2) and re-bound the second
+    //      drawing to the row the first was already using.
+    //
+    // If no existing row qualifies, we POST a fresh `job_rooms` row.
+    // Two "Bedroom"s on the same floor end up as two distinct UUIDs,
+    // pins stay attributed to the room they were placed on, and the
+    // floor-plan editor stops having to disambiguate by name.
+    const claimedBackendIds = new Set(
+      canvasRef.current
+        ?.getCurrentState()
+        .rooms.map((r) => r.propertyRoomId)
+        .filter((id): id is string => !!id) ?? [],
+    );
+    const existing = jobRooms?.find(
+      (r) =>
+        r.room_name === name
+        && (r.floor_plan_id == null || r.floor_plan_id === resolvedFloorPlanId)
+        && !claimedBackendIds.has(r.id),
+    );
     if (existing) {
       if (canvasRoomId) canvasRef.current?.setRoomPropertyId(canvasRoomId, existing.id);
       return;
@@ -867,7 +931,7 @@ export default function FloorPlanPage({
         // orphan rows that rendered fine in the editor — because the
         // editor keys off canvas_data, not `job_rooms.floor_plan_id`
         // — but broke every join-based consumer.
-        floor_plan_id: activeFloorIdRef.current ?? undefined,
+        floor_plan_id: resolvedFloorPlanId,
         length_ft: dimensions?.height ?? null,
         width_ft: dimensions?.width ?? null,
         // Persist the form's metadata so floor_level / room_type / ceiling / etc.
@@ -1913,16 +1977,28 @@ export default function FloorPlanPage({
       saveStatusTimer.current = setTimeout(() => setSaveStatus("idle"), 2000);
 
       // Create the job_rooms row with metadata (floor_level locked to target).
+      // Pass `targetFloor.id` explicitly so handleCreateRoom doesn't race
+      // the activeFloorId state update — on a fresh property we just
+      // created the floor a few lines above and the React ref hasn't
+      // re-rendered yet, so `activeFloorIdRef.current` could still be
+      // null. The explicit override guarantees the new room's
+      // `floor_plan_id` is set deterministically.
       const widthFt = Math.round((pendingBounds.width / gridSize) * 10) / 10;
       const heightFt = Math.round((pendingBounds.height / gridSize) * 10) / 10;
-      handleCreateRoom(roomData.name, { width: widthFt, height: heightFt }, {
-        roomType: roomData.roomType,
-        ceilingHeight: roomData.ceilingHeight,
-        ceilingType: roomData.ceilingType,
-        floorLevel: targetLevel,
-        materialFlags: roomData.materialFlags,
-        affected: roomData.affected,
-      });
+      handleCreateRoom(
+        roomData.name,
+        { width: widthFt, height: heightFt },
+        {
+          roomType: roomData.roomType,
+          ceilingHeight: roomData.ceilingHeight,
+          ceilingType: roomData.ceilingType,
+          floorLevel: targetLevel,
+          materialFlags: roomData.materialFlags,
+          affected: roomData.affected,
+        },
+        undefined,
+        targetFloor.id,
+      );
     } catch (err) {
       // Round-3 second critical review (HIGH #1 sibling-miss):
       // cross-floor save previously swallowed 412 into a generic "error"
@@ -2169,6 +2245,11 @@ export default function FloorPlanPage({
             // float carpet_pad + drywall to the top of the material dropdown.
             // Coerce null → undefined so the prop type stays optional[].
             material_flags: r.material_flags ?? undefined,
+            // floor_plan_id is the secondary floor-resolution path for
+            // the moisture pin filter: when a pin's joined floor_plan_id
+            // is missing (freshly-created cache entry), the filter looks
+            // up the room here to learn which floor to gate against.
+            floor_plan_id: r.floor_plan_id,
           }))}
           onCreateRoom={handleCreateRoom}
           activeFloorLevel={activeFloorLevel}
@@ -2176,6 +2257,7 @@ export default function FloorPlanPage({
           noActiveFloor={!activeFloor && !isJobArchived}
           onDrawAttemptWithoutFloor={() => setPickFloorOpen(true)}
           jobId={jobId}
+          activeFloorPlanId={activeFloorId}
           onSelectionChange={handleSelectionChange}
           onEditRoom={handleDesktopEditRoom}
           canvasMode={canvasMode}
