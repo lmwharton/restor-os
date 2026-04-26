@@ -71,6 +71,17 @@ export function useUpdateMoisturePin(jobId: string) {
       ...body
     }: UpdateMoisturePinBody & { pinId: string }) =>
       apiPatch<MoisturePin>(`/v1/jobs/${jobId}/moisture-pins/${pinId}`, body),
+    // Rollback the optimistic cache when a PATCH fails. Without this, a
+    // 422 (e.g. backend bounds rejection), 403, or any network error
+    // leaves the pin-follow `setQueryData` write in place and the canvas
+    // renders the pin at coordinates the server never accepted. Hard
+    // refresh appears to "fix" it but actually exposes the pre-existing
+    // divergence: the cache was lying. Invalidating on error forces a
+    // refetch so the canvas stays consistent with server truth on every
+    // failed mutation, regardless of cause.
+    onError: () => {
+      qc.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
+    },
     onSuccess: (_pin, variables) => {
       // Coord-only PATCHes (the pin-follow drag path: dragging a room
       // translates each child pin via canvas_x/canvas_y) skip the

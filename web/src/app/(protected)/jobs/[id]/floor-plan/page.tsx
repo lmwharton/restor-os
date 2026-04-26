@@ -1450,6 +1450,20 @@ export default function FloorPlanPage({
           reconcileSavedVersion(
             queryClient, jobId, currentFloor.id, savedVersion, setActiveFloorId,
           );
+          // Case-3 fork only: floor_plans.id rotated, so the canvas-side
+          // per-floor pin filter (`pin.floor_plan_id !== activeFloorPlanId`
+          // → drop) would hide every existing pin until a hard refresh.
+          // We DO NOT invalidate on every save — that re-introduces the
+          // multi-pin drag race commit 731c061 closed (refetch lands
+          // between pin A's and pin B's queued PATCHes, returns mixed
+          // server state, the pin-follow effect re-PATCHes B against the
+          // wrong base position, and the wrong coords land permanently
+          // on the server). Pure position drags don't change the pin's
+          // joined floor_plan_id, so the cache stays correct without
+          // any invalidation here.
+          if (savedVersion.id !== currentFloor.id) {
+            queryClient.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
+          }
         } else {
           // No floor plan yet — create the floor plan shell first (metadata only),
           // then save canvas through the versioning endpoint.
@@ -1642,6 +1656,11 @@ export default function FloorPlanPage({
         syncWallsToBackend(canvasData, jobRooms)
           .then(() => queryClient.invalidateQueries({ queryKey: ["rooms", jobId] }))
           .catch(() => {});
+
+        // Note: moisture-pins invalidation is NOT here. It only fires
+        // when Case-3 fork detected (above, after reconcileSavedVersion).
+        // Putting an unconditional invalidation here re-introduces the
+        // multi-pin drag race that commit 731c061 closed.
 
         // Success — clear local backup, reset retries, show saved.
         // Record the saved signature so an immediate re-invoke with the
@@ -2102,6 +2121,14 @@ export default function FloorPlanPage({
             queryClient.invalidateQueries({ queryKey: ["jobs", jobId] });
             queryClient.invalidateQueries({ queryKey: ["rooms", jobId] });
             queryClient.invalidateQueries({ queryKey: ["floor-plans", jobId] });
+            // Pin → room → floor join is server-computed and embedded on
+            // each pin row. Sketch saves can change job_rooms.floor_plan_id
+            // (cross-floor moves) or the room->floor binding via canvas_data
+            // dedupe, so the cached pin payload's floor_plan_id goes stale.
+            // Without this invalidation, soft-navigating into Moisture mode
+            // shows pins on the old floor (or as orphans, which the canvas
+            // doesn't render) until the user hard-refreshes.
+            queryClient.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
             router.push(`/jobs/${jobId}`);
           }}
           aria-label="Back to job"

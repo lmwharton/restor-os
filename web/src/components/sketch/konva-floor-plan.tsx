@@ -353,6 +353,15 @@ function MobileOpeningEditor({ type, isOpening, width, height, onWidthChange, on
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
+/** Canvas coordinate upper bound, mirrored from the backend's
+ *  moisture-pin schema (`canvas_x/y: Decimal = Field(..., ge=0, le=10000)`
+ *  in backend/api/moisture_pins/schemas.py). Rooms must stay inside the
+ *  same bounds the backend allows pins to live in — otherwise pin-follow
+ *  computes coords the backend rejects, and the optimistic cache
+ *  diverges from server state on every drag past the origin. Update
+ *  this constant in lockstep with the schema if either side changes. */
+const CANVAS_BOUND = 10000;
+
 const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, activeFloorPlanId, onSelectionChange, onEditRoom, canvasMode = "sketch" }, ref) {
   const modeConfig = CANVAS_MODES[canvasMode];
   // Only "sketch" mode permits sketch-entity interactions. In non-sketch modes
@@ -715,6 +724,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
       // Number() casts: backend serializes NUMERIC as strings ("150.00"),
       // and Math.round("150.00" + 130) would JS-concat → NaN.
+      // clampToCanvas: defense in depth. Room drag is now bounds-clamped
+      // (room dragBoundFunc above), so a pin should never compute past
+      // [0, CANVAS_BOUND]. If a future code path moves a room without
+      // going through dragBoundFunc, this stops the bad PATCH at the
+      // source instead of relying on the backend 422.
+      const clampToCanvas = (v: number) =>
+        Math.max(0, Math.min(CANVAS_BOUND, v));
       pinQueryClient.setQueryData<MoisturePin[]>(
         ["moisture-pins", jobId ?? ""],
         (cached) => {
@@ -724,8 +740,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             if (!target) return p;
             return {
               ...p,
-              canvas_x: Math.round(Number(target.canvas_x) + dx),
-              canvas_y: Math.round(Number(target.canvas_y) + dy),
+              canvas_x: clampToCanvas(Math.round(Number(target.canvas_x) + dx)),
+              canvas_y: clampToCanvas(Math.round(Number(target.canvas_y) + dy)),
             };
           });
         },
@@ -733,8 +749,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
 
       for (const pin of pinsToMove) {
         queuePinCoordUpdate(pin.id, {
-          canvas_x: Math.round(Number(pin.canvas_x) + dx),
-          canvas_y: Math.round(Number(pin.canvas_y) + dy),
+          canvas_x: clampToCanvas(Math.round(Number(pin.canvas_x) + dx)),
+          canvas_y: clampToCanvas(Math.round(Number(pin.canvas_y) + dy)),
         });
       }
     }
@@ -2613,8 +2629,26 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 // room. Polygons use the Konva group-at-origin trick and
                 // their overlap semantics are more complex — scoped out.
                 dragBoundFunc={isPolygon ? undefined : (pos) => {
-                  const localX = (pos.x - stagePos.x) / stageScale;
-                  const localY = (pos.y - stagePos.y) / stageScale;
+                  const localXraw = (pos.x - stagePos.x) / stageScale;
+                  const localYraw = (pos.y - stagePos.y) / stageScale;
+                  // Clamp to canvas bounds [0, CANVAS_BOUND]. The backend
+                  // moisture-pin schema enforces canvas_x/y ∈ [0, 10000]
+                  // (backend/api/moisture_pins/schemas.py:78). When a room
+                  // is dragged past the origin, pin-follow computes a
+                  // negative target coord, the PATCH 422s, and the
+                  // optimistic cache + server diverge — pin renders at
+                  // its old spot while the room renders at its new spot,
+                  // and hard refresh doesn't fix it because the divergence
+                  // is recorded across both sides. Clamp here so rooms
+                  // cannot leave the canvas a pin is allowed to live in.
+                  const localX = Math.max(
+                    0,
+                    Math.min(localXraw, CANVAS_BOUND - room.width),
+                  );
+                  const localY = Math.max(
+                    0,
+                    Math.min(localYraw, CANVAS_BOUND - room.height),
+                  );
                   const proposedLeft = localX;
                   const proposedRight = localX + room.width;
                   const proposedTop = localY;
