@@ -289,13 +289,19 @@ def _shared_view_table_router_with_data(
             return t
         if name == "moisture_pins":
             # Mirror the service's query shape: .select(…).eq(job_id)
-            # .eq(company_id).order("created_at").order(taken_at, foreign_table).execute()
+            # .eq(company_id).order("created_at").order(taken_at, foreign_table)
+            # .limit(500, foreign_table="readings").execute()
             # The fake just returns whatever moisture_pins was set to;
-            # the service unwraps `.data` and passes through.
+            # the service unwraps `.data` and passes through. The .limit()
+            # was added in round-3 review (finding #9, defensive cap on
+            # the readings embed) — without the matching mock link the
+            # chain returns a fresh MagicMock and pins silently come
+            # back empty.
             t = AsyncSupabaseMock()
             (
                 t.select.return_value.eq.return_value.eq.return_value.order
-                .return_value.order.return_value.execute.return_value
+                .return_value.order.return_value.limit.return_value
+                .execute.return_value
             ) = MagicMock(data=moisture_pins)
             return t
         if name == "floor_plans":
@@ -1061,36 +1067,83 @@ class TestPublicSharedView:
             assert response.status_code == 403
             assert response.json()["error_code"] == "SHARE_REVOKED"
 
-    def test_public_shared_view_redacts_sensitive(
-        self,
-        client,
-        mock_job_id,
-        mock_company_id,
-        mock_job_data,
-    ):
-        """Shared view redacts customer_phone, customer_email, and claim_number."""
-        mock_admin = AsyncSupabaseMock()
-        raw_token = "d" * 32
-        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-        link_data = _make_share_link_data(mock_job_id, mock_company_id, token_hash)
+    def test_public_shared_view_redacts_sensitive(self):
+        """The public-portal redaction is now enforced by PostgREST
+        `.select(<allowlist>)` rather than Python `.pop()` (round-3
+        review #3 + pr-review-lessons #35 — blacklists default-leak
+        every new column). The unit-of-redaction is the allowlist
+        string itself, so this test asserts against the exported
+        constants directly: every PII / tech-internal column is
+        absent from the relevant allowlist, and every column the
+        portal genuinely needs is present.
 
-        job_with_pii = {
-            **mock_job_data,
-            "customer_phone": "555-SECRET",
-            "customer_email": "secret@example.com",
-            "claim_number": "CLM-SECRET",
-        }
-        _shared_view_table_router(mock_admin, link_data, job_with_pii)
+        The previous shape of this test (seed a mock with PII fields,
+        assert they're missing from the response) silently passed in
+        production but failed here because `AsyncSupabaseMock` doesn't
+        honor `.select()` filtering — the redaction lived in Python,
+        not the mock. With Python-side `.pop()` removed, the mock
+        leaks the PII through. Asserting on the constants is the
+        honest contract test.
+        """
+        from api.sharing.service import (
+            _PUBLIC_JOB_COLUMNS,
+            _PUBLIC_LINE_ITEM_COLUMNS,
+            _PUBLIC_PHOTO_COLUMNS,
+            _PUBLIC_ROOM_COLUMNS,
+        )
 
-        with _patch_public_only(mock_admin):
-            response = client.get(f"/v1/shared/{raw_token}")
-            assert response.status_code == 200
-            job = response.json()["job"]
-            assert "customer_phone" not in job
-            assert "customer_email" not in job
-            assert "claim_number" not in job
-            assert job["customer_name"] == "John Smith"
-            assert job["address"] == "123 Main St"
+        # Helper — split a comma-separated allowlist string into a set
+        # for membership checks that don't get fooled by substrings
+        # (e.g. "customer_name" must not match "customer_phone").
+        def _cols(allowlist: str) -> set[str]:
+            return {c.strip() for c in allowlist.split(",")}
+
+        job_cols = _cols(_PUBLIC_JOB_COLUMNS)
+        room_cols = _cols(_PUBLIC_ROOM_COLUMNS)
+        photo_cols = _cols(_PUBLIC_PHOTO_COLUMNS)
+        line_item_cols = _cols(_PUBLIC_LINE_ITEM_COLUMNS)
+
+        # PII / tech-internal must NOT be in the jobs allowlist.
+        assert "customer_phone" not in job_cols
+        assert "customer_email" not in job_cols
+        assert "claim_number" not in job_cols
+        assert "notes" not in job_cols
+        assert "tech_notes" not in job_cols
+        assert "loss_cause" not in job_cols
+        assert "latitude" not in job_cols
+        assert "longitude" not in job_cols
+        assert "assigned_to" not in job_cols
+        assert "created_by" not in job_cols
+        assert "updated_by" not in job_cols
+        # adjuster_* family — guard each likely column name.
+        for col in ("adjuster_name", "adjuster_phone", "adjuster_email"):
+            assert col not in job_cols, f"{col} must not be in jobs allowlist"
+
+        # Required for the portal to render anything useful.
+        assert "id" in job_cols
+        assert "customer_name" in job_cols
+        assert "address_line1" in job_cols
+        assert "status" in job_cols
+        assert "timezone" in job_cols  # round-2 H2 pin
+
+        # Rooms allowlist excludes tech notes + V2 sketch internals.
+        assert "notes" not in room_cols
+        assert "room_sketch_data" not in room_cols
+        assert "created_by" not in room_cols
+        assert "room_name" in room_cols
+        assert "square_footage" in room_cols
+
+        # Photos allowlist excludes the AI scoping flag and tech-named
+        # filename.
+        assert "filename" not in photo_cols
+        assert "selected_for_ai" not in photo_cols
+        assert "created_by" not in photo_cols
+        assert "storage_url" in photo_cols
+        assert "caption" in photo_cols
+
+        # line_items allowlist documents Spec 02's public contract.
+        assert "code" in line_item_cols
+        assert "description" in line_item_cols
 
     def test_public_shared_view_invalid_token(self, client):
         """GET /v1/shared/{token} with unknown token -> 404."""
@@ -1513,11 +1566,13 @@ class TestPublicSharedView:
             if name == "moisture_pins":
                 # Simulate the schema-cache-miss case the narrowed
                 # except tolerates. Should NOT raise to the caller;
-                # should land moisture_access='unavailable'.
+                # should land moisture_access='unavailable'. Mirrors
+                # the service chain including the round-3 .limit() cap.
                 t = AsyncSupabaseMock()
                 (
                     t.select.return_value.eq.return_value.eq.return_value
-                    .order.return_value.order.return_value.execute.side_effect
+                    .order.return_value.order.return_value.limit.return_value
+                    .execute.side_effect
                 ) = APIError({"code": "PGRST205", "message": "missing"})
                 return t
             if name == "line_items":

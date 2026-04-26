@@ -245,6 +245,7 @@ class TestArchiveGuardOnMutations:
                     pin_id=ids["pin_id"],
                     job_id=ids["job_id"],
                     company_id=ids["company_id"],
+                    user_id=ids["user_id"],
                     body=body,
                 )
         assert exc.value.error_code == "JOB_ARCHIVED"
@@ -352,6 +353,7 @@ class TestCrossJobPinRejection:
                     pin_id=ids["pin_id"],
                     job_id=ids["other_job_id"],
                     company_id=ids["company_id"],
+                    user_id=ids["user_id"],
                     body=body,
                 )
         assert exc.value.error_code == "PIN_NOT_FOUND"
