@@ -1,25 +1,31 @@
 /**
- * Sticky onboarding progress bar — `Step X of 3: Title`.
+ * Sticky onboarding progress bar — `Step X of N: Title`.
  *
  * Stays at the top of every step screen (NOT the Welcome screen — that
  * has its own celebratory layout). Mobile-friendly: full-width, bold but
  * compact. The bar fill itself is the brand-orange accent.
+ *
+ * Wizard currently runs as 2 steps (Company Profile, Pricing). The
+ * `totalSteps` prop is used so a future change (e.g. adding a step back)
+ * doesn't require touching the title array order.
  */
 "use client";
 
 const STEP_TITLES = [
   "Company Profile",
   "Pricing Setup (Optional)",
-  "Create Your First Job",
 ] as const;
 
 export function ProgressBar({
   current,
+  totalSteps = 2,
 }: {
-  /** 1, 2, or 3 — which step is currently in view. */
-  current: 1 | 2 | 3;
+  /** Which step is currently in view. */
+  current: 1 | 2;
+  /** Total step count — defaults to 2 to match the current wizard. */
+  totalSteps?: number;
 }) {
-  const pct = (current / 3) * 100;
+  const pct = (current / totalSteps) * 100;
   const title = STEP_TITLES[current - 1];
 
   return (
@@ -37,7 +43,7 @@ export function ProgressBar({
             className="text-[11px] font-semibold uppercase tracking-[0.12em] font-[family-name:var(--font-geist-mono)]"
             style={{ color: "#a63500" }}
           >
-            Step {current} of 3
+            Step {current} of {totalSteps}
           </p>
           <p className="text-[12px] font-medium truncate" style={{ color: "#594139" }}>
             {title}
@@ -51,9 +57,9 @@ export function ProgressBar({
           <div
             role="progressbar"
             aria-valuemin={0}
-            aria-valuemax={3}
+            aria-valuemax={totalSteps}
             aria-valuenow={current}
-            aria-valuetext={`Step ${current} of 3: ${title}`}
+            aria-valuetext={`Step ${current} of ${totalSteps}: ${title}`}
             className="h-full rounded-full transition-[width] duration-300 ease-out"
             style={{ width: `${pct}%`, backgroundColor: "#e85d26" }}
           />

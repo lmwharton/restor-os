@@ -65,17 +65,6 @@ export interface QuickJobRow {
   status: JobStatusChoice;
 }
 
-export interface FirstJobPayload {
-  address_line1: string;
-  city: string;
-  state: string;
-  zip: string;
-  customer_name: string;
-  customer_phone: string;
-  loss_type: "water" | "fire" | "mold" | "other";
-  job_type: "mitigation" | "reconstruction";
-}
-
 export interface PricingUploadError {
   row: number;
   field?: string;
@@ -186,17 +175,6 @@ export async function batchCreateJobs(jobs: QuickJobRow[]) {
   return res.json();
 }
 
-export async function createFirstJob(payload: FirstJobPayload) {
-  const headers = await getAuthHeaders({ "Content-Type": "application/json" });
-  const res = await fetch(`${API_URL}/v1/jobs`, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(payload),
-  });
-  if (!res.ok) throw await parseJsonError(res);
-  return res.json();
-}
-
 export async function setOnboardingStep(step: OnboardingStep) {
   const headers = await getAuthHeaders({ "Content-Type": "application/json" });
   const res = await fetch(`${API_URL}/v1/me/onboarding-step`, {
@@ -271,6 +249,48 @@ function triggerBlobDownload(blob: Blob, filename: string) {
   link.click();
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Fetch the current user + company from /v1/me. Used by the Welcome
+ * screen to personalize copy with the company name on the resume case
+ * (when the wizard wasn't carrying it through React state).
+ */
+export interface MyAccount {
+  user: {
+    id: string;
+    email: string;
+    name: string;
+  };
+  company: {
+    id: string;
+    name: string;
+    phone: string | null;
+  } | null;
+}
+
+export async function getMyAccount(): Promise<MyAccount | null> {
+  try {
+    const headers = await getAuthHeaders();
+    const res = await fetch(`${API_URL}/v1/me`, {
+      headers,
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return {
+      user: { id: data.id, email: data.email, name: data.name },
+      company: data.company
+        ? {
+            id: data.company.id,
+            name: data.company.name,
+            phone: data.company.phone ?? null,
+          }
+        : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 // ─── Server-side helpers ─────────────────────────────────────────────

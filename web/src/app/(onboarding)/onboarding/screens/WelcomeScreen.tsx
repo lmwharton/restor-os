@@ -1,93 +1,215 @@
 /**
  * Onboarding Welcome — final celebratory screen.
  *
- * Shows a checklist of completed (✓) vs. skipped (○) items and a "Next
- * steps" rundown. CTA goes to /dashboard, not /jobs (per spec).
+ * Personalized greeting using the contractor's company name. Two clear
+ * actions: create a job (the thing they came here to do) or just go to
+ * the dashboard.
  *
- * Note: pricing-checked status is server-derived (`has_pricing`), so a
- * user who skipped pricing this session may still see ✓ if they uploaded
- * earlier and bailed before this screen rendered. That's correct.
+ * The first-job-during-wizard step was removed per UX feedback — felt
+ * redundant after company creation. The natural place to create a job
+ * is from the dashboard, where every future job will be created too.
+ *
+ * Company name comes from either:
+ *   - the wizard's React state (set when Step 1 submitted in this session)
+ *   - or a lazy GET /v1/me on mount (resume case — user came back after
+ *     finishing Step 1 in a previous session)
+ * If both fail (rare network case), we fall back to a generic greeting.
  */
 "use client";
 
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { PrimaryButton } from "../components/UiBits";
+import { PrimaryButton, SecondaryButton } from "../components/UiBits";
+import { getMyAccount } from "@/lib/onboarding-api";
 
 type Props = {
-  createdJob: boolean;
+  /** Captured at Step 1. Null on resume — we'll fetch from /v1/me. */
+  companyName: string | null;
+  /** Server-derived: did pricing get uploaded? Affects the optional badge. */
   hasPricing: boolean;
 };
 
-export default function WelcomeScreen({ createdJob, hasPricing }: Props) {
+export default function WelcomeScreen({ companyName, hasPricing }: Props) {
   const router = useRouter();
 
-  const items = [
-    { done: true, label: "Company profile created" },
-    { done: createdJob, label: "First job created" },
-    { done: hasPricing, label: "Pricing setup" },
-  ];
+  // Resume case: name wasn't passed through wizard state. Fetch from
+  // /v1/me on mount. Falls back to null → generic greeting if it fails.
+  const [resolvedName, setResolvedName] = useState<string | null>(companyName);
+  useEffect(() => {
+    if (companyName) return;
+    let cancelled = false;
+    (async () => {
+      const account = await getMyAccount();
+      if (!cancelled && account?.company?.name) {
+        setResolvedName(account.company.name);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [companyName]);
+
+  const greeting = resolvedName
+    ? `Welcome aboard, ${resolvedName}!`
+    : "Welcome to Crewmatic!";
 
   return (
-    <div className="space-y-7 text-center sm:text-left">
+    <div className="space-y-8 text-center sm:text-left">
       <div>
-        <p className="text-[40px] sm:text-[48px] leading-none mb-3" aria-hidden>🎉</p>
-        <h1 className="text-[28px] sm:text-[32px] font-bold leading-tight" style={{ color: "#1f1b17" }}>
-          Welcome to Crewmatic!
+        {/*
+          Celebratory hero mark — large water-droplet on a soft brand-orange
+          ring. Replaces the 🎉 emoji (felt off-brand and WhatsApp-ish);
+          the droplet ties back to the wordmark and to "water restoration"
+          as the wedge product. Decorative — aria-hidden.
+        */}
+        <div
+          className="mb-5 inline-flex h-16 w-16 items-center justify-center rounded-full"
+          aria-hidden
+          style={{
+            background:
+              "radial-gradient(circle at 30% 30%, #fff4ed 0%, #fde6d8 70%, #fbcab5 100%)",
+            boxShadow: "0 1px 0 rgba(166, 53, 0, 0.05)",
+          }}
+        >
+          <svg
+            width="36"
+            height="36"
+            viewBox="0 0 28 28"
+            fill="none"
+            aria-hidden
+          >
+            <path
+              d="M14 3C14 3 6 12.5 6 17.5C6 22 9.58 25 14 25C18.42 25 22 22 22 17.5C22 12.5 14 3 14 3Z"
+              fill="url(#welcomeDropGrad)"
+              stroke="#a63500"
+              strokeWidth="1.5"
+              strokeLinejoin="round"
+            />
+            <defs>
+              <linearGradient
+                id="welcomeDropGrad"
+                x1="6"
+                y1="3"
+                x2="22"
+                y2="25"
+                gradientUnits="userSpaceOnUse"
+              >
+                <stop stopColor="#e85d26" stopOpacity="0.45" />
+                <stop offset="1" stopColor="#a63500" stopOpacity="0.20" />
+              </linearGradient>
+            </defs>
+          </svg>
+        </div>
+        <h1
+          className="text-[28px] sm:text-[32px] font-bold leading-tight"
+          style={{ color: "#1f1b17" }}
+        >
+          {greeting}
         </h1>
-        <p className="mt-2 text-[14px] sm:text-[15px] leading-relaxed" style={{ color: "#594139" }}>
-          Your account is set up and ready. Here&apos;s what you&apos;ve done so far:
+        <p
+          className="mt-3 text-[15px] sm:text-[16px] leading-relaxed"
+          style={{ color: "#594139" }}
+        >
+          You&apos;re all set. From here, Crewmatic turns damage photos into
+          Xactimate-ready estimates and keeps your job documentation tight
+          for every claim.
         </p>
       </div>
 
-      <ul className="space-y-2.5 text-left">
-        {items.map((item) => (
-          <li key={item.label} className="flex items-start gap-3">
-            <span
-              aria-hidden
-              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
-              style={{
-                backgroundColor: item.done ? "#15512c" : "#f3dcce",
-                color: item.done ? "white" : "#a63500",
-              }}
-            >
-              {item.done ? "✓" : "○"}
-            </span>
-            <span
-              className="text-[14px]"
-              style={{ color: item.done ? "#1f1b17" : "#594139" }}
-            >
-              {item.label}
-              {!item.done ? (
-                <span className="ml-1.5 text-[12px]" style={{ color: "#8d7168" }}>
-                  (optional — do it anytime)
-                </span>
-              ) : null}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {/*
+        Compact status pill — only shown if pricing is missing, since
+        company profile is always done by the time we render this. Tone
+        is "nudge", not "checklist." No more ✓/○ celebration list — felt
+        like padding.
+      */}
+      {!hasPricing ? (
+        <div
+          className="rounded-xl border px-4 py-3 text-left"
+          style={{ borderColor: "#fbcab5", backgroundColor: "#fff4ed" }}
+        >
+          <p className="text-[13px] font-semibold" style={{ color: "#7a2c0b" }}>
+            One optional step left: pricing
+          </p>
+          <p
+            className="mt-0.5 text-[12.5px] leading-relaxed"
+            style={{ color: "#594139" }}
+          >
+            Upload your Xactimate price list anytime from{" "}
+            <span className="font-medium">Settings → Pricing</span>{" "}
+            for faster estimates. Skip for now if you don&apos;t have it
+            ready.
+          </p>
+        </div>
+      ) : null}
 
       <div
-        className="rounded-xl border p-4 text-left"
+        className="rounded-xl border p-5 text-left"
         style={{ borderColor: "#e1bfb4", backgroundColor: "#fffaf6" }}
       >
         <p
           className="text-[11px] font-semibold uppercase tracking-[0.12em] font-[family-name:var(--font-geist-mono)]"
           style={{ color: "#a63500" }}
         >
-          Next steps
+          What&apos;s next
         </p>
-        <ul className="mt-2 space-y-1 text-[13px]" style={{ color: "#1f1b17" }}>
-          <li className="flex gap-2"><span aria-hidden>•</span> Add photos and damage documentation</li>
-          <li className="flex gap-2"><span aria-hidden>•</span> Create an estimate from your photos</li>
-          <li className="flex gap-2"><span aria-hidden>•</span> Explore the dashboard for live job status</li>
+        <ul
+          className="mt-3 space-y-2 text-[14px] leading-relaxed"
+          style={{ color: "#1f1b17" }}
+        >
+          <li className="flex items-start gap-2.5">
+            <span
+              aria-hidden
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{ backgroundColor: "#fde6d8", color: "#a63500" }}
+            >
+              1
+            </span>
+            <span>
+              <span className="font-medium">Create your first job</span> —
+              when the next call comes in, log it in seconds and start
+              capturing damage photos.
+            </span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <span
+              aria-hidden
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{ backgroundColor: "#fde6d8", color: "#a63500" }}
+            >
+              2
+            </span>
+            <span>
+              <span className="font-medium">Browse jobs from the dashboard</span> —
+              everything you log shows up there, ready to scope, estimate,
+              and submit.
+            </span>
+          </li>
+          <li className="flex items-start gap-2.5">
+            <span
+              aria-hidden
+              className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
+              style={{ backgroundColor: "#fde6d8", color: "#a63500" }}
+            >
+              3
+            </span>
+            <span>
+              <span className="font-medium">Invite your team</span>{" "}
+              when you&apos;re ready — owners and techs each get the views
+              they need.
+            </span>
+          </li>
         </ul>
       </div>
 
-      <div className="flex justify-center sm:justify-end pt-2">
-        <PrimaryButton type="button" onClick={() => router.push("/dashboard")}>
+      <div className="flex flex-col-reverse sm:flex-row sm:items-center sm:justify-end gap-3 pt-2">
+        <SecondaryButton type="button" onClick={() => router.push("/dashboard")}>
           Go to Dashboard
-          <span aria-hidden className="text-[16px]">&rarr;</span>
+        </SecondaryButton>
+        <PrimaryButton type="button" onClick={() => router.push("/jobs/new")}>
+          Create Your First Job
+          <span aria-hidden className="text-[16px]">
+            &rarr;
+          </span>
         </PrimaryButton>
       </div>
     </div>

@@ -33,8 +33,8 @@ import { createCompany, type CompanyCreatePayload } from "@/lib/onboarding-api";
 type Props = {
   /** Show the "Welcome back!" banner above the form (resume case). */
   showWelcomeBack?: boolean;
-  /** Called after successful POST /v1/company. */
-  onCreated: () => void;
+  /** Called after successful POST /v1/company. Receives the entered company name so Welcome can personalize. */
+  onCreated: (companyName: string) => void;
   /** Called when the "Have active jobs in progress?" link is clicked. */
   onOpenQuickAdd: () => void;
 };
@@ -120,7 +120,7 @@ export default function CompanyProfileScreen({
     setSubmitting(true);
     try {
       await createCompany(payload);
-      onCreated();
+      onCreated(payload.name);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to create company.";
       setSubmitError(msg);

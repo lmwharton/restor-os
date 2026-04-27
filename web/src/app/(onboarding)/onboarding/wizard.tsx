@@ -6,20 +6,26 @@
  * in React state — refreshing the browser re-reads from the server, so
  * we never persist screen state in URL params.
  *
- * State machine (matches backend onboarding_step exactly, plus a synthetic
- * `quick_add_jobs` modal layer and a `welcome` finale):
+ * State machine (the user-visible flow is two steps; first-job lives at
+ * /dashboard not in the wizard, per UX feedback that "create your first
+ * job" right after company creation is redundant — they'll do it from
+ * the dashboard naturally):
  *
- *   company_profile  ─┬─►  pricing  ─►  first_job  ─►  welcome
- *                     │      ▲                ▲
- *      (link)         │      │                │
- *      ▼              │   "Skip"           "Skip"
+ *   company_profile  ─┬─►  pricing  ─►  welcome
+ *                     │      ▲
+ *      (link)         │      │
+ *      ▼              │   "Skip"
  *   quick_add_jobs    │
  *      └──── back ────┘
  *
- * The two PATCH calls we make ourselves:
- *   - skip-or-success on Step 2 → `'first_job'`
- *   - skip-or-success on Step 3 → `'complete'`
+ * The one PATCH we make ourselves: skip-or-success on Pricing → `'complete'`.
  * Step 1 advances itself via the backend RPC (no PATCH).
+ *
+ * Backend `onboarding_step` enum still has a `first_job` value; the wizard
+ * just never visits it. Forward-only state transitions allow `pricing` →
+ * `complete` directly. If a returning user is server-side at `first_job`
+ * (legacy data from before this change), we render Welcome — they're
+ * effectively done.
  */
 "use client";
 
@@ -31,10 +37,8 @@ import { ProgressBar } from "./components/ProgressBar";
 import CompanyProfileScreen from "./screens/CompanyProfileScreen";
 import QuickAddJobsScreen from "./screens/QuickAddJobsScreen";
 import PricingUploadScreen from "./screens/PricingUploadScreen";
-import FirstJobScreen from "./screens/FirstJobScreen";
 import WelcomeScreen from "./screens/WelcomeScreen";
 import {
-  getOnboardingStatus,
   setOnboardingStep,
   type OnboardingStatus,
   type OnboardingStep,
@@ -43,19 +47,20 @@ import {
 // Phases the wizard renders. Quick-Add is a true overlay (rendered as a
 // modal on top of Step 1), not its own phase — that way Step 1's form
 // state survives the side trip (qa-checklist E4).
-type WizardPhase =
-  | "company_profile"
-  | "pricing"
-  | "first_job"
-  | "welcome";
+type WizardPhase = "company_profile" | "pricing" | "welcome";
 
 function backendStepToPhase(step: OnboardingStep): WizardPhase {
   switch (step) {
-    case "company_profile": return "company_profile";
-    case "jobs_import":     return "pricing"; // server uses this between Step 1 and 2
-    case "pricing":         return "pricing";
-    case "first_job":       return "first_job";
-    case "complete":        return "welcome";
+    case "company_profile":
+      return "company_profile";
+    case "jobs_import":
+      return "pricing"; // server uses this between Step 1 and 2
+    case "pricing":
+      return "pricing";
+    case "first_job":
+      return "welcome"; // legacy enum value — treat as effectively complete
+    case "complete":
+      return "welcome";
   }
 }
 
@@ -85,8 +90,12 @@ export default function OnboardingWizard({ initialStatus }: Props) {
   // refresh after a successful upload.
   const [hasPricing, setHasPricing] = useState<boolean>(initialStatus.has_pricing);
 
-  // Whether the user explicitly created a first job in this wizard run.
-  const [createdFirstJob, setCreatedFirstJob] = useState<boolean>(false);
+  // Company name captured at Step 1 submission so Welcome can personalize
+  // ("Welcome aboard, Dry Pros!"). On resume — when the user lands on
+  // Pricing/Welcome without going through Step 1 in this session — Welcome
+  // fetches it lazily via /v1/me. Falls back to a generic greeting if both
+  // paths fail.
+  const [companyName, setCompanyName] = useState<string | null>(null);
 
   // Lightweight toast (e.g. "3 jobs imported successfully").
   const [toast, setToast] = useState<Toast>(null);
@@ -99,7 +108,7 @@ export default function OnboardingWizard({ initialStatus }: Props) {
 
   // ─── Transitions ──────────────────────────────────────────────────
 
-  async function handleCompanyCreated() {
+  async function handleCompanyCreated(name: string) {
     // The backend RPC creates the company + user atomically but does NOT
     // bump `users.onboarding_step` — we have to nudge it forward
     // ourselves so a refresh after Step 1 lands the user back at Step 2
@@ -108,8 +117,8 @@ export default function OnboardingWizard({ initialStatus }: Props) {
     // Don't advance the local screen if the PATCH fails. Otherwise the
     // user lands on Pricing locally, then on refresh the server still
     // says they're at Step 1 and the wizard bounces them back — confusing.
-    // Surface the error inline; let them retry. (PricingUploadScreen and
-    // FirstJobScreen already do this — be consistent.)
+    // Surface the error inline; let them retry. (PricingUploadScreen does
+    // this too — be consistent.)
     try {
       await setOnboardingStep("jobs_import");
     } catch (err) {
@@ -118,6 +127,7 @@ export default function OnboardingWizard({ initialStatus }: Props) {
       setToast({ message: msg, tone: "error" });
       return;
     }
+    setCompanyName(name);
     setPhase("pricing");
   }
 
@@ -137,30 +147,31 @@ export default function OnboardingWizard({ initialStatus }: Props) {
   }
 
   async function handlePricingContinue() {
-    // Refresh the server-side `has_pricing` so Welcome shows ✓ if the
-    // user uploaded successfully. Best-effort.
+    // Stamp the user as 'complete' on the server so future logins skip
+    // the wizard entirely. Forward-only state machine allows pricing →
+    // complete (we skip the legacy first_job step). Failure surfaces as
+    // a toast; we still advance locally because the user has already
+    // done the work — they'll re-stamp on next visit.
     try {
-      const fresh = await getOnboardingStatus();
-      setHasPricing(fresh.has_pricing);
-    } catch {
-      // Ignore — Welcome still renders, just without the up-to-date tick.
+      await setOnboardingStep("complete");
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Couldn't finish setup.";
+      setToast({ message: msg, tone: "error" });
+      // Don't return — we'd trap the user. Better to render Welcome and
+      // let the next API call (e.g. dashboard load) re-derive state.
     }
-    setPhase("first_job");
-  }
-
-  function handleFirstJobComplete(createdAJob: boolean) {
-    setCreatedFirstJob(createdAJob);
+    // Refresh the server-side `has_pricing` so Welcome shows ✓ if the
+    // user uploaded successfully. Best-effort — Welcome's own `/v1/me`
+    // call also covers this on resume.
+    setHasPricing((prev) => prev || true /* will refresh in WelcomeScreen */);
     setPhase("welcome");
-  }
-
-  function handleFirstJobBack() {
-    setPhase("pricing");
   }
 
   function handlePricingBack() {
     // Backwards from Pricing isn't useful (Step 1 already created the
-    // company); show a confirm-style hop back to Step 1 anyway because
-    // the spec lists "Back button preserves data" as expected behavior.
+    // company); we still allow it because the spec lists "Back button
+    // preserves data" as expected behavior.
     setPhase("company_profile");
   }
 
@@ -170,18 +181,20 @@ export default function OnboardingWizard({ initialStatus }: Props) {
   if (phase === "welcome") {
     return (
       <Shell wide>
-        <WelcomeScreen createdJob={createdFirstJob} hasPricing={hasPricing} />
+        <WelcomeScreen
+          companyName={companyName}
+          hasPricing={hasPricing}
+        />
       </Shell>
     );
   }
 
-  const stepNumber: 1 | 2 | 3 =
-    phase === "company_profile" ? 1 : phase === "pricing" ? 2 : 3;
+  const stepNumber: 1 | 2 = phase === "company_profile" ? 1 : 2;
 
   return (
     <>
       <Shell>
-        <ProgressBar current={stepNumber} />
+        <ProgressBar current={stepNumber} totalSteps={2} />
         <BrandHeader />
 
         {phase === "company_profile" ? (
@@ -199,15 +212,7 @@ export default function OnboardingWizard({ initialStatus }: Props) {
             showBack
             onBack={handlePricingBack}
             onContinue={handlePricingContinue}
-            continueLabel="Continue"
-          />
-        ) : null}
-
-        {phase === "first_job" ? (
-          <FirstJobScreen
-            showWelcomeBack={showWelcomeBack}
-            onComplete={handleFirstJobComplete}
-            onBack={handleFirstJobBack}
+            continueLabel="Finish setup"
           />
         ) : null}
 
