@@ -50,6 +50,14 @@ export interface CompanyCreatePayload {
   city: string;
   state: string;
   zip: string;
+  /**
+   * Owner's display name (e.g. "Brett Sodders"). Captured at Step 1
+   * because email/password signups don't carry a name from the auth
+   * provider — without this the backend falls back to the email prefix
+   * and the user's avatar shows "??". Optional in the type so legacy
+   * callers compile, but Step 1 always provides it.
+   */
+  owner_name?: string;
   service_area?: string[];
 }
 

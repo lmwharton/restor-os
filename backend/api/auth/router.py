@@ -105,7 +105,16 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
 
     auth_user = auth_response.user
     email = auth_user.email or ""
-    user_name = (auth_user.user_metadata or {}).get("full_name", email.split("@")[0])
+    # Priority: explicit owner_name from the wizard (email/password path)
+    # > full_name from auth metadata (Google OAuth path)
+    # > email prefix (last-resort fallback so the column is never null).
+    # Without owner_name, email/password signups end up with name="l" for
+    # "l@test.com" — looks broken in the avatar/profile UI.
+    user_name = (
+        (body.owner_name or "").strip()
+        or (auth_user.user_metadata or {}).get("full_name")
+        or email.split("@")[0]
+    )
     avatar_url = (auth_user.user_metadata or {}).get("avatar_url")
 
     company, user = await get_or_create_company(

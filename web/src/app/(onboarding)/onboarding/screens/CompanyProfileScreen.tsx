@@ -44,6 +44,7 @@ export default function CompanyProfileScreen({
   onCreated,
   onOpenQuickAdd,
 }: Props) {
+  const [ownerName, setOwnerName] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [address, setAddress] = useState("");
@@ -58,6 +59,7 @@ export default function CompanyProfileScreen({
   // wizard will get a proper county picker tied to a real outcome.
 
   const [touched, setTouched] = useState<Record<keyof CompanyProfileFields, boolean>>({
+    ownerName: false,
     name: false,
     phone: false,
     address: false,
@@ -69,13 +71,15 @@ export default function CompanyProfileScreen({
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const fields: CompanyProfileFields = { name, phone, address, city, state, zip };
+  const fields: CompanyProfileFields = {
+    ownerName, name, phone, address, city, state, zip,
+  };
   // `fields` is rebuilt each render — depend on its primitives so the
   // memo refreshes on the actual inputs, not on the object identity.
   const errors = useMemo(
     () => validateCompanyProfile(fields),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [name, phone, address, city, state, zip],
+    [ownerName, name, phone, address, city, state, zip],
   );
   const isValid = Object.keys(errors).length === 0;
 
@@ -103,7 +107,15 @@ export default function CompanyProfileScreen({
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    setTouched({ name: true, phone: true, address: true, city: true, state: true, zip: true });
+    setTouched({
+      ownerName: true,
+      name: true,
+      phone: true,
+      address: true,
+      city: true,
+      state: true,
+      zip: true,
+    });
     setSubmitError(null);
     if (!isValid || submitting) return;
 
@@ -114,6 +126,7 @@ export default function CompanyProfileScreen({
       city: city.trim(),
       state: state.trim().toUpperCase(),
       zip: zip.trim(),
+      owner_name: ownerName.trim(),
       // service_area intentionally omitted — collected when lead-gen ships
     };
 
@@ -154,8 +167,21 @@ export default function CompanyProfileScreen({
 
       <form onSubmit={handleSubmit} noValidate className="space-y-5">
         <FormField
+          label="Your Name"
+          required
+          autoComplete="name"
+          value={ownerName}
+          onChange={(e) => setOwnerName(e.target.value)}
+          onBlur={() => markTouched("ownerName")}
+          placeholder="Brett Sodders"
+          helper="Shown on reports and the team roster — you can change it later."
+          error={touched.ownerName ? errors.ownerName : undefined}
+        />
+
+        <FormField
           label="Company Name"
           required
+          autoComplete="organization"
           value={name}
           onChange={(e) => setName(e.target.value)}
           onBlur={() => markTouched("name")}

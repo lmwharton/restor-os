@@ -29,6 +29,12 @@ class CompanyCreate(BaseModel):
     Address fields and ``service_area`` were added when onboarding was
     extended past name+phone. ``rpc_onboard_user`` was widened to accept
     these in one call (no separate PATCH).
+
+    ``owner_name`` is captured at Step 1 because email/password signups
+    don't carry a name from the auth provider. Without it the backend
+    falls back to email-prefix and the user's avatar shows "??". Optional
+    here for back-compat with Google-OAuth callers (auth metadata still
+    provides ``full_name``).
     """
 
     name: str
@@ -37,6 +43,7 @@ class CompanyCreate(BaseModel):
     city: str | None = None
     state: str | None = None
     zip: str | None = None
+    owner_name: str | None = None
     service_area: list[str] | None = None
 
 

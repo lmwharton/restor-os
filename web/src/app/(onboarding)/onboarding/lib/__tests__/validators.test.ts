@@ -17,6 +17,7 @@ import {
 } from "../validators";
 
 const baseCompany: CompanyProfileFields = {
+  ownerName: "Brett Sodders",
   name: "Dry Pros QA",
   phone: "555-123-4567",
   address: "123 Main St",
@@ -42,6 +43,11 @@ describe("validateCompanyProfile", () => {
   it("flags missing company name", () => {
     const errors = validateCompanyProfile({ ...baseCompany, name: "   " });
     expect(errors.name).toBeTruthy();
+  });
+
+  it("flags missing owner name", () => {
+    const errors = validateCompanyProfile({ ...baseCompany, ownerName: "  " });
+    expect(errors.ownerName).toBeTruthy();
   });
 
   it("flags missing phone and bad phone separately", () => {

@@ -11,6 +11,7 @@ const ZIP_REGEX = /^\d{5}(-\d{4})?$/;
 const PHONE_REGEX = /^[\d().+\-\s]{7,}$/;
 
 export type CompanyProfileFields = {
+  ownerName: string;
   name: string;
   phone: string;
   address: string;
@@ -25,6 +26,7 @@ export function validateCompanyProfile(
   fields: CompanyProfileFields,
 ): CompanyProfileErrors {
   const errors: CompanyProfileErrors = {};
+  if (!fields.ownerName.trim()) errors.ownerName = "Your name is required.";
   if (!fields.name.trim()) errors.name = "Company name is required.";
   if (!fields.phone.trim()) errors.phone = "Phone number is required.";
   else if (!PHONE_REGEX.test(fields.phone.trim()))
