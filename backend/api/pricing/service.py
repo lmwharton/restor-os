@@ -42,46 +42,71 @@ EXPECTED_COLUMNS: tuple[str, ...] = ("code", "description", "unit", "price")
 # In-memory cache of recent error reports so the client can download a CSV
 # after a failed upload. Keyed by run_id (UUID4 string). 256-entry LRU bound
 # keeps memory predictable; reports older than the bound are evicted.
+#
+# Each entry is scoped by company_id so a user from company B who guesses a
+# run_id from company A still gets a 404. Run_ids are UUIDv4 (unguessable in
+# practice) but tenant-scoped storage is the correct categorical fix, not
+# "in practice they can't guess." Caught by code review.
 _ERROR_REPORT_TTL_SECONDS = 60 * 60  # 1 hour
 _ERROR_REPORT_MAX_ENTRIES = 256
 
-_error_reports: dict[str, tuple[float, list[PricingRowError]]] = {}
+
+class _ErrorReportEntry:
+    __slots__ = ("company_id", "fetched_at", "errors")
+
+    def __init__(self, company_id: UUID, fetched_at: float, errors: list[PricingRowError]):
+        self.company_id = company_id
+        self.fetched_at = fetched_at
+        self.errors = errors
 
 
-def _store_error_report(errors: list[PricingRowError]) -> str:
-    """Stash an error list and return its run_id.
+_error_reports: dict[str, _ErrorReportEntry] = {}
+
+
+def _store_error_report(company_id: UUID, errors: list[PricingRowError]) -> str:
+    """Stash an error list scoped to ``company_id`` and return its run_id.
 
     The frontend GETs /v1/pricing/error-report/{run_id} to download the
-    CSV. Reports expire after 1 hour or when the LRU cap is hit.
+    CSV. Reports expire after 1 hour or when the LRU cap is hit. The
+    company_id is verified on read so tenant A cannot read tenant B's
+    report by guessing a run_id.
     """
     # Evict expired entries first.
     now = time.monotonic()
-    expired = [k for k, (ts, _) in _error_reports.items() if now - ts > _ERROR_REPORT_TTL_SECONDS]
+    expired = [
+        k for k, e in _error_reports.items() if now - e.fetched_at > _ERROR_REPORT_TTL_SECONDS
+    ]
     for k in expired:
         _error_reports.pop(k, None)
 
     # Evict oldest entries if over cap (drop ~25% to amortize).
     if len(_error_reports) >= _ERROR_REPORT_MAX_ENTRIES:
-        ordered = sorted(_error_reports.items(), key=lambda kv: kv[1][0])
+        ordered = sorted(_error_reports.items(), key=lambda kv: kv[1].fetched_at)
         drop = ordered[: len(ordered) // 4 or 1]
         for k, _ in drop:
             _error_reports.pop(k, None)
 
     run_id = str(uuid4())
-    _error_reports[run_id] = (now, errors)
+    _error_reports[run_id] = _ErrorReportEntry(company_id, now, errors)
     return run_id
 
 
-def get_error_report(run_id: str) -> list[PricingRowError] | None:
-    """Look up an error report by run_id. Returns None if not found / expired."""
+def get_error_report(run_id: str, *, company_id: UUID) -> list[PricingRowError] | None:
+    """Look up an error report by run_id, scoped to ``company_id``.
+
+    Returns None if not found, expired, OR if the report belongs to a
+    different company (tenant isolation). Callers MUST pass the caller's
+    own company_id — never accept it from the request.
+    """
     entry = _error_reports.get(run_id)
     if entry is None:
         return None
-    fetched_at, errors = entry
-    if time.monotonic() - fetched_at > _ERROR_REPORT_TTL_SECONDS:
+    if entry.company_id != company_id:
+        return None
+    if time.monotonic() - entry.fetched_at > _ERROR_REPORT_TTL_SECONDS:
         _error_reports.pop(run_id, None)
         return None
-    return errors
+    return entry.errors
 
 
 def errors_to_csv(errors: list[PricingRowError]) -> str:
@@ -396,7 +421,7 @@ async def upload_pricing_file(
     """
     rows, errors = parse_pricing_xlsx(content)
     if errors:
-        run_id = _store_error_report(errors)
+        run_id = _store_error_report(company_id, errors)
         # Tier might not be reliable on a malformed file; surface 'unknown'
         # rather than fabricate. The UI only uses tier on the success path.
         return PricingUploadResponse(

@@ -54,9 +54,26 @@ def _make_xlsx_bytes(rows: list[tuple], *, sheet_title: str = "Tier A") -> bytes
     return buf.getvalue()
 
 
-def _user_row(user_id, company_id, *, step="company_profile", completed_at=None, dismissed_at=None):
+def _user_row(
+    user_id,
+    company_id,
+    *,
+    auth_user_id=None,
+    step="company_profile",
+    completed_at=None,
+    dismissed_at=None,
+):
+    """Build a fake users-table row for service tests.
+
+    Includes ``auth_user_id`` distinct from ``id`` because the production
+    code looks up by ``auth_user_id`` for status reads / state writes (the
+    Supabase JWT carries auth_user_id in ``sub``, not users.id). Earlier
+    fixtures omitted this field, so a service bug that confused the two
+    keys was invisible to the test mocks. Caught by code review.
+    """
     return {
         "id": str(user_id),
+        "auth_user_id": str(auth_user_id or user_id),
         "company_id": str(company_id),
         "onboarding_step": step,
         "onboarding_completed_at": completed_at,
@@ -257,15 +274,30 @@ class TestPricingErrorReport:
         from api.pricing.schemas import PricingRowError
         from api.pricing.service import _store_error_report
 
+        company_id = uuid4()
         errors = [PricingRowError(row=2, field="code", message="bad")]
-        run_id = _store_error_report(errors)
+        run_id = _store_error_report(company_id, errors)
 
-        retrieved = get_error_report(run_id)
+        retrieved = get_error_report(run_id, company_id=company_id)
         assert retrieved is not None
         assert retrieved[0].field == "code"
 
     def test_report_not_found_returns_none(self):
-        assert get_error_report("nonexistent-run-id") is None
+        assert get_error_report("nonexistent-run-id", company_id=uuid4()) is None
+
+    def test_report_cross_tenant_lookup_returns_none(self):
+        """Tenant A cannot fetch tenant B's report by guessing a run_id."""
+        from api.pricing.schemas import PricingRowError
+        from api.pricing.service import _store_error_report
+
+        company_a = uuid4()
+        company_b = uuid4()
+        errors = [PricingRowError(row=2, field="code", message="leaked")]
+        run_id = _store_error_report(company_a, errors)
+
+        assert get_error_report(run_id, company_id=company_b) is None
+        # Sanity: company_a still gets it back
+        assert get_error_report(run_id, company_id=company_a) is not None
 
 
 # ---------------------------------------------------------------------------

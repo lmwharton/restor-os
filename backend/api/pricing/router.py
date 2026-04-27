@@ -97,14 +97,16 @@ async def get_pricing_template(
 @router.get("/error-report/{run_id}")
 async def get_pricing_error_report(
     run_id: str,
-    _ctx: AuthContext = Depends(get_auth_context),  # auth-gate only
+    ctx: AuthContext = Depends(get_auth_context),
 ):
     """Download a CSV of the errors from a recent pricing upload.
 
     ``run_id`` is the value returned in PricingUploadResponse.run_id when
-    a previous upload failed validation. Reports expire after 1 hour.
+    a previous upload failed validation. Reports are tenant-scoped: a
+    user from a different company gets 404, even with a valid run_id.
+    Reports expire after 1 hour.
     """
-    errors = get_error_report(run_id)
+    errors = get_error_report(run_id, company_id=ctx.company_id)
     if errors is None:
         raise AppException(
             status_code=404,

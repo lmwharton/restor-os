@@ -556,8 +556,14 @@ def _parse_timestamptz(raw: str) -> datetime:
     return datetime.fromisoformat(raw.replace("Z", "+00:00"))
 
 
-async def update_onboarding_step(user_id: UUID, step: str) -> OnboardingStatusResponse:
+async def update_onboarding_step(auth_user_id: UUID, step: str) -> OnboardingStatusResponse:
     """Set the user's onboarding step. Forward-only (or same step).
+
+    Lookup is by ``auth_user_id`` (matches ``get_onboarding_status``) so the
+    response builder at the end resolves the same row we just wrote. Using
+    ``users.id`` here while ``get_onboarding_status`` looks up by
+    ``auth_user_id`` would silently fall through to the "fresh signup"
+    branch and return the wrong shape (caught by code review).
 
     Decision Log #5: clients may advance the cursor (next-step skip) but
     cannot rewind. ``step == 'complete'`` also stamps
@@ -579,7 +585,7 @@ async def update_onboarding_step(user_id: UUID, step: str) -> OnboardingStatusRe
     current = await (
         client.table("users")
         .select("id, onboarding_step, onboarding_completed_at")
-        .eq("id", str(user_id))
+        .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
         .maybe_single()
         .execute()
@@ -613,7 +619,12 @@ async def update_onboarding_step(user_id: UUID, step: str) -> OnboardingStatusRe
     if step == "complete" and not current.data.get("onboarding_completed_at"):
         updates["onboarding_completed_at"] = datetime.now(UTC).isoformat()
 
-    update_result = await client.table("users").update(updates).eq("id", str(user_id)).execute()
+    update_result = await (
+        client.table("users")
+        .update(updates)
+        .eq("auth_user_id", str(auth_user_id))
+        .execute()
+    )
     if not update_result.data:
         raise AppException(
             status_code=404,
@@ -621,12 +632,14 @@ async def update_onboarding_step(user_id: UUID, step: str) -> OnboardingStatusRe
             error_code="USER_NOT_FOUND",
         )
 
-    return await get_onboarding_status(user_id)
+    return await get_onboarding_status(auth_user_id)
 
 
-async def dismiss_setup_banner(user_id: UUID) -> OnboardingStatusResponse:
+async def dismiss_setup_banner(auth_user_id: UUID) -> OnboardingStatusResponse:
     """Mark the dashboard setup banner dismissed for this user.
 
+    Lookup keyed by ``auth_user_id`` for consistency with
+    ``get_onboarding_status`` (see note in ``update_onboarding_step``).
     Per Decision Log #9: dismiss state is per-user, server-side. Survives
     device switches.
     """
@@ -635,7 +648,7 @@ async def dismiss_setup_banner(user_id: UUID) -> OnboardingStatusResponse:
     update_result = await (
         client.table("users")
         .update({"setup_banner_dismissed_at": datetime.now(UTC).isoformat()})
-        .eq("id", str(user_id))
+        .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
         .execute()
     )
@@ -646,4 +659,4 @@ async def dismiss_setup_banner(user_id: UUID) -> OnboardingStatusResponse:
             error_code="USER_NOT_FOUND",
         )
 
-    return await get_onboarding_status(user_id)
+    return await get_onboarding_status(auth_user_id)

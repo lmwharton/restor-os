@@ -196,8 +196,12 @@ async def patch_onboarding_step(
     Forward-only: rejects backward transitions with 400
     ``ONBOARDING_BACKWARD_TRANSITION``. Setting step to ``'complete'``
     stamps ``onboarding_completed_at`` once.
+
+    We pass ``auth_user_id`` (not ``user_id``) so the service's lookup key
+    matches ``get_onboarding_status``'s — otherwise the response builder
+    silently falls through to the "fresh signup" branch.
     """
-    return await update_onboarding_step(ctx.user_id, body.step)
+    return await update_onboarding_step(ctx.auth_user_id, body.step)
 
 
 @router.patch("/me/dismiss-setup-banner", response_model=OnboardingStatusResponse)
@@ -208,4 +212,4 @@ async def patch_dismiss_setup_banner(
 
     Per-user, persisted server-side. Survives device switches.
     """
-    return await dismiss_setup_banner(ctx.user_id)
+    return await dismiss_setup_banner(ctx.auth_user_id)
