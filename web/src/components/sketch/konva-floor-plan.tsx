@@ -1294,7 +1294,13 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           room_id: placement.roomId,
           canvas_x: placement.canvas_x,
           canvas_y: placement.canvas_y,
-          location_name: data.location_name,
+          // Phase 2 location split (migration e2b3c4d5f6a7) — placement
+          // sheet emits the structured triple instead of a composed
+          // location_name string. Display side renders via
+          // formatPinLocation in @/lib/moisture-pin-location.
+          surface: data.surface,
+          position: data.position,
+          wall_segment_id: data.wall_segment_id,
           material: data.material,
           dry_standard: data.dry_standard,
           initial_reading: {
@@ -2273,6 +2279,12 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         {readingPinId && jobId && (() => {
           const pin = moisturePins.find((p) => p.id === readingPinId);
           if (!pin) return null;
+          // Phase 2 location split — resolve canvas room by
+          // propertyRoomId (the canvas room's pointer to the backend
+          // job_rooms.id) so the sheet header renders the rich label.
+          const hostRoom = pin.room_id
+            ? state.rooms.find((r) => r.propertyRoomId === pin.room_id)
+            : undefined;
           return (
             <MoistureReadingSheet
               open
@@ -2284,6 +2296,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               // conditionally omitting it here.
               onEditRequest={(pinId) => setEditingPinId(pinId)}
               readOnly={readOnly}
+              roomName={hostRoom?.name}
             />
           );
         })()}
@@ -2299,6 +2312,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         {editingPinId && jobId && (() => {
           const pin = moisturePins.find((p) => p.id === editingPinId);
           if (!pin) return null;
+          const hostRoom = pin.room_id
+            ? state.rooms.find((r) => r.propertyRoomId === pin.room_id)
+            : undefined;
           return (
             <MoistureEditSheet
               // Remount on pin swap. The sheet seeds its material +
@@ -2310,6 +2326,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               key={pin.id}
               open
               pin={pin}
+              roomName={hostRoom?.name}
               onClose={() => setEditingPinId(null)}
               isSaving={updatePin.isPending}
               onSave={({ material, dry_standard }) => {

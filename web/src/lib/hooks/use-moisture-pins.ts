@@ -6,6 +6,8 @@ import type {
   MoistureMaterial,
   MoisturePin,
   MoisturePinReading,
+  MoisturePosition,
+  MoistureSurface,
   PaginatedResponse,
 } from "../types";
 
@@ -30,7 +32,14 @@ export interface CreateMoisturePinBody {
   room_id: string;
   canvas_x: number;
   canvas_y: number;
-  location_name: string;
+  /** Phase 2 location split — structured triple replaces composed
+   *  `location_name`. surface + position required (DB NOT NULL after
+   *  migration e3c4d5f6a7b8); wall_segment_id only meaningful (and
+   *  accepted) when surface == 'wall'. Backend Pydantic + DB CHECK
+   *  both enforce the binding. */
+  surface: MoistureSurface;
+  position: MoisturePosition;
+  wall_segment_id: string | null;
   material: MoistureMaterial;
   /** Omit to use the material default from the backend DRY_STANDARDS dict. */
   dry_standard?: number;
@@ -55,7 +64,12 @@ export function useCreateMoisturePin(jobId: string) {
 }
 
 export interface UpdateMoisturePinBody {
-  location_name?: string;
+  /** Phase 2 location split. Surface flip away from 'wall' MUST be
+   *  paired with `wall_segment_id: null` in the same patch — both
+   *  Pydantic and the DB CHECK reject the partial update otherwise. */
+  surface?: MoistureSurface;
+  position?: MoisturePosition | null;
+  wall_segment_id?: string | null;
   material?: MoistureMaterial;
   dry_standard?: number;
   canvas_x?: number;

@@ -17,6 +17,7 @@
 import { useMemo, useRef, useState } from "react";
 import type { MoistureMaterial, MoisturePin } from "@/lib/types";
 import { DRY_STANDARDS } from "@/lib/hooks/use-moisture-pins";
+import { formatPinLocation } from "@/lib/moisture-pin-location";
 
 export interface EditSheetData {
   material: MoistureMaterial;
@@ -31,6 +32,10 @@ interface MoistureEditSheetProps {
   /** True while the parent's update-pin mutation is in flight. Drives
    *  the Update button's disabled + "Updating…" label. */
   isSaving?: boolean;
+  /** Phase 2 location split — when known, parent passes the host
+   *  room's name so the header can render the rich label
+   *  ("Floor, Center, Kitchen") instead of the bare-fields fallback. */
+  roomName?: string | null;
 }
 
 // Same material catalog as the placement sheet — kept local so the
@@ -52,6 +57,7 @@ export function MoistureEditSheet({
   onSave,
   onClose,
   isSaving = false,
+  roomName,
 }: MoistureEditSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
@@ -153,7 +159,7 @@ export function MoistureEditSheet({
                 Edit pin
               </h3>
               <p className="mt-1 text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant truncate">
-                {pin.location_name}
+                {formatPinLocation(pin, { roomName })}
               </p>
             </div>
             <button

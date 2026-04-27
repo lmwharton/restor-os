@@ -351,13 +351,29 @@ export interface MoisturePinReading {
   created_at: string;
 }
 
+/** Spec 01H Phase 2 location split — surface the pin sits on. Replaces
+ *  the old composed `location_name` together with `position` + `wall_segment_id`. */
+export type MoistureSurface = "floor" | "wall" | "ceiling";
+
+/** Quadrant within the surface. Required for every pin regardless of
+ *  surface (floor / wall / ceiling) — DB column is NOT NULL after
+ *  migration e3c4d5f6a7b8. */
+export type MoisturePosition = "C" | "NW" | "NE" | "SW" | "SE";
+
 export interface MoisturePin {
   id: string;
   job_id: string;
   room_id: string | null;
   canvas_x: number;
   canvas_y: number;
-  location_name: string;
+  /** Phase 2 location split: structured triple replaces composed
+   *  `location_name`. Display string is derived via `formatPinLocation`
+   *  in `@/lib/moisture-pin-location` from these + the host room name.
+   *  surface + position required (DB NOT NULL); wall_segment_id only
+   *  set when surface === 'wall'. */
+  surface: MoistureSurface;
+  position: MoisturePosition;
+  wall_segment_id: string | null;
   material: MoistureMaterial;
   dry_standard: number;
   created_by: string | null;

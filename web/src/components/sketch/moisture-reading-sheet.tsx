@@ -36,6 +36,7 @@ import type {
 } from "@/lib/types";
 import { ConfirmModal } from "@/components/confirm-modal";
 import { formatShortDateLocal, localDateFromTimestamp, todayLocalIso } from "@/lib/dates";
+import { formatPinLocation } from "@/lib/moisture-pin-location";
 import {
   deriveReadingHistory,
   findTodayReading,
@@ -89,6 +90,10 @@ interface MoistureReadingSheetProps {
    *  handed to the carrier. Mirrors backend behavior — archived job
    *  reads pass, writes return 403 JOB_ARCHIVED. */
   readOnly?: boolean;
+  /** Phase 2 location split — host room name. Header derives the rich
+   *  display label via `formatPinLocation`; falls back to a context-
+   *  less label when omitted. */
+  roomName?: string | null;
 }
 
 
@@ -266,6 +271,7 @@ export function MoistureReadingSheet({
   onClose,
   onEditRequest,
   readOnly = false,
+  roomName,
 }: MoistureReadingSheetProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const startYRef = useRef(0);
@@ -495,7 +501,7 @@ export function MoistureReadingSheet({
                   className={`w-2.5 h-2.5 rounded-full ${dotColor} shrink-0`}
                 />
                 <h3 className="text-[15px] sm:text-[16px] font-semibold text-on-surface truncate">
-                  {pin.location_name}
+                  {formatPinLocation(pin, { roomName })}
                 </h3>
               </div>
               <p className="mt-1.5 text-[11px] font-[family-name:var(--font-geist-mono)] text-on-surface-variant">

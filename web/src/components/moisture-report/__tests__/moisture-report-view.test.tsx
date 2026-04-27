@@ -59,7 +59,9 @@ function makePin(over: Partial<MoisturePin> = {}): MoisturePin {
     room_id: "pr-living",
     canvas_x: 50,
     canvas_y: 50,
-    location_name: "Floor, NW Corner, Living Room",
+    surface: "floor",
+    position: "NW",
+    wall_segment_id: null,
     material: "drywall",
     dry_standard: 16,
     created_by: null,
@@ -153,9 +155,13 @@ describe("MoistureReportView", () => {
     expect(screen.getByText("RM-2026-014")).toBeInTheDocument();
     expect(screen.getByText(/Brett Sodders/)).toBeInTheDocument();
 
-    // Summary table: location + material + all three day columns
+    // Summary table: location + material + all three day columns.
+    // Phase 2 location split (migration e2b3c4d5f6a7) — the report now
+    // composes the label via formatPinLocation from structured fields,
+    // not the legacy "Floor, NW Corner, Living Room" composed string.
+    // "Northwest" is the formatted position word for `position: "NW"`.
     expect(
-      screen.getByText("Floor, NW Corner, Living Room"),
+      screen.getByText("Floor, Northwest, Living Room"),
     ).toBeInTheDocument();
     expect(screen.getByText("Drywall")).toBeInTheDocument();
     expect(screen.getByText("D1")).toBeInTheDocument();

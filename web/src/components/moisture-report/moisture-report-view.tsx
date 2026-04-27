@@ -22,6 +22,7 @@ import { deriveReadingHistory } from "@/lib/moisture-reading-history";
 
 import { MoistureReportCanvas } from "./moisture-report-canvas";
 import { MoistureReportSummaryTable } from "./moisture-report-summary-table";
+import { formatPinLocation } from "@/lib/moisture-pin-location";
 
 /** Canonical per-spec floor labels (matches floor-selector.tsx).
  *  Used as the display name when a floor_plans row has no
@@ -184,6 +185,36 @@ export function MoistureReportView({
     }
     return [...set].sort();
   }, [selectedFloor, readingsByPinId]);
+
+  // Phase 2 location split (migration e2b3c4d5f6a7) — precompute the
+  // display label for each visible pin once. The summary table doesn't
+  // have access to the floor's canvas data; doing it here keeps the
+  // table dumb (renders strings) and centralizes the room/wall lookup.
+  // Match canvas room by `propertyRoomId` (the canvas room's pointer to
+  // the backend `job_rooms.id`); walls associate to that canvas room
+  // via `roomId`. Polygon vertices come from `room.points` when present.
+  const pinLocationLabels = useMemo(() => {
+    if (!selectedFloor) return undefined;
+    const roomById = new Map(
+      selectedFloor.canvas.rooms.map((r) => [r.propertyRoomId ?? r.id, r]),
+    );
+    const labels = new Map<string, string>();
+    for (const pin of [...visiblePins, ...visibleOrphanPins]) {
+      const room = pin.room_id ? roomById.get(pin.room_id) : null;
+      const wallsInRoom = room
+        ? selectedFloor.canvas.walls.filter((w) => w.roomId === room.id)
+        : null;
+      labels.set(
+        pin.id,
+        formatPinLocation(pin, {
+          roomName: room?.name,
+          walls: wallsInRoom,
+          roomPolygon: room?.points,
+        }),
+      );
+    }
+    return labels;
+  }, [selectedFloor, visiblePins, visibleOrphanPins]);
 
   // Rollup strip: count pins that existed on the snapshot date AND
   // had achieved dry standard by it. Total is the count of pins that
@@ -443,6 +474,7 @@ export function MoistureReportView({
                 pins={[...visiblePins, ...visibleOrphanPins]}
                 readingsByPinId={readingsByPinId}
                 jobTimezone={jobTimezone}
+                pinLocationLabels={pinLocationLabels}
               />
             </section>
           )}

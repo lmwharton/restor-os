@@ -13,6 +13,7 @@
 import type { MoisturePin, MoisturePinReading } from "@/lib/types";
 import { formatShortDateLocal, localDateFromTimestamp } from "@/lib/dates";
 import { deriveReadingHistory } from "@/lib/moisture-reading-history";
+import { formatPinLocation } from "@/lib/moisture-pin-location";
 
 const COLOR_BG: Record<"red" | "amber" | "green", string> = {
   red: "bg-red-500",
@@ -28,6 +29,13 @@ export interface MoistureReportSummaryTableProps {
    *  in a different TZ see the same days as the on-site tech.
    *  Omit for tech-only contexts where browser-local is correct. */
   jobTimezone?: string;
+  /** Phase 2 location split (migration e2b3c4d5f6a7) — precomputed
+   *  display label per pin id. Parent computes via `formatPinLocation`
+   *  with full room + wall context (the table doesn't have access to
+   *  the floor's canvas data). Missing entries fall back to a
+   *  context-less label so the table still renders during a partial
+   *  load. */
+  pinLocationLabels?: ReadonlyMap<string, string>;
 }
 
 /** Material label lookup — same catalog as the placement / edit sheets,
@@ -47,6 +55,7 @@ export function MoistureReportSummaryTable({
   pins,
   readingsByPinId,
   jobTimezone,
+  pinLocationLabels,
 }: MoistureReportSummaryTableProps) {
   if (pins.length === 0) {
     return (
@@ -137,7 +146,7 @@ export function MoistureReportSummaryTable({
                 className="border-b border-outline-variant/30 align-middle"
               >
                 <td className="px-2 py-1.5 text-on-surface whitespace-nowrap">
-                  {pin.location_name}
+                  {pinLocationLabels?.get(pin.id) ?? formatPinLocation(pin)}
                 </td>
                 <td className="px-2 py-1.5 text-on-surface-variant whitespace-nowrap">
                   {materialLabel}

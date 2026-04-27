@@ -9,20 +9,38 @@
 // Desktop: centered modal. Same contents either way.
 
 import { useMemo, useRef, useState } from "react";
-import type { MoistureMaterial } from "@/lib/types";
+import type {
+  MoistureMaterial,
+  MoisturePosition,
+  MoistureSurface,
+} from "@/lib/types";
 import { DRY_STANDARDS } from "@/lib/hooks/use-moisture-pins";
 
-type Surface = "Floor" | "Wall" | "Ceiling";
-type Position = "NW" | "NE" | "C" | "SW" | "SE";
+// UI-side label types — capitalized for the chip buttons. Mapped to
+// the lowercase backend `MoistureSurface` enum at submit time.
+type SurfaceLabel = "Floor" | "Wall" | "Ceiling";
+type PositionLabel = "NW" | "NE" | "C" | "SW" | "SE";
+
+const SURFACE_TO_BACKEND: Record<SurfaceLabel, MoistureSurface> = {
+  Floor: "floor",
+  Wall: "wall",
+  Ceiling: "ceiling",
+};
 
 export interface PlacementSheetData {
-  surface: Surface;
-  position: Position;
+  /** Phase 2 location split (migration e2b3c4d5f6a7) — lowercase enum
+   *  matching the backend column. Replaces the composed `location_name`. */
+  surface: MoistureSurface;
+  /** Required for every surface (DB column is NOT NULL). The placement
+   *  sheet defaults to 'C' so the chip row always has a selection. */
+  position: MoisturePosition;
+  /** Wall segment FK — populated by the (future) wall picker UX. For
+   *  now this is always `null`; the backend CHECK explicitly allows
+   *  wall pins without a picked segment ("draft state"). */
+  wall_segment_id: string | null;
   material: MoistureMaterial;
   dry_standard: number;
   initial_reading: number;
-  /** Composed "Surface, Position, Room Name" for the pin's location_name. */
-  location_name: string;
 }
 
 interface MoisturePlacementSheetProps {
@@ -42,8 +60,8 @@ interface MoisturePlacementSheetProps {
   isSaving?: boolean;
 }
 
-const SURFACES: Surface[] = ["Floor", "Wall", "Ceiling"];
-const POSITIONS: Position[] = ["NW", "NE", "C", "SW", "SE"];
+const SURFACES: SurfaceLabel[] = ["Floor", "Wall", "Ceiling"];
+const POSITIONS: PositionLabel[] = ["NW", "NE", "C", "SW", "SE"];
 
 // The 7 material options that map to a dry standard. Order matches the
 // backend DRY_STANDARDS dict so developers can cross-reference easily.
@@ -99,8 +117,8 @@ export function MoisturePlacementSheet({
   // drywall is present in ~every restoration job).
   const defaultMaterial: MoistureMaterial = suggested[0]?.value ?? "drywall";
 
-  const [surface, setSurface] = useState<Surface>("Floor");
-  const [position, setPosition] = useState<Position>("C");
+  const [surface, setSurface] = useState<SurfaceLabel>("Floor");
+  const [position, setPosition] = useState<PositionLabel>("C");
   const [material, setMaterial] = useState<MoistureMaterial>(defaultMaterial);
   // String state for numeric inputs so the user can type intermediate values
   // (empty string, "4.", "4.5") without state rejecting them. Seeded from
@@ -156,24 +174,23 @@ export function MoisturePlacementSheet({
 
   const handleSave = () => {
     if (!canSave) return;
-    const positionWord =
-      position === "C"
-        ? "Center"
-        : position === "NW"
-          ? "NW Corner"
-          : position === "NE"
-            ? "NE Corner"
-            : position === "SW"
-              ? "SW Corner"
-              : "SE Corner";
-    const location_name = `${surface}, ${positionWord}, ${roomName}`;
+    const backendSurface = SURFACE_TO_BACKEND[surface];
     onSave({
-      surface,
+      surface: backendSurface,
+      // Position is sent for every surface — the tech picked it explicitly
+      // in the chip row and we'd rather record what they meant than
+      // throw it away. The DB CHECK is decoupled from surface
+      // (`position IS NULL OR position IN ('C','NW','NE','SW','SE')`),
+      // so floor / wall / ceiling all accept the same enum.
       position,
+      // Wall picker UI hasn't shipped yet — wall pins save without a
+      // segment link. The backend CHECK
+      // chk_moisture_pin_wall_segment_only_when_wall explicitly allows
+      // this draft state for wall surfaces.
+      wall_segment_id: null,
       material,
       dry_standard: dryNum,
       initial_reading: readNum,
-      location_name,
     });
   };
 
