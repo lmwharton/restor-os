@@ -1731,7 +1731,9 @@ class TestPublicSharedView:
             moisture_pins=[
                 {
                     "id": str(uuid4()),
-                    "location_name": "Floor, NW Corner",
+                    "surface": "floor",
+                    "position": "NW",
+                    "wall_segment_id": None,
                     "readings": [],
                 },
             ],
@@ -1768,7 +1770,11 @@ class TestPublicSharedView:
         pins = [
             {
                 "id": str(uuid4()),
-                "location_name": "Floor, Center, Kitchen",
+                # Phase 2 location split (e2b3c4d5f6a7) — structured
+                # triple replaces composed location_name.
+                "surface": "floor",
+                "position": "C",
+                "wall_segment_id": None,
                 "material": "drywall",
                 "dry_standard": 16.0,
                 "canvas_x": 100.0,
@@ -1814,9 +1820,13 @@ class TestPublicSharedView:
             assert response.status_code == 200
             data = response.json()
             assert len(data["moisture_pins"]) == 1
-            assert data["moisture_pins"][0]["location_name"] == (
-                "Floor, Center, Kitchen"
-            )
+            # Phase 2 location split (e2b3c4d5f6a7) — public payload now
+            # carries the structured triple instead of the composed
+            # location_name. The frontend moisture-report wrapper
+            # composes the display string via formatPinLocation.
+            assert data["moisture_pins"][0]["surface"] == "floor"
+            assert data["moisture_pins"][0]["position"] == "C"
+            assert data["moisture_pins"][0]["wall_segment_id"] is None
             # Readings survive the round-trip for the report view's
             # per-pin history rendering.
             assert len(data["moisture_pins"][0]["readings"]) == 1
@@ -1848,8 +1858,20 @@ class TestPublicSharedView:
             link_data,
             {**mock_job_data, "floor_plan_id": str(uuid4()), "property_id": "prop-1"},
             moisture_pins=[
-                {"id": str(uuid4()), "location_name": "Wall, North", "readings": []},
-                {"id": str(uuid4()), "location_name": "Floor, Center", "readings": []},
+                {
+                    "id": str(uuid4()),
+                    "surface": "wall",
+                    "position": "C",
+                    "wall_segment_id": None,
+                    "readings": [],
+                },
+                {
+                    "id": str(uuid4()),
+                    "surface": "floor",
+                    "position": "C",
+                    "wall_segment_id": None,
+                    "readings": [],
+                },
             ],
             floor_plans=[
                 {"id": str(uuid4()), "canvas_data": {}, "is_current": True, "floor_number": 1},

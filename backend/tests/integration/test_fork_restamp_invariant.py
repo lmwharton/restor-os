@@ -94,6 +94,17 @@ EXPECTED_RESTAMP_TABLES: list[dict[str, list[str]]] = [
             "AND fp.floor_number = p_floor_number",
         ],
     },
+    # NB: ``moisture_pins.wall_segment_id`` was originally added here by
+    # Phase 2 location-split (e2b3c4d5f6a7) and REMOVED by e5f6a7b8c9d0
+    # after Gemini cross-review found the UPDATE was a no-op inside
+    # save_floor_plan_version. The re-stamp lives inside
+    # restore_floor_plan_relational_snapshot now (where new wall ids
+    # exist by the time the UPDATE runs). The runtime invariant is
+    # pinned by tests/integration/test_wall_segment_restamp_on_snapshot_restore.py —
+    # that test asserts the post-condition end-to-end against a real DB,
+    # which is the only correct tool for this class of invariant
+    # (text-scan green-lit the misplaced UPDATE statement and missed
+    # the structural defect — lesson #12).
 ]
 
 

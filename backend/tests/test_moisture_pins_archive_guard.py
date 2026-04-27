@@ -123,7 +123,9 @@ def _pin_row(pin_id, job_id):
         "company_id": str(uuid4()),
         "canvas_x": 100.0,
         "canvas_y": 100.0,
-        "location_name": "Test",
+        "surface": "floor",
+        "position": "C",
+        "wall_segment_id": None,
         "material": "drywall",
         "dry_standard": 16.0,
     }
@@ -154,7 +156,7 @@ class TestArchiveGuardOnMutations:
         body = MoisturePinCreate(
             room_id=ids["room_id"],
             canvas_x=100, canvas_y=100,
-            location_name="Center", material="drywall",
+            surface="floor", position="C", material="drywall",
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,
@@ -651,7 +653,7 @@ class TestUpdatePinPlacementValidation:
             room_id=ids["room_id"],
             # (200, 200) lies well outside the [0..100] square polygon.
             canvas_x=200, canvas_y=200,
-            location_name="Floating", material="drywall",
+            surface="floor", position="C", material="drywall",
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,
@@ -788,7 +790,7 @@ class TestUpdatePinPlacementValidation:
         body = MoisturePinCreate(
             room_id=ids["room_id"],
             canvas_x=50, canvas_y=50,
-            location_name="Center", material="drywall",
+            surface="floor", position="C", material="drywall",
             dry_standard=16,
             initial_reading={
                 "reading_value": 15,

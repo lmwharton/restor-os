@@ -96,10 +96,12 @@ def scratch_pin(conn):
         """
         INSERT INTO moisture_pins (
             id, job_id, room_id, company_id,
-            canvas_x, canvas_y, location_name,
+            canvas_x, canvas_y,
+            surface, position, wall_segment_id,
             material, dry_standard, created_by
         ) VALUES (
-            %s, %s, %s, %s, 100, 100, 'trigger-test',
+            %s, %s, %s, %s, 100, 100,
+            'floor', 'C', NULL,
             'drywall', 16.0, NULL
         )
         """,
@@ -236,9 +238,11 @@ def test_first_reading_for_new_pin_fires_trigger(conn):
         """
         INSERT INTO moisture_pins (
             id, job_id, room_id, company_id, canvas_x, canvas_y,
-            location_name, material, dry_standard, created_by
+            surface, position, wall_segment_id,
+            material, dry_standard, created_by
         ) VALUES (
-            %s, %s, %s, %s, 90, 90, 'first-reading-test',
+            %s, %s, %s, %s, 90, 90,
+            'floor', 'C', NULL,
             'drywall', 16.0, NULL
         )
         """,
@@ -283,9 +287,11 @@ def test_per_pin_dry_standard_override_honored(conn):
         """
         INSERT INTO moisture_pins (
             id, job_id, room_id, company_id, canvas_x, canvas_y,
-            location_name, material, dry_standard, created_by
+            surface, position, wall_segment_id,
+            material, dry_standard, created_by
         ) VALUES (
-            %s, %s, %s, %s, 50, 50, 'override-test',
+            %s, %s, %s, %s, 50, 50,
+            'floor', 'C', NULL,
             'drywall', 40.0, NULL
         )
         """,
