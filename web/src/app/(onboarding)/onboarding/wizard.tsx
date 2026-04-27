@@ -59,7 +59,7 @@ function backendStepToPhase(step: OnboardingStep): WizardPhase {
   }
 }
 
-type Toast = { message: string; tone: "success" | "info" } | null;
+type Toast = { message: string; tone: "success" | "info" | "error" } | null;
 
 type Props = {
   initialStatus: OnboardingStatus;
@@ -104,11 +104,19 @@ export default function OnboardingWizard({ initialStatus }: Props) {
     // bump `users.onboarding_step` — we have to nudge it forward
     // ourselves so a refresh after Step 1 lands the user back at Step 2
     // (Pricing) instead of Step 1.
+    //
+    // Don't advance the local screen if the PATCH fails. Otherwise the
+    // user lands on Pricing locally, then on refresh the server still
+    // says they're at Step 1 and the wizard bounces them back — confusing.
+    // Surface the error inline; let them retry. (PricingUploadScreen and
+    // FirstJobScreen already do this — be consistent.)
     try {
       await setOnboardingStep("jobs_import");
-    } catch {
-      // Best-effort — even if the bump fails, the local screen advances.
-      // The next mutation will re-derive state and recover.
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : "Couldn't advance onboarding step.";
+      setToast({ message: msg, tone: "error" });
+      return;
     }
     setPhase("pricing");
   }
@@ -208,7 +216,12 @@ export default function OnboardingWizard({ initialStatus }: Props) {
             role="status"
             className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl px-4 py-2.5 text-[13px] font-medium shadow-lg"
             style={{
-              backgroundColor: toast.tone === "success" ? "#15512c" : "#1f1b17",
+              backgroundColor:
+                toast.tone === "success"
+                  ? "#15512c"
+                  : toast.tone === "error"
+                    ? "#7a2c0b"
+                    : "#1f1b17",
               color: "white",
             }}
           >

@@ -4,8 +4,9 @@
  * This is the first REQUIRED step and the only one that creates the
  * `companies`/`users` rows (Decision Log #2: Screen 2 is the CREATE step).
  * One atomic `POST /v1/company` call. Backend's RPC handles the advisory
- * lock + onboarding-step bump to `'jobs_import'`. We do NOT issue a
- * follow-up PATCH /v1/me/onboarding-step here (advisor pitfall #2).
+ * lock. The screen does NOT issue the PATCH /v1/me/onboarding-step here —
+ * that's the wizard's `handleCompanyCreated` after `onCreated()`, which
+ * surfaces any failure inline rather than silently advancing.
  *
  * Optional sidetrack: if the user has active jobs already, they can pop a
  * Quick-Add modal from inline link below the form.

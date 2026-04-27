@@ -12,7 +12,9 @@
  * (protected)/layout.tsx gate. Single source of truth.
  */
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Backend port is 5174 per backend/CLAUDE.md (uvicorn --port 5174).
+// Production sets NEXT_PUBLIC_API_URL via Vercel env vars.
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5174";
 
 interface OnboardingStatusResponse {
   step:
@@ -33,16 +35,9 @@ export async function getAuthenticatedRedirect(
       cache: "no-store",
     });
 
-    console.log(
-      `[auth-redirect] GET ${API_URL}/v1/company/onboarding-status → ${res.status}`,
-    );
-
     if (res.ok) {
       const data: OnboardingStatusResponse = await res.json();
       if (!data.has_company || data.step !== "complete") {
-        console.log(
-          `[auth-redirect] → /onboarding (step=${data.step} has_company=${data.has_company})`,
-        );
         return "/onboarding";
       }
       return "/dashboard";
@@ -52,16 +47,13 @@ export async function getAuthenticatedRedirect(
     // 401 = no auth user. Both → onboarding so the wizard can stand up
     // the user/company atomically.
     if (res.status === 404 || res.status === 401) {
-      console.log("[auth-redirect] → /onboarding (no user/auth row)");
       return "/onboarding";
     }
 
     // 5xx / unknown → permissive fallback so existing users aren't blocked
     // by an unrelated outage.
-    console.log(`[auth-redirect] → /dashboard (status=${res.status})`);
     return "/dashboard";
-  } catch (err) {
-    console.log(`[auth-redirect] → /dashboard (catch: ${err})`);
+  } catch {
     return "/dashboard";
   }
 }

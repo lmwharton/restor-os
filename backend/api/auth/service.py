@@ -620,10 +620,7 @@ async def update_onboarding_step(auth_user_id: UUID, step: str) -> OnboardingSta
         updates["onboarding_completed_at"] = datetime.now(UTC).isoformat()
 
     update_result = await (
-        client.table("users")
-        .update(updates)
-        .eq("auth_user_id", str(auth_user_id))
-        .execute()
+        client.table("users").update(updates).eq("auth_user_id", str(auth_user_id)).execute()
     )
     if not update_result.data:
         raise AppException(

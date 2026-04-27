@@ -81,7 +81,7 @@ This spec (v1):
 | 3 | Address columns already exist on `companies` | Spec 00 already added `address, city, state, zip`. Migration only needs to add `service_area text[]`. |
 | 4 | Onboarding state lives on `users` (not `companies`) | Eng review (codex) caught that company-scoped state would trap invited team members in owner setup. Per-user state is the right boundary. |
 | 5 | State is server-derived from data, not client-asserted | Eng review (codex) caught that `PATCH /v1/company/onboarding-step` lets a client claim `first_job_created=true` without creating a job. Server derives from `EXISTS` queries on real tables. Only `setup_banner_dismissed_at` is a real flag. |
-| 6 | Job statuses use the actual enum (`needs_scope/scoped/submitted`), not Brett's PRD wording (Lead/Scheduled/In Progress/Completed) | Spec 00 already shipped the pipeline with the actual enum. Brett's UI dropdown labels can map to the same backend values without a second enum. |
+| 6 | Job statuses use the live 7-stage pipeline enum, not Brett's PRD wording (Lead/Scheduled/In Progress/Completed) | The DB CHECK lives at migration `49e2a91b6ebb`: `('new', 'contracted', 'mitigation', 'drying', 'job_complete', 'submitted', 'collected')`. Brett's three Quick-Add dropdown labels map: Lead→`new`, Scoped→`mitigation`, Submitted→`submitted`. Mapping in `_normalize_batch_status`. No new enum. |
 | 7 | Role rename `'employee'` → `'tech'` | DB CHECK is `'employee'`. Brett's PRD uses `'tech'`. Pre-launch zero data — cheap migration. Avoids ongoing app-layer aliasing. |
 | 8 | Pricing upload kept in onboarding with **minimal** `scope_codes` table here | Codex called out that dropping pricing cascades through state machine, copy, and banner. Cheaper to ship the minimal table now and let Spec 01D extend it later than to rewrite the wizard twice. |
 | 9 | Banner dismiss state per-user, server-side | Survives device switches. Trivial cost. |
@@ -255,12 +255,12 @@ Accessed via link on Company Profile screen. Not a required step. Same as Brett'
 
 **Job status mapping (no new enum):**
 
-Brett's PRD UI labels use friendly terms; the backend uses the existing `('needs_scope', 'scoped', 'submitted')` CHECK constraint. Use the existing pipeline status values; the dropdown shows friendly labels.
+Brett's PRD UI labels use friendly terms; the backend uses the live 7-stage CHECK constraint (set in migration `49e2a91b6ebb`: `('new', 'contracted', 'mitigation', 'drying', 'job_complete', 'submitted', 'collected')`). The Quick Add dropdown only exposes the three states a contractor uses when migrating from another tool — the rest of the pipeline gets touched in normal job flow, not at import time. Implementation lives in `_normalize_batch_status` in `backend/api/jobs/service.py`.
 
 | UI label | Backend value |
 |---|---|
-| Lead | `needs_scope` (default) |
-| Scoped | `scoped` |
+| Lead | `new` (default) |
+| Scoped | `mitigation` |
 | Submitted | `submitted` |
 
 **Re-accessible later:** `/settings/jobs/import` (built as part of this spec)

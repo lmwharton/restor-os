@@ -31,12 +31,16 @@ export async function proxy(request: NextRequest) {
         },
         set(name: string, value: string, options: CookieOptions) {
           request.cookies.set({ name, value, ...options });
-          response = NextResponse.next({ request });
+          // Preserve forwardHeaders on the rebuild so x-pathname survives
+          // a token-refresh write. Without this, the layout's path-aware
+          // gate sees an empty pathname and incorrectly bounces users
+          // away from /settings/* during onboarding.
+          response = NextResponse.next({ request: { headers: forwardHeaders } });
           response.cookies.set({ name, value, ...options });
         },
         remove(name: string, options: CookieOptions) {
           request.cookies.set({ name, value: "", ...options });
-          response = NextResponse.next({ request });
+          response = NextResponse.next({ request: { headers: forwardHeaders } });
           response.cookies.set({ name, value: "", ...options });
         },
       },

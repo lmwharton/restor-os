@@ -124,11 +124,13 @@ async def delete_job_endpoint(
     job_id: UUID,
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Soft delete a job. Owner or admin only."""
-    if ctx.role not in ("owner", "admin"):
+    """Soft delete a job. Owner only."""
+    # Roles are ('owner', 'tech') after Spec 01I migration 01i_a2; the old
+    # ('owner', 'admin') check shipped before the rename was dead code.
+    if ctx.role != "owner":
         raise AppException(
             status_code=403,
-            detail="Only owners and admins can delete jobs",
+            detail="Only owners can delete jobs",
             error_code="FORBIDDEN",
         )
     await delete_job(ctx.company_id, ctx.user_id, job_id)
