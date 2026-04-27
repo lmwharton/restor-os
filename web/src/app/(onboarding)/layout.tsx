@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getUser } from "@/lib/supabase/server";
+import { GoogleMapsProvider } from "@/components/google-maps-provider";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
@@ -17,5 +18,8 @@ export default async function OnboardingLayout({
     redirect("/login");
   }
 
-  return <>{children}</>;
+  // Onboarding's CompanyProfileScreen uses Google Places autocomplete on
+  // the business address field. Without this provider the input still
+  // works as a plain text field (graceful degradation).
+  return <GoogleMapsProvider>{children}</GoogleMapsProvider>;
 }

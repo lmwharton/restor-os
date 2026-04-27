@@ -16,6 +16,10 @@
 import { useMemo, useState, type FormEvent } from "react";
 import FormField from "@/components/forms/FormField";
 import {
+  AddressAutocomplete,
+  type AddressParts,
+} from "@/components/address-autocomplete";
+import {
   PrimaryButton,
   SelectField,
   US_STATE_OPTIONS,
@@ -25,12 +29,6 @@ import {
   type CompanyProfileFields,
 } from "../lib/validators";
 import { createCompany, type CompanyCreatePayload } from "@/lib/onboarding-api";
-
-const SERVICE_AREA_OPTIONS = [
-  "Warren/Macomb County",
-  "Oakland County",
-  "Wayne County",
-];
 
 type Props = {
   /** Show the "Welcome back!" banner above the form (resume case). */
@@ -52,9 +50,13 @@ export default function CompanyProfileScreen({
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [zip, setZip] = useState("");
-  const [serviceArea, setServiceArea] = useState<string[]>([]);
-  const [otherChecked, setOtherChecked] = useState(false);
-  const [otherText, setOtherText] = useState("");
+  // Service area is free-text, comma-separated. Earlier the screen
+  // hardcoded three Michigan counties (from Brett's PRD wireframe), which
+  // was nonsense for any contractor outside MI. A single free-text input
+  // works for any state and matches how contractors actually describe
+  // their territory ("Wayne, Macomb, Oakland" / "King County" / "Boroughs
+  // 1-3"). Submitted as `string[]` after split-trim-filter on commas.
+  const [serviceAreaText, setServiceAreaText] = useState("");
 
   const [touched, setTouched] = useState<Record<keyof CompanyProfileFields, boolean>>({
     name: false,
@@ -82,10 +84,22 @@ export default function CompanyProfileScreen({
     setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
   }
 
-  function toggleArea(area: string) {
-    setServiceArea((prev) =>
-      prev.includes(area) ? prev.filter((a) => a !== area) : [...prev, area],
-    );
+  function handleAddressSelect(parts: AddressParts) {
+    // Google Places picks: street_number + route → address_line1, plus
+    // locality, admin_area_level_1, postal_code. Auto-fill the dependent
+    // fields so the user types one address and we get all four.
+    setAddress(parts.address_line1);
+    if (parts.city) setCity(parts.city);
+    if (parts.state) setState(parts.state);
+    if (parts.zip) setZip(parts.zip);
+    // Mark them all touched so any stale errors clear on the next render.
+    setTouched((prev) => ({
+      ...prev,
+      address: true,
+      city: true,
+      state: true,
+      zip: true,
+    }));
   }
 
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
@@ -94,8 +108,11 @@ export default function CompanyProfileScreen({
     setSubmitError(null);
     if (!isValid || submitting) return;
 
-    const finalAreas = [...serviceArea];
-    if (otherChecked && otherText.trim()) finalAreas.push(otherText.trim());
+    // Free-text service area → string[]. Empty / whitespace-only → undefined.
+    const serviceArea = serviceAreaText
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean);
 
     const payload: CompanyCreatePayload = {
       name: name.trim(),
@@ -104,7 +121,7 @@ export default function CompanyProfileScreen({
       city: city.trim(),
       state: state.trim().toUpperCase(),
       zip: zip.trim(),
-      service_area: finalAreas.length > 0 ? finalAreas : undefined,
+      service_area: serviceArea.length > 0 ? serviceArea : undefined,
     };
 
     setSubmitting(true);
@@ -166,16 +183,40 @@ export default function CompanyProfileScreen({
           error={touched.phone ? errors.phone : undefined}
         />
 
-        <FormField
-          label="Business Address"
-          required
-          autoComplete="street-address"
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          onBlur={() => markTouched("address")}
-          placeholder="123 Main Street"
-          error={touched.address ? errors.address : undefined}
-        />
+        <div className="flex flex-col">
+          <label
+            htmlFor="company-address"
+            className="block text-[11px] font-semibold tracking-[0.1em] uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]"
+          >
+            Business Address
+            <span aria-hidden="true" className="ml-1 text-red-500">
+              *
+            </span>
+          </label>
+          <AddressAutocomplete
+            value={address}
+            onChange={setAddress}
+            onSelect={handleAddressSelect}
+            placeholder="Start typing your business address..."
+            className={[
+              "w-full h-12 px-4 rounded-lg text-on-surface text-[15px]",
+              "placeholder:text-outline outline-none transition-all duration-200",
+              "bg-surface-container-low focus:bg-surface-container-lowest",
+              touched.address && errors.address
+                ? "ring-2 ring-red-400/60 focus:ring-red-500/70"
+                : "focus:ring-2 focus:ring-primary/20",
+            ].join(" ")}
+          />
+          {touched.address && errors.address ? (
+            <p role="alert" className="mt-1.5 text-[12px] leading-snug text-red-600">
+              {errors.address}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[12px] leading-snug text-on-surface-variant">
+              Pick a suggestion to auto-fill city, state, and ZIP.
+            </p>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-[1fr_140px_120px] gap-3">
           <FormField
@@ -216,62 +257,13 @@ export default function CompanyProfileScreen({
           />
         </div>
 
-        <fieldset className="space-y-2">
-          <legend className="block text-[11px] font-semibold tracking-[0.1em] uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]">
-            Service Area{" "}
-            <span className="ml-0.5 text-outline font-normal normal-case tracking-normal">
-              (optional)
-            </span>
-          </legend>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {SERVICE_AREA_OPTIONS.map((area) => {
-              const checked = serviceArea.includes(area);
-              return (
-                <label
-                  key={area}
-                  className="flex items-center gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer hover:bg-surface-container-low/50 transition-colors"
-                  style={{
-                    borderColor: checked ? "#e85d26" : "#e1bfb4",
-                    backgroundColor: checked ? "#fff4ed" : undefined,
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggleArea(area)}
-                    className="h-4 w-4 cursor-pointer rounded border-outline-variant accent-[#e85d26]"
-                  />
-                  <span className="text-[13px] text-on-surface">{area}</span>
-                </label>
-              );
-            })}
-            <label
-              className="flex items-center gap-2.5 rounded-lg border px-3 py-2.5 cursor-pointer hover:bg-surface-container-low/50 transition-colors sm:col-span-2"
-              style={{
-                borderColor: otherChecked ? "#e85d26" : "#e1bfb4",
-                backgroundColor: otherChecked ? "#fff4ed" : undefined,
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={otherChecked}
-                onChange={(e) => setOtherChecked(e.target.checked)}
-                className="h-4 w-4 cursor-pointer rounded border-outline-variant accent-[#e85d26]"
-              />
-              <span className="text-[13px] text-on-surface shrink-0">Other</span>
-              {otherChecked ? (
-                <input
-                  type="text"
-                  value={otherText}
-                  onChange={(e) => setOtherText(e.target.value)}
-                  onFocus={(e) => e.target.select()}
-                  placeholder="e.g. St. Clair County"
-                  className="flex-1 h-8 px-2 rounded-md text-[13px] outline-none bg-white border border-outline-variant focus:ring-2 focus:ring-primary/20"
-                />
-              ) : null}
-            </label>
-          </div>
-        </fieldset>
+        <FormField
+          label="Service Area"
+          value={serviceAreaText}
+          onChange={(e) => setServiceAreaText(e.target.value)}
+          placeholder="e.g. Wayne, Macomb, Oakland"
+          helper="Counties or areas you serve, separated by commas. Optional — set up later from Settings."
+        />
 
         {submitError ? (
           <p role="alert" className="text-sm text-red-600">{submitError}</p>
