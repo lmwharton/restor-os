@@ -1,13 +1,27 @@
-from uuid import UUID
-
 from typing import Literal
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request
 
 from api.auth.middleware import get_auth_context
 from api.auth.schemas import AuthContext
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobListResponse, JobUpdate
-from api.jobs.service import create_job, create_linked_recon, delete_job, get_job, list_jobs, update_job
+from api.jobs.schemas import (
+    JobBatchCreate,
+    JobBatchResponse,
+    JobCreate,
+    JobDetailResponse,
+    JobListResponse,
+    JobUpdate,
+)
+from api.jobs.service import (
+    create_job,
+    create_jobs_batch,
+    create_linked_recon,
+    delete_job,
+    get_job,
+    list_jobs,
+    update_job,
+)
 from api.shared.dependencies import _get_token
 from api.shared.exceptions import AppException
 
@@ -25,13 +39,29 @@ async def create_job_endpoint(
     return await create_job(token, ctx.company_id, ctx.user_id, body)
 
 
+@router.post("/batch", status_code=201, response_model=JobBatchResponse)
+async def create_jobs_batch_endpoint(
+    body: JobBatchCreate,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Create up to 10 jobs atomically (Spec 01I Quick Add Active Jobs).
+
+    All-or-nothing: if any row fails to insert (CHECK violation, unique
+    conflict, etc.), the whole batch rolls back. Status field accepts
+    UI labels (Lead/Scoped/Submitted) or enum values.
+    """
+    return await create_jobs_batch(ctx.company_id, ctx.user_id, body)
+
+
 @router.get("", response_model=JobListResponse)
 async def list_jobs_endpoint(
     request: Request,
     ctx: AuthContext = Depends(get_auth_context),
     status: str | None = Query(None, description="Filter by status"),
     loss_type: str | None = Query(None, description="Filter by loss type"),
-    job_type: Literal["mitigation", "reconstruction"] | None = Query(None, description="Filter by job type"),
+    job_type: Literal["mitigation", "reconstruction"] | None = Query(
+        None, description="Filter by job type"
+    ),
     search: str | None = Query(None, description="Search address or customer name"),
     limit: int = Query(20, ge=1, le=100, description="Max items per page"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),

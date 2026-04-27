@@ -3,13 +3,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, UploadFile
 
 from api.auth.middleware import get_auth_context, get_auth_user_id
-from api.auth.schemas import AuthContext, CompanyCreate, CompanyUpdate, UserUpdate
+from api.auth.schemas import (
+    AuthContext,
+    CompanyCreate,
+    CompanyUpdate,
+    OnboardingStatusResponse,
+    OnboardingStepUpdate,
+    UserUpdate,
+)
 from api.auth.service import (
+    dismiss_setup_banner,
+    get_onboarding_status,
     get_or_create_company,
     get_user_with_company,
     update_company,
     update_company_logo,
     update_last_login,
+    update_onboarding_step,
     update_user_avatar,
     update_user_profile,
 )
@@ -105,6 +115,11 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
         email=email,
         user_name=user_name,
         avatar_url=avatar_url,
+        address=body.address,
+        city=body.city,
+        state=body.state,
+        zip_code=body.zip,
+        service_area=body.service_area,
     )
 
     return {"company": company, "user": user}
@@ -146,3 +161,46 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
 
 # GET /v1/jobs endpoint moved to api/jobs/router.py (Spec 01).
 # The list_jobs function remains in auth/service.py temporarily until the jobs module is built.
+
+
+# ---------------------------------------------------------------------------
+# Spec 01I: onboarding state endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/company/onboarding-status", response_model=OnboardingStatusResponse)
+async def get_company_onboarding_status(
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Return server-derived onboarding status for the current user.
+
+    ``has_jobs`` and ``has_pricing`` are read from real tables, not from
+    any client-asserted flag. ``show_setup_banner`` is computed on the fly
+    (completed AND not dismissed AND no pricing yet).
+    """
+    return await get_onboarding_status(ctx.user_id)
+
+
+@router.patch("/me/onboarding-step", response_model=OnboardingStatusResponse)
+async def patch_onboarding_step(
+    body: OnboardingStepUpdate,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Advance the user's onboarding step.
+
+    Forward-only: rejects backward transitions with 400
+    ``ONBOARDING_BACKWARD_TRANSITION``. Setting step to ``'complete'``
+    stamps ``onboarding_completed_at`` once.
+    """
+    return await update_onboarding_step(ctx.user_id, body.step)
+
+
+@router.patch("/me/dismiss-setup-banner", response_model=OnboardingStatusResponse)
+async def patch_dismiss_setup_banner(
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Dismiss the dashboard 'Complete your setup' banner for the current user.
+
+    Per-user, persisted server-side. Survives device switches.
+    """
+    return await dismiss_setup_banner(ctx.user_id)

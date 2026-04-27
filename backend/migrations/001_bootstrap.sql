@@ -51,8 +51,14 @@ CREATE TABLE users (
     phone             TEXT,
     avatar_url        TEXT,
     title             TEXT,
+    -- Role values: owner (creator/admin) or tech (field staff).
+    -- Originally shipped as ('owner', 'employee'); renamed to 'tech' in
+    -- alembic migration 01i_a2_rename_role (Spec 01I) to match contractor
+    -- terminology. The rename migration is retained for already-deployed
+    -- DBs; this bootstrap line carries the post-rename values directly so
+    -- a fresh DB starts at the right schema.
     role              TEXT NOT NULL DEFAULT 'owner'
-                      CHECK (role IN ('owner', 'employee')),
+                      CHECK (role IN ('owner', 'tech')),
     is_platform_admin BOOLEAN NOT NULL DEFAULT false,
     last_login_at     TIMESTAMPTZ,
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),

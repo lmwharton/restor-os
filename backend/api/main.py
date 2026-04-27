@@ -14,6 +14,7 @@ from api.jobs.router import router as jobs_router
 from api.moisture.router import router as moisture_router
 from api.notifications.router import router as notifications_router
 from api.photos.router import router as photos_router
+from api.pricing.router import router as pricing_router
 from api.properties.router import router as properties_router
 from api.recon_phases.router import router as recon_phases_router
 from api.reports.router import router as reports_router
@@ -118,6 +119,7 @@ app.include_router(jobs_router, prefix="/v1")
 app.include_router(moisture_router, prefix="/v1")
 app.include_router(notifications_router, prefix="/v1")
 app.include_router(photos_router, prefix="/v1")
+app.include_router(pricing_router, prefix="/v1/pricing")
 app.include_router(properties_router, prefix="/v1")
 app.include_router(reports_router, prefix="/v1")
 app.include_router(rooms_router, prefix="/v1")

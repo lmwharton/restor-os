@@ -217,7 +217,8 @@ async def get_auth_context(request: Request) -> AuthContext:
     last_seen_raw = user.get("last_notifications_seen_at")
     last_seen = None
     if last_seen_raw:
-        from datetime import datetime, UTC
+        from datetime import datetime
+
         last_seen = datetime.fromisoformat(last_seen_raw.replace("Z", "+00:00"))
 
     ctx = AuthContext(

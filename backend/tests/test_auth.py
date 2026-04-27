@@ -129,11 +129,15 @@ def mock_user_row_no_company(mock_user_id):
 
 @pytest.fixture
 def mock_user_row_employee(mock_user_id, mock_company_id):
-    """User row with employee role."""
+    """User row with non-owner (tech) role.
+
+    Fixture name kept for backward-compat with existing tests; the role
+    value follows the Spec 01I rename ('employee' -> 'tech').
+    """
     return {
         "id": str(mock_user_id),
         "company_id": str(mock_company_id),
-        "role": "employee",
+        "role": "tech",
         "is_platform_admin": False,
     }
 
@@ -790,7 +794,7 @@ class TestPatchCompany:
     def test_update_company_non_owner_forbidden(
         self, client, valid_token, jwt_secret, mock_user_row_employee
     ):
-        """PATCH /v1/company as employee -> 403."""
+        """PATCH /v1/company as tech (non-owner) -> 403."""
         auth_mock = _make_admin_mock(user_row=mock_user_row_employee)
 
         with (
@@ -837,7 +841,7 @@ class TestUploadCompanyLogo:
     def test_upload_logo_non_owner_forbidden(
         self, client, valid_token, jwt_secret, mock_user_row_employee
     ):
-        """POST /v1/company/logo as employee -> 403."""
+        """POST /v1/company/logo as tech (non-owner) -> 403."""
         auth_mock = _make_admin_mock(user_row=mock_user_row_employee)
 
         with (

@@ -5,7 +5,15 @@ import string
 from datetime import UTC, datetime
 from uuid import UUID
 
-from api.auth.schemas import CompanyResponse, CompanyUpdate, JobResponse, UserResponse, UserUpdate
+from api.auth.schemas import (
+    ONBOARDING_STEP_ORDER,
+    CompanyResponse,
+    CompanyUpdate,
+    JobResponse,
+    OnboardingStatusResponse,
+    UserResponse,
+    UserUpdate,
+)
 from api.shared.database import get_supabase_admin_client
 from api.shared.exceptions import AppException
 
@@ -37,6 +45,7 @@ def _parse_company(data: dict) -> CompanyResponse:
         city=data.get("city"),
         state=data.get("state"),
         zip=data.get("zip"),
+        service_area=data.get("service_area"),
         subscription_tier=data.get("subscription_tier", "free"),
         created_at=data["created_at"],
         updated_at=data["updated_at"],
@@ -97,12 +106,22 @@ async def get_or_create_company(
     email: str,
     user_name: str,
     avatar_url: str | None,
+    *,
+    address: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    zip_code: str | None = None,
+    service_area: list[str] | None = None,
 ) -> tuple[CompanyResponse, UserResponse]:
     """Onboarding flow: create company + user atomically.
 
-    Uses rpc_onboard_user for atomic company + user creation with advisory
-    lock to prevent race conditions from concurrent requests. Falls back to
-    non-atomic path if the RPC is not available.
+    Uses ``rpc_onboard_user`` (extended in Spec 01I to accept the full
+    company profile) for atomic creation with an advisory lock. Falls
+    back to a non-atomic path if the RPC is missing.
+
+    Address fields and ``service_area`` are optional so existing call
+    sites that pre-date Spec 01I (which collected only name + phone)
+    still work — they simply pass through as NULL.
     """
     client = await get_supabase_admin_client()
 
@@ -126,6 +145,11 @@ async def get_or_create_company(
                 "p_company_name": name,
                 "p_company_phone": phone,
                 "p_company_slug": slug,
+                "p_company_address": address,
+                "p_company_city": city,
+                "p_company_state": state,
+                "p_company_zip": zip_code,
+                "p_service_area": service_area,
             },
         ).execute()
 
@@ -149,14 +173,28 @@ async def get_or_create_company(
     except Exception as e:
         error_msg = str(e).lower()
         is_rpc_missing = "rpc_onboard_user" in error_msg and (
-            "not found" in error_msg or "does not exist" in error_msg
+            "not found" in error_msg
+            or "does not exist" in error_msg
             or "could not find" in error_msg
         )
         if is_rpc_missing:
             logger.info("rpc_onboard_user not available, falling back to non-atomic path")
             return await _onboard_user_fallback(
-                client, auth_user_id, name, phone, email, user_name,
-                avatar_url, slug, first_name, last_name,
+                client,
+                auth_user_id,
+                name,
+                phone,
+                email,
+                user_name,
+                avatar_url,
+                slug,
+                first_name,
+                last_name,
+                address=address,
+                city=city,
+                state=state,
+                zip_code=zip_code,
+                service_area=service_area,
             )
         raise
 
@@ -172,6 +210,12 @@ async def _onboard_user_fallback(
     slug: str,
     first_name: str,
     last_name: str | None,
+    *,
+    address: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    zip_code: str | None = None,
+    service_area: list[str] | None = None,
 ) -> tuple[CompanyResponse, UserResponse]:
     """Fallback: non-atomic onboarding when RPC is not available."""
     # Check if user already has a company
@@ -190,12 +234,26 @@ async def _onboard_user_fallback(
         user = _parse_user(existing_data, company)
         return company, user
 
-    # Create company
-    company_result = await (
-        client.table("companies")
-        .insert({"name": name, "slug": slug, "phone": phone, "email": email})
-        .execute()
-    )
+    # Create company with full profile (None values are fine — DB columns
+    # are nullable except name/slug).
+    company_insert: dict = {
+        "name": name,
+        "slug": slug,
+        "phone": phone,
+        "email": email,
+    }
+    if address is not None:
+        company_insert["address"] = address
+    if city is not None:
+        company_insert["city"] = city
+    if state is not None:
+        company_insert["state"] = state
+    if zip_code is not None:
+        company_insert["zip"] = zip_code
+    if service_area is not None:
+        company_insert["service_area"] = service_area
+
+    company_result = await client.table("companies").insert(company_insert).execute()
 
     if not company_result.data:
         raise AppException(
@@ -211,30 +269,34 @@ async def _onboard_user_fallback(
     if existing_data:
         user_result = await (
             client.table("users")
-            .update({
-                "company_id": str(company.id),
-                "name": user_name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "avatar_url": avatar_url,
-                "role": "owner",
-            })
+            .update(
+                {
+                    "company_id": str(company.id),
+                    "name": user_name,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "avatar_url": avatar_url,
+                    "role": "owner",
+                }
+            )
             .eq("id", existing_data["id"])
             .execute()
         )
     else:
         user_result = await (
             client.table("users")
-            .insert({
-                "auth_user_id": str(auth_user_id),
-                "company_id": str(company.id),
-                "email": email,
-                "name": user_name,
-                "first_name": first_name,
-                "last_name": last_name,
-                "avatar_url": avatar_url,
-                "role": "owner",
-            })
+            .insert(
+                {
+                    "auth_user_id": str(auth_user_id),
+                    "company_id": str(company.id),
+                    "email": email,
+                    "name": user_name,
+                    "first_name": first_name,
+                    "last_name": last_name,
+                    "avatar_url": avatar_url,
+                    "role": "owner",
+                }
+            )
             .execute()
         )
 
@@ -389,6 +451,188 @@ async def update_user_avatar(user_id: UUID, file, *, content: bytes | None = Non
 async def update_last_login(user_id: UUID) -> None:
     """Update last_login_at timestamp."""
     client = await get_supabase_admin_client()
-    await client.table("users").update({"last_login_at": datetime.now(UTC).isoformat()}).eq(
-        "id", str(user_id)
-    ).execute()
+    await (
+        client.table("users")
+        .update({"last_login_at": datetime.now(UTC).isoformat()})
+        .eq("id", str(user_id))
+        .execute()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Spec 01I: onboarding state machine
+# ---------------------------------------------------------------------------
+
+
+async def _exists(client, table: str, *, company_id: UUID) -> bool:
+    """Return True if any row exists in ``table`` for ``company_id``.
+
+    Uses select(...).limit(1) instead of count="exact" — cheaper and
+    short-circuits at the first match. Soft-delete-aware tables filter
+    deleted_at; ``scope_codes`` has no deleted_at column so we skip that
+    filter for it.
+    """
+    query = client.table(table).select("id").eq("company_id", str(company_id)).limit(1)
+    if table != "scope_codes":
+        query = query.is_("deleted_at", "null")
+    try:
+        result = await query.execute()
+    except (OSError, ValueError, RuntimeError) as e:
+        logger.warning("Failed exists() on %s for company %s: %s", table, company_id, e)
+        return False
+    return bool(result.data)
+
+
+async def get_onboarding_status(user_id: UUID) -> OnboardingStatusResponse:
+    """Return server-derived onboarding status for ``user_id``.
+
+    Per Decision Log #5: ``has_jobs`` and ``has_pricing`` are derived from
+    EXISTS queries on real tables, not from any client-asserted flag. The
+    only persisted user-facing flags are ``onboarding_step`` and
+    ``setup_banner_dismissed_at``.
+    """
+    client = await get_supabase_admin_client()
+
+    user_result = await (
+        client.table("users")
+        .select(
+            "id, company_id, onboarding_step, onboarding_completed_at, setup_banner_dismissed_at"
+        )
+        .eq("id", str(user_id))
+        .is_("deleted_at", "null")
+        .maybe_single()
+        .execute()
+    )
+    user = user_result.data if user_result else None
+    if not user:
+        raise AppException(
+            status_code=404,
+            detail="User not found",
+            error_code="USER_NOT_FOUND",
+        )
+
+    company_id_str = user.get("company_id")
+    has_company = company_id_str is not None
+    has_jobs = False
+    has_pricing = False
+
+    if has_company:
+        company_id = UUID(company_id_str)
+        has_jobs = await _exists(client, "jobs", company_id=company_id)
+        has_pricing = await _exists(client, "scope_codes", company_id=company_id)
+
+    completed_at_raw = user.get("onboarding_completed_at")
+    completed_at = _parse_timestamptz(completed_at_raw) if completed_at_raw else None
+
+    dismissed_raw = user.get("setup_banner_dismissed_at")
+    dismissed_at = _parse_timestamptz(dismissed_raw) if dismissed_raw else None
+
+    show_setup_banner = completed_at is not None and dismissed_at is None and not has_pricing
+
+    return OnboardingStatusResponse(
+        step=user.get("onboarding_step") or "company_profile",
+        completed_at=completed_at,
+        setup_banner_dismissed_at=dismissed_at,
+        has_jobs=has_jobs,
+        has_pricing=has_pricing,
+        has_company=has_company,
+        show_setup_banner=show_setup_banner,
+    )
+
+
+def _parse_timestamptz(raw: str) -> datetime:
+    """Best-effort ISO-8601 parser. Supabase returns 'Z' suffix or +00:00."""
+    return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+
+
+async def update_onboarding_step(user_id: UUID, step: str) -> OnboardingStatusResponse:
+    """Set the user's onboarding step. Forward-only (or same step).
+
+    Decision Log #5: clients may advance the cursor (next-step skip) but
+    cannot rewind. ``step == 'complete'`` also stamps
+    ``onboarding_completed_at = now()``.
+
+    Validates ``step`` against the canonical list. Returns the refreshed
+    onboarding status (server-derived ``has_*`` flags included so the
+    client doesn't need a follow-up GET).
+    """
+    if step not in ONBOARDING_STEP_ORDER:
+        raise AppException(
+            status_code=400,
+            detail=(f"Invalid onboarding step: must be one of {', '.join(ONBOARDING_STEP_ORDER)}"),
+            error_code="INVALID_ONBOARDING_STEP",
+        )
+
+    client = await get_supabase_admin_client()
+
+    current = await (
+        client.table("users")
+        .select("id, onboarding_step, onboarding_completed_at")
+        .eq("id", str(user_id))
+        .is_("deleted_at", "null")
+        .maybe_single()
+        .execute()
+    )
+    if not current or not current.data:
+        raise AppException(
+            status_code=404,
+            detail="User not found",
+            error_code="USER_NOT_FOUND",
+        )
+
+    current_step = current.data.get("onboarding_step") or "company_profile"
+    try:
+        current_idx = ONBOARDING_STEP_ORDER.index(current_step)
+    except ValueError:
+        # Unknown step in DB — treat as the start so any forward move is allowed.
+        current_idx = 0
+    new_idx = ONBOARDING_STEP_ORDER.index(step)
+
+    if new_idx < current_idx:
+        raise AppException(
+            status_code=400,
+            detail=(
+                f"Cannot move backwards from '{current_step}' to '{step}'. "
+                "Onboarding transitions are forward-only."
+            ),
+            error_code="ONBOARDING_BACKWARD_TRANSITION",
+        )
+
+    updates: dict = {"onboarding_step": step}
+    if step == "complete" and not current.data.get("onboarding_completed_at"):
+        updates["onboarding_completed_at"] = datetime.now(UTC).isoformat()
+
+    update_result = await client.table("users").update(updates).eq("id", str(user_id)).execute()
+    if not update_result.data:
+        raise AppException(
+            status_code=404,
+            detail="User not found",
+            error_code="USER_NOT_FOUND",
+        )
+
+    return await get_onboarding_status(user_id)
+
+
+async def dismiss_setup_banner(user_id: UUID) -> OnboardingStatusResponse:
+    """Mark the dashboard setup banner dismissed for this user.
+
+    Per Decision Log #9: dismiss state is per-user, server-side. Survives
+    device switches.
+    """
+    client = await get_supabase_admin_client()
+
+    update_result = await (
+        client.table("users")
+        .update({"setup_banner_dismissed_at": datetime.now(UTC).isoformat()})
+        .eq("id", str(user_id))
+        .is_("deleted_at", "null")
+        .execute()
+    )
+    if not update_result.data:
+        raise AppException(
+            status_code=404,
+            detail="User not found",
+            error_code="USER_NOT_FOUND",
+        )
+
+    return await get_onboarding_status(user_id)

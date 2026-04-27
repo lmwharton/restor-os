@@ -9,7 +9,15 @@ from uuid import UUID
 
 from postgrest.exceptions import APIError
 
-from api.jobs.schemas import JobCreate, JobDetailResponse, JobUpdate, LinkedJobSummary
+from api.jobs.schemas import (
+    JobBatchCreate,
+    JobBatchResponse,
+    JobBatchSummary,
+    JobCreate,
+    JobDetailResponse,
+    JobUpdate,
+    LinkedJobSummary,
+)
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
@@ -38,12 +46,21 @@ VALID_JOB_TYPES = {"mitigation", "reconstruction"}
 
 # Which statuses are valid for each job type
 MITIGATION_STATUSES = {
-    "new", "contracted", "mitigation", "drying",
-    "complete", "submitted", "collected",
+    "new",
+    "contracted",
+    "mitigation",
+    "drying",
+    "complete",
+    "submitted",
+    "collected",
 }
 RECONSTRUCTION_STATUSES = {
-    "new", "scoping", "in_progress",
-    "complete", "submitted", "collected",
+    "new",
+    "scoping",
+    "in_progress",
+    "complete",
+    "submitted",
+    "collected",
 }
 
 
@@ -109,9 +126,7 @@ def _validate_enums(
         )
 
 
-async def _generate_job_number(
-    client, company_id: UUID, *, collision_offset: int = 0
-) -> str:
+async def _generate_job_number(client, company_id: UUID, *, collision_offset: int = 0) -> str:
     """Generate JOB-YYYYMMDD-XXX. Queries max existing for today.
 
     On retry after a unique constraint collision, pass collision_offset > 0
@@ -308,10 +323,23 @@ async def create_job(
     # Auto-copy fields from linked job (only override fields the caller didn't explicitly set)
     if linked_job_data:
         COPY_FIELDS = [
-            "claim_number", "carrier", "adjuster_name", "adjuster_phone", "adjuster_email",
-            "customer_name", "customer_phone", "customer_email",
-            "address_line1", "city", "state", "zip", "latitude", "longitude",
-            "property_id", "loss_type", "loss_date",
+            "claim_number",
+            "carrier",
+            "adjuster_name",
+            "adjuster_phone",
+            "adjuster_email",
+            "customer_name",
+            "customer_phone",
+            "customer_email",
+            "address_line1",
+            "city",
+            "state",
+            "zip",
+            "latitude",
+            "longitude",
+            "property_id",
+            "loss_type",
+            "loss_date",
         ]
         explicitly_set = body.model_fields_set
         for field in COPY_FIELDS:
@@ -321,6 +349,7 @@ async def create_job(
                     # Parse date strings from PostgREST into Python date objects
                     if field == "loss_date" and isinstance(linked_val, str):
                         from datetime import date as date_type
+
                         try:
                             linked_val = date_type.fromisoformat(linked_val)
                         except ValueError:
@@ -407,14 +436,13 @@ async def create_job(
             is_job_number_conflict = "unique" in error_msg and "job_number" in error_msg
             # If RPC doesn't exist yet, fall back to non-atomic path
             is_rpc_missing = "rpc_create_job" in error_msg and (
-                "not found" in error_msg or "does not exist" in error_msg
+                "not found" in error_msg
+                or "does not exist" in error_msg
                 or "could not find" in error_msg
             )
             if is_rpc_missing:
                 logger.info("rpc_create_job not available, falling back to non-atomic path")
-                job_data = await _create_job_fallback(
-                    client, company_id, user_id, body, job_number
-                )
+                job_data = await _create_job_fallback(client, company_id, user_id, body, job_number)
                 break
             if is_job_number_conflict and attempt < JOB_NUMBER_MAX_RETRIES - 1:
                 logger.warning(
@@ -433,11 +461,16 @@ async def create_job(
         )
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("job_created", extra={"extra_data": {
-        "job_id": str(job_data.get("id", "")),
-        "job_number": job_data.get("job_number", ""),
-        "duration_ms": duration_ms,
-    }})
+    logger.info(
+        "job_created",
+        extra={
+            "extra_data": {
+                "job_id": str(job_data.get("id", "")),
+                "job_number": job_data.get("job_number", ""),
+                "duration_ms": duration_ms,
+            }
+        },
+    )
 
     # Log job_linked event on both jobs if linked
     new_job_id = job_data.get("id")
@@ -446,18 +479,39 @@ async def create_job(
             "linked_job_id": str(body.linked_job_id),
             "new_job_id": str(new_job_id),
         }
-        await log_event(company_id, "job_linked", job_id=UUID(str(new_job_id)), user_id=user_id, event_data=event_data)
-        await log_event(company_id, "job_linked", job_id=body.linked_job_id, user_id=user_id, event_data=event_data)
+        await log_event(
+            company_id,
+            "job_linked",
+            job_id=UUID(str(new_job_id)),
+            user_id=user_id,
+            event_data=event_data,
+        )
+        await log_event(
+            company_id,
+            "job_linked",
+            job_id=body.linked_job_id,
+            user_id=user_id,
+            event_data=event_data,
+        )
 
     # Pre-populate default phases for reconstruction jobs (batch insert)
     if body.job_type == "reconstruction" and new_job_id:
         DEFAULT_RECON_PHASES = [
-            "Demo Verification", "Drywall", "Paint", "Flooring",
-            "Trim / Moldings", "Final Walkthrough",
+            "Demo Verification",
+            "Drywall",
+            "Paint",
+            "Flooring",
+            "Trim / Moldings",
+            "Final Walkthrough",
         ]
         phase_rows = [
-            {"job_id": str(new_job_id), "company_id": str(company_id),
-             "phase_name": name, "sort_order": i, "status": "pending"}
+            {
+                "job_id": str(new_job_id),
+                "company_id": str(company_id),
+                "phase_name": name,
+                "sort_order": i,
+                "status": "pending",
+            }
             for i, name in enumerate(DEFAULT_RECON_PHASES)
         ]
         try:
@@ -552,9 +606,16 @@ async def _copy_rooms_from_linked_job(
     # save use the normal versioning flow to link its rooms to the right row.
     COPY_FIELDS = [
         "room_name",
-        "length_ft", "width_ft", "height_ft", "square_footage",
-        "room_type", "ceiling_type", "floor_level",
-        "room_polygon", "floor_openings", "custom_wall_sf",
+        "length_ft",
+        "width_ft",
+        "height_ft",
+        "square_footage",
+        "room_type",
+        "ceiling_type",
+        "floor_level",
+        "room_polygon",
+        "floor_openings",
+        "custom_wall_sf",
         "sort_order",
     ]
 
@@ -571,9 +632,7 @@ async def _copy_rooms_from_linked_job(
             .execute()
         )
     except APIError as e:
-        logger.error(
-            "Failed to fetch rooms from linked job %s: %s", source_job_id, e
-        )
+        logger.error("Failed to fetch rooms from linked job %s: %s", source_job_id, e)
         raise AppException(
             status_code=500,
             detail=f"Failed to fetch source rooms: {e.message}",
@@ -594,7 +653,10 @@ async def _copy_rooms_from_linked_job(
     except APIError as e:
         logger.error(
             "Failed to copy %d rooms from %s to %s: %s",
-            len(new_rows), source_job_id, new_job_id, e,
+            len(new_rows),
+            source_job_id,
+            new_job_id,
+            e,
         )
         raise AppException(
             status_code=500,
@@ -622,7 +684,9 @@ async def create_linked_recon(
         .execute()
     )
     if not result.data:
-        raise AppException(status_code=404, detail="Source job not found", error_code="JOB_NOT_FOUND")
+        raise AppException(
+            status_code=404, detail="Source job not found", error_code="JOB_NOT_FOUND"
+        )
     if result.data.get("job_type") != "mitigation":
         raise AppException(
             status_code=400,
@@ -663,10 +727,24 @@ async def _create_job_fallback(
         insert_data["linked_job_id"] = str(body.linked_job_id)
 
     optional_fields = [
-        "property_id", "customer_name", "customer_phone", "customer_email",
-        "loss_category", "loss_class", "loss_cause", "loss_date", "home_year_built",
-        "claim_number", "carrier", "adjuster_name", "adjuster_phone",
-        "adjuster_email", "latitude", "longitude", "notes", "tech_notes",
+        "property_id",
+        "customer_name",
+        "customer_phone",
+        "customer_email",
+        "loss_category",
+        "loss_class",
+        "loss_cause",
+        "loss_date",
+        "home_year_built",
+        "claim_number",
+        "carrier",
+        "adjuster_name",
+        "adjuster_phone",
+        "adjuster_email",
+        "latitude",
+        "longitude",
+        "notes",
+        "tech_notes",
     ]
     for field in optional_fields:
         value = getattr(body, field)
@@ -909,15 +987,14 @@ async def delete_job(
         if isinstance(rpc_result, list):
             rpc_result = rpc_result[0] if rpc_result else False
         if not rpc_result:
-            raise AppException(
-                status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND"
-            )
+            raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
     except AppException:
         raise
     except Exception as e:
         error_msg = str(e).lower()
         is_rpc_missing = "rpc_delete_job" in error_msg and (
-            "not found" in error_msg or "does not exist" in error_msg
+            "not found" in error_msg
+            or "does not exist" in error_msg
             or "could not find" in error_msg
         )
         if is_rpc_missing:
@@ -953,3 +1030,144 @@ async def _delete_job_fallback(
         job_id=job_id,
         user_id=user_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Spec 01I: POST /v1/jobs/batch — atomic Quick Add Active Jobs
+# ---------------------------------------------------------------------------
+
+# UI-label → backend-enum map. The Quick Add dropdown shows contractor
+# friendly labels; the DB already migrated past 'needs_scope/scoped/submitted'
+# to the 7-stage pipeline, so map onto those equivalents.
+#
+# Spec 01I § "Job status mapping":
+#   Lead       -> new       (default if omitted)
+#   Scoped     -> mitigation (matches the 49e2a91b6ebb migration's mapping)
+#   Submitted  -> submitted
+#
+# Pass-through is also accepted: if the caller sends an enum value that's
+# already in VALID_STATUSES, we trust it.
+_UI_STATUS_LABEL_TO_ENUM: dict[str, str] = {
+    "lead": "new",
+    "scoped": "mitigation",
+    "submitted": "submitted",
+}
+
+
+def _normalize_batch_status(raw: str | None) -> str:
+    """Translate UI labels and enum values into the backend status enum.
+
+    Returns 'new' when ``raw`` is None / empty (the SQL default). Raises
+    AppException(400) on an unrecognized value rather than silently
+    coercing.
+    """
+    if raw is None:
+        return "new"
+    s = str(raw).strip()
+    if not s:
+        return "new"
+    lowered = s.lower()
+    if lowered in _UI_STATUS_LABEL_TO_ENUM:
+        return _UI_STATUS_LABEL_TO_ENUM[lowered]
+    if s in VALID_STATUSES:
+        return s
+    raise AppException(
+        status_code=400,
+        detail=(
+            f"Invalid status '{raw}'. Use a UI label "
+            f"({', '.join(sorted(_UI_STATUS_LABEL_TO_ENUM))}) or an enum value "
+            f"({', '.join(sorted(VALID_STATUSES))})."
+        ),
+        error_code="INVALID_STATUS",
+    )
+
+
+async def create_jobs_batch(
+    company_id: UUID,
+    user_id: UUID,
+    body: JobBatchCreate,
+) -> JobBatchResponse:
+    """Create up to 10 jobs atomically (Spec 01I Quick Add Active Jobs).
+
+    Delegates to ``rpc_create_jobs_batch`` (migration 01i_a6_jobs_batch),
+    which executes the whole batch in one plpgsql transaction. If any
+    row violates a constraint, all rows roll back — that's the spec's
+    "all-or-nothing" guarantee.
+
+    Pre-RPC validation here keeps the SQL function focused on the atomic
+    write. Status normalization, loss-type validation, and contact-field
+    validation are done in Python so the user gets a clean 400 instead
+    of an opaque 23514.
+    """
+    # Validate + normalize each item up front. Cheap, fail-fast, and
+    # keeps the error response shape consistent with POST /v1/jobs.
+    payload: list[dict] = []
+    for idx, item in enumerate(body.jobs):
+        # Enum + contact validation matches the single-create path so
+        # batch and one-by-one share their failure surface.
+        _validate_enums(loss_type=item.loss_type)
+        _validate_contact_fields(customer_phone=item.customer_phone)
+
+        if item.job_type not in VALID_JOB_TYPES:
+            raise AppException(
+                status_code=400,
+                detail=(
+                    f"jobs[{idx}].job_type: must be one of {', '.join(sorted(VALID_JOB_TYPES))}"
+                ),
+                error_code="INVALID_JOB_TYPE",
+            )
+
+        normalized_status = _normalize_batch_status(item.status)
+
+        payload.append(
+            {
+                "address_line1": item.address_line1,
+                "city": item.city or "",
+                "state": item.state or "",
+                "zip": item.zip or "",
+                "customer_name": item.customer_name,
+                "customer_phone": item.customer_phone,
+                "loss_type": item.loss_type,
+                "job_type": item.job_type,
+                "status": normalized_status,
+            }
+        )
+
+    admin_client = await get_supabase_admin_client()
+
+    try:
+        result = await admin_client.rpc(
+            "rpc_create_jobs_batch",
+            {
+                "p_company_id": str(company_id),
+                "p_user_id": str(user_id),
+                "p_jobs": payload,
+            },
+        ).execute()
+    except AppException:
+        raise
+    except Exception as e:
+        # Pre-launch: surface the SQL error so the spec author can
+        # diagnose. Once stable we'll narrow this to mapped error codes.
+        logger.error("rpc_create_jobs_batch failed: %s", e)
+        raise AppException(
+            status_code=500,
+            detail=f"Batch create failed: {e}",
+            error_code="JOB_BATCH_CREATE_FAILED",
+        )
+
+    rpc_data = result.data
+    if isinstance(rpc_data, list):
+        rpc_data = rpc_data[0] if rpc_data else None
+    if not isinstance(rpc_data, dict) or "jobs" not in rpc_data:
+        raise AppException(
+            status_code=500,
+            detail="Batch RPC returned unexpected payload",
+            error_code="JOB_BATCH_BAD_RESPONSE",
+        )
+
+    summaries = [
+        JobBatchSummary(job_id=UUID(row["job_id"]), job_number=row["job_number"])
+        for row in rpc_data.get("jobs", [])
+    ]
+    return JobBatchResponse(created=int(rpc_data.get("created", len(summaries))), jobs=summaries)
