@@ -20,7 +20,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { PrimaryButton, SecondaryButton } from "../components/UiBits";
-import { getMyAccount } from "@/lib/onboarding-api";
+import { getMyAccount, setOnboardingStep } from "@/lib/onboarding-api";
 
 type Props = {
   /** Captured at Step 1. Null on resume — we'll fetch from /v1/me. */
@@ -31,6 +31,36 @@ type Props = {
 
 export default function WelcomeScreen({ companyName, hasPricing }: Props) {
   const router = useRouter();
+
+  // Belt-and-suspenders: stamp the user as 'complete' on mount.
+  //
+  // The wizard's `handlePricingContinue` already PATCHes 'complete' before
+  // routing here, but a few legacy / edge paths land users on Welcome with
+  // a non-terminal server-side step:
+  //   - users mid-onboarding when the wizard rewrite shipped (server step
+  //     was 'first_job', wizard renders Welcome — clicking Go to Dashboard
+  //     would otherwise bounce back through the protected-layout gate)
+  //   - any future code path that routes to Welcome without going through
+  //     handlePricingContinue
+  // Welcome IS the "you're done" surface — make the server agree. The
+  // PATCH is forward-only and idempotent, so calling 'complete' when
+  // already complete is a no-op.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        await setOnboardingStep("complete");
+      } catch {
+        // Best-effort. If it fails, the user can still navigate; the next
+        // protected-route load will retry status lookup. Failure here is
+        // not actionable from the Welcome screen.
+      }
+      if (cancelled) return;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Resume case: name wasn't passed through wizard state. Fetch from
   // /v1/me on mount. Falls back to null → generic greeting if it fails.
