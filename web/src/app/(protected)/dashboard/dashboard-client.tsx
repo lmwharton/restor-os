@@ -11,6 +11,7 @@ import {
 } from "@/lib/hooks/use-dashboard";
 import { useJobs } from "@/lib/hooks/use-jobs";
 import DashboardMap from "@/components/dashboard-map";
+import SetupBanner from "@/components/dashboard/SetupBanner";
 import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 
@@ -827,6 +828,10 @@ export default function DashboardClient({
           className="w-full h-9 pl-9 pr-4 rounded-lg bg-surface-container text-[13px] text-on-surface placeholder:text-on-surface-variant/50 outline-none focus:ring-2 focus:ring-brand-accent/30 transition-shadow"
         />
       </div>
+
+      {/* -- Setup banner (Spec 01I) -------------------------------------- */}
+      {/* Reads onboarding-status; renders only when show_setup_banner = true */}
+      <SetupBanner />
 
       {/* -- KPIs ---------------------------------------------------------- */}
       <KPIGauges kpis={kpis.data ?? undefined} />
