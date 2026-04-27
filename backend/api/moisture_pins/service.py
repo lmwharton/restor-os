@@ -298,7 +298,15 @@ async def create_pin(
                 "p_company_id": str(company_id),
                 "p_canvas_x": str(body.canvas_x),
                 "p_canvas_y": str(body.canvas_y),
-                "p_location_name": body.location_name,
+                # Spec 01H Phase 2 location split (e2b3c4d5f6a7) —
+                # location_name replaced by surface + position + wall_segment_id.
+                "p_surface": body.surface,
+                "p_position": body.position,
+                "p_wall_segment_id": (
+                    str(body.wall_segment_id)
+                    if body.wall_segment_id is not None
+                    else None
+                ),
                 "p_material": body.material,
                 "p_dry_standard": str(dry_standard),
                 "p_created_by": str(user_id),
@@ -433,7 +441,24 @@ async def update_pin(
         client, pin_id=pin_id, job_id=job_id, company_id=company_id,
     )
 
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    raw_updates = body.model_dump(exclude_unset=True)
+    # `wall_segment_id` is the ONLY explicit-null-valid PATCH field —
+    # clearing it on a surface flip wall→floor/ceiling is required (the
+    # MoisturePinUpdate Pydantic validator enforces "send wall_segment_id:
+    # null in the same patch when changing surface to non-wall"). Every
+    # other nullable schema field is either NOT NULL on the column
+    # (surface, position — see migration e3c4d5f6a7b8) or logically
+    # immutable through PATCH (room_id, material, etc.), so the
+    # historical "drop None to keep the patch clean" filter still
+    # applies. Past mistake: this set used to include "position" before
+    # the _position_not_explicit_null Pydantic validator tightened —
+    # keeping "position" here was dead code AND a landmine for any
+    # future maintainer who relaxed the validator.
+    nullable_passthrough = {"wall_segment_id"}
+    updates = {
+        k: v for k, v in raw_updates.items()
+        if v is not None or k in nullable_passthrough
+    }
 
     # Mirror create_pin's material → dry_standard default when the
     # caller sends a new material without an explicit dry_standard
@@ -448,6 +473,40 @@ async def update_pin(
             updates[key] = float(updates[key])
     if "room_id" in updates:
         updates["room_id"] = str(updates["room_id"])
+    if updates.get("wall_segment_id") is not None:
+        updates["wall_segment_id"] = str(updates["wall_segment_id"])
+
+    # Cross-room wall binding (lesson #30). When wall_segment_id is being
+    # set to a non-NULL value, verify the wall belongs to the pin's
+    # post-patch room AND the caller's tenant. The FK on
+    # moisture_pins.wall_segment_id only validates wall existence, not
+    # parent-room binding — without this check a caller could attach a
+    # pin to a wall in a different room (or another company's room if
+    # RLS were ever bypassed). Same pattern as create_moisture_pin_with_reading
+    # in the migration.
+    if updates.get("wall_segment_id") is not None:
+        target_room_for_wall = updates.get("room_id", existing_pin.get("room_id"))
+        if not target_room_for_wall:
+            raise AppException(
+                status_code=409,
+                detail="Cannot attach to a wall — pin has no room",
+                error_code="PIN_ORPHANED",
+            )
+        wall_check = await (
+            client.table("wall_segments")
+            .select("id")
+            .eq("id", updates["wall_segment_id"])
+            .eq("room_id", str(target_room_for_wall))
+            .eq("company_id", str(company_id))
+            .maybe_single()
+            .execute()
+        )
+        if not wall_check or not wall_check.data:
+            raise AppException(
+                status_code=400,
+                detail="Wall segment does not belong to the pin's room",
+                error_code="INVALID_WALL_SEGMENT",
+            )
 
     # If any of canvas coords / room_id are changing, re-run the
     # create-time room-membership + point-in-polygon invariant.

@@ -385,11 +385,15 @@ async def get_shared_job(token: str) -> dict:
             # to adjusters. Combined with `jobs.created_by` /
             # `assigned_to` across multiple shares, recorded_by could
             # enumerate the tech roster. Pin columns stay on `*` since
-            # MoisturePin's user-facing fields (location_name,
-            # canvas_x/y, material, dry_standard) are all spec'd as
-            # adjuster-visible; `created_by` on pins is the same risk
-            # but the portal's report header references it nowhere
-            # currently — flag for follow-up if it surfaces.
+            # MoisturePin's user-facing fields (surface, position,
+            # wall_segment_id, canvas_x/y, material, dry_standard) are all
+            # spec'd as adjuster-visible. After the Phase 2 location-split
+            # migration (e2b3c4d5f6a7) `location_name` is gone — the
+            # public payload now exposes the structured triple instead;
+            # the moisture-report frontend composes a display string from
+            # them. `created_by` on pins is the same enumeration risk as
+            # `recorded_by` but the portal's report header references it
+            # nowhere currently — flag for follow-up if it surfaces.
             pins_result = await (
                 admin.table("moisture_pins")
                 .select(

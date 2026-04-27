@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Material types that drive dry-standard defaults. "tile" is intentionally
 # excluded — it's non-absorbent and has no meaningful moisture reading.
@@ -23,6 +23,14 @@ MoistureMaterial = Literal[
     "osb_plywood",
     "block_wall",
 ]
+
+# Spec 01H Phase 2 (location split): which surface the pin sits on. Replaces
+# the old composed `location_name` along with `position` + `wall_segment_id`.
+MoistureSurface = Literal["floor", "wall", "ceiling"]
+
+# Quadrant within the surface. Required for floor today; nullable for
+# wall/ceiling (semantics deferred — picker UX will define).
+MoisturePosition = Literal["C", "NW", "NE", "SW", "SE"]
 
 PinColor = Literal["red", "amber", "green"]
 
@@ -77,19 +85,77 @@ class MoisturePinCreate(BaseModel):
     )
     canvas_x: Decimal = Field(..., ge=0, le=10000)
     canvas_y: Decimal = Field(..., ge=0, le=10000)
-    location_name: str = Field(..., min_length=1, max_length=200)
+    # Spec 01H Phase 2 location split: structured fields replace the old
+    # composed `location_name`. surface + position are both required for
+    # every pin (DB columns are NOT NULL after migration e3c4d5f6a7b8);
+    # wall_segment_id is only meaningful when surface == 'wall'. The DB
+    # CHECK enforces the wall_segment_id binding (lesson #7); Pydantic
+    # mirrors it here so callers see a 422 instead of round-tripping a
+    # CHECK violation as a 500.
+    surface: MoistureSurface
+    position: MoisturePosition
+    wall_segment_id: UUID | None = None
     material: MoistureMaterial
     dry_standard: Decimal | None = Field(default=None, ge=0, le=100)
     initial_reading: MoisturePinReadingCreate
 
+    @model_validator(mode="after")
+    def _wall_segment_only_on_wall(self) -> "MoisturePinCreate":
+        # Mirror the DB CHECK chk_moisture_pin_wall_segment_only_when_wall:
+        # wall_segment_id may only be set when surface == 'wall'. Floor or
+        # ceiling pins with a stray wall ref are loud-rejected at the API
+        # edge so callers don't see a generic CHECK violation 500.
+        if self.wall_segment_id is not None and self.surface != "wall":
+            raise ValueError(
+                "wall_segment_id may only be set when surface == 'wall'"
+            )
+        return self
+
 
 class MoisturePinUpdate(BaseModel):
-    location_name: str | None = Field(default=None, min_length=1, max_length=200)
+    surface: MoistureSurface | None = None
+    position: MoisturePosition | None = None
+    wall_segment_id: UUID | None = None
     material: MoistureMaterial | None = None
     dry_standard: Decimal | None = Field(default=None, ge=0, le=100)
     canvas_x: Decimal | None = Field(default=None, ge=0, le=10000)
     canvas_y: Decimal | None = Field(default=None, ge=0, le=10000)
     room_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def _wall_segment_only_on_wall(self) -> "MoisturePinUpdate":
+        # If surface is being changed to non-wall, the patch must clear
+        # wall_segment_id in the same request (set it explicitly to null).
+        # Otherwise a stale wall ref would survive the surface flip and
+        # trip the DB CHECK as a generic 500. This mirrors the Create-side
+        # validator and matches the lesson #7 "never silently drop" rule.
+        if (
+            self.surface is not None
+            and self.surface != "wall"
+            and self.wall_segment_id is not None
+        ):
+            raise ValueError(
+                "wall_segment_id must be null when surface is not 'wall' "
+                "(send wall_segment_id: null explicitly when changing surface)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _position_not_explicit_null(self) -> "MoisturePinUpdate":
+        # Position is NOT NULL on the DB column (migration e3c4d5f6a7b8).
+        # On PATCH, omitting `position` from the body is fine ("don't
+        # change") — but explicit null would attempt to clear it and the
+        # DB would reject the UPDATE. Reject at the API edge with a clear
+        # message so callers don't get a generic constraint-violation 500.
+        # Distinguishes "not in body" (allowed, ignored) from "explicit
+        # null in body" (rejected) via Pydantic's set-tracking on the raw
+        # __pydantic_fields_set__.
+        if "position" in self.model_fields_set and self.position is None:
+            raise ValueError(
+                "position cannot be cleared (NOT NULL); send a valid "
+                "position value or omit the field to leave it unchanged"
+            )
+        return self
 
 
 class MoisturePinResponse(BaseModel):
@@ -101,7 +167,14 @@ class MoisturePinResponse(BaseModel):
     room_id: UUID | None
     canvas_x: Decimal
     canvas_y: Decimal
-    location_name: str
+    # Spec 01H Phase 2 location split (migrations e2b3c4d5f6a7 + e3c4d5f6a7b8) —
+    # surface + position required for every pin (DB columns NOT NULL);
+    # wall_segment_id only meaningful when surface == 'wall'. Must be
+    # declared on the response model or FastAPI strips them on the wire
+    # even when the service dict includes them (lesson #24).
+    surface: MoistureSurface
+    position: MoisturePosition
+    wall_segment_id: UUID | None = None
     material: MoistureMaterial
     dry_standard: Decimal
     created_by: UUID | None
