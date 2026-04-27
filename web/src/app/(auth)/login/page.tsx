@@ -1,7 +1,8 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
-import SignInButton from "./sign-in-button";
+import LoginForm from "./login-form";
 
 /**
  * Water droplet SVG icon used in the brand wordmark.
@@ -32,28 +33,6 @@ function WaterDropIcon() {
           <stop offset="1" stopColor="#a63500" stopOpacity="0.5" />
         </linearGradient>
       </defs>
-    </svg>
-  );
-}
-
-/**
- * Shield icon for the "Secure Contractor Portal" info card.
- */
-function ShieldIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="#a63500"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <path d="M9 12l2 2 4-4" />
     </svg>
   );
 }
@@ -204,47 +183,10 @@ export default async function LoginPage() {
             The Operating System for Restoration Contractors
           </p>
 
-          {/* Sign-in button */}
-          <SignInButton />
-
-          {/* Divider */}
-          <div className="my-8 flex items-center gap-4">
-            <div className="h-px flex-1" style={{ backgroundColor: "#e1bfb4" }} />
-            <span
-              className="whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.08em] font-[family-name:var(--font-geist-mono)]"
-              style={{ color: "#594139" }}
-            >
-              Precision Field Access
-            </span>
-            <div className="h-px flex-1" style={{ backgroundColor: "#e1bfb4" }} />
-          </div>
-
-          {/* Secure portal info card */}
-          <div
-            className="flex items-start gap-3 rounded-xl p-4"
-            style={{ backgroundColor: "#f5ece6" }}
-          >
-            <div
-              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "#fbf2eb" }}
-            >
-              <ShieldIcon />
-            </div>
-            <div>
-              <p
-                className="text-sm font-semibold leading-tight"
-                style={{ color: "#1f1b17" }}
-              >
-                Secure Contractor Portal
-              </p>
-              <p
-                className="mt-1 text-xs leading-relaxed"
-                style={{ color: "#594139" }}
-              >
-                Enterprise-grade security with Google SSO. Your project data is encrypted and isolated per company.
-              </p>
-            </div>
-          </div>
+          {/* Login form (email/password + Google + forgot password + sign up link) */}
+          <Suspense fallback={<div className="h-[420px]" aria-hidden="true" />}>
+            <LoginForm />
+          </Suspense>
 
           {/* Terms footer */}
           <p
