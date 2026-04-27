@@ -12,6 +12,10 @@
 import { useMemo, useState } from "react";
 import FormField from "@/components/forms/FormField";
 import {
+  AddressAutocomplete,
+  type AddressParts,
+} from "@/components/address-autocomplete";
+import {
   PrimaryButton,
   SecondaryButton,
   SelectField,
@@ -78,6 +82,20 @@ export default function FirstJobScreen({
 
   function markTouched(key: keyof FirstJobFields) {
     setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+  }
+
+  function handleAddressSelect(parts: AddressParts) {
+    setAddress(parts.address_line1);
+    if (parts.city) setCity(parts.city);
+    if (parts.state) setState(parts.state);
+    if (parts.zip) setZip(parts.zip);
+    setTouched((prev) => ({
+      ...prev,
+      address_line1: true,
+      city: true,
+      state: true,
+      zip: true,
+    }));
   }
 
   async function handleSkip() {
@@ -148,16 +166,38 @@ export default function FirstJobScreen({
       </div>
 
       <div className="space-y-5">
-        <FormField
-          label="Property Address"
-          required
-          autoComplete="street-address"
-          value={address_line1}
-          onChange={(e) => setAddress(e.target.value)}
-          onBlur={() => markTouched("address_line1")}
-          placeholder="123 Main Street"
-          error={touched.address_line1 ? errors.address_line1 : undefined}
-        />
+        <div className="flex flex-col">
+          <label
+            htmlFor="first-job-address"
+            className="block text-[11px] font-semibold tracking-[0.1em] uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]"
+          >
+            Property Address
+            <span aria-hidden className="ml-1 text-red-500">*</span>
+          </label>
+          <AddressAutocomplete
+            value={address_line1}
+            onChange={setAddress}
+            onSelect={handleAddressSelect}
+            placeholder="Start typing the property address..."
+            className={[
+              "w-full h-12 px-4 rounded-lg text-on-surface text-[15px]",
+              "placeholder:text-outline outline-none transition-all duration-200",
+              "bg-surface-container-low focus:bg-surface-container-lowest",
+              touched.address_line1 && errors.address_line1
+                ? "ring-2 ring-red-400/60 focus:ring-red-500/70"
+                : "focus:ring-2 focus:ring-primary/20",
+            ].join(" ")}
+          />
+          {touched.address_line1 && errors.address_line1 ? (
+            <p role="alert" className="mt-1.5 text-[12px] leading-snug text-red-600">
+              {errors.address_line1}
+            </p>
+          ) : (
+            <p className="mt-1.5 text-[12px] leading-snug text-on-surface-variant">
+              Pick a suggestion to auto-fill city, state, and ZIP.
+            </p>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 sm:grid-cols-[1fr_140px_120px] gap-3">
           <FormField

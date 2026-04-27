@@ -17,6 +17,10 @@
 import { useState, useMemo } from "react";
 import FormField from "@/components/forms/FormField";
 import {
+  AddressAutocomplete,
+  type AddressParts,
+} from "@/components/address-autocomplete";
+import {
   PrimaryButton,
   SecondaryButton,
   SelectField,
@@ -125,6 +129,28 @@ export default function QuickAddJobsScreen({
     });
   }
 
+  function handleAddressSelect(index: number, parts: AddressParts) {
+    setRows((prev) => {
+      const copy = [...prev];
+      const r = copy[index];
+      copy[index] = {
+        ...r,
+        address_line1: parts.address_line1,
+        city: parts.city || r.city,
+        state: parts.state || r.state,
+        zip: parts.zip || r.zip,
+        touched: {
+          ...r.touched,
+          address_line1: true,
+          city: true,
+          state: true,
+          zip: true,
+        },
+      };
+      return copy;
+    });
+  }
+
   function addRow() {
     if (rows.length >= MAX_ROWS) return;
     setRows((prev) => [...prev, blankRow()]);
@@ -216,16 +242,34 @@ export default function QuickAddJobsScreen({
                 ) : null}
               </div>
 
-              <FormField
-                label="Address"
-                required
-                autoComplete="street-address"
-                value={row.address_line1}
-                onChange={(e) => updateRow(idx, "address_line1", e.target.value)}
-                onBlur={() => markTouched(idx, "address_line1")}
-                placeholder="123 Main Street"
-                error={row.touched.address_line1 ? rowErrors.address_line1 : undefined}
-              />
+              <div className="flex flex-col">
+                <label
+                  htmlFor={`quick-add-address-${idx}`}
+                  className="block text-[11px] font-semibold tracking-[0.1em] uppercase text-on-surface-variant mb-2 font-[family-name:var(--font-geist-mono)]"
+                >
+                  Address
+                  <span aria-hidden className="ml-1 text-red-500">*</span>
+                </label>
+                <AddressAutocomplete
+                  value={row.address_line1}
+                  onChange={(v) => updateRow(idx, "address_line1", v)}
+                  onSelect={(parts) => handleAddressSelect(idx, parts)}
+                  placeholder="Start typing the property address..."
+                  className={[
+                    "w-full h-12 px-4 rounded-lg text-on-surface text-[15px]",
+                    "placeholder:text-outline outline-none transition-all duration-200",
+                    "bg-surface-container-low focus:bg-surface-container-lowest",
+                    row.touched.address_line1 && rowErrors.address_line1
+                      ? "ring-2 ring-red-400/60 focus:ring-red-500/70"
+                      : "focus:ring-2 focus:ring-primary/20",
+                  ].join(" ")}
+                />
+                {row.touched.address_line1 && rowErrors.address_line1 ? (
+                  <p role="alert" className="mt-1.5 text-[12px] leading-snug text-red-600">
+                    {rowErrors.address_line1}
+                  </p>
+                ) : null}
+              </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-[1fr_140px_120px] gap-3">
                 <FormField
