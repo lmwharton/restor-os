@@ -2,13 +2,17 @@
 
 | Field | Value |
 |-------|-------|
-| Status | 95% — PR #5 review fixes done (14/15), pending mobile device testing |
-| Priority | High — blocking first customer demo |
-| Depends on | Spec 01 (Jobs), Spec 01B (merged to main) |
-| Estimate | 1 session (4-6 hours) |
+| Status | ✅ **Implemented** — PR #5 merged, real-device QA superseded by Spec 01H v2 work |
+| Priority | High — blocking first customer demo (✅ unblocked) |
+| Depends on | Spec 01 (Jobs), Spec 01B (Reconstruction Job Mode) |
+| Successor | Spec 01H — Floor Plan v2 (property-anchored, structured walls, pins) |
 | Library | react-konva (721K weekly downloads, MIT, best React integration) |
-| Branch | `feature/01c-floor-plan-photos` (off main) |
-| Last updated | 2026-04-15 |
+| Linear issue | [CREW-10 — Floor Plan v1 (Spec 01C) — Shipped](https://linear.app/crewmatic/issue/CREW-10) |
+| Linear tech plan | [🛠 Tech Plan — Floor Plan Konva (01C)](https://linear.app/crewmatic/document/v1-tech-plan-floor-plan-konva-01c-327dcf708686) |
+| Main PR | [#5 — Spec 01C: Room photos, mobile floor plan, offline save, canvas improvements](https://github.com/lmwharton/restor-os/pull/5) |
+| Last updated | 2026-04-27 (moved to implemented/) |
+
+> **Closeout note (2026-04-27):** v1 was sitting at 95% pending real-device mobile QA. With Spec 01H v2 actively rebuilding the floor plan as property-anchored with structured walls and pins, the remaining 5% mobile QA is being absorbed into v2 testing. Marking v1 done so the architecture can move forward cleanly.
 
 ## Completed Items
 
