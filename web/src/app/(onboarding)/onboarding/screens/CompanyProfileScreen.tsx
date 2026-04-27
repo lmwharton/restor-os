@@ -50,13 +50,12 @@ export default function CompanyProfileScreen({
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [zip, setZip] = useState("");
-  // Service area is free-text, comma-separated. Earlier the screen
-  // hardcoded three Michigan counties (from Brett's PRD wireframe), which
-  // was nonsense for any contractor outside MI. A single free-text input
-  // works for any state and matches how contractors actually describe
-  // their territory ("Wayne, Macomb, Oakland" / "King County" / "Boroughs
-  // 1-3"). Submitted as `string[]` after split-trim-filter on commas.
-  const [serviceAreaText, setServiceAreaText] = useState("");
+  // Service area was specced by Brett as an optional metadata field
+  // intended to power future lead-gen features (route inbound damage
+  // leads to contractors by county). No code path reads `service_area`
+  // today, so collecting it during onboarding is noise. The DB column
+  // (`companies.service_area TEXT[]`) stays — when lead-gen ships, the
+  // wizard will get a proper county picker tied to a real outcome.
 
   const [touched, setTouched] = useState<Record<keyof CompanyProfileFields, boolean>>({
     name: false,
@@ -108,12 +107,6 @@ export default function CompanyProfileScreen({
     setSubmitError(null);
     if (!isValid || submitting) return;
 
-    // Free-text service area → string[]. Empty / whitespace-only → undefined.
-    const serviceArea = serviceAreaText
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
     const payload: CompanyCreatePayload = {
       name: name.trim(),
       phone: phone.trim(),
@@ -121,7 +114,7 @@ export default function CompanyProfileScreen({
       city: city.trim(),
       state: state.trim().toUpperCase(),
       zip: zip.trim(),
-      service_area: serviceArea.length > 0 ? serviceArea : undefined,
+      // service_area intentionally omitted — collected when lead-gen ships
     };
 
     setSubmitting(true);
@@ -257,13 +250,6 @@ export default function CompanyProfileScreen({
           />
         </div>
 
-        <FormField
-          label="Service Area"
-          value={serviceAreaText}
-          onChange={(e) => setServiceAreaText(e.target.value)}
-          placeholder="e.g. Wayne, Macomb, Oakland"
-          helper="Counties or areas you serve, separated by commas. Optional — set up later from Settings."
-        />
 
         {submitError ? (
           <p role="alert" className="text-sm text-red-600">{submitError}</p>
