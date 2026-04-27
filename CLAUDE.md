@@ -60,6 +60,31 @@ Research (docs/research/)  →  Design (docs/design.md)  →  Specs (docs/specs/
 
 **Note:** The database (Supabase PostgreSQL) is not set up yet. `docs/design.md` contains the V1 schema and API endpoints.
 
+## Linear Workspace
+
+Product + engineering work is tracked in Linear (team **Crewmatic / CREW**).
+
+**Hierarchy** — Initiative → Project → (PRD docs + Tech Plan docs) → Issues.
+
+**Three initiatives:**
+- **V1 — Launch** (active) — run a real Dry Pros job end-to-end (job lifecycle: create / update / complete + foundations + reports).
+- **V2 — Workflow Completion** (planned) — periodic auto-communication, AI assists, supplements, daily summaries.
+- **V3 — Growth & Expansion** (planned) — customer acquisition, lead gen, dispatch, trade verticals.
+
+**Naming convention** (mandatory — every project / issue / doc carries V tier visibly):
+- Projects: `[V1] AI Photo Analysis`
+- PRD docs: `[V1] 📝 PRD — Topic (status)`
+- Tech Plan docs: `[V1] 🛠 Tech Plan — Topic (spec ID)` — references git spec like `docs/specs/draft/02A-photoscope.md`
+- Issues: `[V1] [AI Photo Analysis] Build four-pass AI estimate generation pipeline`
+
+**Spec ID ↔ Tech Plan mapping** — git specs use `01C`, `02A`, `02B`, `03A`, etc. Each tech plan doc in Linear references its git spec path. Specs move between `docs/specs/draft/` → `in-progress/` → `implemented/`.
+
+**Read first** (any agent touching Linear):
+- 📐 [Linear Conventions — Read This First](https://linear.app/crewmatic/document/linear-conventions-read-this-first-523a2e45821a) — naming, labels, parenting rules
+- 📋 [Master Index — Crewmatic Workspace](https://linear.app/crewmatic/document/master-index-crewmatic-workspace-30cd9593c2c0) — curated tree view of all initiatives + projects
+
+**When V tier moves** — rename project, all child PRDs / Tech Plans, all child issues, and update both initiative descriptions. Mechanical — delegate to an agent.
+
 ## Planned Tech Stack (from specs)
 
 | Layer | Technology |
