@@ -170,15 +170,20 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
 
 @router.get("/company/onboarding-status", response_model=OnboardingStatusResponse)
 async def get_company_onboarding_status(
-    ctx: AuthContext = Depends(get_auth_context),
+    auth_user_id: UUID = Depends(get_auth_user_id),
 ):
-    """Return server-derived onboarding status for the current user.
+    """Return server-derived onboarding status for the current auth user.
+
+    Uses ``get_auth_user_id`` (auth-only) — this endpoint runs BEFORE the
+    user's profile row exists in the ``users`` table (Step 1 of the wizard
+    creates it). For a freshly signed-up auth user with no profile row,
+    the service returns a sensible default (Step 1, has_company=False).
 
     ``has_jobs`` and ``has_pricing`` are read from real tables, not from
     any client-asserted flag. ``show_setup_banner`` is computed on the fly
     (completed AND not dismissed AND no pricing yet).
     """
-    return await get_onboarding_status(ctx.user_id)
+    return await get_onboarding_status(auth_user_id)
 
 
 @router.patch("/me/onboarding-step", response_model=OnboardingStatusResponse)

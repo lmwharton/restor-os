@@ -483,13 +483,19 @@ async def _exists(client, table: str, *, company_id: UUID) -> bool:
     return bool(result.data)
 
 
-async def get_onboarding_status(user_id: UUID) -> OnboardingStatusResponse:
-    """Return server-derived onboarding status for ``user_id``.
+async def get_onboarding_status(auth_user_id: UUID) -> OnboardingStatusResponse:
+    """Return server-derived onboarding status for the auth user.
 
     Per Decision Log #5: ``has_jobs`` and ``has_pricing`` are derived from
     EXISTS queries on real tables, not from any client-asserted flag. The
     only persisted user-facing flags are ``onboarding_step`` and
     ``setup_banner_dismissed_at``.
+
+    Lookup is by ``auth_user_id`` (not ``users.id``) because this endpoint
+    is called BEFORE Step 1 of the wizard creates the ``users`` row. A
+    freshly signed-up auth user has no ``users`` record yet — we return a
+    sensible default (``step='company_profile'``, ``has_company=False``)
+    instead of 401/404. The wizard renders Step 1 against that default.
     """
     client = await get_supabase_admin_client()
 
@@ -498,17 +504,22 @@ async def get_onboarding_status(user_id: UUID) -> OnboardingStatusResponse:
         .select(
             "id, company_id, onboarding_step, onboarding_completed_at, setup_banner_dismissed_at"
         )
-        .eq("id", str(user_id))
+        .eq("auth_user_id", str(auth_user_id))
         .is_("deleted_at", "null")
         .maybe_single()
         .execute()
     )
     user = user_result.data if user_result else None
     if not user:
-        raise AppException(
-            status_code=404,
-            detail="User not found",
-            error_code="USER_NOT_FOUND",
+        # Fresh auth user with no profile row yet — default to Step 1.
+        return OnboardingStatusResponse(
+            step="company_profile",
+            completed_at=None,
+            setup_banner_dismissed_at=None,
+            has_jobs=False,
+            has_pricing=False,
+            has_company=False,
+            show_setup_banner=False,
         )
 
     company_id_str = user.get("company_id")
