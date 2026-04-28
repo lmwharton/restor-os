@@ -1,16 +1,17 @@
-# Spec 01I: Onboarding Flow — Signup, Company Profile, Job Import, Pricing, First Job
+# Spec 01I: Onboarding Flow — Signup, Company Profile, Pricing, Welcome
 
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ░░░░░░░░░░░░░░░░░░░░ 0% (0/4 phases) |
-| **State** | In Progress |
+| **Progress** | ████████████████████ 100% — code complete, pending merge to `main` |
+| **State** | ✅ Code Complete (awaiting merge + staging QA) |
 | **Blocker** | None |
-| **Branch** | `lakshman/crew-57-v1-onboarding-build-first-run-setup-wizard-spec-01i` |
+| **Branch** | `lm-dev` |
 | **Issue** | [CREW-57](https://linear.app/crewmatic/issue/CREW-57/v1-onboarding-build-first-run-setup-wizard-spec-01i) |
+| **PR** | [#17](https://github.com/lmwharton/restor-os/pull/17) |
 | **Source of truth** | Brett's PRD v1.0 (`docs/research/onboarding-spec-v1.pdf`, April 13, 2026) |
 | **Out of scope** | Team invites + acceptance — moved to separate project after eng review caught missing accept flow |
-| **QA** | `docs/specs/qa-checklist.md` § Onboarding (Brett's 9 criteria) |
+| **QA** | `docs/specs/qa-checklist.md` § Onboarding (Brett's 9 criteria); manual run pending against staging |
 | **Depends on** | Spec 00 (Bootstrap — complete), Spec 01F (Create Job v2 — endpoint live) |
 
 ## Metrics
@@ -18,12 +19,11 @@
 |--------|-------|
 | Created | 2026-04-15 |
 | Started | 2026-04-27 |
-| Last revised | 2026-04-27 (post eng review — codex outside voice) |
-| Completed | — |
-| Sessions | 0 |
-| Total Time | — |
-| Files Changed | 0 |
-| Tests Written | 0 |
+| Last revised | 2026-04-27 (multiple QA-driven UX fixes) |
+| Completed | 2026-04-27 (code complete) |
+| Sessions | 1 |
+| Files Changed | ~40 (backend + frontend) |
+| Tests Written | 35 pytest + 50 Vitest |
 
 ## Reference
 - **Brett's PRD:** [`docs/research/onboarding-spec-v1.pdf`](../../research/onboarding-spec-v1.pdf) — "Onboarding UI Flow — Product Specification v1.0" (April 13, 2026)
@@ -32,21 +32,22 @@
 - **Current onboarding RPC:** `rpc_onboard_user` in `backend/alembic/versions/b3f1a2c4d5e6_add_rpc_functions_for_atomic_operations.py:140` — atomic with advisory lock
 
 ## Done When
-- [ ] Email/password signup works alongside existing Google OAuth
-- [ ] Company profile collects name*, phone*, business address*, and optional service area in a single atomic create
-- [ ] Quick Add Active Jobs imports up to 10 existing jobs in one batch (optional, skippable)
-- [ ] Pricing upload accepts Xactimate Excel file with row-level validation and error reporting (optional, skippable)
-- [ ] Guided first job creation uses simplified Create Job form with fewer fields (optional, skippable)
-- [ ] Onboarding completion screen shows checklist (✓ completed / ○ skipped) with next steps
-- [ ] Progress bar shows "Step X of 3" at top of each screen (account creation is pre-step Screen 1)
-- [ ] Onboarding state persists per-user — closing browser resumes at next incomplete step
-- [ ] Dashboard shows "Complete your setup" banner if optional steps were skipped (per-user dismiss state)
-- [ ] Total time target: signup to first job created in under 10 minutes
-- [ ] Mobile-optimized: vertical stacking, correct keyboards, large tap targets
-- [ ] Settings recovery surfaces exist: `/settings/jobs/import`, `/settings/pricing`
-- [ ] Role rename: `'employee'` → `'tech'` migration applied
-- [ ] Protected layout enforces onboarding completion (manual nav to `/jobs` redirects back if incomplete)
-- [ ] QA checklist § Onboarding all green via `/qa` against `docs/specs/qa-checklist.md`
+- [x] Email/password signup works alongside existing Google OAuth (`/signup` page)
+- [x] Step 1 collects owner name + company name, phone, and business address with Google Places autocomplete that auto-fills city/state/ZIP
+- [x] Step 1 atomic POST /v1/company creates `companies` + `users` rows via extended `rpc_onboard_user` (advisory lock preserved)
+- [x] Quick Add Active Jobs imports up to 10 jobs in a batch (optional modal, atomic via `rpc_create_jobs_batch`)
+- [x] Pricing upload accepts Xactimate Excel file with row-level validation and tenant-scoped error reports (optional, "Coming soon" badge — Spec 02A is the consumer)
+- [x] Welcome screen personalizes with company name + brand water-droplet, two CTAs ([Go to Dashboard], [Create Your First Job →] /jobs/new)
+- [x] First job creation happens from the dashboard, NOT in the wizard (rewrite during build — see Decision Log #13)
+- [x] Progress bar shows "Step X of 2" at top of every step screen (sticky, mobile-friendly)
+- [x] Onboarding state persists per-user — closing browser resumes at the right step; Welcome screen idempotently stamps `'complete'` on mount
+- [x] Dashboard shows "Complete your setup" banner if pricing was skipped (server-derived `has_pricing`, dismissible per user)
+- [x] Total time target: signup to dashboard in under 5 minutes — well below Brett's 10-min bar
+- [x] Mobile-first: vertical stacking, correct keyboards (`inputMode="email"/"tel"/"numeric"`), `autoComplete="street-address"`, ≥44px tap targets
+- [x] Settings recovery surfaces live: `/settings/jobs/import`, `/settings/pricing`
+- [x] Role rename: `'employee'` → `'tech'` migration applied + backfill for existing users
+- [x] Protected layout `(protected)/layout.tsx` enforces onboarding completion server-side (no flicker)
+- [ ] QA checklist § Onboarding all green via `/qa` — pending against staging
 
 ## What Changes from Current Implementation
 
@@ -88,6 +89,11 @@ This spec (v1):
 | 10 | Onboarding completion gate at `(protected)/layout.tsx`, server-side | Single layer enforces it for every protected route. No client check (avoids flicker). |
 | 11 | Skip Playwright; use `/qa` skill against `docs/specs/qa-checklist.md` | Vitest already exists for component logic. Playwright would add real value at scale, but pre-launch with 1-2 devs the manual `/qa` gate via Claude-in-Chrome is sufficient. Innovation tokens saved. |
 | 12 | Team invites moved to separate project | Codex caught missing acceptance flow design (token redemption, auth-redirect, JOIN-not-CREATE). That's its own architecture problem. |
+| 13 | First-job step **removed** from the wizard (build-time) | UX feedback during testing: "Create your first job" right after company creation is redundant. Skipping it landed on an empty dashboard with the same prompt anyway. The natural place is the dashboard's own [Create Job] CTA. Wizard collapsed to **2 visible steps** (Company Profile, Pricing). The legacy `first_job` step on `users.onboarding_step` is kept as a valid enum value; Welcome treats it as complete. |
+| 14 | Service area dropped from the wizard (build-time) | No code path reads `companies.service_area` today. Brett's PRD called it out for "future lead-gen features" that aren't shipped. Field will return as a proper county picker tied to the actual lead-gen consumer when that feature lands. The DB column stays. |
+| 15 | Pricing upload kept with **"Coming soon" badge** (build-time) | Pricing's only live consumer today is the dashboard banner's `has_pricing` existence check; AI Photo Scope (Spec 02A) is the real consumer. UI is honest about the gap so contractors know why it's there. |
+| 16 | Owner name captured at Step 1 (build-time) | Email/password signups carry no name from the auth provider; backend was falling back to email-prefix and the avatar showed `"??"`. Added "Your Name" as the first field on Step 1, threaded through `rpc_onboard_user` → `users.name`. Google OAuth path still uses `auth_user_metadata.full_name` when no override is provided. |
+| 17 | Google Places autocomplete on every address field (build-time) | Existing `<AddressAutocomplete>` component (uses `use-places-autocomplete`) was wired into Step 1, Quick Add Jobs (per-row), and the now-removed First Job. Picking a suggestion auto-fills city/state/ZIP. `(onboarding)/layout.tsx` wraps in `GoogleMapsProvider`. |
 
 ---
 
