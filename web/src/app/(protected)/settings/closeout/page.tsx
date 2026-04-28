@@ -12,7 +12,7 @@
  * full UI is testable.
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMe } from "@/lib/hooks/use-me";
 import {
@@ -167,12 +167,12 @@ export default function CloseoutRequirementsPage() {
                 }
                 return (
                   <div key={col.key} className="pr-3">
-                    <GateCellSelect
+                    <GateCellWithSaveState
+                      settingId={setting.id}
                       value={setting.gate_level}
                       onChange={(level) =>
-                        updateSetting.mutate({ id: setting.id, gate_level: level })
+                        updateSetting.mutateAsync({ id: setting.id, gate_level: level })
                       }
-                      disabled={updateSetting.isPending}
                     />
                   </div>
                 );
@@ -232,6 +232,98 @@ export default function CloseoutRequirementsPage() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  GateCellWithSaveState — wraps the dropdown with per-cell save UX    */
+/*                                                                     */
+/*  Three states:                                                      */
+/*   - idle: no decoration                                             */
+/*   - pending: spinner overlay, dropdown disabled                     */
+/*   - saved: "Saved ✓" pill fades in, fades out after 1500ms          */
+/*                                                                     */
+/*  We track state per-cell rather than relying on the global mutation */
+/*  flag because multiple cells can be edited in quick succession and  */
+/*  the global flag would flicker the wrong cells.                     */
+/* ------------------------------------------------------------------ */
+
+interface GateCellWithSaveStateProps {
+  /** Settings row id — used as a stable key only; not read inside this component. */
+  settingId: string;
+  value: GateLevel;
+  onChange: (next: GateLevel) => Promise<unknown>;
+}
+
+function GateCellWithSaveState({ value, onChange }: GateCellWithSaveStateProps) {
+  const [saveState, setSaveState] = useState<"idle" | "pending" | "saved">("idle");
+  const fadeTimer = useRef<number | null>(null);
+
+  // Cleanup pending fade timer on unmount so we don't update state after
+  // the component leaves the tree.
+  useEffect(() => () => {
+    if (fadeTimer.current !== null) window.clearTimeout(fadeTimer.current);
+  }, []);
+
+  async function handleChange(next: GateLevel) {
+    if (fadeTimer.current !== null) {
+      window.clearTimeout(fadeTimer.current);
+      fadeTimer.current = null;
+    }
+    setSaveState("pending");
+    try {
+      await onChange(next);
+      setSaveState("saved");
+      fadeTimer.current = window.setTimeout(() => {
+        setSaveState("idle");
+        fadeTimer.current = null;
+      }, 1500);
+    } catch {
+      // Mutation surfaces error globally — reset to idle so the cell
+      // doesn't pretend it saved.
+      setSaveState("idle");
+    }
+  }
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 min-w-0">
+        <GateCellSelect
+          value={value}
+          onChange={handleChange}
+          disabled={saveState === "pending"}
+        />
+      </div>
+      {/* Save-state indicator — fixed-width slot so the dropdown doesn't
+          re-flow when the indicator shows/hides. Pending shows a spinner,
+          saved shows a fading "Saved ✓" pill that auto-clears after 1.5s. */}
+      <span
+        aria-live="polite"
+        className="inline-flex items-center justify-start gap-1 w-[52px] h-9 text-[11px] font-semibold whitespace-nowrap shrink-0"
+        style={{
+          opacity: saveState === "idle" ? 0 : 1,
+          transform: saveState === "idle" ? "translateX(-4px)" : "translateX(0)",
+          transition: "opacity 200ms ease, transform 200ms ease",
+          color: saveState === "saved" ? "var(--status-completed)" : "var(--on-surface-variant)",
+        }}
+        aria-label={saveState === "saved" ? "Saved" : saveState === "pending" ? "Saving" : ""}
+      >
+        {saveState === "pending" && (
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="animate-spin">
+            <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="2.4" />
+            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" />
+          </svg>
+        )}
+        {saveState === "saved" && (
+          <>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" strokeWidth="2.8" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            Saved
+          </>
+        )}
+      </span>
     </div>
   );
 }
