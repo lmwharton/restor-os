@@ -123,7 +123,12 @@ export default function LoginForm() {
   async function handleGoogle() {
     if (isGoogleLoading) return;
     setIsGoogleLoading(true);
+    // Clear ALL prior alerts so the user doesn't see a stale "Invalid
+    // email or password" or "reset link sent" message stacked above the
+    // OAuth flow. Caught during /qa.
     setSubmitError(null);
+    setResetMessage(null);
+    setResetError(null);
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.signInWithOAuth({
@@ -143,6 +148,10 @@ export default function LoginForm() {
   }
 
   async function handleForgotPassword() {
+    // Clear stale login error too — otherwise "Invalid email or password"
+    // sticks above the new "we've sent a reset link" notice and looks
+    // like both happened. Caught during /qa.
+    setSubmitError(null);
     setResetMessage(null);
     setResetError(null);
 
