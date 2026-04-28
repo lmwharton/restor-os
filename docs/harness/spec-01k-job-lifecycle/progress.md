@@ -1,0 +1,20 @@
+# Refinement Progress: Spec 01K — Job Lifecycle Management
+
+| Ver | Design | Craft | Func | Key Changes |
+|-----|--------|-------|------|-------------|
+| v0  | -      | -     | -    | Baseline (post-implementation, pre-QA-loop). Backend RPC + closeout module shipped, frontend modals + settings page + disputed pin landed, code review applied, simplifier pass complete. Backend tests 696/754 passing (58 pre-existing failures unrelated). Frontend tsc clean, 49/49 vitest passing. |
+| v1-eval | 7 | 7 | 8 | Inline browser sweep of Status Modal + Closeout Modal + Settings page on real seeded data. 3 high-severity issues found: (1) drag-handle pill leaking onto desktop, (2) Cert-of-Completion warn/hard_block + copy mismatch, (3) closeout modal skeleton-flash even when API <50ms. Plus 5 medium/polish items. Disputed map pin + mobile viewport + 409 conflict deferred (extension dropped). See `eval-1.md`. |
+| v1-fix  | -    | -    | -    | Fixed 3 highs: (1) `bottom-sheet.tsx` drag handle gated behind `sm:hidden`; (2) `closeout/service.py` cert evaluator copy softened to "recommended before closeout" (matches warn-level seed default); (3) `change-status-modal.tsx` prefetches closeout-gates when user picks Completed, so checklist modal mounts with cache hot. 4 of 5 medium findings turned out to be false-alarms on re-inspection (spacing already 8px, "Build-Back" intentional, gate-bar contrast already saturated, n/a cells already deemphasized). Tag: `refine-loop/spec-01k-job-lifecycle/v1`. tsc + 49/49 vitest still pass. |
+| v2-fix  | 9    | 9    | 9    | Closed the 9/9 gap via 3 parallel expert agents + applied **Option A 4-bucket pipeline palette** from the Anthropic Design bundle (`docs/harness/spec-01k-job-lifecycle/design-references/`). 11 atomic commits. **Palette + mobile (Agent 1):** `--status-*` tokens migrated to Option A — motion (orange, lead is muted tan), waiting (amber, disputed is the only act-now red-orange), won (green deepens light → mid → deep as money lands), closed (gray, lost lighter than cancelled). Disputed map pin updated to `#c8501a` fill + `#e85d26` ring. Bottom-sheet got drag-to-dismiss with scroll-aware lock-in, `safe-area-inset-top`, unified `--sheet-duration` / `--sheet-ease` tokens (eliminates 200ms vs 240ms drift), `touch-action: pan-y` + `overscroll-behavior: contain` (kills pull-to-refresh during drag), and a desktop-only close `×` button. **Modal UX (Agent 2):** structured `JobStatusUpdateError` with `kind: "conflict"\|"validation"\|"unknown"` discriminator — 409 now renders an amber refresh prompt with "Refresh now" button instead of a generic error. Closeout modal hex → CSS-var tokens; hard-block helper now deep-links to `/jobs/{id}/report`, `/readings`, `/photos` per gate `item_key`. Settings page got per-cell save confirmation (idle → spinner → green check, 1.5s linger, `aria-live="polite"`). Job detail metric grid is threshold-aware: cycle > 21d / pay > 60d → red (disputed token), 14-21d / 30-60d → amber. **Backend (Agent 3):** defensive fallback to `SPEC_DEFAULT_GATES` when company has zero closeout_settings rows (with `logger.warning` so we can spot which need backfilling); voice consistency across 7 evaluators ("contractor's-eye" — short, present-tense, count-prefixed, no apologetic fillers); 26 new tests in `test_closeout_service.py`. **Edge case fix (me):** generic error block in change-status modal flipped from `var(--status-cancelled)` (now warm gray) → `var(--error)` (`#ba1a1a`) since cancelled no longer reads as alarming. Tag: `refine-loop/spec-01k-job-lifecycle/v2`. tsc + 49/49 vitest + 80 backend tests passing. |
+
+## QA scope
+1. Status Change Modal — `/jobs/[id]` clickable status pill
+2. Closeout Checklist Modal — opens on `target=completed` with failing gates
+3. Settings page — `/settings/closeout` (owner-only)
+4. Disputed map pin — dashboard map for `status=disputed` jobs
+5. Job Detail Header refresh — metric grid, contract badge
+
+## QA mode
+- Migration target: local Supabase (port 55322)
+- Auth: user-supplied test creds (pasted next reply)
+- Coverage: full sweep across all 5 deliverables

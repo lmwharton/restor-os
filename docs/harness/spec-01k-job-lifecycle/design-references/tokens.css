@@ -1,0 +1,65 @@
+/* Crewmatic — pulled from web/src/app/globals.css + brief overrides */
+:root {
+  --bg: #fff8f4;
+  --surface: #ffffff;
+  --surface-low: #fbf2eb;
+  --surface: #f5ece6;
+  --container-low: #fbf2eb;
+  --container: #f5ece6;
+  --container-high: #f0e6e0;
+
+  --text: #1a1a1a;
+  --text-2: #6b6560;
+  --text-3: #8a847e;
+  --border: #eae6e1;
+  --border-strong: #d9d2cb;
+
+  --brand: #e85d26;
+  --brand-press: #cc4911;
+  --brand-tint: #fff3ed;
+
+  /* 9 lifecycle statuses — Option A (4-bucket: motion / waiting / won / closed) */
+  --st-lead:       #8a7560;   /* warm tan, in-motion bucket — quiet */
+  --st-lead-bg:    #f3ece4;
+  --st-active:     #e85d26;   /* brand orange — full motion */
+  --st-active-bg:  #fff3ed;
+  --st-on_hold:    #b8801f;   /* amber — waiting */
+  --st-on_hold-bg: #fdefd8;
+  --st-disputed:   #c8501a;   /* red-orange — only "act on this" color on the bar */
+  --st-disputed-bg:#fbe8dc;
+  --st-completed:  #5fae7d;   /* light green — won, lightest step */
+  --st-completed-bg:#e3f1e7;
+  --st-invoiced:   #2f8a5b;   /* mid green — won, money invoiced */
+  --st-invoiced-bg:#dcefe2;
+  --st-paid:       #1f7a48;   /* deep green — money landed */
+  --st-paid-bg:    #d4e8dc;
+  --st-cancelled:  #7a746e;   /* warm gray — closed */
+  --st-cancelled-bg:#ebe7e3;
+  --st-lost:       #a39990;   /* lighter gray — lost */
+  --st-lost-bg:    #f0ece8;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; }
+body {
+  font-family: var(--font-geist), -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  font-feature-settings: "ss01", "cv11";
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.mono { font-family: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace; font-feature-settings: "ss01"; }
+
+button { font-family: inherit; cursor: pointer; }
+input, textarea, select { font-family: inherit; font-size: 16px; }
+
+/* utility colorways for status pill */
+.pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; line-height: 1; letter-spacing: 0.01em; }
+.dot  { width: 6px; height: 6px; border-radius: 999px; flex: none; }
+
+/* tap targets */
+.tap { min-height: 48px; }
+
+/* hide scrollbars where used */
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { scrollbar-width: none; }
