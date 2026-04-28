@@ -471,15 +471,18 @@ Out of scope for this spec — no UI to drive. End-to-end customer-pick-or-creat
 
 The original 01J PRD covered four phases; this spec is **Phase 1 only**. Other phases are listed below for traceability — each is to become its own Linear issue + spec.
 
-| Original 01J Phase | New Linear Issue | New Spec File | One-liner |
+| Theme | New Linear Issue | New Spec File | One-liner |
 |-------|------------------|---------------|-----------|
-| Phase 2: Property Detail Page + nav tab | TBD (`[V1] Property Data Model`) | `01K-property-detail-page.md` (draft) | Route `/properties/[id]` with Sketch / Jobs / Photos / Notes tabs; `gate_code`, `key_location`, `access_notes` columns; Properties list view; "View Property" link from job detail |
-| Phase 3: Convert to Reconstruction | TBD (`[V1] Jobs`) | `01L-convert-to-reconstruction.md` (draft) | "Convert to Reconstruction" button on completed mitigation; `jobs.parent_job_id` schema + idempotent `POST /v1/jobs/{id}/convert-to-reconstruction` |
-| Phase 4 (fuzzy match autocomplete) | **CREW-13** | extend in CREW-13's spec | New job creation autocomplete: address → property suggestion; tier-based fuzzy match endpoint (`pg_trgm` ≥ 0.7 with abbreviation expansion) |
-| Phase 4 (merge tooling) | TBD (`[V1] Property Data Model`) | `01M-property-customer-merge.md` (draft) | `POST /v1/properties/merge`, `POST /v1/customers/merge`, admin "Merge Duplicates" UI, Customer Detail page |
+| **01K** — Property Detail + Customer Detail pages (symmetric pair) | TBD (`[V1] Property Data Model`) | `01K-detail-pages.md` (draft) | `/properties/[id]` with Sketch / Jobs / Photos / Notes tabs (+ `gate_code`, `key_location`, `access_notes` columns); `/customers/[id]` with the customer + their owned properties + latest-job summary per property; Properties + Customers nav tabs; "View Property" / "View Customer" links from job detail. |
+| **01L** — Generalized job-clone pattern (covers Convert to Reconstruction) | TBD (`[V1] Jobs`) | `01L-job-clone.md` (draft) | Add `jobs.parent_job_id` (FK to source job, `ON DELETE RESTRICT`) + accept optional `clone_from_job_id` on `POST /v1/jobs`. When provided, backend copies `loss_date`, `claim_number`, `carrier`, `adjuster_*`, `loss_type/category/class/cause` from source unless body overrides. "Convert to Reconstruction" button is just a UI preset — no special endpoint. Partial unique index `(parent_job_id) WHERE job_type='reconstruction' AND deleted_at IS NULL` enforces idempotency for the reconstruction case specifically. |
+| Address autocomplete + fuzzy match + write-time USPS canonicalization | **CREW-13** | extend in CREW-13's spec | Existing-property suggestion on new job address entry; phone/name autocomplete on new customer; tier-based fuzzy match (`pg_trgm` + abbreviation expansion, OR Smarty/USPS API for proper canonicalization). **Absorbs the "auto-correct address on save" concern** that originally motivated merge tooling. |
 | `customer_contacts` sub-table for commercial | V2 | TBD | Multi-contact pattern (Sarah primary, Mike maintenance, Tom billing). Migration path: each existing customer becomes its entity's primary contact. |
 
-When CREW-11 ships, file the four new Linear issues above so 01J's draft work isn't lost.
+When CREW-11 ships, file the **two** new Linear issues above (01K and 01L) so 01J's draft work isn't lost.
+
+### Explicitly out — no Linear issue planned
+
+- **Merge tooling for properties / customers**. Deduped at write-time instead: phone is unique per company (DB constraint, blocks customer dupes), and CREW-13's address autocomplete + write-time USPS canonicalization prevents property dupes from being created in the first place. The lifecycle gap merge would solve doesn't materialize if the prevention is good.
 
 ---
 
