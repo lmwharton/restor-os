@@ -47,14 +47,16 @@ async def get_closeout_gates(
 
 def _require_owner_for_company(ctx: AuthContext, company_id: UUID) -> None:
     """Per Spec 01I (`01i_a2`) the only roles are 'owner' and 'tech'.
-    Closeout config is owner-only and tenant-scoped."""
-    if company_id != ctx.company_id:
+    Closeout config is owner-only and tenant-scoped. Platform admins (the
+    Crewmatic support team account flag) are also allowed — they need to
+    debug closeout flows for any company under their support contract."""
+    if company_id != ctx.company_id and not ctx.is_platform_admin:
         raise AppException(
             status_code=403,
             detail="Cross-company access denied",
             error_code="FORBIDDEN",
         )
-    if ctx.role != "owner":
+    if ctx.role != "owner" and not ctx.is_platform_admin:
         raise AppException(status_code=403, detail="Owner only", error_code="FORBIDDEN")
 
 
@@ -67,12 +69,11 @@ async def list_closeout_settings(
     request: Request,
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    if company_id != ctx.company_id:
-        raise AppException(
-            status_code=403,
-            detail="Cross-company access denied",
-            error_code="FORBIDDEN",
-        )
+    # Read access is owner-only — matches the admin UI gate. Tech users have
+    # no UI surface for these settings, so granting them read access would
+    # leak company configuration without a user-facing reason. Match write
+    # endpoints' role check.
+    _require_owner_for_company(ctx, company_id)
     token = _get_token(request)
     return await list_settings(token, ctx.company_id)
 
