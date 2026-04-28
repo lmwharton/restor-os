@@ -147,3 +147,57 @@ class JobDetailResponse(JobResponse):
 class JobListResponse(BaseModel):
     items: list[JobDetailResponse]
     total: int
+
+
+# ---------------------------------------------------------------------------
+# Spec 01I — Quick Add Active Jobs (batch import)
+# ---------------------------------------------------------------------------
+
+
+class JobBatchItem(BaseModel):
+    """A single row in POST /v1/jobs/batch.
+
+    Required: address_line1.
+
+    Status field accepts either the friendly UI label ('Lead', 'Scoped',
+    'Submitted') or the underlying enum value — the service maps friendly
+    labels to enum values so the frontend can show contractor-facing copy
+    without a separate enum.
+    """
+
+    address_line1: str = Field(..., min_length=1)
+    city: str = ""
+    state: str = ""
+    zip: str = ""
+
+    customer_name: str | None = None
+    customer_phone: str | None = None
+
+    # 'water' default mirrors POST /v1/jobs.
+    loss_type: str = "water"
+
+    # Mitigation/reconstruction; defaults to mitigation since most active
+    # jobs imported on day 1 are existing mit jobs.
+    job_type: Literal["mitigation", "reconstruction"] = "mitigation"
+
+    # Optional. Either the UI label or the enum string. Defaults to 'new'
+    # at the SQL layer when omitted.
+    status: str | None = None
+
+
+class JobBatchCreate(BaseModel):
+    """Request body for POST /v1/jobs/batch (Spec 01I)."""
+
+    jobs: list[JobBatchItem] = Field(..., min_length=1, max_length=10)
+
+
+class JobBatchSummary(BaseModel):
+    """A single created job's identity, returned in JobBatchResponse."""
+
+    job_id: UUID
+    job_number: str
+
+
+class JobBatchResponse(BaseModel):
+    created: int
+    jobs: list[JobBatchSummary]

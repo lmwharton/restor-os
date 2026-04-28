@@ -3,13 +3,23 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, UploadFile
 
 from api.auth.middleware import get_auth_context, get_auth_user_id
-from api.auth.schemas import AuthContext, CompanyCreate, CompanyUpdate, UserUpdate
+from api.auth.schemas import (
+    AuthContext,
+    CompanyCreate,
+    CompanyUpdate,
+    OnboardingStatusResponse,
+    OnboardingStepUpdate,
+    UserUpdate,
+)
 from api.auth.service import (
+    dismiss_setup_banner,
+    get_onboarding_status,
     get_or_create_company,
     get_user_with_company,
     update_company,
     update_company_logo,
     update_last_login,
+    update_onboarding_step,
     update_user_avatar,
     update_user_profile,
 )
@@ -95,7 +105,16 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
 
     auth_user = auth_response.user
     email = auth_user.email or ""
-    user_name = (auth_user.user_metadata or {}).get("full_name", email.split("@")[0])
+    # Priority: explicit owner_name from the wizard (email/password path)
+    # > full_name from auth metadata (Google OAuth path)
+    # > email prefix (last-resort fallback so the column is never null).
+    # Without owner_name, email/password signups end up with name="l" for
+    # "l@test.com" — looks broken in the avatar/profile UI.
+    user_name = (
+        (body.owner_name or "").strip()
+        or (auth_user.user_metadata or {}).get("full_name")
+        or email.split("@")[0]
+    )
     avatar_url = (auth_user.user_metadata or {}).get("avatar_url")
 
     company, user = await get_or_create_company(
@@ -105,6 +124,11 @@ async def create_company(body: CompanyCreate, auth_user_id: UUID = Depends(get_a
         email=email,
         user_name=user_name,
         avatar_url=avatar_url,
+        address=body.address,
+        city=body.city,
+        state=body.state,
+        zip_code=body.zip,
+        service_area=body.service_area,
     )
 
     return {"company": company, "user": user}
@@ -146,3 +170,55 @@ async def upload_company_logo(file: UploadFile, ctx: AuthContext = Depends(get_a
 
 # GET /v1/jobs endpoint moved to api/jobs/router.py (Spec 01).
 # The list_jobs function remains in auth/service.py temporarily until the jobs module is built.
+
+
+# ---------------------------------------------------------------------------
+# Spec 01I: onboarding state endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/company/onboarding-status", response_model=OnboardingStatusResponse)
+async def get_company_onboarding_status(
+    auth_user_id: UUID = Depends(get_auth_user_id),
+):
+    """Return server-derived onboarding status for the current auth user.
+
+    Uses ``get_auth_user_id`` (auth-only) — this endpoint runs BEFORE the
+    user's profile row exists in the ``users`` table (Step 1 of the wizard
+    creates it). For a freshly signed-up auth user with no profile row,
+    the service returns a sensible default (Step 1, has_company=False).
+
+    ``has_jobs`` and ``has_pricing`` are read from real tables, not from
+    any client-asserted flag. ``show_setup_banner`` is computed on the fly
+    (completed AND not dismissed AND no pricing yet).
+    """
+    return await get_onboarding_status(auth_user_id)
+
+
+@router.patch("/me/onboarding-step", response_model=OnboardingStatusResponse)
+async def patch_onboarding_step(
+    body: OnboardingStepUpdate,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Advance the user's onboarding step.
+
+    Forward-only: rejects backward transitions with 400
+    ``ONBOARDING_BACKWARD_TRANSITION``. Setting step to ``'complete'``
+    stamps ``onboarding_completed_at`` once.
+
+    We pass ``auth_user_id`` (not ``user_id``) so the service's lookup key
+    matches ``get_onboarding_status``'s — otherwise the response builder
+    silently falls through to the "fresh signup" branch.
+    """
+    return await update_onboarding_step(ctx.auth_user_id, body.step)
+
+
+@router.patch("/me/dismiss-setup-banner", response_model=OnboardingStatusResponse)
+async def patch_dismiss_setup_banner(
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Dismiss the dashboard 'Complete your setup' banner for the current user.
+
+    Per-user, persisted server-side. Survives device switches.
+    """
+    return await dismiss_setup_banner(ctx.auth_user_id)

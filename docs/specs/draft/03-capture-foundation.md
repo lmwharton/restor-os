@@ -2,6 +2,21 @@
 
 > Engineering umbrella for the Voice + Photo Capture project. Defines the primitives + sync architecture that 03A/B/C all sit on top of.
 
+> **🔖 Open question (revisit before scheduling 03A):**
+> Photo Capture (03A) is a prerequisite for AI Photo Scope (02A) — the AI
+> needs photos before it can analyze them. Brett asked whether 03A
+> belongs in the **02 (AI)** block instead of the **03 (capture)** block,
+> since it's tightly coupled to PhotoScope. Voice Capture (03B) is a more
+> independent need (hands-free scoping, voice notes during a job).
+> Today, photo upload + storage + CRUD already exist in
+> `backend/api/photos/router.py` and a basic frontend uploader, so what
+> 03A actually adds is a polished **camera-first capture primitive** with
+> metadata (geotag, timestamp, room tag) and offline-first sync. We need
+> to clarify whether this belongs as a sibling of 02A (the AI consumer)
+> or stays grouped with voice as a "capture" concern. **Don't reshape
+> until 02A is on deck** — onboarding is still the active workstream.
+> Filed 2026-04-27.
+
 ## Status
 | Field | Value |
 |-------|-------|

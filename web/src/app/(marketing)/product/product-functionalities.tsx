@@ -134,7 +134,7 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Assign photos to specific rooms",
       },
       {
-        text: "~60 photos per job: ~25 damage photos (for AI) + ~35 proof-of-work shots",
+        text: "~60 photos per job: ~25 damage photos (for scoping) + ~35 proof-of-work shots",
       },
       {
         text: "Offline capture with auto-upload when back on network",
@@ -151,8 +151,8 @@ const FUNCTIONALITIES: Functionality[] = [
   {
     id: "ai-photo-scope",
     number: 4,
-    name: "AI Photo Scope",
-    specRef: "02 (AI Pipeline)",
+    name: "Photo Scope",
+    specRef: "02 (Scope Pipeline)",
     specStatus: "draft",
     tagline:
       "Select damage photos, tap one button, get Xactimate line items with S500/OSHA justifications in seconds.",
@@ -165,13 +165,13 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Select ~25 damage photos from the job",
       },
       {
-        text: "Tap 'Run AI Photo Scope'",
+        text: "Tap 'Run Photo Scope'",
       },
       {
-        text: "AI analyzes photos using Claude Vision with Xactimate code reference, S500 standards, and OSHA regulations",
+        text: "Photos are analyzed using Claude Vision against Xactimate codes, S500 standards, and OSHA regulations",
       },
       {
-        text: "AI returns structured line items: Xactimate code, description, quantity, unit, S500/OSHA justification",
+        text: "Returns structured line items: Xactimate code, description, quantity, unit, S500/OSHA justification",
       },
       {
         text: "Non-obvious items flagged — things the tech would have missed (HEPA filters, baseboard removal, PPE, consumables)",
@@ -191,8 +191,8 @@ const FUNCTIONALITIES: Functionality[] = [
   {
     id: "ai-hazmat",
     number: 5,
-    name: "AI Hazmat Scanner",
-    specRef: "02 (AI Pipeline)",
+    name: "Hazmat Scanner",
+    specRef: "02 (Scope Pipeline)",
     specStatus: "draft",
     tagline:
       "Every photo auto-scanned for asbestos-risk materials and lead paint. Flags dangers before techs touch anything.",
@@ -203,11 +203,11 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Photos auto-scanned in background as they're captured",
       },
       {
-        text: "AI identifies asbestos-risk materials: popcorn ceilings, 9x9 vinyl tiles, pipe insulation, vermiculite, transite siding",
+        text: "Asbestos-risk materials are identified: popcorn ceilings, 9x9 vinyl tiles, pipe insulation, vermiculite, transite siding",
         detail: "Targets pre-1980s homes where asbestos is most common",
       },
       {
-        text: "AI identifies lead paint indicators: chipping paint, windowsills, trim in pre-1978 homes",
+        text: "Lead paint indicators are flagged: chipping paint, windowsills, trim in pre-1978 homes",
       },
       {
         text: "Flagged photos show warning with recommended action",
@@ -228,24 +228,24 @@ const FUNCTIONALITIES: Functionality[] = [
     specRef: "03 (Voice)",
     specStatus: "draft",
     tagline:
-      "Speak naturally in any order \u2014 AI extracts and maps to the right fields in real-time. Or use manual keyboard entry with smart Xactimate code search. Every line item auto-backed by S500/OSHA.",
+      "Speak naturally in any order \u2014 spoken words are extracted and mapped to the right fields in real-time. Or use manual keyboard entry with smart Xactimate code search. Every line item auto-backed by S500/OSHA.",
     painPoint:
       "Contractors can\u2019t type with gloves on in a wet basement. A guided form approach (field-by-field prompts) doesn\u2019t match how techs actually talk \u2014 they jump between rooms, backtrack, and describe things out of order. Voice input must handle free-form speech or it won\u2019t be used.",
     aiPowered: true,
     steps: [
       {
-        text: "Voice mode: speak naturally in any order \u2014 AI extracts and maps to the correct fields automatically",
+        text: "Voice mode: speak naturally in any order \u2014 spoken words are extracted and mapped to the correct fields automatically",
         detail:
-          "No rigid question sequence. Describe damage, rooms, materials in whatever order comes naturally. AI handles the structure.",
+          "No rigid question sequence. Describe damage, rooms, materials in whatever order comes naturally. The system handles the structure.",
       },
       {
         text: "Two input modes: Continuous (mic stays hot, hands-free) and Push-to-Talk (for noisy job sites)",
       },
       {
-        text: "Fields lock green when AI confirms the capture; yellow with flag when ambiguous for review",
+        text: "Fields lock green when the capture is confirmed; yellow with a flag when ambiguous for review",
       },
       {
-        text: "Spelling recognition: say \u2018spelled K-O-V-I-N-A-C-K\u2019 and AI applies it to the last captured name",
+        text: "Spelling recognition: say \u2018spelled K-O-V-I-N-A-C-K\u2019 and the spelling applies to the last captured name",
       },
       {
         text: "Session log shows everything captured so the tech can track what\u2019s been processed",
@@ -377,10 +377,10 @@ const FUNCTIONALITIES: Functionality[] = [
     id: "job-review",
     number: 10,
     name: "Job Review & QA",
-    specRef: "02 (AI Pipeline)",
+    specRef: "02 (Scope Pipeline)",
     specStatus: "draft",
     tagline:
-      "Before submitting to the adjuster, the owner reviews everything the tech documented. AI flags missing items.",
+      "Before submitting to the adjuster, the owner reviews everything the tech documented. Missing items get flagged automatically.",
     aiPowered: true,
     steps: [
       {
@@ -399,7 +399,7 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Edit, add, or delete items as needed",
       },
       {
-        text: "AI completeness check flags missing items before submission",
+        text: "Completeness check flags missing items before submission",
         detail:
           "Did you forget baseboard removal? Equipment decon? Consumables?",
       },
@@ -504,7 +504,7 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Equipment deployed — total count across all active jobs",
       },
       {
-        text: "Key metrics — revenue, average days to payment, AI scope accuracy",
+        text: "Key metrics — revenue, average days to payment, scope accuracy",
       },
     ],
     brettQuote:
@@ -537,7 +537,7 @@ const FUNCTIONALITIES: Functionality[] = [
         text: "Phase tracking: Demo → Structural → Rough Mechanical → Insulation → Drywall → Paint → Finish → Walkthrough",
       },
       {
-        text: "Supplement management — AI drafts supplements when new damage is discovered during demo",
+        text: "Supplement management — supplements are auto-drafted when new damage is discovered during demo",
       },
       {
         text: "ACV/RCV holdback tracking and release requests per phase milestone",

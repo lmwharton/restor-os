@@ -130,7 +130,7 @@ const LIFECYCLE_STEPS = [
   { label: "Dispatch Tech", sub: "Schedule + notify" },
   { label: "Arrive & Assess", sub: "Walk site, ID damage" },
   { label: "Document", sub: "Photos, voice, sketches" },
-  { label: "AI Scope", sub: "Photos → line items" },
+  { label: "Photo Scope", sub: "Photos → line items" },
   { label: "Demo & Dry", sub: "Equipment + monitoring" },
   { label: "Daily Logs", sub: "Readings + progress" },
   { label: "Review & QA", sub: "Owner checks work" },
@@ -141,11 +141,11 @@ const LIFECYCLE_STEPS = [
 
 const MOAT_ITEMS = [
   {
-    name: "AI Photo Scope",
+    name: "Photo Scope",
     desc: "Damage photos → Xactimate line items with S500/OSHA justifications. No competitor offers this.",
   },
   {
-    name: "AI Hazmat Scanner",
+    name: "Hazmat Scanner",
     desc: "Auto-flags asbestos-risk materials and lead paint in every photo. No competitor offers this.",
   },
   {
@@ -157,8 +157,8 @@ const MOAT_ITEMS = [
     desc: "Daily progress auto-sent to adjusters with limited-access secure link. No competitor automates this.",
   },
   {
-    name: "AI Completeness Check",
-    desc: "Before submission, AI reviews scope for missing items — baseboard removal, HEPA filters, consumables, PPE.",
+    name: "Completeness Check",
+    desc: "Before submission, scope is reviewed for missing items — baseboard removal, HEPA filters, consumables, PPE.",
   },
 ];
 
@@ -170,7 +170,7 @@ const PLATFORM_BLOCKS = [
     bg: "bg-[#f6faf7]",
   },
   {
-    title: "AI Engine",
+    title: "Scope Engine",
     items: ["Photo → Line Items", "Hazmat Detection", "S500/OSHA Citations", "Completeness Check", "Non-Obvious Items"],
     color: "border-[#7c5cbf]",
     bg: "bg-[#f8f5ff]",
@@ -247,9 +247,10 @@ export default async function ProductPage() {
         </h1>
         <p className="text-[16px] text-[#171717] leading-relaxed mb-2">
           Crewmatic replaces 4&ndash;6 fragmented tools with a single
-          field-first AI platform. A contractor opens one app to capture photos,
-          scope damage by voice, track moisture and equipment, generate
-          Xactimate-ready reports, and get paid faster.
+          field-first platform <span className="text-[#8a847e]">— powered by AI</span>.
+          A contractor opens one app to capture photos, scope damage by voice,
+          track moisture and equipment, generate Xactimate-ready reports, and
+          get paid faster.
         </p>
         <p className="text-[14px] text-[#8a847e] leading-relaxed">
           15 functionalities covering all 16 validated workflows. From the first
@@ -441,7 +442,7 @@ export default async function ProductPage() {
               { label: "US restoration services market", value: "$7.2B" },
               { label: "Software TAM (US)", value: "$225M–$600M/yr" },
               { label: "Current contractor tool spend", value: "$700–$1,900/mo" },
-              { label: "AI adoption in restoration", value: "Near zero" },
+              { label: "Modern field-first tools", value: "Near zero" },
               { label: "Competitors with photo-to-line-items", value: "Zero" },
             ].map((item, i) => (
               <div
@@ -467,7 +468,7 @@ export default async function ProductPage() {
           <p className="text-[14px] text-[#8a847e] mb-5">
             Crewmatic starts with water restoration, then expands into adjacent
             trades. Each vertical shares the same core engine &mdash; what
-            changes is the data model, AI prompts, and document outputs.
+            changes is the data model, scope prompts, and document outputs.
           </p>
 
           <div className="space-y-3">
@@ -476,7 +477,7 @@ export default async function ProductPage() {
                 phase: "V1",
                 label: "Now",
                 title: "Water Restoration (Mitigation)",
-                desc: "AI Photo Scope, job management, moisture tracking, PDF reports, adjuster portal. The foundation everything else builds on.",
+                desc: "Photo Scope, job management, moisture tracking, PDF reports, adjuster portal. The foundation everything else builds on.",
                 color: "bg-[#2a9d5c]",
                 border: "border-[#2a9d5c]",
                 bg: "bg-[#f6faf7]",
@@ -581,7 +582,7 @@ export default async function ProductPage() {
               {[
                 { title: "Tier-Based Status", desc: "Bronze \u2192 Silver \u2192 Gold \u2192 Platinum. Higher tiers unlock better per-referral payouts and priority scheduling." },
                 { title: "Streak Mechanics", desc: "Consecutive referral weeks build streaks. Loss aversion keeps partners engaged \u2014 \u201C2 referrals from Gold!\u201D" },
-                { title: "Automated Drip Campaigns", desc: "AI-generated blogs, SMS/email sequences, tier-up celebrations. The referral network runs on autopilot." },
+                { title: "Automated Drip Campaigns", desc: "Auto-generated blogs, SMS/email sequences, tier-up celebrations. The referral network runs on autopilot." },
                 { title: "Revenue Attribution", desc: "Owners see which referral channels generate the most revenue, best close rates, and highest average job size." },
               ].map((item) => (
                 <div key={item.title} className="px-2 py-2 bg-white/60 rounded border border-[#f0ede9]">

@@ -40,7 +40,7 @@ function extractTextFromChildren(children: React.ReactNode): string {
 
 const SECTION_SUMMARIES: Record<string, string> = {
   "executive-summary":
-    "$180-360M TAM · $49-299/mo vs $700-1,900/mo · 0 competitors with AI photo-to-Xactimate",
+    "$180-360M TAM · $49-299/mo vs $700-1,900/mo · 0 competitors with photo-to-Xactimate",
   "the-contractors-reality":
     "30% documentation / 70% field · Scheduling is #1 pain · Tool fragmentation leads to paper",
   "the-problem":
@@ -54,7 +54,7 @@ const SECTION_SUMMARIES: Record<string, string> = {
   "workflow-level-competitive-comparison":
     "16 workflows compared · 5 where Crewmatic has zero competition",
   "what-were-building":
-    "AI Photo Scope · Voice Scoping · Site Log · Sketching · Job Mgmt · Reports · Hazmat Scanner",
+    "Photo Scope · Voice Scoping · Site Log · Sketching · Job Mgmt · Reports · Hazmat Scanner",
   pricing:
     "Solo $49 · Team $149 · Pro $299 · Enterprise custom + Hazmat marketplace revenue",
   "strategy-to-win":
@@ -66,7 +66,7 @@ const SECTION_SUMMARIES: Record<string, string> = {
   "expansion-roadmap":
     "V1 Water then V2 Fire then V3 Mold then V4 Contents then V5 Adjacent trades",
   risks:
-    "7 risks tracked · Encircle AI live · Speed to market · MICA mandates",
+    "7 risks tracked · Encircle scoping live · Speed to market · MICA mandates",
   "strategic-intelligence-verisk--the-xactimate-moat":
     "Verisk $31B · Xactimate $350/mo · Failed AccuLynx deal · Crowdsourced pricing opportunity",
   "appendix-a-contractor-interview--brett-sodders-co-founder":

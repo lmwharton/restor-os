@@ -478,8 +478,8 @@ function EmptyState() {
           No jobs yet.
         </h1>
         <p className="text-[15px] text-on-surface-variant leading-relaxed mb-8 max-w-sm">
-          Create your first job to start AI scoping and real-time field data
-          monitoring.
+          Create your first job to start scoping damage and capturing real-time
+          field data.
         </p>
         <Link
           href="/jobs/new"

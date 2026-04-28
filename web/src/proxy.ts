@@ -7,12 +7,19 @@ const PUBLIC_PATHS = ["/", "/login", "/signup", "/auth", "/callback", "/onboardi
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
+  // Forward the current pathname to server components via a request header.
+  // Spec 01I's onboarding gate in (protected)/layout.tsx needs to whitelist
+  // /settings/* without doing client-side checks. Next.js 16 server-component
+  // layouts can't read `nextUrl` directly, but they can read forwarded headers.
+  const forwardHeaders = new Headers(request.headers);
+  forwardHeaders.set("x-pathname", pathname);
+
   // Skip auth entirely for public pages
   if (PUBLIC_PATHS.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
-    return NextResponse.next({ request });
+    return NextResponse.next({ request: { headers: forwardHeaders } });
   }
 
-  let response = NextResponse.next({ request });
+  let response = NextResponse.next({ request: { headers: forwardHeaders } });
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -24,12 +31,16 @@ export async function proxy(request: NextRequest) {
         },
         set(name: string, value: string, options: CookieOptions) {
           request.cookies.set({ name, value, ...options });
-          response = NextResponse.next({ request });
+          // Preserve forwardHeaders on the rebuild so x-pathname survives
+          // a token-refresh write. Without this, the layout's path-aware
+          // gate sees an empty pathname and incorrectly bounces users
+          // away from /settings/* during onboarding.
+          response = NextResponse.next({ request: { headers: forwardHeaders } });
           response.cookies.set({ name, value, ...options });
         },
         remove(name: string, options: CookieOptions) {
           request.cookies.set({ name, value: "", ...options });
-          response = NextResponse.next({ request });
+          response = NextResponse.next({ request: { headers: forwardHeaders } });
           response.cookies.set({ name, value: "", ...options });
         },
       },
@@ -49,6 +60,9 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(loginUrl);
   }
 
+  // Re-tag the pathname header on the final response so later middlewares
+  // / RSCs see the same value the auth check used.
+  response.headers.set("x-pathname", pathname);
   return response;
 }
 

@@ -30,9 +30,9 @@ function eventLabel(item: NotificationItem): string {
       return `${name} added moisture reading${room ? ` — ${room}` : ""}`;
     }
     case "ai_photo_analysis":
-      return "AI completed photo analysis";
+      return "Photo analysis complete";
     case "ai_sketch_cleanup":
-      return "AI sketch cleanup done";
+      return "Sketch cleanup done";
     case "report_generated":
       return "Report generated";
     case "job_status_changed": {
@@ -142,7 +142,7 @@ export default function NotificationDropdown() {
                   <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                 </svg>
                 <p className="text-sm text-on-surface-variant">No activity yet</p>
-                <p className="text-xs text-outline mt-1">Events from your team and AI will show up here</p>
+                <p className="text-xs text-outline mt-1">Team activity and automated events will show up here</p>
               </div>
             ) : (
               <>
@@ -160,12 +160,12 @@ export default function NotificationDropdown() {
                   </div>
                 )}
 
-                {/* AI / System */}
+                {/* Automated / System */}
                 {aiEvents.length > 0 && (
                   <div>
                     <div className="px-4 py-2 bg-surface-container/50">
                       <span className="text-[10px] font-semibold uppercase tracking-[0.08em] text-on-surface-variant font-[family-name:var(--font-geist-mono)]">
-                        AI &amp; System
+                        Automated
                       </span>
                     </div>
                     {aiEvents.map((item) => (

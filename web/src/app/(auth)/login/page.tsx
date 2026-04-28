@@ -1,62 +1,15 @@
 import { redirect } from "next/navigation";
+import { Suspense } from "react";
+import type { Metadata } from "next";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
-import SignInButton from "./sign-in-button";
+import LoginForm from "./login-form";
 
-/**
- * Water droplet SVG icon used in the brand wordmark.
- * Inline to avoid external component dependencies during bootstrap.
- */
-function WaterDropIcon() {
-  return (
-    <svg
-      width="28"
-      height="28"
-      viewBox="0 0 32 32"
-      fill="none"
-      aria-hidden="true"
-    >
-      <path
-        d="M16 2C16 2 6 14 6 20a10 10 0 0020 0C26 14 16 2 16 2z"
-        fill="#e85d26"
-        opacity="0.9"
-      />
-      <path
-        d="M16 2C16 2 6 14 6 20a10 10 0 0020 0C26 14 16 2 16 2z"
-        fill="url(#dropGrad)"
-      />
-      <ellipse cx="12.5" cy="18" rx="2.5" ry="3.5" fill="white" opacity="0.25" />
-      <defs>
-        <linearGradient id="dropGrad" x1="6" y1="2" x2="26" y2="30" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#e85d26" stopOpacity="0" />
-          <stop offset="1" stopColor="#a63500" stopOpacity="0.5" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
-
-/**
- * Shield icon for the "Secure Contractor Portal" info card.
- */
-function ShieldIcon() {
-  return (
-    <svg
-      width="20"
-      height="20"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="#a63500"
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-      <path d="M9 12l2 2 4-4" />
-    </svg>
-  );
-}
+export const metadata: Metadata = {
+  title: "Sign In",
+  description: "Sign in to Crewmatic.",
+};
 
 export default async function LoginPage() {
   try {
@@ -130,7 +83,7 @@ export default async function LoginPage() {
           </div>
         </div>
 
-        {/* AI Moisture Analysis badge — top-right, tilted, overlapping card edge */}
+        {/* Moisture Analysis badge — top-right, tilted, overlapping card edge */}
         <div
           className="pointer-events-none absolute -right-4 -top-2 z-20 w-[130px] overflow-hidden rounded-xl sm:-right-16 sm:top-8 sm:w-[155px]"
           aria-hidden="true"
@@ -145,7 +98,7 @@ export default async function LoginPage() {
               className="text-[8px] font-semibold uppercase tracking-[0.1em] font-[family-name:var(--font-geist-mono)] sm:text-[9px]"
               style={{ color: "rgba(255,255,255,0.7)" }}
             >
-              AI Moisture Analysis
+              Moisture Analysis
             </p>
           </div>
           <div className="px-3 pb-0.5">
@@ -179,15 +132,16 @@ export default async function LoginPage() {
             boxShadow: "0 4px 32px rgba(166, 53, 0, 0.06), 0 1px 4px rgba(166, 53, 0, 0.04)",
           }}
         >
-          {/* Brand wordmark */}
-          <div className="mb-8 flex items-center justify-center gap-2.5">
-            <WaterDropIcon />
-            <span
-              className="text-[17px] font-semibold lowercase"
-              style={{ color: "#1f1b17", letterSpacing: "-0.45px" }}
-            >
-              crewmatic
-            </span>
+          {/* Brand wordmark — official logo art. */}
+          <div className="mb-8 flex items-center justify-center">
+            <Image
+              src="/crewmatic-logo.png"
+              alt="Crewmatic"
+              width={160}
+              height={42}
+              priority
+              className="h-auto w-[140px] sm:w-[160px]"
+            />
           </div>
 
           {/* Heading */}
@@ -204,47 +158,10 @@ export default async function LoginPage() {
             The Operating System for Restoration Contractors
           </p>
 
-          {/* Sign-in button */}
-          <SignInButton />
-
-          {/* Divider */}
-          <div className="my-8 flex items-center gap-4">
-            <div className="h-px flex-1" style={{ backgroundColor: "#e1bfb4" }} />
-            <span
-              className="whitespace-nowrap text-[11px] font-medium uppercase tracking-[0.08em] font-[family-name:var(--font-geist-mono)]"
-              style={{ color: "#594139" }}
-            >
-              Precision Field Access
-            </span>
-            <div className="h-px flex-1" style={{ backgroundColor: "#e1bfb4" }} />
-          </div>
-
-          {/* Secure portal info card */}
-          <div
-            className="flex items-start gap-3 rounded-xl p-4"
-            style={{ backgroundColor: "#f5ece6" }}
-          >
-            <div
-              className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-lg"
-              style={{ backgroundColor: "#fbf2eb" }}
-            >
-              <ShieldIcon />
-            </div>
-            <div>
-              <p
-                className="text-sm font-semibold leading-tight"
-                style={{ color: "#1f1b17" }}
-              >
-                Secure Contractor Portal
-              </p>
-              <p
-                className="mt-1 text-xs leading-relaxed"
-                style={{ color: "#594139" }}
-              >
-                Enterprise-grade security with Google SSO. Your project data is encrypted and isolated per company.
-              </p>
-            </div>
-          </div>
+          {/* Login form (email/password + Google + forgot password + sign up link) */}
+          <Suspense fallback={<div className="h-[420px]" aria-hidden="true" />}>
+            <LoginForm />
+          </Suspense>
 
           {/* Terms footer */}
           <p
