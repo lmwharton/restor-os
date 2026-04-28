@@ -8,49 +8,27 @@ import type {
   PipelineStage,
   TeamMember,
 } from "../types";
-import { STATUS_COLORS } from "../status-colors";
+import { JOB_STATUSES } from "../types";
+import { STATUS_META } from "../labels";
+import { isJobArchived } from "../job-status";
 
-// ─── Pipeline — derived from real jobs ────────────────────────────────
+// ─── Pipeline — derived from real jobs (Spec 01K) ─────────────────────
+// Single 9-status lifecycle pipeline replaces the dual mit/recon rows.
 
-const PIPELINE_ORDER: PipelineStage[] = [
-  "new", "contracted", "mitigation", "drying", "complete", "submitted", "collected",
-];
-
-const PIPELINE_COLORS: Record<PipelineStage, string> = {
-  new: STATUS_COLORS.new,
-  contracted: STATUS_COLORS.contracted,
-  mitigation: STATUS_COLORS.mitigation,
-  drying: STATUS_COLORS.drying,
-  complete: STATUS_COLORS.complete,
-  submitted: STATUS_COLORS.submitted,
-  collected: STATUS_COLORS.collected,
-  scoping: STATUS_COLORS.scoping,
-  in_progress: STATUS_COLORS.in_progress,
-};
-
-const PIPELINE_LABELS: Record<PipelineStage, string> = {
-  new: "New",
-  contracted: "Contracted",
-  mitigation: "Mitigation",
-  drying: "Drying",
-  complete: "Complete",
-  submitted: "Submitted",
-  collected: "Collected",
-  scoping: "Scoping",
-  in_progress: "In Progress",
-};
+const PIPELINE_ORDER: readonly PipelineStage[] = JOB_STATUSES;
 
 export function usePipeline(initialJobs?: JobDetail[]) {
   const { data: jobs, isLoading } = useJobs(undefined, initialJobs);
 
   const pipeline = useMemo<PipelineStageData[]>(() => {
-    if (!jobs) return PIPELINE_ORDER.map((stage) => ({
+    const blank = PIPELINE_ORDER.map((stage) => ({
       stage,
-      label: PIPELINE_LABELS[stage],
+      label: STATUS_META[stage].label,
       count: 0,
       amount: 0,
-      color: PIPELINE_COLORS[stage],
+      color: STATUS_META[stage].color,
     }));
+    if (!jobs) return blank;
 
     const counts: Record<string, number> = {};
     for (const stage of PIPELINE_ORDER) counts[stage] = 0;
@@ -61,10 +39,10 @@ export function usePipeline(initialJobs?: JobDetail[]) {
 
     return PIPELINE_ORDER.map((stage) => ({
       stage,
-      label: PIPELINE_LABELS[stage],
+      label: STATUS_META[stage].label,
       count: counts[stage] || 0,
       amount: 0, // TODO: compute from line items when pricing is added
-      color: PIPELINE_COLORS[stage],
+      color: STATUS_META[stage].color,
     }));
   }, [jobs]);
 
@@ -78,7 +56,7 @@ export function useDashboardKPIs(initialJobs?: JobDetail[]) {
 
   const kpis = useMemo(() => {
     if (!jobs) return null;
-    const activeJobs = jobs.filter((j) => j.status !== "collected").length;
+    const activeJobs = jobs.filter((j) => !isJobArchived(j.status)).length;
     return {
       active_jobs: activeJobs,
       active_jobs_change: 0, // TODO: compare to last week
@@ -102,7 +80,7 @@ export function usePriorityTasks(initialJobs?: JobDetail[]) {
   const tasks = useMemo(() => {
     if (!jobs) return [];
     return jobs
-      .filter((j) => j.status !== "collected")
+      .filter((j) => !isJobArchived(j.status))
       .map((job: JobDetail) => ({
         id: job.id,
         job_id: job.id,
@@ -124,9 +102,14 @@ function buildTaskDescription(job: JobDetail): string {
 }
 
 function getTaskPriority(job: JobDetail): "critical" | "warning" | "normal" | "low" {
-  if (job.status === "new") return "critical";
-  if (job.status === "mitigation") return "warning";
-  if (job.status === "drying") return "normal";
+  // Spec 01K priority mapping:
+  //  lead    — needs conversion attention
+  //  on_hold / disputed — needs follow-up
+  //  active  — work in progress, watch it
+  //  others  — low priority
+  if (job.status === "lead" || job.status === "disputed") return "critical";
+  if (job.status === "on_hold") return "warning";
+  if (job.status === "active") return "normal";
   return "low";
 }
 
