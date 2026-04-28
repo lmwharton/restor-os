@@ -147,6 +147,7 @@ The customer↔property M:N relationship is **derived through jobs + the propert
 | 18 | Multi-field search disambiguation: input shape decides the matcher. Starts with `+` or contains 7+ digits → phone prefix match (digits-only normalize). Contains `@` → email `ilike`. Else → `pg_trgm similarity ≥ 0.4` on `name OR entity_name`. Single endpoint, deterministic dispatch. | Clear contract. Two engineers can't implement it differently. |
 | 19 | Adjuster share-link projects an explicit column whitelist on customers: `id, name, entity_name, customer_type` only. `phone`, `email`, `notes` are **never SELECTed** for adjuster-scope share endpoints. Pre-fetch redaction, not post-fetch masking. | Closes the "PII in process memory + risk of new field leaking later" failure mode. |
 | 20 | `customers.notes`, `customers.email`, `customers.phone`, `customers.entity_name` excluded from `GET /v1/customers` list endpoint response. Returned only by `GET /v1/customers/{id}`. List endpoint returns `{ id, name, entity_name, customer_type, property_count_summary }`. | Reduces enumeration surface. Notes can contain operator-sensitive content. |
+| 21 | Add denormalized `properties.last_activity_at TIMESTAMPTZ` column with trigger updating from job mutations. Used by 01L's properties + customers list views to sort by recent activity without N+1 aggregation queries. | Pre-launch + cheap to add now. Retrofitting later means computing `MAX(jobs.created_at)` per property at list time → N+1 hell at scale. Trigger updates on insert/update/soft-delete of jobs. |
 
 ---
 
@@ -286,6 +287,47 @@ CREATE INDEX idx_jobs_customer
 -- pick-or-create explicitly). Post-TRUNCATE there are no rows, so the
 -- constraint applies cleanly.
 ALTER TABLE jobs ALTER COLUMN property_id SET NOT NULL;
+
+-- ============================================================================
+-- 8. properties.last_activity_at + trigger (Decision #21)
+-- ============================================================================
+ALTER TABLE properties
+    ADD COLUMN last_activity_at TIMESTAMPTZ;
+
+CREATE INDEX idx_properties_company_last_activity
+    ON properties(company_id, last_activity_at DESC NULLS LAST)
+    WHERE deleted_at IS NULL;
+
+CREATE OR REPLACE FUNCTION update_property_last_activity()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.property_id IS NOT NULL AND NEW.deleted_at IS NULL THEN
+        UPDATE properties
+        SET last_activity_at = GREATEST(
+            COALESCE(last_activity_at, NEW.updated_at),
+            NEW.updated_at
+        )
+        WHERE id = NEW.property_id;
+    END IF;
+
+    -- Property reassigned: recompute old property's last_activity from remaining jobs
+    IF TG_OP = 'UPDATE'
+       AND OLD.property_id IS DISTINCT FROM NEW.property_id
+       AND OLD.property_id IS NOT NULL THEN
+        UPDATE properties p
+        SET last_activity_at = (
+            SELECT MAX(j.updated_at) FROM jobs j
+            WHERE j.property_id = p.id AND j.deleted_at IS NULL
+        )
+        WHERE p.id = OLD.property_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_jobs_update_property_activity
+    AFTER INSERT OR UPDATE ON jobs
+    FOR EACH ROW EXECUTE FUNCTION update_property_last_activity();
 ```
 
 `downgrade()` is the inverse: drop indexes, drop FK columns, recreate the three `customers_*` columns on `jobs` (no data restoration — pre-launch), drop the `customers` table, drop the trigram extension if no other table uses it (skip if uncertain).
