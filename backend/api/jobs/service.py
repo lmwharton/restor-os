@@ -904,20 +904,12 @@ async def update_job(
 
     client = await get_authenticated_client(token)
 
-    # Spec 01K — generic PATCH /jobs/{id} no longer accepts `status`.
-    # Status changes go through the dedicated PATCH /jobs/{id}/status endpoint
-    # so transitions are validated, locked, and audited atomically. JobUpdate
-    # schema removed `status`, but a malicious client could still pass it via
-    # the raw dict — reject defensively.
-    if "status" in updates:
-        raise AppException(
-            status_code=400,
-            detail=(
-                "Status changes go through PATCH /v1/jobs/{id}/status "
-                "— not the generic PATCH endpoint."
-            ),
-            error_code="USE_STATUS_ENDPOINT",
-        )
+    # Spec 01K — generic PATCH /jobs/{id} no longer accepts `status`. JobUpdate
+    # schema removed the field, and Pydantic's default `extra=ignore` strips
+    # any client attempt to sneak it through. A `{"status":"x"}`-only payload
+    # therefore lands in NO_UPDATES above (empty dict after stripping) — which
+    # is the correct user-facing signal. There is no reachable code path here
+    # where `status` survives into `updates`.
 
     result = await (
         client.table("jobs")
