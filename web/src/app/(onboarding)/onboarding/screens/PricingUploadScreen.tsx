@@ -214,12 +214,35 @@ export default function PricingUploadScreen({
       ) : null}
 
       <div>
-        <h1 className="text-[26px] sm:text-[28px] font-bold leading-tight" style={{ color: "#1f1b17" }}>
-          Upload your pricing
-        </h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1
+            className="text-[26px] sm:text-[28px] font-bold leading-tight"
+            style={{ color: "#1f1b17" }}
+          >
+            Upload your pricing
+          </h1>
+          {/*
+            "Coming soon" badge — uploaded prices are stored today but no
+            feature reads them yet. The AI Photo Scope (Spec 02A) is the
+            real consumer; it reads `scope_codes` to apply the contractor's
+            prices to AI-generated Xactimate line items. Until 02A ships,
+            uploading just stops the dashboard nudge banner.
+          */}
+          <span
+            className="inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-semibold tracking-[0.04em]"
+            style={{
+              backgroundColor: "#fff4ed",
+              color: "#a63500",
+              border: "1px solid #fbcab5",
+            }}
+          >
+            Coming soon
+          </span>
+        </div>
         <p className="mt-2 text-[14px] leading-relaxed" style={{ color: "#594139" }}>
-          Drop your Xactimate-style spreadsheet so estimates pull line-item prices
-          automatically. You can do this later from Settings.
+          Drop your Xactimate-style spreadsheet now — once AI estimates
+          launch, your prices auto-apply to every generated line item.
+          Optional; you can do this later from Settings.
         </p>
       </div>
 
