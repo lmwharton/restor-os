@@ -1,9 +1,9 @@
 "use client";
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiGet, apiPost, apiPatch, apiDelete } from "../api";
+import { apiGet, apiPost, apiPatch, apiDelete, ApiError } from "../api";
 import type {
-  JobDetail, JobCreate, Job,
+  JobDetail, JobCreate, Job, JobStatus,
   Room, Photo, PhotoType, MoistureReading, Event,
   FloorPlan, PaginatedResponse, ReconPhase,
   WallSegment, WallOpening,
@@ -70,6 +70,110 @@ export function useUpdateJob(jobId: string) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["jobs"] });
       qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+    },
+  });
+}
+
+// ─── Spec 01K — dedicated status-change mutation ─────────────────────
+// Calls PATCH /v1/jobs/{id}/status (the only path to change status).
+// Passes `expected_current_status` for optimistic locking — server returns
+// 409 Conflict if the cached status is stale.
+//
+// On 409 we *surface the error* (the change-status modal renders a "may have
+// been updated by someone else, refresh and try again" prompt), rather than
+// auto-retry. Auto-retry would silently transition the job through a status
+// the user didn't intend if someone else's update changed the legal target
+// set. Manual refetch is safer for a low-frequency action.
+
+export interface JobStatusUpdate {
+  status: JobStatus;
+  expected_current_status: JobStatus;
+  reason?: string;
+  resume_date?: string;          // ISO date — only meaningful for status='on_hold'
+  override_gates?: string[];     // gate item_keys the user explicitly overrode
+  override_reason?: string;      // "Close Anyway" reason logged to event_history
+  cancel_reason?: string;        // dropdown key (mutually exclusive with cancel_reason_other)
+  cancel_reason_other?: string;  // free text when cancel_reason = null
+}
+
+/**
+ * Structured error wrapper for status-update mutations. The change-status
+ * modal switches on `kind` to render a 409-specific refresh prompt vs. a
+ * generic error block.
+ *
+ * `kind: "conflict"` is set whenever the server returned 409 (someone else
+ * moved the job between the time the modal opened and submit). The modal
+ * uses this to render an actionable "Refresh now" button instead of a flat
+ * error message.
+ */
+export class JobStatusUpdateError extends Error {
+  kind: "conflict" | "validation" | "unknown";
+  status: number;
+  error_code: string;
+
+  constructor(kind: "conflict" | "validation" | "unknown", status: number, message: string, error_code = "UNKNOWN") {
+    super(message);
+    this.name = "JobStatusUpdateError";
+    this.kind = kind;
+    this.status = status;
+    this.error_code = error_code;
+  }
+}
+
+/** Discriminator-narrowed alias of JobStatusUpdateError for the 409 case. */
+export interface JobStatusConflictError extends JobStatusUpdateError {
+  kind: "conflict";
+}
+
+/**
+ * Type guard — true when `err` is a JobStatusUpdateError with kind='conflict'.
+ * Narrows to `JobStatusConflictError` so the `else` branch keeps the broader
+ * `JobStatusUpdateError` (validation/unknown) rather than collapsing to never.
+ */
+export function isStatusConflictError(err: unknown): err is JobStatusConflictError {
+  return err instanceof JobStatusUpdateError && err.kind === "conflict";
+}
+
+export function useUpdateJobStatus(jobId: string) {
+  const qc = useQueryClient();
+  return useMutation<Job, JobStatusUpdateError, JobStatusUpdate>({
+    mutationFn: async (body) => {
+      try {
+        return await apiPatch<Job>(`/v1/jobs/${jobId}/status`, body);
+      } catch (err) {
+        // Translate raw ApiError into the structured form the modal switches on.
+        // Any 409 → conflict; 400/422 → validation; anything else → unknown.
+        if (err instanceof ApiError) {
+          const kind: JobStatusUpdateError["kind"] =
+            err.status === 409 ? "conflict"
+            : err.status === 400 || err.status === 422 ? "validation"
+            : "unknown";
+          throw new JobStatusUpdateError(kind, err.status, err.message, err.error_code);
+        }
+        // Network or unexpected error — message-sniff for a 409 hint as a
+        // last-resort fallback so callers still get a usable kind.
+        if (err instanceof Error) {
+          const looksLikeConflict =
+            err.message?.includes("409") || err.message?.toLowerCase().includes("conflict");
+          throw new JobStatusUpdateError(
+            looksLikeConflict ? "conflict" : "unknown",
+            looksLikeConflict ? 409 : 0,
+            err.message,
+          );
+        }
+        throw new JobStatusUpdateError("unknown", 0, "Status update failed");
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["jobs"] });
+      qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+    },
+    onError: (err) => {
+      // On any 409, refetch the job so the next user attempt sees the new
+      // current_status without requiring a page reload.
+      if (err.kind === "conflict") {
+        qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+      }
     },
   });
 }
