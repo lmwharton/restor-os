@@ -136,10 +136,15 @@ export function isStatusConflictError(err: unknown): err is JobStatusConflictErr
 
 export function useUpdateJobStatus(jobId: string) {
   const qc = useQueryClient();
-  return useMutation<Job, JobStatusUpdateError, JobStatusUpdate>({
+  // Backend `update_status` returns the full JobDetailResponse (job row +
+  // counts + linked_job_summary), not the bare Job. Type the mutation to
+  // match the wire contract so any caller reading `mutation.data` gets
+  // the right shape. (Most callers rely on query invalidation rather than
+  // mutation.data, but this closes a type hole.)
+  return useMutation<JobDetail, JobStatusUpdateError, JobStatusUpdate>({
     mutationFn: async (body) => {
       try {
-        return await apiPatch<Job>(`/v1/jobs/${jobId}/status`, body);
+        return await apiPatch<JobDetail>(`/v1/jobs/${jobId}/status`, body);
       } catch (err) {
         // Translate raw ApiError into the structured form the modal switches on.
         // Any 409 → conflict; 400/422 → validation; anything else → unknown.
