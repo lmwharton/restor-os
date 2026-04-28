@@ -66,14 +66,14 @@ function getEventMeta(event: Event): EventMeta {
     case "ai_photo_analysis": {
       const items = d.line_items_found;
       return {
-        label: `AI Photo Analysis${items ? ` — ${items} items found` : ""}`,
+        label: `Photo Analysis${items ? ` — ${items} items found` : ""}`,
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
     }
     case "ai_sketch_cleanup":
       return {
-        label: "AI Sketch Cleanup Complete",
+        label: "Sketch Cleanup Complete",
         icon: <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round"/></svg>,
         color: "bg-surface-container", accent: "text-on-surface-variant",
       };
@@ -676,7 +676,7 @@ function LatestActivity({ jobs, initialEvents }: { jobs: JobDetail[]; initialEve
                     {event.is_ai ? (
                       <span className="inline-flex items-center gap-0.5 text-amber-600 font-medium">
                         <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 2l2.09 6.26H21l-5.55 4.04L17.55 18.54 12 14.49l-5.55 4.05 2.1-6.24L3 8.26h6.91L12 2z" fill="currentColor"/></svg>
-                        AI
+                        Auto
                       </span>
                     ) : (
                       <span className="font-medium text-on-surface-variant">You</span>

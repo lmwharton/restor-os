@@ -254,7 +254,7 @@ export function ResearchContent({
               Brett&apos;s Product Sessions
             </h2>
             <p className="text-[13px] text-[#8a847e] mt-0.5">
-              Market sizing, AI feature ideas, voice UX findings, sketch tool requirements, and iOS direction
+              Market sizing, feature ideas, voice UX findings, sketch tool requirements, and iOS direction
             </p>
           </div>
           <span

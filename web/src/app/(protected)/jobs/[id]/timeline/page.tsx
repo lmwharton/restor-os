@@ -323,9 +323,9 @@ export default function JobTimelinePage({
       ),
     },
 
-    // 6. AI Scope
+    // 6. Photo Scope
     {
-      label: "AI Scope",
+      label: "Photo Scope",
       status:
         job.line_item_count > 0
           ? "complete"

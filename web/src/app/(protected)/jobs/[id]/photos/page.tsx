@@ -259,7 +259,7 @@ function MobilePhotoSheet({
 
           {/* AI toggle */}
           <div className="flex items-center justify-between py-1">
-            <span className="text-[13px] font-medium text-on-surface">Include in AI Scope</span>
+            <span className="text-[13px] font-medium text-on-surface">Include in scope</span>
             <button
               type="button"
               onClick={onToggleAI}
@@ -823,7 +823,7 @@ export default function PhotosPage() {
 
                 {/* AI selection toggle */}
                 <div className="flex items-center justify-between py-1">
-                  <span className="text-[12px] font-medium text-on-surface">Include in AI Scope</span>
+                  <span className="text-[12px] font-medium text-on-surface">Include in scope</span>
                   <button
                     type="button"
                     onClick={() => {

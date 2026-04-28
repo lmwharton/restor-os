@@ -18,16 +18,16 @@ interface Phase {
 const PHASES: Phase[] = [
   {
     id: "v1",
-    label: "V1: AI Scope + Job Shell",
+    label: "V1: Photo Scope + Job Shell",
     tag: "Building Now",
     tagColor: "text-[#2a9d5c]",
     tagBg: "bg-[#edf7f0]",
     dotColor: "bg-[#2a9d5c]",
     features: [
       {
-        name: "AI Photo Scope",
+        name: "Photo Scope",
         description:
-          "Upload damage photos, AI generates Xactimate line items with S500/OSHA justifications.",
+          "Upload damage photos to generate Xactimate line items with S500/OSHA justifications. Powered by AI.",
       },
       {
         name: "Job Shell",
@@ -62,7 +62,7 @@ const PHASES: Phase[] = [
       {
         name: "Voice Scoping",
         description:
-          "AI-guided step-by-step voice scoping using Deepgram Nova-2 STT.",
+          "Step-by-step voice scoping using Deepgram Nova-2 STT. Powered by AI.",
       },
       {
         name: "Equipment Tracking",
@@ -102,7 +102,7 @@ const PHASES: Phase[] = [
       {
         name: "Supplement Trigger Engine",
         description:
-          "AI monitors new photos against original scope, auto-drafts supplement requests when billable deviations detected.",
+          "New photos are monitored against the original scope; supplement requests are auto-drafted when billable deviations are detected. Powered by AI.",
       },
     ],
   },
@@ -115,14 +115,14 @@ const PHASES: Phase[] = [
     dotColor: "bg-[#5b6abf]",
     features: [
       {
-        name: "Carrier-Specific AI Rules",
+        name: "Carrier-Specific Rules",
         description:
-          "Per-TPA rule sets (Alacrity, Code Blue, Sedgwick) embedded in the AI pipeline.",
+          "Per-TPA rule sets (Alacrity, Code Blue, Sedgwick) embedded in the scope pipeline. Powered by AI.",
       },
       {
         name: "Rejection Predictor",
         description:
-          "AI flags line items likely to be denied based on carrier history.",
+          "Flags line items likely to be denied based on carrier history. Powered by AI.",
       },
       {
         name: "Auto Adjuster Reports",

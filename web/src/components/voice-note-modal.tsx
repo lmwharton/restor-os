@@ -181,7 +181,7 @@ function VoiceNoteContent({
 
         {/* Hint */}
         <p className="mt-3 text-[12px] italic text-on-surface-variant/70">
-          AI reads these notes when building your scope &mdash; be specific
+          These notes feed into your scope &mdash; be specific
         </p>
 
         {/* Action buttons */}

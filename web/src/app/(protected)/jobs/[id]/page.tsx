@@ -128,7 +128,7 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
     case "moisture_reading_added":
       return `logged Day ${evt.event_data.day_number ?? "?"} moisture readings`;
     case "ai_sketch_cleanup":
-      return "cleaned up floor plan with AI";
+      return "cleaned up floor plan automatically";
     case "ai_photo_analysis":
       return `generated ${evt.event_data.line_items_generated ?? ""} line items from photos`;
     case "job_created":
@@ -158,7 +158,7 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
 }
 
 function eventActor(evt: { is_ai: boolean; user_id: string | null }, currentUserId?: string, currentUserName?: string): string {
-  if (evt.is_ai) return "Crewmatic AI";
+  if (evt.is_ai) return "Crewmatic";
   if (currentUserId && evt.user_id === currentUserId && currentUserName) return currentUserName;
   return "Team Member";
 }
@@ -2388,10 +2388,10 @@ export default function JobDetailPage() {
             onSave={(val) => updateJob.mutate({ tech_notes: val || null })}
           />
 
-          {/* Section 6: AI Scope */}
+          {/* Section 6: Photo Scope */}
           <AccordionSection
             icon={<IconAIScope />}
-            title="AI Scope"
+            title="Photo Scope"
             badge={
               hasPhotos ? (
                 <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold font-[family-name:var(--font-geist-mono)] uppercase">
@@ -2465,7 +2465,7 @@ export default function JobDetailPage() {
                       {untaggedPhotos.length} photos need room tags
                     </p>
                     <p className="text-[11px] text-on-surface-variant mt-0.5">
-                      Tag rooms before AI scope
+                      Tag rooms before generating scope
                     </p>
                   </div>
                 </div>
