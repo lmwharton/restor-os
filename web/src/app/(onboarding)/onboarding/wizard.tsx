@@ -206,6 +206,7 @@ export default function OnboardingWizard({ initialStatus }: Props) {
             showWelcomeBack={false /* never on Step 1 — the user is fresh */}
             onCreated={handleCompanyCreated}
             onOpenQuickAdd={handleOpenQuickAdd}
+            hasCompany={initialStatus.has_company || companyName !== null}
           />
         ) : null}
 
