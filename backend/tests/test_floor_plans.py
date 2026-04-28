@@ -3558,18 +3558,19 @@ class TestEnsureJobFloorPlanRpcMigration:
     def test_rpc_rejects_archived_jobs(self):
         text = self._text()
         upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
-        # Spec 01K renamed terminal "collected" → "paid". The migration was
-        # rewritten in-place (pre-launch, no dual-status window).
-        assert "v_job.status = 'paid'" in upgrade
+        # Spec 01K renamed terminal "collected" → "paid" AND added the other
+        # archived states (cancelled/lost) to the IN clause so DB guards stay
+        # consistent with api/shared/constants.py ARCHIVED_JOB_STATUSES.
+        assert "v_job.status IN ('paid', 'cancelled', 'lost')" in upgrade
         # Post-review MEDIUM #4: archived jobs raise 55006
         # (object_not_in_prerequisite_state), NOT 42501. 42501 is reserved
         # for "caller identity" failures; 55006 matches the frozen-version
         # trigger convention for "row not in mutable state". A Python
         # catch block must be able to tell them apart — same SQLSTATE for
         # different causes was lessons-doc pattern #5.
-        archived_block = upgrade.split("v_job.status = 'paid'", 1)[1].split(
-            "END IF", 1
-        )[0]
+        archived_block = upgrade.split(
+            "v_job.status IN ('paid', 'cancelled', 'lost')", 1
+        )[1].split("END IF", 1)[0]
         assert "'55006'" in archived_block, (
             "Archived-job branch must raise 55006 (distinct from the "
             "42501 no-JWT-company branch). See lessons-doc pattern #5."
@@ -5307,7 +5308,11 @@ class TestAtomicRollbackWrapperMigration:
         assert "get_my_company_id()" in wrapper_block
         assert "Property mismatch" in wrapper_block or "property_id <> v_target.property_id" in wrapper_block
         # Spec 01K: terminal "collected" → "paid".
-        assert "Job archived" in wrapper_block or "status = 'paid'" in wrapper_block
+        # Spec 01K — archived guards check all 3 terminal statuses.
+        assert (
+            "Job archived" in wrapper_block
+            or "status IN ('paid', 'cancelled', 'lost')" in wrapper_block
+        )
         assert "Job has no property" in wrapper_block
 
     def test_wrapper_is_security_definer_with_locked_search_path(self):
