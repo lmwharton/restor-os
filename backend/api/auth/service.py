@@ -166,6 +166,24 @@ async def get_or_create_company(
 
         company = _parse_company(rpc_data["company"])
         user = _parse_user(rpc_data["user"], company)
+
+        # Spec 01K: seed default closeout-gate settings for the brand-new
+        # company so the closeout-checklist modal works on day one. Best-effort
+        # — if this fails, the modal will show empty gates which is recoverable
+        # via /settings/closeout, but onboarding should not fail because of it.
+        try:
+            await client.rpc(
+                "rpc_seed_closeout_settings",
+                {"p_company_id": str(company.id)},
+            ).execute()
+        except Exception as seed_err:
+            logger.warning(
+                "rpc_seed_closeout_settings failed for company %s: %s — owner can "
+                "trigger reset from /settings/closeout to recover",
+                company.id,
+                seed_err,
+            )
+
         return company, user
 
     except AppException:

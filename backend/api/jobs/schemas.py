@@ -55,7 +55,10 @@ class JobCreate(BaseModel):
 
 
 class JobUpdate(BaseModel):
-    status: str | None = None
+    # Spec 01K — generic PATCH /v1/jobs/{id} no longer accepts status.
+    # Status changes go through the dedicated PATCH /v1/jobs/{id}/status
+    # endpoint so transition validation, optimistic locking, gate checks,
+    # and event_history audit are guaranteed atomic.
 
     # Address
     address_line1: str | None = None
@@ -136,6 +139,63 @@ class JobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+    # Spec 01K — lifecycle timestamps + reason fields + lead source.
+    # All optional / nullable; populated when the relevant transition fires.
+    active_at: datetime | None = None
+    completed_at: datetime | None = None
+    invoiced_at: datetime | None = None
+    disputed_at: datetime | None = None
+    dispute_resolved_at: datetime | None = None
+    paid_at: datetime | None = None
+    cancelled_at: datetime | None = None
+    on_hold_reason: str | None = None
+    on_hold_resume_date: date | None = None
+    cancel_reason: str | None = None
+    cancel_reason_other: str | None = None
+    dispute_reason: str | None = None
+    dispute_count: int = 0
+    contract_signed_at: datetime | None = None
+    estimate_last_finalized_at: datetime | None = None
+    lead_source: str | None = None
+    lead_source_other: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Spec 01K — Status update body (atomic transition with optimistic locking)
+# ---------------------------------------------------------------------------
+
+
+class StatusUpdateBody(BaseModel):
+    """Body for PATCH /v1/jobs/{job_id}/status — the only path to change status.
+
+    `expected_current_status` enables optimistic-locking. The server compares
+    against the row's current status and returns 409 Conflict if stale,
+    so the UI can refetch instead of blindly overwriting.
+    """
+
+    status: Literal[
+        "active", "on_hold", "completed", "invoiced",
+        "disputed", "paid", "cancelled", "lost",
+    ]
+    expected_current_status: Literal[
+        "lead", "active", "on_hold", "completed", "invoiced",
+        "disputed", "paid", "cancelled", "lost",
+    ]
+    # Required for on_hold / cancelled / lost / disputed (validated server-side).
+    reason: str | None = Field(None, max_length=2000)
+    # Only meaningful for on_hold.
+    resume_date: date | None = None
+    # Closeout gate overrides — list of item_keys the user explicitly accepted.
+    # When non-null, the resulting `status_changed` event_history row gets
+    # `override_gates` + `override_reason` keys in its event_data payload, so
+    # audits can filter via:
+    #   WHERE event_type = 'status_changed' AND event_data ? 'override_gates'
+    override_gates: list[str] | None = None
+    override_reason: str | None = Field(None, max_length=2000)
+    # Cancel reason — split shape per Spec 01K D-impl-1 (one populated, never both).
+    cancel_reason: str | None = None
+    cancel_reason_other: str | None = None
+
 
 class JobDetailResponse(JobResponse):
     room_count: int = 0
@@ -159,8 +219,8 @@ class JobBatchItem(BaseModel):
 
     Required: address_line1.
 
-    Status field accepts either the friendly UI label ('Lead', 'Scoped',
-    'Submitted') or the underlying enum value — the service maps friendly
+    Status field accepts either the friendly UI label ('Lead', 'Active',
+    'Invoiced') or the underlying enum value — the service maps friendly
     labels to enum values so the frontend can show contractor-facing copy
     without a separate enum.
     """

@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.auth.router import router as auth_router
+from api.closeout.router import router as closeout_router
 from api.config import settings
 from api.dashboard.router import router as dashboard_router
 from api.events.router import router as events_router
@@ -112,6 +113,7 @@ async def request_context(request: Request, call_next):
 
 
 app.include_router(auth_router, prefix="/v1")
+app.include_router(closeout_router, prefix="/v1")
 app.include_router(dashboard_router, prefix="/v1")
 app.include_router(events_router, prefix="/v1")
 app.include_router(floor_plans_router, prefix="/v1")

@@ -12,6 +12,7 @@ from api.jobs.schemas import (
     JobDetailResponse,
     JobListResponse,
     JobUpdate,
+    StatusUpdateBody,
 )
 from api.jobs.service import (
     create_job,
@@ -21,6 +22,7 @@ from api.jobs.service import (
     get_job,
     list_jobs,
     update_job,
+    update_status,
 )
 from api.shared.dependencies import _get_token
 from api.shared.exceptions import AppException
@@ -48,7 +50,7 @@ async def create_jobs_batch_endpoint(
 
     All-or-nothing: if any row fails to insert (CHECK violation, unique
     conflict, etc.), the whole batch rolls back. Status field accepts
-    UI labels (Lead/Scoped/Submitted) or enum values.
+    UI labels (Lead/Active/Invoiced) or enum values.
     """
     return await create_jobs_batch(ctx.company_id, ctx.user_id, body)
 
@@ -103,9 +105,32 @@ async def update_job_endpoint(
     request: Request,
     ctx: AuthContext = Depends(get_auth_context),
 ):
-    """Update job fields. Only send fields to change."""
+    """Update job fields. Only send fields to change.
+
+    Spec 01K — `status` is NOT accepted on this endpoint. Use
+    PATCH /v1/jobs/{job_id}/status instead so transitions are validated,
+    optimistically locked, and audited atomically.
+    """
     token = _get_token(request)
     return await update_job(token, ctx.company_id, ctx.user_id, job_id, body)
+
+
+@router.patch("/{job_id}/status", response_model=JobDetailResponse)
+async def update_status_endpoint(
+    job_id: UUID,
+    body: StatusUpdateBody,
+    request: Request,
+    ctx: AuthContext = Depends(get_auth_context),
+):
+    """Spec 01K — Move a job through the lifecycle.
+
+    The only path to change `status`. Validates the transition matrix,
+    enforces required-reason rules, and writes the status change +
+    `event_history` entry atomically via `rpc_update_job_status`. Returns
+    409 Conflict if `expected_current_status` is stale (optimistic lock fail).
+    """
+    token = _get_token(request)
+    return await update_status(token, ctx.company_id, ctx.user_id, job_id, body)
 
 
 @router.post("/{job_id}/create-linked-recon", status_code=201, response_model=JobDetailResponse)
