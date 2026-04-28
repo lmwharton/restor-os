@@ -32,3 +32,6 @@ build/
 
 # Supabase
 .supabase/
+
+# Claude Code local config (per-developer)
+.claude/
