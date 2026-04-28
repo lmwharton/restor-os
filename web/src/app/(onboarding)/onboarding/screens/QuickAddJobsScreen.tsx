@@ -152,8 +152,11 @@ export default function QuickAddJobsScreen({
   }
 
   function addRow() {
-    if (rows.length >= MAX_ROWS) return;
-    setRows((prev) => [...prev, blankRow()]);
+    // Guard inside the functional setState so rapid clicks (or anything
+    // that batches multiple addRow calls in the same render) honor the
+    // cap. Reading `rows.length` from closure was letting fast clicks
+    // exceed MAX_ROWS — caught during /qa-refine-loop.
+    setRows((prev) => (prev.length >= MAX_ROWS ? prev : [...prev, blankRow()]));
   }
 
   function removeRow(index: number) {

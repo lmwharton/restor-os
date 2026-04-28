@@ -1,8 +1,14 @@
 import { redirect } from "next/navigation";
 import { Suspense } from "react";
+import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
 import { getAuthenticatedRedirect } from "@/lib/auth-redirect";
 import LoginForm from "./login-form";
+
+export const metadata: Metadata = {
+  title: "Sign In",
+  description: "Sign in to Crewmatic.",
+};
 
 /**
  * Water droplet SVG icon used in the brand wordmark.
