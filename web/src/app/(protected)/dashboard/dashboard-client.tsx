@@ -13,7 +13,9 @@ import { useJobs } from "@/lib/hooks/use-jobs";
 import DashboardMap from "@/components/dashboard-map";
 import SetupBanner from "@/components/dashboard/SetupBanner";
 import type { PipelineStage, PipelineStageData, PriorityTask, Event, JobDetail } from "@/lib/types";
+import { JOB_STATUSES } from "@/lib/types";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
+import { STATUS_META } from "@/lib/labels";
 
 // ---------------------------------------------------------------------------
 //  Helpers
@@ -184,58 +186,34 @@ function getEventMeta(event: Event): EventMeta {
 
 const MONO = "font-[family-name:var(--font-geist-mono)]";
 
-const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string }> = {
-  new:          { label: "New",          color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.1) },
-  contracted:   { label: "Contracted",   color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.1) },
-  mitigation:   { label: "Mitigation",   color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.1) },
-  drying:       { label: "Drying",       color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.1) },
-  complete: { label: "Complete",     color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.1) },
-  submitted:    { label: "Submitted",    color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.1) },
-  collected:    { label: "Collected",    color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.1) },
-  scoping:      { label: "Scoping",      color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.1) },
-  in_progress:  { label: "In Progress",  color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.1) },
-};
+// Spec 01K — single 9-status pipeline. STAGE_META imports STATUS_META from labels.ts
+// (single source of truth), but exposes the {label, color, bg} shape this file uses.
+const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string }> =
+  Object.fromEntries(
+    JOB_STATUSES.map((s) => [s, { label: STATUS_META[s].label, color: STATUS_META[s].color, bg: STATUS_META[s].bg }])
+  ) as Record<PipelineStage, { label: string; color: string; bg: string }>;
 
-const MIT_STAGE_ORDER: PipelineStage[] = ["new", "contracted", "mitigation", "drying", "complete", "submitted", "collected"];
-const REC_STAGE_ORDER: PipelineStage[] = ["new", "scoping", "in_progress", "complete", "submitted", "collected"];
-const STAGE_ORDER: PipelineStage[] = MIT_STAGE_ORDER;
+const STAGE_ORDER: readonly PipelineStage[] = JOB_STATUSES;
 
 // ---------------------------------------------------------------------------
 //  Stage-to-jobs mapping
 // ---------------------------------------------------------------------------
 
 function getJobStage(job: { status: string }): PipelineStage {
-  switch (job.status) {
-    case "new": return "new";
-    case "contracted": return "contracted";
-    case "mitigation": return "mitigation";
-    case "drying": return "drying";
-    case "complete": return "complete";
-    case "submitted": return "submitted";
-    case "collected": return "collected";
-    case "scoping": return "scoping";
-    case "in_progress": return "in_progress";
-    default: return "new";
-  }
+  // Spec 01K — migration already maps any legacy values; expect valid JobStatus.
+  // Defensive fallback to "lead" for unrecognized values shouldn't fire in practice.
+  return (JOB_STATUSES as readonly string[]).includes(job.status)
+    ? (job.status as PipelineStage)
+    : "lead";
 }
 
 function getTaskStage(task: PriorityTask, jobs: JobDetail[]): PipelineStage {
   const job = jobs.find((j) => j.id === task.job_id);
-  if (!job) return "new";
+  if (!job) return "lead";
   return getJobStage(job);
 }
 
-const PIN_COLOR: Record<PipelineStage, string> = {
-  new: STATUS_COLORS.new,
-  contracted: STATUS_COLORS.contracted,
-  mitigation: STATUS_COLORS.mitigation,
-  drying: STATUS_COLORS.drying,
-  complete: STATUS_COLORS.complete,
-  submitted: STATUS_COLORS.submitted,
-  collected: STATUS_COLORS.collected,
-  scoping: STATUS_COLORS.scoping,
-  in_progress: STATUS_COLORS.in_progress,
-};
+const PIN_COLOR: Record<PipelineStage, string> = STATUS_COLORS;
 
 // ---------------------------------------------------------------------------
 //  Skeleton
@@ -317,10 +295,10 @@ function AttentionBar({ jobs }: { jobs: JobDetail[] }) {
   const alerts: { text: string; jobId: string; type: "warning" | "info" }[] = [];
 
   for (const job of jobs) {
-    if (job.status === "drying" && job.room_count > 0) {
+    if (job.status === "active" && job.room_count > 0) {
       alerts.push({ text: `Moisture readings due — ${job.address_line1}`, jobId: job.id, type: "warning" });
     }
-    if (job.status === "new" && job.photo_count === 0) {
+    if (job.status === "lead" && job.photo_count === 0) {
       alerts.push({ text: `No photos yet — ${job.address_line1}`, jobId: job.id, type: "info" });
     }
   }
@@ -368,7 +346,7 @@ function PipelineBar({
 }: {
   label: string;
   dotColor: string;
-  stageOrder: PipelineStage[];
+  stageOrder: readonly PipelineStage[];
   stageCounts: Map<PipelineStage, number>;
   selectedStage: PipelineStage | null;
   onStageClick: (stage: PipelineStage) => void;
@@ -468,7 +446,10 @@ function JobsList({
   now: number;
   jobs: JobDetail[];
 }) {
-  const activeTasks = tasks.filter((t) => getTaskStage(t, jobs) !== "collected");
+  const activeTasks = tasks.filter((t) => {
+    const s = getTaskStage(t, jobs);
+    return s !== "paid" && s !== "cancelled" && s !== "lost";
+  });
   const filteredTasks = filter
     ? activeTasks.filter((t) => {
         const job = jobs.find((j) => j.id === t.job_id);
@@ -549,7 +530,10 @@ function JobsList({
 // ---------------------------------------------------------------------------
 
 function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineStage | null; jobs: JobDetail[] }) {
-  const activeJobs = jobs.filter((job) => getJobStage(job) !== "collected");
+  const activeJobs = jobs.filter((job) => {
+    const s = getJobStage(job);
+    return s !== "paid" && s !== "cancelled" && s !== "lost";
+  });
   const mapJobs = activeJobs.map((job) => {
     const stage = getJobStage(job);
     return {
@@ -766,27 +750,26 @@ export default function DashboardClient({
   const pipelineData = pipeline.data ?? [];
   const taskData = tasks.data ?? [];
 
-  function handleMitStageClick(stage: PipelineStage) {
-    if (stage === "collected") return;
-    setFilter((prev) => (prev?.stage === stage && prev?.jobType === "mitigation") ? null : { stage, jobType: "mitigation" });
+  function handleStageClick(stage: PipelineStage, jobType: "mitigation" | "reconstruction") {
+    // Skip clicks on terminal/archived statuses (no active jobs to filter into)
+    if (stage === "paid" || stage === "cancelled" || stage === "lost") return;
+    setFilter((prev) => (prev?.stage === stage && prev?.jobType === jobType) ? null : { stage, jobType });
   }
 
-  function handleRecStageClick(stage: PipelineStage) {
-    if (stage === "collected") return;
-    setFilter((prev) => (prev?.stage === stage && prev?.jobType === "reconstruction") ? null : { stage, jobType: "reconstruction" });
-  }
-
-  // Compute per-type stage counts
+  // Spec 01K — single 9-status lifecycle pipeline replaces the dual mit/recon rows.
+  // We still split counts by job_type so users can filter the panel below by either,
+  // but both rows use the same 9 statuses now.
   const mitCounts = new Map<PipelineStage, number>();
   const recCounts = new Map<PipelineStage, number>();
-  for (const s of MIT_STAGE_ORDER) mitCounts.set(s, 0);
-  for (const s of REC_STAGE_ORDER) recCounts.set(s, 0);
+  for (const s of JOB_STATUSES) {
+    mitCounts.set(s, 0);
+    recCounts.set(s, 0);
+  }
   for (const job of jobs) {
     const stage = getJobStage(job);
-    if (job.job_type === "mitigation" && mitCounts.has(stage)) {
+    if (job.job_type === "mitigation") {
       mitCounts.set(stage, (mitCounts.get(stage) ?? 0) + 1);
-    }
-    if (job.job_type === "reconstruction" && recCounts.has(stage)) {
+    } else if (job.job_type === "reconstruction") {
       recCounts.set(stage, (recCounts.get(stage) ?? 0) + 1);
     }
   }
@@ -851,19 +834,19 @@ export default function DashboardClient({
           <PipelineBar
             label="Mitigation"
             dotColor="#3b82f6"
-            stageOrder={MIT_STAGE_ORDER}
+            stageOrder={JOB_STATUSES}
             stageCounts={mitCounts}
             selectedStage={filter?.jobType === "mitigation" ? filter.stage : null}
-            onStageClick={handleMitStageClick}
+            onStageClick={(s) => handleStageClick(s, "mitigation")}
             onClearFilter={() => setFilter(null)}
           />
           <PipelineBar
             label="Reconstruction"
             dotColor="#e85d26"
-            stageOrder={REC_STAGE_ORDER}
+            stageOrder={JOB_STATUSES}
             stageCounts={recCounts}
             selectedStage={filter?.jobType === "reconstruction" ? filter.stage : null}
-            onStageClick={handleRecStageClick}
+            onStageClick={(s) => handleStageClick(s, "reconstruction")}
             onClearFilter={() => setFilter(null)}
           />
         </div>

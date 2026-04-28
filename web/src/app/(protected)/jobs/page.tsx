@@ -6,7 +6,9 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Plus } from "@/components/icons";
 import { useJobs, usePhotos, useUpdateJob } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus, JobType } from "@/lib/types";
-import { STATUS_COLORS, withAlpha } from "@/lib/status-colors";
+import { JOB_STATUSES } from "@/lib/types";
+import { STATUS_META } from "@/lib/labels";
+import { JobStatusBadge } from "@/components/job-status-badge";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -35,38 +37,12 @@ function categoryLabel(cat: string | null): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Status Badge                                                       */
+/*  Status Badge — uses shared <JobStatusBadge> from @/components       */
+/*  (Spec 01K — single 9-status lifecycle palette)                      */
 /* ------------------------------------------------------------------ */
 
-const statusConfig: Record<
-  JobStatus,
-  { label: string; color: string; bg: string }
-> = {
-  new:          { label: "New",         color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.15) },
-  contracted:   { label: "Contracted",  color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.15) },
-  mitigation:   { label: "Mitigation",  color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.15) },
-  drying:       { label: "Drying",      color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.15) },
-  complete:     { label: "Complete",    color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.15) },
-  submitted:    { label: "Submitted",   color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.15) },
-  collected:    { label: "Collected",   color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.15) },
-  scoping:      { label: "Scoping",     color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.15) },
-  in_progress:  { label: "In Progress", color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.15) },
-};
-
 function StatusBadge({ status }: { status: JobStatus }) {
-  const config = statusConfig[status] ?? {
-    label: status.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-    color: "#6b7280",
-    bg: "rgba(107,114,128,0.15)",
-  };
-  return (
-    <span
-      className="inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold"
-      style={{ backgroundColor: config.bg, color: config.color }}
-    >
-      {config.label}
-    </span>
-  );
+  return <JobStatusBadge status={status} size="sm" />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -231,23 +207,15 @@ function JobTableRow({
 /*  Desktop Preview Panel                                              */
 /* ------------------------------------------------------------------ */
 
-const MITIGATION_PHASES: { value: JobStatus; label: string }[] = [
-  { value: "new", label: "New" },
-  { value: "contracted", label: "Contracted" },
-  { value: "mitigation", label: "Mitigation" },
-  { value: "drying", label: "Drying" },
-  { value: "complete", label: "Complete" },
-  { value: "submitted", label: "Submitted" },
-  { value: "collected", label: "Collected" },
-];
-const RECONSTRUCTION_PHASES: { value: JobStatus; label: string }[] = [
-  { value: "new", label: "New" },
-  { value: "scoping", label: "Scoping" },
-  { value: "in_progress", label: "In Progress" },
-  { value: "complete", label: "Complete" },
-  { value: "submitted", label: "Submitted" },
-  { value: "collected", label: "Collected" },
-];
+// Spec 01K — single 9-status lifecycle replaces the dual mit/recon phase lists.
+// Both job types now share the same status options. Build the dropdown options
+// from STATUS_META so labels stay in sync.
+const LIFECYCLE_PHASES: { value: JobStatus; label: string }[] = JOB_STATUSES.map((s) => ({
+  value: s,
+  label: STATUS_META[s].label,
+}));
+const MITIGATION_PHASES = LIFECYCLE_PHASES;
+const RECONSTRUCTION_PHASES = LIFECYCLE_PHASES;
 
 function PreviewPanel({ job }: { job: JobDetail | null }) {
   const { data: photos } = usePhotos(job?.id ?? "");
