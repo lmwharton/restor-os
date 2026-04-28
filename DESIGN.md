@@ -50,26 +50,30 @@
 | Error (red) | #dc2626 | #fef2f2 | Error messages, destructive actions |
 | Non-obvious (orange) | #e85d26 | #fff3ed | AI-found line items (orange left border) |
 
-### Status Badge Colors — Job Lifecycle (Spec 01K, 9 statuses)
+### Status Badge Colors — Job Lifecycle (Spec 01K, 9 statuses, **Option A 4-bucket palette**)
 
-These are the lifecycle status colors. **No blue** (DESIGN.md says no blue-gray palette). Active uses the Crewmatic brand orange to signal "work is happening here."
+The lifecycle palette groups statuses into four operational buckets, with shade as the within-bucket variation. The pipeline bar reads as a health summary, not a rainbow: motion (orange family), waiting (amber family), won (greens deepening as money lands), closed (gray family). Source of truth: `web/src/lib/labels.ts` STATUS_META + `web/src/app/globals.css` `--status-*` tokens. **No blue.**
 
-| Status | Text | Background | Memorable thing |
-|--------|------|-----------|-----------------|
-| Lead | #6b6560 | #f5f5f4 | Neutral — pipeline entry, no commitment |
-| Active | #e85d26 | #fff3ed | **Brand orange** — crew is moving, this is "live" |
-| On Hold | #d97706 | #fffbeb | Amber — paused, not scary |
-| Completed | #2a9d5c | #edf7f0 | Green — work done, ready for invoicing |
-| Invoiced | #5b6abf | #eef0fc | Indigo — money in flight |
-| Disputed | #b45309 | #fef3c7 | Darker amber + **orange ring on map pin** for visual differentiation from On Hold |
-| Paid | #059669 | #ecfdf5 | Emerald — closed |
-| Cancelled | #9b1c1c | #fef2f2 | Red — terminal sad |
-| Lost | #b5b0aa | #f5f5f4 | Muted grey + strikethrough on label — never converted |
+| Bucket | Status | Text | Background | Memorable thing |
+|--------|--------|------|-----------|-----------------|
+| **In motion** | Lead | #8a7560 | #f3ece4 | Warm tan — pipeline entry, low commitment |
+| **In motion** | Active | #e85d26 | #fff3ed | **Brand orange** — crew is moving, this is "live" |
+| **Waiting** | On Hold | #b8801f | #fdefd8 | Amber — paused, contractor's call |
+| **Waiting** | Disputed | #c8501a | #fbe8dc | **Red-orange — the ONLY "act now" alarm color in the system** |
+| **Won** | Completed | #5fae7d | #e3f1e7 | Light green — work done, ready for invoicing |
+| **Won** | Invoiced | #2f8a5b | #dcefe2 | Mid green — money invoiced |
+| **Won** | Paid | #1f7a48 | #d4e8dc | Deep green — money landed |
+| **Closed** | Cancelled | #7a746e | #ebe7e3 | Warm gray — closed, not an error |
+| **Closed** | Lost | #a39990 | #f0ece8 | Lighter gray + strikethrough on label — never converted |
 
-**Differentiation rule:** Active / On Hold / Disputed all sit in the warm-orange spectrum. Distinguish via:
-- Active = pure brand orange (#e85d26) — brightest, used everywhere
-- On Hold = yellow-tilted amber (#d97706 / #fffbeb) — softer
-- Disputed = darker amber (#b45309) + orange ring on dashboard map pins (shape differentiator)
+**Differentiation rule:** Active / On Hold / Disputed all sit in the warm spectrum. Read them by saturation:
+- **Active** = brand orange (#e85d26) — brightest, used everywhere as primary
+- **On Hold** = quieter amber (#b8801f / #fdefd8) — paused, doesn't shout
+- **Disputed** = saturated red-orange (#c8501a / #fbe8dc) + brand-orange ring on dashboard map pins (shape differentiator) — the bar turns red here
+
+**Why "won" deepens:** Completed → Invoiced → Paid uses the same green family with deepening saturation, so visually a "Paid" badge feels like progress vs "Completed". Three different greens that mean three different things, but read as one bucket.
+
+**Why "cancelled" is gray, not red:** Cancelled is a closed terminal state — nothing's at stake anymore. Reserve red for things that need action (Disputed). Cancelled = "this doesn't matter to your day-to-day," not "this is an emergency."
 
 ### Status Badge Colors — Legacy (pre-01K)
 
