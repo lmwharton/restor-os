@@ -3,13 +3,18 @@
 /**
  * Settings → Closeout Requirements
  *
- * Spec 01K Phase 3 admin page. Owner / admin only.
+ * Spec 01K Phase 3 admin page. Owner-only (admin role was dropped by
+ * Spec 01I migration `01i_a2`; only `owner` and `tech` exist now, plus
+ * the platform_admin flag for Crewmatic support staff).
+ *
  * Configures gate strictness for the closeout checklist that surfaces
  * when a user marks a job Completed. One row per gate item × one column
  * per job type. Cells are dropdowns — Warning / Acknowledge / Hard Block.
  *
- * Until backend Phase 3 of CREW-55 lands, hooks return mock data so the
- * full UI is testable.
+ * Backend lives at `backend/api/closeout/` — list/update/reset endpoints
+ * are real (no mock fallback). Defensive `SPEC_DEFAULT_GATES` server-side
+ * makes the modal work even for companies that pre-date the migration's
+ * seed-defaults DO-block.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
