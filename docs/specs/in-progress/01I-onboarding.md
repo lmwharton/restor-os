@@ -19,11 +19,12 @@
 |--------|-------|
 | Created | 2026-04-15 |
 | Started | 2026-04-27 |
-| Last revised | 2026-04-27 (multiple QA-driven UX fixes) |
+| Last revised | 2026-04-28 (post-/qa polish + per-screen feature badges) |
 | Completed | 2026-04-27 (code complete) |
 | Sessions | 1 |
-| Files Changed | ~40 (backend + frontend) |
-| Tests Written | 35 pytest + 50 Vitest |
+| Commits on `lm-dev` | 19 (since spec rewrite at `c0f15b1`) |
+| Files Changed | ~45 (backend + frontend) |
+| Tests Written | 35 pytest + 50 Vitest (all green) |
 
 ## Reference
 - **Brett's PRD:** [`docs/research/onboarding-spec-v1.pdf`](../../research/onboarding-spec-v1.pdf) — "Onboarding UI Flow — Product Specification v1.0" (April 13, 2026)
@@ -94,6 +95,11 @@ This spec (v1):
 | 15 | Pricing upload kept with **"Coming soon" badge** (build-time) | Pricing's only live consumer today is the dashboard banner's `has_pricing` existence check; AI Photo Scope (Spec 02A) is the real consumer. UI is honest about the gap so contractors know why it's there. |
 | 16 | Owner name captured at Step 1 (build-time) | Email/password signups carry no name from the auth provider; backend was falling back to email-prefix and the avatar showed `"??"`. Added "Your Name" as the first field on Step 1, threaded through `rpc_onboard_user` → `users.name`. Google OAuth path still uses `auth_user_metadata.full_name` when no override is provided. |
 | 17 | Google Places autocomplete on every address field (build-time) | Existing `<AddressAutocomplete>` component (uses `use-places-autocomplete`) was wired into Step 1, Quick Add Jobs (per-row), and the now-removed First Job. Picking a suggestion auto-fills city/state/ZIP. `(onboarding)/layout.tsx` wraps in `GoogleMapsProvider`. |
+| 18 | Welcome stamps `'complete'` on mount (build-time) | A user mid-onboarding when the wizard rewrite shipped had server-side step `'first_job'`; clicking [Go to Dashboard] then bounced through the layout gate back to `/onboarding`. Welcome now idempotently PATCHes `step → 'complete'` on mount. Forward-only state machine guarantees this is safe whether arriving via legitimate `pricing → complete`, legacy `first_job → complete`, or refresh `complete → complete` (no-op). |
+| 19 | Onboarding gets a personality (build-time) | UX feedback: "are these screens exciting enough?" — they were operationally good but emotionally cold. Three small wins: (1) value-prop subtitles on `/signup`, Step 1, Step 2; (2) drop "Coming soon" pill from Pricing — replace with anticipatory copy; (3) per-screen tilted feature badges on the card edges (matches login's "Field Sync"/"AI Moisture Analysis" pattern). `/signup` previews **AI Photo Scope · 12 line items · S500 cited** (dark). Step 1 previews **Every line item S500-cited · S500 / OSHA / EPA tags** (white). Step 2 previews **Smart Code Match · WTR DRYOUT matched · 147 of 147** (teal). Bigger Welcome redesign with real product screenshots filed as CREW-58 — blocked on Spec 02A capture assets. |
+| 20 | Page-title metadata on every route (build-time, /qa) | Tab titles were inheriting parent layout default — `/signup` showed "Sign In — Crewmatic", `/settings/pricing` and `/settings/jobs/import` showed bare "Crewmatic". Added route-level layouts (and one direct metadata export on `/login` since it's a server component) so each page renders a sensible title. |
+| 21 | Login form clears stale alerts across actions (build-time, /qa) | Clicking Forgot Password after a failed login left "Invalid email or password" stacked above "we've sent a reset link" — looked like both happened. `handleForgotPassword` and `handleGoogle` now clear all three alert states (submitError + resetMessage + resetError) at the start. |
+| 22 | Quick Add row-cap closure leak (build-time, /qa) | `addRow` checked `rows.length >= MAX_ROWS` from render-time closure; rapid clicks read stale length and skipped the guard. Moved the check inside the functional setState so each call sees freshest length. Real users can't physically click that fast — fix was free. |
 
 ---
 
