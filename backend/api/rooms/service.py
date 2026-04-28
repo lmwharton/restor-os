@@ -190,8 +190,63 @@ async def create_room(
     if not material_flags and body.room_type:
         material_flags = _get_material_defaults(body.room_type)
 
+    # Idempotent client-UUID handling. When the caller supplies `id`, the
+    # canvas already committed to that UUID (see frontend room-creation
+    # lifecycle — propertyRoomId is set at draw-time). Three branches:
+    #
+    #   (a) row with that id exists in the SAME tenant → return it as-is.
+    #       This is the network-retry happy path: the original POST
+    #       landed but the response was lost; the retry is harmless.
+    #
+    #   (b) row with that id exists in a DIFFERENT tenant → 409.
+    #       Vanishingly rare (UUID collision across tenants) but the
+    #       guard must be there — never leak existence of another
+    #       tenant's row by silently overwriting or returning it.
+    #       Lesson #30 (cross-tenant binding).
+    #
+    #   (c) no row with that id → fall through to INSERT below.
+    #       Race-safe — if two clients POST with the same id concurrently,
+    #       the second hits PK violation 23505 in the INSERT block and
+    #       we re-resolve via this same SELECT path.
+    if body.id is not None:
+        existing_check = await (
+            client.table("job_rooms")
+            .select("id, company_id")
+            .eq("id", str(body.id))
+            .execute()
+        )
+        existing_rows = existing_check.data or []
+        if existing_rows:
+            existing_row = existing_rows[0]
+            if existing_row["company_id"] == str(company_id):
+                # Same-tenant idempotent retry — refetch the full row
+                # so the response shape matches a fresh INSERT.
+                full_row = await (
+                    client.table("job_rooms")
+                    .select("*")
+                    .eq("id", str(body.id))
+                    .eq("company_id", str(company_id))
+                    .single()
+                    .execute()
+                )
+                room = full_row.data
+                room["reading_count"] = 0
+                room["latest_reading_date"] = None
+                return room
+            # Cross-tenant collision — non-leaky message.
+            raise AppException(
+                status_code=409,
+                detail="Room id already in use",
+                error_code="ROOM_ID_CONFLICT",
+            )
+
     row = _serialize_decimals(
         {
+            # When body.id is None, omit the key entirely so the DB
+            # generates via gen_random_uuid() default. Explicit "id":
+            # None would override the column default with NULL and
+            # fail the NOT NULL constraint.
+            **({"id": str(body.id)} if body.id is not None else {}),
             "job_id": str(job_id),
             "company_id": str(company_id),
             "room_name": body.room_name,
@@ -224,6 +279,35 @@ async def create_room(
     try:
         result = await client.table("job_rooms").insert(row).execute()
     except APIError as e:
+        # Race window: client-supplied `id` passed the SELECT-first
+        # idempotency check (no row), but a concurrent client also
+        # supplied the same id and INSERTed first. Postgres returns
+        # 23505 (unique_violation) for the PK collision. Treat as a
+        # second-chance retry — re-resolve via the same idempotency
+        # rules (same-tenant → return existing; cross-tenant → 409).
+        is_pk_collision = (
+            body.id is not None
+            and ("23505" in str(e) or "duplicate key" in (e.message or "").lower())
+        )
+        if is_pk_collision:
+            recheck = await (
+                client.table("job_rooms")
+                .select("*")
+                .eq("id", str(body.id))
+                .execute()
+            )
+            recheck_rows = recheck.data or []
+            if recheck_rows:
+                existing_row = recheck_rows[0]
+                if existing_row["company_id"] == str(company_id):
+                    existing_row["reading_count"] = 0
+                    existing_row["latest_reading_date"] = None
+                    return existing_row
+                raise AppException(
+                    status_code=409,
+                    detail="Room id already in use",
+                    error_code="ROOM_ID_CONFLICT",
+                ) from e
         raise AppException(
             status_code=500,
             detail=f"Failed to create room: {e.message}",

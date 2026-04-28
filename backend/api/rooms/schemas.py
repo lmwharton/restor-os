@@ -39,6 +39,20 @@ FloorLevel = Literal["basement", "main", "upper", "attic"]
 
 
 class RoomCreate(BaseModel):
+    # Optional client-supplied UUID. When provided, the row is created
+    # with this id (idempotent retry safe — the service SELECT-or-INSERTs
+    # by (id, company_id) and returns the existing row on retry). When
+    # omitted, the DB generates one via gen_random_uuid() — backward
+    # compatible with all existing callers.
+    #
+    # Why client-supplied: the canvas needs the room's UUID at the
+    # moment of drawing (to set propertyRoomId from t=0 so pin
+    # placement and pin-follow-room never have to fall back to
+    # name-match). Without this, there's a transient unsaved-room
+    # window where two same-named rooms become indistinguishable to
+    # the frontend resolver — which is the bug this PR closes.
+    # See lesson #2 (silent default) + lesson #16 (optional defaults).
+    id: UUID | None = None
     room_name: str = Field(..., min_length=1, max_length=100)
     floor_plan_id: UUID | None = None
     length_ft: Decimal | None = Field(default=None, ge=0)
