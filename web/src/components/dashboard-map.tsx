@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { importLibrary } from "@googlemaps/js-api-loader";
 import { useGoogleMapsLoaded } from "@/components/google-maps-provider";
+import { STATUS_COLORS } from "@/lib/status-colors";
 
 // ---------------------------------------------------------------------------
 //  Types
@@ -186,9 +187,12 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
           ? {
               path: google.maps.SymbolPath.CIRCLE,
               scale: 9,
-              fillColor: "#c8501a",   // --status-disputed (red-orange alarm)
+              // Google Maps SymbolPath doesn't consume CSS vars, so we
+              // import STATUS_COLORS to keep this in lockstep with
+              // labels.ts STATUS_META — palette flips propagate here too.
+              fillColor: STATUS_COLORS.disputed,
               fillOpacity: 1,
-              strokeColor: "#e85d26", // --status-active (brand-orange ring)
+              strokeColor: STATUS_COLORS.active,
               strokeWeight: 3,
             }
           : {
@@ -213,7 +217,7 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
           <div style="font-family:system-ui,-apple-system,sans-serif;padding:4px 2px;">
             <div style="font-weight:600;font-size:13px;color:#1c1917;line-height:1.3;">${job.address_line1}</div>
             <div style="font-size:11px;color:#78716c;margin-top:3px;">${job.customerName || job.city + ", " + job.state}</div>
-            <a href="/jobs/${job.id}" style="display:inline-block;margin-top:6px;font-size:11px;font-weight:600;color:#e85d26;text-decoration:underline;text-underline-offset:2px;">Open Job &rarr;</a>
+            <a href="/jobs/${job.id}" style="display:inline-block;margin-top:6px;font-size:11px;font-weight:600;color:${STATUS_COLORS.active};text-decoration:underline;text-underline-offset:2px;">Open Job &rarr;</a>
           </div>
         `);
         infoWindow.open({ anchor: marker, map });
