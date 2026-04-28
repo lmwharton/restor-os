@@ -310,10 +310,10 @@ BEGIN
               USING ERRCODE = 'P0002',
                     MESSAGE = 'Job not found or belongs to another company';
     END IF;
-    IF v_job.status = 'collected' THEN
+    IF v_job.status = 'paid' THEN
         RAISE EXCEPTION 'Job archived'
               USING ERRCODE = '42501',
-                    MESSAGE = 'Cannot rollback floor plan for a collected job';
+                    MESSAGE = 'Cannot rollback floor plan for a paid job';
     END IF;
     IF v_job.property_id IS NULL THEN
         RAISE EXCEPTION 'Job has no property'
@@ -525,10 +525,10 @@ BEGIN
               USING ERRCODE = 'P0002',
                     MESSAGE = 'Job not found or belongs to another company';
     END IF;
-    IF v_job.status = 'collected' THEN
+    IF v_job.status = 'paid' THEN
         RAISE EXCEPTION 'Job archived'
               USING ERRCODE = '42501',
-                    MESSAGE = 'Cannot rollback floor plan for a collected job';
+                    MESSAGE = 'Cannot rollback floor plan for a paid job';
     END IF;
     IF v_job.property_id IS NULL THEN
         RAISE EXCEPTION 'Job has no property'

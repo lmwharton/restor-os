@@ -119,10 +119,10 @@ BEGIN
     -- (object_not_in_prerequisite_state) matches the convention used
     -- by the frozen-version trigger for "row is not in a mutable state",
     -- which is exactly what an archived job is.
-    IF v_job.status = 'collected' THEN
+    IF v_job.status = 'paid' THEN
         RAISE EXCEPTION 'Job archived'
               USING ERRCODE = '55006',
-                    MESSAGE = 'Cannot create floor plan for a collected job';
+                    MESSAGE = 'Cannot create floor plan for a paid job';
     END IF;
 
     -- 23502 (not_null_violation) semantically fits: the RPC's invariant
