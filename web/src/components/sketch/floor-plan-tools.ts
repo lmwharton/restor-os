@@ -28,6 +28,26 @@ export interface FloorOpeningData {
 }
 
 export interface RoomData {
+  /** Canonical UUID. For rooms created post-fix (Spec 01H Phase 2),
+   *  equal to ``propertyRoomId`` AT t=0 — same UUID, freshly drawn,
+   *  about to commit. The equality is NOT a permanent invariant:
+   *
+   *    - Legacy rooms loaded from canvas_data predating the fix may
+   *      have ``room_<timestamp>_<n>`` ids; those rooms carry their
+   *      backend UUID separately in ``propertyRoomId``.
+   *    - The same-name dedup branch in ``handleCreateRoom``
+   *      (floor-plan/page.tsx) re-binds a freshly-drawn room's
+   *      ``propertyRoomId`` to an existing same-name backend row's
+   *      UUID via ``setRoomPropertyId``. After that re-bind,
+   *      ``id !== propertyRoomId`` for that canvas room: ``id`` is
+   *      the canvas-local identity (still the fresh ``newRoomUuid()``
+   *      we minted at draw-time), ``propertyRoomId`` is the backend
+   *      identity. All backend lookups (pin attribution, pin-follow,
+   *      cross-floor visibility) MUST key on ``propertyRoomId``;
+   *      anything keying on ``id`` for a backend lookup will silently
+   *      misattribute on dedup-rebound rooms.
+   *
+   *  See ``newRoomUuid()`` below. */
   id: string;
   x: number;
   y: number;
@@ -35,7 +55,16 @@ export interface RoomData {
   height: number;
   name: string;
   fill: string;
-  propertyRoomId?: string; // links to property_rooms.id — avoids name-based matching
+  /** Backend ``job_rooms.id`` UUID. Set at creation via
+   *  ``newRoomUuid()`` for new rooms (matches ``id``); legacy rooms
+   *  carry whatever value was backfilled at save time. The
+   *  ``canvas-room-resolver`` no longer carries a name-match fallback
+   *  — code that hits a ``RoomData`` with missing ``propertyRoomId``
+   *  must log and skip rather than silently coercing to a guess
+   *  (lesson #2). Stays optional on the type because hydration of
+   *  pre-fix canvas_data may produce rooms without it; runtime code
+   *  treats missing as "cannot resolve, skip." */
+  propertyRoomId?: string;
   /** Polygon vertices in absolute canvas coordinates. When present, the room
    *  is rendered as a closed polygon and x/y/width/height are treated as the
    *  bounding box (derived). Rectangles may leave this undefined; the four
@@ -95,6 +124,29 @@ export function emptyFloorPlan(): FloorPlanData {
 let _counter = 0;
 export function uid(prefix: string): string {
   return `${prefix}_${Date.now()}_${++_counter}`;
+}
+
+/** Generate the canonical UUID for a brand-new canvas room.
+ *
+ *  Same value is used for BOTH ``RoomData.id`` (canvas-side identifier)
+ *  AND ``RoomData.propertyRoomId`` (backend ``job_rooms.id``) — they're
+ *  the same UUID from t=0, so there's no transient unsaved-room window
+ *  where canvas-id and backend-id diverge. The backend ``create_room``
+ *  endpoint accepts this UUID and INSERTs the row with it (idempotent
+ *  on retry).
+ *
+ *  Why one UUID instead of two: pin attribution uses backend UUID
+ *  (``moisture_pins.room_id``); canvas state uses canvas id; the
+ *  ``canvas-room-resolver`` used to bridge them via name-match
+ *  fallback during the unsaved-room window. With one UUID, name-match
+ *  is unreachable — the resolver becomes pure ID lookup.
+ *
+ *  Uses ``crypto.randomUUID()`` (available in all browsers + Node 19+
+ *  + every test runtime in this project). 122 bits of entropy makes
+ *  collision across tenants statistically irrelevant.
+ */
+export function newRoomUuid(): string {
+  return crypto.randomUUID();
 }
 
 export function snapToGrid(value: number, gridSize: number): number {
