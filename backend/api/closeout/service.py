@@ -104,35 +104,21 @@ async def load_snapshot(token: str, company_id: UUID, job_id: UUID) -> JobStateS
         raise AppException(status_code=404, detail="Job not found", error_code="JOB_NOT_FOUND")
 
     # Rooms
-    rooms_res = await (
-        client.table("job_rooms")
-        .select("*")
-        .eq("job_id", str(job_id))
-        .execute()
-    )
+    rooms_res = await client.table("job_rooms").select("*").eq("job_id", str(job_id)).execute()
 
     # Photos (only the type field — keep payload small)
     photos_res = await (
-        client.table("photos")
-        .select("id, photo_type, room_id")
-        .eq("job_id", str(job_id))
-        .execute()
+        client.table("photos").select("id, photo_type, room_id").eq("job_id", str(job_id)).execute()
     )
 
     # Moisture readings (just need counts per room)
     readings_res = await (
-        client.table("moisture_readings")
-        .select("id, room_id")
-        .eq("job_id", str(job_id))
-        .execute()
+        client.table("moisture_readings").select("id, room_id").eq("job_id", str(job_id)).execute()
     )
 
     # Closeout settings for the job's company
     settings_res = await (
-        client.table("closeout_settings")
-        .select("*")
-        .eq("company_id", str(company_id))
-        .execute()
+        client.table("closeout_settings").select("*").eq("company_id", str(company_id)).execute()
     )
     settings = [CloseoutSetting.model_validate(s) for s in (settings_res.data or [])]
 
@@ -174,34 +160,45 @@ async def load_snapshot(token: str, company_id: UUID, job_id: UUID) -> JobStateS
 #   - (False, detail) → gate failed (status determined from settings.gate_level)
 
 
+# Voice for detail strings: "contractor's-eye" — short, present-tense,
+# count-prefixed when relevant, never apologetic. Pass strings affirm what's
+# on file; fail strings name what's missing as a count or a fact, never
+# soften it with "yet" or "recommended".
+
+
 def _eval_contract_signed(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     if snap.job.get("contract_signed_at"):
-        return True, "Signed and on file"
-    return False, "No contract signed yet"
+        return True, "Contract on file"
+    return False, "Contract not signed"
 
 
 def _eval_photos_final_after(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     rooms_with_after = {p.get("room_id") for p in snap.photos if p.get("photo_type") == "after"}
     rooms_with_after.discard(None)
-    total_rooms = len(snap.rooms)
+    room_ids = {r["id"] for r in snap.rooms}
+    total_rooms = len(room_ids)
     if total_rooms == 0:
-        return True, "No rooms recorded yet"
-    if rooms_with_after.issuperset({r["id"] for r in snap.rooms}):
-        return True, f"{total_rooms} of {total_rooms} rooms"
-    have = len(rooms_with_after)
-    return False, f"Only {have} of {total_rooms} rooms have a Final/After photo"
+        # Nothing to tag yet — surface as a fail so the contractor sees the
+        # gap (no rooms = no Final/After photos possible).
+        return False, "No rooms recorded"
+    missing = total_rooms - len(room_ids & rooms_with_after)
+    if missing == 0:
+        return True, "Final/After photos tagged"
+    return False, f"{missing} of {total_rooms} rooms missing Final/After photos"
 
 
 def _eval_moisture_per_room(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     rooms_with_reading = {r.get("room_id") for r in snap.moisture_readings}
     rooms_with_reading.discard(None)
-    total_rooms = len(snap.rooms)
+    room_ids = {r["id"] for r in snap.rooms}
+    total_rooms = len(room_ids)
     if total_rooms == 0:
-        return True, "No rooms"
-    missing = total_rooms - len({r["id"] for r in snap.rooms} & rooms_with_reading)
+        return False, "No rooms recorded"
+    have = len(room_ids & rooms_with_reading)
+    missing = total_rooms - have
     if missing == 0:
-        return True, f"All {total_rooms} rooms have at least one reading"
-    return False, f"{missing} room{'s' if missing != 1 else ''} missing a moisture reading"
+        return True, f"{have} rooms with readings"
+    return False, f"{missing} of {total_rooms} rooms missing readings"
 
 
 def _eval_all_rooms_dry_standard(snap: JobStateSnapshot) -> tuple[bool, str | None]:
@@ -210,67 +207,61 @@ def _eval_all_rooms_dry_standard(snap: JobStateSnapshot) -> tuple[bool, str | No
     # countRoomsAtDryStandard helper. Future: wire to a real dry-standard
     # column once it lands.
     rooms_with_reading = {r.get("room_id") for r in snap.moisture_readings}
-    not_yet = []
+    total_rooms = len(snap.rooms)
+    if total_rooms == 0:
+        return False, "No rooms recorded"
+    not_yet = 0
     for room in snap.rooms:
         rid = room["id"]
         equip = (room.get("equipment_air_movers") or 0) + (room.get("equipment_dehus") or 0)
         if rid not in rooms_with_reading or equip > 0:
-            not_yet.append(room.get("room_name") or rid[:6])
-    if not not_yet:
-        return True, f"{len(snap.rooms)} rooms at dry standard"
-    return False, f"Not yet at dry standard: {', '.join(not_yet[:3])}"
+            not_yet += 1
+    if not_yet == 0:
+        return True, "All rooms at dry standard"
+    return False, f"{not_yet} of {total_rooms} rooms not at dry standard"
 
 
 def _eval_all_equipment_pulled(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     am = sum((r.get("equipment_air_movers") or 0) for r in snap.rooms)
     de = sum((r.get("equipment_dehus") or 0) for r in snap.rooms)
-    if am == 0 and de == 0:
+    total = am + de
+    if total == 0:
         return True, "All equipment pulled"
-    parts = []
-    if am > 0:
-        parts.append(f"{am} air mover{'s' if am != 1 else ''}")
-    if de > 0:
-        parts.append(f"{de} dehu{'s' if de != 1 else ''}")
-    return False, f"{' · '.join(parts)} still placed"
+    return False, f"{total} units still on site"
 
 
 def _eval_scope_finalized(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     if snap.job.get("estimate_last_finalized_at"):
         return True, "Estimate finalized"
-    return False, "Estimate not yet finalized"
+    return False, "Estimate not finalized"
 
 
 def _eval_certificate_generated(snap: JobStateSnapshot) -> tuple[bool, str | None]:
     if snap.has_certificate:
-        return True, "Generated and on file"
-    # Default gate level for this item is `warn` (per migration 01k_a1
-    # closeout_settings seed), so the copy is "recommended" not "required".
-    # Companies that flip the gate to `hard_block` will see this item block
-    # closeout — but the language stays soft because the seed mentioned
-    # generating one is best-practice, not a strict prerequisite.
-    return False, "Not generated yet — recommended before closeout"
+        return True, "Certificate on file"
+    return False, "Certificate not generated"
 
 
 GATE_EVALUATORS: dict[str, Callable[[JobStateSnapshot], tuple[bool, str | None]]] = {
-    "contract_signed":         _eval_contract_signed,
-    "photos_final_after":      _eval_photos_final_after,
-    "moisture_per_room":       _eval_moisture_per_room,
-    "all_rooms_dry_standard":  _eval_all_rooms_dry_standard,
-    "all_equipment_pulled":    _eval_all_equipment_pulled,
-    "scope_finalized":         _eval_scope_finalized,
-    "certificate_generated":   _eval_certificate_generated,
+    "contract_signed": _eval_contract_signed,
+    "photos_final_after": _eval_photos_final_after,
+    "moisture_per_room": _eval_moisture_per_room,
+    "all_rooms_dry_standard": _eval_all_rooms_dry_standard,
+    "all_equipment_pulled": _eval_all_equipment_pulled,
+    "scope_finalized": _eval_scope_finalized,
+    "certificate_generated": _eval_certificate_generated,
 }
 
 
 # Friendly labels surfaced to the UI checklist + the admin settings page.
 GATE_LABELS: dict[str, str] = {
-    "contract_signed":         "Contract signed",
-    "photos_final_after":      "Photos tagged Final / After",
-    "moisture_per_room":       "All rooms have moisture reading",
-    "all_rooms_dry_standard":  "All rooms at dry standard",
-    "all_equipment_pulled":    "All equipment pulled",
-    "scope_finalized":         "Scope finalized",
-    "certificate_generated":   "Certificate of Completion",
+    "contract_signed": "Contract signed",
+    "photos_final_after": "Photos tagged Final / After",
+    "moisture_per_room": "All rooms have moisture reading",
+    "all_rooms_dry_standard": "All rooms at dry standard",
+    "all_equipment_pulled": "All equipment pulled",
+    "scope_finalized": "Scope finalized",
+    "certificate_generated": "Certificate of Completion",
 }
 
 
@@ -370,9 +361,7 @@ async def update_setting(
     return CloseoutSetting.model_validate(res.data[0])
 
 
-async def reset_settings_for_job_type(
-    company_id: UUID, job_type: str
-) -> None:
+async def reset_settings_for_job_type(company_id: UUID, job_type: str) -> None:
     """Delete all settings rows for a job_type, then re-seed defaults via the RPC.
 
     Uses admin client to bypass the closeout_settings_delete RLS policy
