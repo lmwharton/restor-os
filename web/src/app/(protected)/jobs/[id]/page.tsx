@@ -24,7 +24,8 @@ import {
   useReorderReconPhases,
 } from "@/lib/hooks/use-jobs";
 import { useMe } from "@/lib/hooks/use-me";
-import type { ReconPhase, ReconPhaseStatus, Room } from "@/lib/types";
+import type { JobStatus, ReconPhase, ReconPhaseStatus, Room } from "@/lib/types";
+import { STATUS_META } from "@/lib/labels";
 import {
   DndContext,
   closestCenter,
@@ -42,6 +43,9 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { JobStatusBadge } from "@/components/job-status-badge";
+import { ChangeStatusModal } from "@/components/change-status-modal";
+import { CloseoutChecklistModal } from "@/components/closeout-checklist-modal";
 import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
 import { isJobArchived } from "@/lib/job-status";
 
@@ -96,29 +100,122 @@ function daysSinceLoss(lossDate: string | null): number {
   return Math.max(1, diffDays + 1);
 }
 
-function statusLabel(status: string): string {
-  switch (status) {
-    case "new":
-      return "New";
-    case "contracted":
-      return "Contracted";
-    case "mitigation":
-      return "Mitigation";
-    case "drying":
-      return "Drying";
-    case "complete":
-      return "Complete";
-    case "submitted":
-      return "Submitted";
-    case "collected":
-      return "Collected";
-    case "scoping":
-      return "Scoping";
-    case "in_progress":
-      return "In Progress";
-    default:
-      return status;
-  }
+// Spec 01K — header metric helpers + utility for "X min ago" timestamps.
+function daysBetween(start: string | number, end: string | number): number {
+  const s = typeof start === "string" ? new Date(start).getTime() : start;
+  const e = typeof end === "string" ? new Date(end).getTime() : end;
+  return Math.max(0, Math.floor((e - s) / 86400000));
+}
+
+function timeAgoShort(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const m = Math.floor(diff / 60000);
+  if (m < 1)   return "just now";
+  if (m < 60)  return `${m} min ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24)  return `${h} hr ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function countRoomsDrying(rooms: Room[]): number {
+  // Rooms with active drying = has equipment placed AND not at dry standard yet.
+  return rooms.filter((r) => (r.equipment_air_movers + r.equipment_dehus) > 0).length;
+}
+
+function countRoomsAtDryStandard(rooms: Room[]): number {
+  // Heuristic until backend exposes per-room dry-standard status: rooms with a
+  // moisture reading and no equipment placed indicate drying complete.
+  return rooms.filter((r) => r.reading_count > 0 && (r.equipment_air_movers + r.equipment_dehus) === 0).length;
+}
+
+function countEquipmentOnSite(rooms: Room[]): number {
+  return rooms.reduce((sum, r) => sum + r.equipment_air_movers + r.equipment_dehus, 0);
+}
+
+function equipmentBreakdown(rooms: Room[]): string {
+  const am = rooms.reduce((sum, r) => sum + r.equipment_air_movers, 0);
+  const de = rooms.reduce((sum, r) => sum + r.equipment_dehus, 0);
+  if (am === 0 && de === 0) return "—";
+  const parts: string[] = [];
+  if (am > 0) parts.push(`${am} air mover${am === 1 ? "" : "s"}`);
+  if (de > 0) parts.push(`${de} dehu${de === 1 ? "" : "s"}`);
+  return parts.join(" · ");
+}
+
+// Single metric tile in the job-detail header grid.
+//
+// Spec 01K — `valueColor` is a CSS color (token preferred — e.g.
+// `var(--status-on-hold)`) used to render the value when a threshold
+// indicates a "watch" or "bad" zone. Default is the neutral on-surface
+// ink. Only applied to the big numeric value, not the label/hint, so
+// the cell still reads as a metric not an alert.
+function MetricBlock({
+  label,
+  value,
+  unit,
+  hint,
+  last,
+  valueColor,
+}: {
+  label: string;
+  value: React.ReactNode;
+  unit?: string;
+  hint?: string;
+  last?: boolean;
+  valueColor?: string;
+}) {
+  return (
+    <div className={`px-4 py-3 ${last ? "" : "border-r border-outline-variant/40"} border-b sm:border-b-0 border-outline-variant/40 last:border-b-0`}>
+      <div className="text-[11px] font-semibold tracking-[0.06em] uppercase text-on-surface-variant/80">
+        {label}
+      </div>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <span
+          className="text-[22px] font-bold tracking-[-0.01em] leading-none"
+          style={{ color: valueColor ?? "var(--on-surface)" }}
+        >
+          {value}
+        </span>
+        {unit && <span className="text-[13px] text-on-surface-variant">{unit}</span>}
+      </div>
+      {hint && (
+        <div className="text-[11px] text-on-surface-variant/70 mt-1">{hint}</div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  Threshold helpers — surface "watch" / "bad" zones in metric grid   */
+/*                                                                     */
+/*  Color tiers map to the status palette so flipping a token in       */
+/*  globals.css cascades. Cycle time:                                  */
+/*    < 14 days → neutral                                              */
+/*    14-21 days → on_hold (amber)                                     */
+/*    > 21 days → disputed (dark amber/red-orange)                     */
+/*  Days to payment:                                                   */
+/*    < 30 days → neutral                                              */
+/*    30-60 days → on_hold (amber)                                     */
+/*    > 60 days → disputed                                             */
+/* ------------------------------------------------------------------ */
+
+const THRESHOLD_NEUTRAL = "var(--on-surface)";
+const THRESHOLD_WATCH   = "var(--status-on-hold)";
+const THRESHOLD_BAD     = "var(--status-disputed)";
+
+function cycleTimeColor(days: number | null): string {
+  if (days === null) return THRESHOLD_NEUTRAL;
+  if (days > 21) return THRESHOLD_BAD;
+  if (days >= 14) return THRESHOLD_WATCH;
+  return THRESHOLD_NEUTRAL;
+}
+
+function daysToPaymentColor(days: number | null): string {
+  if (days === null) return THRESHOLD_NEUTRAL;
+  if (days > 60) return THRESHOLD_BAD;
+  if (days >= 30) return THRESHOLD_WATCH;
+  return THRESHOLD_NEUTRAL;
 }
 
 function eventDescription(evt: { event_type: string; is_ai: boolean; event_data: Record<string, unknown> }): string {
@@ -146,8 +243,17 @@ function eventDescription(evt: { event_type: string; is_ai: boolean; event_data:
       return `removed room "${evt.event_data.room_name ?? ""}"`;
     case "photo_tagged":
       return `tagged photo to ${evt.event_data.room_name ?? "a room"}`;
-    case "status_changed":
-      return `changed status to ${evt.event_data.new_status ?? ""}`;
+    case "status_changed": {
+      // Spec 01K: rpc_update_job_status writes { from_status, to_status }
+      // into event_data. STATUS_META gives a human label per status.
+      const to = evt.event_data.to_status as string | undefined;
+      const from = evt.event_data.from_status as string | undefined;
+      const toLabel = to ? STATUS_META[to as JobStatus]?.label ?? to : "";
+      const fromLabel = from ? STATUS_META[from as JobStatus]?.label ?? from : "";
+      return fromLabel
+        ? `changed status from ${fromLabel} to ${toLabel}`
+        : `changed status to ${toLabel}`;
+    }
     case "report_generated":
       return "generated scope report";
     case "share_link_created":
@@ -466,11 +572,13 @@ function AccordionSection({
 /*  Recon Phases Section (interactive)                                 */
 /* ------------------------------------------------------------------ */
 
+// Recon phase status palette — distinct from job lifecycle status (Spec 01K).
+// These are work-state indicators on individual reconstruction phases.
 const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string; border: string }[] = [
-  { value: "pending",     label: "Pending",     color: "#b5b0aa",                  bg: withAlpha("#b5b0aa", 0.1),             border: withAlpha("#b5b0aa", 0.3) },
+  { value: "pending",     label: "Pending",     color: "#b5b0aa",                  bg: withAlpha("#b5b0aa", 0.1),                  border: withAlpha("#b5b0aa", 0.3) },
   { value: "in_progress", label: "In Progress", color: JOB_TYPE_COLORS.mitigation, bg: withAlpha(JOB_TYPE_COLORS.mitigation, 0.1), border: withAlpha(JOB_TYPE_COLORS.mitigation, 0.3) },
-  { value: "on_hold",     label: "On Hold",     color: STATUS_COLORS.in_progress,  bg: withAlpha(STATUS_COLORS.in_progress, 0.1),  border: withAlpha(STATUS_COLORS.in_progress, 0.3) },
-  { value: "complete",    label: "Complete",     color: STATUS_COLORS.collected,    bg: withAlpha(STATUS_COLORS.collected, 0.1),    border: withAlpha("#2a9d5c", 0.3) },
+  { value: "on_hold",     label: "On Hold",     color: STATUS_COLORS.on_hold,      bg: withAlpha(STATUS_COLORS.on_hold, 0.1),      border: withAlpha(STATUS_COLORS.on_hold, 0.3) },
+  { value: "complete",    label: "Complete",    color: STATUS_COLORS.completed,    bg: withAlpha(STATUS_COLORS.completed, 0.1),    border: withAlpha(STATUS_COLORS.completed, 0.3) },
 ];
 
 function PhaseStatusIcon({ status }: { status: ReconPhaseStatus }) {
@@ -1615,6 +1723,10 @@ export default function JobDetailPage() {
   const { data: rooms } = useRooms(jobId);
   const { data: floorPlans, isLoading: floorPlansLoading } = useFloorPlans(jobId);
   const isArchived = isJobArchived(job?.status);
+
+  // Spec 01K — status change modal + closeout checklist modal state
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
+  const [closeoutModalOpen, setCloseoutModalOpen] = useState(false);
   // Archived jobs prefer anchoring on their own pin so the resolved floor
   // matches the frozen view. When the pin is missing (legacy row without
   // floor_plan_id set), fall back to the first is_current row — list_versions
@@ -1780,6 +1892,25 @@ export default function JobDetailPage() {
 
   const dayNumber = job?.loss_date ? daysSinceLoss(job.loss_date) : null;
 
+  // Spec 01K — header metric durations. `Date.now()` is impure, so we
+  // freeze it via lazy useState initializer (matches the pattern used in
+  // dashboard-client) and reuse the snapshot across both metric memos.
+  // Day-granular precision is fine for a header metric — re-mount on
+  // route change refreshes it.
+  const [renderNow] = useState<number>(() => Date.now());
+  const cycleDays = useMemo<number | null>(() => {
+    if (!job) return null;
+    if (job.active_at && job.completed_at) return daysBetween(job.active_at, job.completed_at);
+    if (job.active_at) return daysBetween(job.active_at, renderNow);
+    return null;
+  }, [job, renderNow]);
+  const payDays = useMemo<number | null>(() => {
+    if (!job) return null;
+    if (job.invoiced_at && job.paid_at) return daysBetween(job.invoiced_at, job.paid_at);
+    if (job.invoiced_at) return daysBetween(job.invoiced_at, renderNow);
+    return null;
+  }, [job, renderNow]);
+
   // Untagged photos (no room assigned)
   const untaggedPhotos = useMemo(
     () => photos?.filter((p) => !p.room_id) ?? [],
@@ -1847,8 +1978,14 @@ export default function JobDetailPage() {
             </div>
           </div>
 
-          {/* Right: Day pill */}
+          {/* Right: Status pill (clickable, opens ChangeStatusModal) + Day pill */}
           <div className="flex items-center gap-2 shrink-0">
+            <JobStatusBadge
+              status={job.status}
+              size="md"
+              interactive
+              onClick={() => setStatusModalOpen(true)}
+            />
             {dayNumber !== null && (
               <span className="px-2.5 py-1 rounded-full bg-brand-accent text-on-primary text-[11px] font-bold font-[family-name:var(--font-geist-mono)] tracking-wide">
                 Day {dayNumber}
@@ -1858,65 +1995,132 @@ export default function JobDetailPage() {
         </div>
       </header>
 
-      {/* ── Phase Stepper ────────────────────────────────────── */}
-      {(() => {
-        const phases = job.job_type === "reconstruction"
-          ? [["new","New"],["scoping","Scoping"],["in_progress","In Progress"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]]
-          : [["new","New"],["contracted","Contracted"],["mitigation","Mitigation"],["drying","Drying"],["complete","Complete"],["submitted","Submitted"],["collected","Collected"]];
-        const currentIdx = phases.findIndex(([val]) => val === job.status);
-        return (
-          <div className="max-w-6xl mx-auto px-4 pt-3">
-            <div className="flex items-center">
-              {phases.map(([val, label], i) => {
-                const color = STATUS_COLORS[val as keyof typeof STATUS_COLORS] || "#94a3b8";
-                const isCurrent = val === job.status;
-                const isPast = i < currentIdx;
-                const isLast = i === phases.length - 1;
-                return (
-                  <div key={val} className="flex items-center flex-1 min-w-0">
-                    <button
-                      type="button"
-                      onClick={() => updateJob.mutate({ status: val } as Record<string, string | null>)}
-                      className="flex flex-col items-center gap-1 cursor-pointer group w-full active:scale-95 transition-transform"
-                    >
-                      {/* Dot */}
-                      <span
-                        className={`rounded-full transition-all ${
-                          isCurrent ? "w-5 h-5 ring-4" : isPast ? "w-3.5 h-3.5" : "w-3 h-3 group-hover:w-3.5 group-hover:h-3.5"
-                        }`}
-                        style={{
-                          backgroundColor: isCurrent || isPast ? color : "#e1ddd9",
-                          ringColor: isCurrent ? withAlpha(color, 0.2) : undefined,
-                        } as React.CSSProperties}
-                      >
-                        {isPast && (
-                          <svg className="w-full h-full text-white" viewBox="0 0 16 16" fill="none">
-                            <path d="M4.5 8l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        )}
-                      </span>
-                      {/* Label */}
-                      <span className={`text-[9px] sm:text-[10px] font-medium leading-tight text-center transition-colors truncate w-full ${
-                        isCurrent ? "font-bold" : isPast ? "opacity-70" : "text-on-surface-variant/40 group-hover:text-on-surface-variant/70"
-                      }`}
-                        style={isCurrent || isPast ? { color } : undefined}
-                      >
-                        {label}
-                      </span>
-                    </button>
-                    {/* Connector arrow */}
-                    {!isLast && (
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" className="shrink-0 mx-0.5" aria-hidden="true">
-                        <path d="M9 6l6 6-6 6" stroke={isPast ? withAlpha(color, 0.5) : "#d4d0cc"} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
+      {/* Spec 01K — Status change bottom-sheet. Selecting "Completed" hands off
+          to the closeout-checklist modal so gates can be evaluated. */}
+      <ChangeStatusModal
+        open={statusModalOpen}
+        onClose={() => setStatusModalOpen(false)}
+        jobId={job.id}
+        jobAddress={job.address_line1}
+        currentStatus={job.status}
+        onCompletedSelected={() => {
+          setStatusModalOpen(false);
+          setCloseoutModalOpen(true);
+        }}
+      />
+      <CloseoutChecklistModal
+        open={closeoutModalOpen}
+        onClose={() => setCloseoutModalOpen(false)}
+        jobId={job.id}
+        jobAddress={job.address_line1}
+        jobType={job.job_type}
+        currentStatus={job.status}
+      />
+
+      {/* ── Spec 01K — Lifecycle meta row + metric blocks ──────────────────────
+          Replaces the legacy phase stepper. Status changes go through the
+          clickable JobStatusBadge in the header → ChangeStatusModal. */}
+      <div className="max-w-6xl mx-auto px-4 pt-3">
+        {/* Meta row: contract badge + loss type + adjuster (right-aligned timestamp) */}
+        <div className="flex items-center gap-2 flex-wrap">
+          {job.contract_signed_at && (
+            <span
+              className="inline-flex items-center gap-1.5 h-6 px-2.5 rounded-full text-[12px] font-semibold"
+              style={{ backgroundColor: "#e7f6ec", border: "1px solid #b8e2c5", color: "#1f6f3e" }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M5 12.5l4.5 4.5L19 7.5" stroke="#2a9d5c" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+              Contract signed
+            </span>
+          )}
+          {job.loss_category && (
+            <span className="inline-flex items-center h-6 px-2.5 rounded-full text-[12px] font-semibold border border-outline-variant/50 bg-surface-container-lowest text-on-surface-variant">
+              Cat {job.loss_category}{job.loss_cause ? ` · ${job.loss_cause}` : ""}
+            </span>
+          )}
+          {job.adjuster_name && (
+            <span className="inline-flex items-center h-6 px-2.5 rounded-full text-[12px] font-semibold border border-outline-variant/50 bg-surface-container-lowest text-on-surface-variant">
+              Adjuster · {job.adjuster_name}{job.carrier ? ` · ${job.carrier}` : ""}
+            </span>
+          )}
+          <div className="flex-1" />
+          <span className="text-[12px] text-on-surface-variant/70">
+            Updated{" "}
+            <span className="font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+              {timeAgoShort(job.updated_at)}
+            </span>
+            {dayNumber !== null && (
+              <>
+                {" "}· Day{" "}
+                <span className="font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
+                  {dayNumber}
+                </span>
+              </>
+            )}
+          </span>
+        </div>
+
+        {/* Metric blocks: 4-up grid, single-row card.
+            Cycle time + Days to payment are threshold-aware:
+              cycle > 21d  → disputed   (red)
+              cycle 14-21d → on_hold    (amber)
+              pay   > 60d  → disputed   (red)
+              pay   30-60d → on_hold    (amber)
+            Rooms drying + Equipment on site stay neutral — they're status
+            indicators, not durations. */}
+        <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 bg-surface-container-lowest border border-outline-variant/50 rounded-xl overflow-hidden">
+          <MetricBlock
+            label="Cycle time"
+            value={cycleDays === null ? "—" : String(cycleDays)}
+            unit={cycleDays === null ? undefined : "days"}
+            valueColor={cycleTimeColor(cycleDays)}
+            hint={job.status === "completed" || job.status === "invoiced" || job.status === "paid"
+              ? "Active → Completed"
+              : "Loss → today"}
+          />
+          <MetricBlock
+            label="Days to payment"
+            value={payDays === null ? "—" : String(payDays)}
+            unit={payDays === null ? undefined : "days"}
+            valueColor={daysToPaymentColor(payDays)}
+            hint={
+              job.paid_at ? "Invoiced → Paid"
+              : job.invoiced_at ? "Invoiced → today"
+              : "Not yet invoiced"
+            }
+          />
+          <MetricBlock
+            label="Rooms drying"
+            value={
+              <span>
+                <span className="font-[family-name:var(--font-geist-mono)] font-semibold">
+                  {countRoomsDrying(rooms ?? [])}
+                </span>
+                <span className="text-on-surface-variant/60 text-[12px]"> / {(rooms ?? []).length}</span>
+              </span>
+            }
+            hint={
+              countRoomsAtDryStandard(rooms ?? []) > 0
+                ? `${countRoomsAtDryStandard(rooms ?? [])} at dry standard`
+                : "—"
+            }
+          />
+          <MetricBlock
+            label="Equipment on site"
+            value={
+              <span>
+                <span className="font-[family-name:var(--font-geist-mono)] font-semibold">
+                  {countEquipmentOnSite(rooms ?? [])}
+                </span>
+                <span className="text-on-surface-variant/60 text-[12px]"> units</span>
+              </span>
+            }
+            hint={equipmentBreakdown(rooms ?? [])}
+            last
+          />
+        </div>
+      </div>
 
       {/* ── Linked Job Banner ─────────────────────────────────── */}
       {job.linked_job_summary && (
@@ -2507,8 +2711,10 @@ export default function JobDetailPage() {
             </button>
           </section>
 
-          {/* Create Reconstruction Job — shown on mitigation jobs that are complete or later */}
-          {job.job_type === "mitigation" && ["complete", "submitted", "collected"].includes(job.status) && (
+          {/* Create Reconstruction Job — shown on mitigation jobs that have
+              reached the post-work part of the lifecycle. Spec 01K: legacy
+              "complete/submitted/collected" → "completed/invoiced/paid". */}
+          {job.job_type === "mitigation" && ["completed", "invoiced", "paid"].includes(job.status) && (
             <button
               type="button"
               onClick={() => router.push(`/jobs/new?type=reconstruction&linked=${jobId}`)}
