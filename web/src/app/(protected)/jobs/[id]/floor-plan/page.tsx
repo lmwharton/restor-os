@@ -20,14 +20,14 @@ import { apiGet, apiPost, apiPatch, apiDelete } from "@/lib/api";
 import type { FloorPlan, FloorLevel } from "@/lib/types";
 import { FLOOR_LEVEL_TO_NUMBER, FLOOR_LEVEL_LABEL, floorNumberToLevel, hasEtag } from "@/lib/types";
 import type { FloorPlanData, RoomData } from "@/components/sketch/floor-plan-tools";
-import { wallsForRoom, detectSharedWalls, uid } from "@/components/sketch/floor-plan-tools";
+import { wallsForRoom, detectSharedWalls, uid, newRoomUuid } from "@/components/sketch/floor-plan-tools";
 import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan";
 import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
 import { FloorSelector } from "@/components/sketch/floor-selector";
 import { PickFloorModal } from "@/components/sketch/pick-floor-modal";
 import { CanvasModeSwitcher } from "@/components/sketch/canvas-mode-switcher";
 import { type CanvasMode } from "@/components/sketch/moisture-mode";
-import type { WallSegment } from "@/lib/types";
+import type { MoisturePin, WallSegment } from "@/lib/types";
 import { isJobArchived as isJobArchivedStatus } from "@/lib/job-status";
 
 const KonvaFloorPlan = dynamic(() => import("@/components/sketch/konva-floor-plan"), { ssr: false });
@@ -312,12 +312,15 @@ const _wallSyncBadRoomIds = new Set<string>();
 async function syncWallsToBackend(
   canvasData: FloorPlanData,
   jobRooms: Array<{ id: string; room_name: string }> | undefined,
-) {
-  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) return;
-  if (_wallSyncInFlight) return;
+  jobId: string,
+): Promise<{ restampedAny: boolean }> {
+  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) {
+    return { restampedAny: false };
+  }
+  if (_wallSyncInFlight) return { restampedAny: false };
   _wallSyncInFlight = true;
   try {
-    await _syncWallsToBackendImpl(canvasData, jobRooms);
+    return await _syncWallsToBackendImpl(canvasData, jobRooms, jobId);
   } finally {
     _wallSyncInFlight = false;
   }
@@ -326,8 +329,49 @@ async function syncWallsToBackend(
 async function _syncWallsToBackendImpl(
   canvasData: FloorPlanData,
   jobRooms: Array<{ id: string; room_name: string }> | undefined,
-) {
-  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) return;
+  jobId: string,
+): Promise<{ restampedAny: boolean }> {
+  if (!canvasData.walls || !jobRooms || jobRooms.length === 0) {
+    return { restampedAny: false };
+  }
+  let restampedAny = false;
+
+  // Phase 2 location-split follow-up (R1 HIGH 1): when a room's
+  // canvas-vs-backend wall signature diverges, the autosave path
+  // wipe-and-recreates that room's wall_segments. moisture_pins.
+  // wall_segment_id has ON DELETE SET NULL, so every pin on that room's
+  // walls would otherwise have its wall reference silently nulled on
+  // every geometry-touching autosave. Mirrors the capture-then-restamp
+  // logic restore_floor_plan_relational_snapshot runs server-side
+  // (migration e5f6a7b8c9d0).
+  //
+  // Today every wall pin in the live DB has wall_segment_id = NULL
+  // (picker UX deferred per Spec 01H Phase 2 line 472), so the capture
+  // is empty in practice and the restamp is a no-op — this is forward
+  // protection for the picker rollout, not a current bug repair.
+  //
+  // Atomicity ceiling: this is N HTTP calls (GET pins, DELETE walls,
+  // POST walls, PATCH pins). A crash mid-sequence leaves pins NULL
+  // — same end state as today's silent-wipe. The picker UX rollout is
+  // the natural moment to escalate to a SECURITY DEFINER replace_room_
+  // walls RPC for atomic capture+wipe+insert+restamp inside one tx
+  // (mirrors Phase 1 R19's snapshot-restore path). Tracked in the
+  // spec's picker-UX prerequisite block.
+  const pinsByOldWallId = new Map<string, string>(); // wall_segment_id → pin_id
+  try {
+    const pinsResp = await apiGet<{ items: MoisturePin[] } | MoisturePin[]>(
+      `/v1/jobs/${jobId}/moisture-pins`,
+    );
+    const allPins = Array.isArray(pinsResp) ? pinsResp : pinsResp.items ?? [];
+    for (const p of allPins) {
+      if (p.wall_segment_id) pinsByOldWallId.set(p.wall_segment_id, p.id);
+    }
+  } catch (err) {
+    // Pin fetch failure is non-fatal — wall sync still proceeds, but
+    // any wipe path will lose wall_segment_id refs (no worse than the
+    // pre-fix behavior). Log so the silent loss isn't truly silent.
+    console.warn("Pin fetch for wall-sync restamp failed", err);
+  }
 
   // Group canvas walls by roomId (canvas-local ID, not backend ID)
   const wallsByRoom = new Map<string, typeof canvasData.walls>();
@@ -410,12 +454,25 @@ async function _syncWallsToBackendImpl(
         continue;
       }
 
+      // Capture (pin_id, sort_order_of_old_wall) for any pins on this
+      // room before the DELETE wipes the wall_segment_id refs. See the
+      // function-header block for the full rationale.
+      const restampCaptures: Array<{ pinId: string; sortOrder: number }> = [];
+      for (const w of existingWalls) {
+        const pinId = pinsByOldWallId.get(w.id);
+        if (pinId !== undefined) {
+          restampCaptures.push({ pinId, sortOrder: Number(w.sort_order) });
+        }
+      }
+
       // Delete existing walls (clean slate — cascades openings)
       for (const w of existingWalls) {
         await apiDelete(`/v1/rooms/${backendRoomId}/walls/${w.id}`);
       }
 
-      // Create new walls and track ID mapping
+      // Create new walls and track ID mapping. newWallBySortOrder feeds
+      // the post-INSERT restamp loop below.
+      const newWallBySortOrder = new Map<number, string>();
       for (let i = 0; i < roomWalls.length; i++) {
         const w = roomWalls[i];
         const created = await apiPost<WallSegment>(`/v1/rooms/${backendRoomId}/walls`, {
@@ -429,6 +486,25 @@ async function _syncWallsToBackendImpl(
           sort_order: i,
         });
         canvasToBackendWallId.set(w.id, created.id);
+        newWallBySortOrder.set(i, created.id);
+      }
+
+      // Re-stamp captured pins. Pins whose original sort_order no
+      // longer maps (geometry edit removed the wall) keep
+      // wall_segment_id = NULL via ON DELETE SET NULL — that's the
+      // honest answer (lesson #2). Per-pin failures don't block the
+      // sync from completing.
+      for (const cap of restampCaptures) {
+        const newWallId = newWallBySortOrder.get(cap.sortOrder);
+        if (!newWallId) continue;
+        try {
+          await apiPatch(`/v1/jobs/${jobId}/moisture-pins/${cap.pinId}`, {
+            wall_segment_id: newWallId,
+          });
+          restampedAny = true;
+        } catch (err) {
+          console.warn("Pin wall_segment_id restamp failed", cap.pinId, err);
+        }
       }
     } catch (err) {
       // First-time warn so genuine failures still surface. Mark the id as
@@ -489,6 +565,8 @@ async function _syncWallsToBackendImpl(
       console.warn("Window/opening sync failed", err);
     }
   }
+
+  return { restampedAny };
 }
 
 /* ------------------------------------------------------------------ */
@@ -830,7 +908,30 @@ export default function FloorPlanPage({
   // handleCreateRoom so the mutation carries floor_plan_id without
   // depending on a closure over a variable not yet in scope.
   const activeFloorIdRef = useRef<string | null>(null);
-  const handleCreateRoom = useCallback((
+  // Spec 01H Phase 2 fix (2026-04-27): bumped after a cross-floor save
+  // commits to force Konva to remount with the freshly-seeded
+  // `lastCanvasRef`. Konva initializes its internal state from
+  // `initialData` only on mount; when the same-floor save lands new
+  // data, the React Query cache is correct but Konva keeps its
+  // pre-save internal state. Bumping this counter changes the Konva
+  // `key` prop → React unmounts the old instance and mounts a fresh
+  // one that reads the new `initialData`. Independent of any
+  // auto-create-default-floor logic.
+  const [canvasRemountSeed, setCanvasRemountSeed] = useState(0);
+  // Forward-declared ref to ensureFloor (defined further down). Same
+  // pattern as activeFloorIdRef — handleCreateRoom is defined here at
+  // the top of the file but ensureFloor lives after the rooms hook
+  // ordering. The ref is wired up in the render body (search
+  // `ensureFloorRef.current = ensureFloor`). Used by handleCreateRoom
+  // when `activeFloorIdRef.current` is null but `metadata.floorLevel`
+  // tells us which floor the user picked — fixes the race on fresh-job
+  // first-room creates where the user draws faster than
+  // `activeFloorId` propagates from `setActiveFloorId` → render →
+  // ref-sync.
+  const ensureFloorRef = useRef<
+    ((level: FloorLevel) => Promise<FloorPlan>) | null
+  >(null);
+  const handleCreateRoom = useCallback(async (
     name: string,
     dimensions?: { width: number; height: number },
     metadata?: {
@@ -855,23 +956,51 @@ export default function FloorPlanPage({
      *  orphan UUID. */
     floorPlanIdOverride?: string,
   ) => {
-    // ── Hard guard: refuse to create a room without a resolved
-    //    floor_plan_id. ──────────────────────────────────────────
+    // ── Floor resolution (user-intent-first) ──────────────────────
     // Every pin's floor membership is derived through the join
     // `moisture_pins.room_id → job_rooms.floor_plan_id`. A room
     // persisted with `floor_plan_id = NULL` produces pins whose floor
     // membership the render filter can't determine, and they leak
     // visually across every floor whose canvas references them.
     //
-    // We resolve the floor in this priority order:
-    //   1. `floorPlanIdOverride` — explicit, post-`ensureFloor` value.
-    //   2. `activeFloorIdRef.current` — the active floor at call time.
-    // If neither resolves, bail loudly so a future regression to the
-    // create path surfaces as a console.warn instead of corrupt data.
-    const resolvedFloorPlanId =
-      floorPlanIdOverride ?? activeFloorIdRef.current;
+    // Priority order (Spec 01H Phase 2 fix, 2026-04-27 — second pass):
+    //   1. `floorPlanIdOverride` — caller is explicit (e.g.
+    //      handleCreateRoomOnDifferentFloor already resolved the
+    //      target via ensureFloor). Trust them.
+    //   2. `metadata.floorLevel` — the USER's explicit pick from the
+    //      room confirmation form. Resolve via ensureFloor. This wins
+    //      over `activeFloorIdRef.current` because the user's stated
+    //      intent ("basement") MUST beat the currently-displayed
+    //      canvas ("main") whenever they differ. Pre-fix on fresh
+    //      jobs: cross-floor gate at konva-floor-plan.tsx:1658 failed
+    //      to fire when `activeFloorLevel` was null at click-time,
+    //      falling through to the regular handleCreateRoom path; the
+    //      first-pass fix here only fired ensureFloor when no floor
+    //      was resolved at all, missing the case where activeFloorIdRef
+    //      had drifted to main while the user wanted basement. The
+    //      room then landed on main — the "first room creates on
+    //      wrong floor" symptom Samhith reported.
+    //   3. `activeFloorIdRef.current` — the active canvas at call
+    //      time. Fallback only when the user didn't explicitly pick.
+    let resolvedFloorPlanId: string | null | undefined = floorPlanIdOverride;
     if (!resolvedFloorPlanId) {
-      // eslint-disable-next-line no-console
+      const userPickedLevel = metadata?.floorLevel as FloorLevel | null | undefined;
+      if (userPickedLevel && ensureFloorRef.current) {
+        try {
+          const fp = await ensureFloorRef.current(userPickedLevel);
+          resolvedFloorPlanId = fp.id;
+        } catch (err) {
+          console.error(
+            "[handleCreateRoom] ensureFloor for user-picked level failed",
+            { name, canvasRoomId, userPickedLevel, err },
+          );
+          return;
+        }
+      } else {
+        resolvedFloorPlanId = activeFloorIdRef.current;
+      }
+    }
+    if (!resolvedFloorPlanId) {
       console.warn(
         "[handleCreateRoom] aborting: no floor_plan_id resolved. A path bypassed the pick-floor gate.",
         { name, canvasRoomId },
@@ -921,6 +1050,23 @@ export default function FloorPlanPage({
     }
     createRoom.mutate(
       {
+        // Spec 01H Phase 2 (duplicate-name fix): the canvas room
+        // already owns its UUID via newRoomUuid() at draw-time, and
+        // that UUID lives on canvasRoomId === RoomData.id ===
+        // RoomData.propertyRoomId. Pass it to the backend as the
+        // job_rooms.id so the row is created with the same UUID the
+        // canvas already committed to. Backend create_room is
+        // idempotent on (id, company_id) — same-tenant retry returns
+        // the existing row (no duplicate INSERT), cross-tenant
+        // collision raises 409. Eliminates the transient
+        // "unsaved-room" window that used to force the resolver into
+        // a name-match fallback.
+        //
+        // The fallback to backend-generated UUID (when canvasRoomId
+        // is somehow undefined — defensive only; both creation sites
+        // pass it) preserves backward compatibility for any code path
+        // we haven't migrated yet.
+        ...(canvasRoomId ? { id: canvasRoomId } : {}),
         room_name: name,
         // Critical: link the new job_rooms row to the floor the tech
         // just drew it on. Without this, `job_rooms.floor_plan_id`
@@ -1186,6 +1332,7 @@ export default function FloorPlanPage({
       setActiveFloorId(floorPlans[0].id);
     }
   }, [floorPlans, activeFloorId]);
+
 
   // Round 5 (Lakshman P1 #2): on mount, scan localStorage for any
   // conflict drafts from a prior VERSION_STALE that triggered a reload.
@@ -1653,8 +1800,18 @@ export default function FloorPlanPage({
         // Sync walls to backend (non-blocking — runs after save succeeds).
         // Single rooms invalidation covers the batched room PATCHes above
         // plus any wall changes, so the list re-fetches exactly once.
-        syncWallsToBackend(canvasData, jobRooms)
-          .then(() => queryClient.invalidateQueries({ queryKey: ["rooms", jobId] }))
+        syncWallsToBackend(canvasData, jobRooms, jobId)
+          .then(({ restampedAny }) => {
+            queryClient.invalidateQueries({ queryKey: ["rooms", jobId] });
+            // Only invalidate moisture-pins when an actual restamp
+            // landed — empty-restamp autosaves (today's reality, since
+            // no pin has non-NULL wall_segment_id yet) skip this to
+            // avoid re-introducing the multi-pin drag race that commit
+            // 731c061 closed.
+            if (restampedAny) {
+              queryClient.invalidateQueries({ queryKey: ["moisture-pins", jobId] });
+            }
+          })
           .catch(() => {});
 
         // Note: moisture-pins invalidation is NOT here. It only fires
@@ -1856,6 +2013,14 @@ export default function FloorPlanPage({
     }
   }, [floorPlans, createFloorPlan, queryClient, jobId]);
 
+  // Wire up the forward-declared ensureFloorRef now that ensureFloor is
+  // defined. Same pattern as activeFloorIdRef sync up at line ~1336 —
+  // handleCreateRoom (defined earlier in the file) reads
+  // `ensureFloorRef.current` lazily so it always sees the latest
+  // closure even though the function definition itself recreates on
+  // every render via useCallback.
+  ensureFloorRef.current = ensureFloor;
+
   // Create a specific preset floor (Basement/Main/Upper/Attic) on tap, or
   // switch to it if it already exists. Pre-floor drawing carry-over logic is
   // gone — with the noActiveFloor intercept, the user can't draw before a
@@ -1908,8 +2073,16 @@ export default function FloorPlanPage({
       const targetFloor = await ensureFloor(targetLevel);
       targetFloorIdForConflict = targetFloor.id;
 
+
+      // Spec 01H Phase 2 (duplicate-name fix): canvas room id is a real
+      // UUID generated client-side; the same UUID becomes the backend
+      // job_rooms.id when handleCreateRoom POSTs. propertyRoomId set
+      // from t=0; resolver never falls back to name-match. See
+      // konva-floor-plan.tsx where the on-canvas creation site does
+      // the equivalent.
+      const roomUuid = roomData.propertyRoomId ?? newRoomUuid();
       const newRoom: RoomData = {
-        id: uid("room"),
+        id: roomUuid,
         x: pendingBounds.x,
         y: pendingBounds.y,
         width: pendingBounds.width,
@@ -1917,7 +2090,7 @@ export default function FloorPlanPage({
         points: pendingBounds.points,
         name: roomData.name,
         fill: roomData.affected ? "#fee2e2" : "#fff3ed",
-        propertyRoomId: roomData.propertyRoomId,
+        propertyRoomId: roomUuid,
       };
       const newRoomWalls = wallsForRoom(newRoom);
 
@@ -1989,6 +2162,18 @@ export default function FloorPlanPage({
       // room lands on Upper. Restores the explicit floor switch that
       // the round-3 refactor dropped when it moved reconciliation into
       // the shared helper.
+      // Spec 01H Phase 2 fix (2026-04-27): seed `lastCanvasRef` with the
+      // merged canvas keyed to the new active floor BEFORE the
+      // setActiveFloorId triggers Konva's remount via the
+      // `key={activeFloor?.id}` prop.
+      lastCanvasRef.current = { floorId: savedVersion.id, data: mergedCanvas };
+      // Force Konva to remount so it re-reads `initialData` from
+      // `lastCanvasRef`. Without this, Konva's internal state stays
+      // at pre-save (empty) and the new room only renders on hard
+      // refresh. The seed bumps the `key` regardless of whether
+      // `activeFloor.id` changes, covering the case where user
+      // is already on the target floor.
+      setCanvasRemountSeed((n) => n + 1);
       setActiveFloorId(savedVersion.id);
 
       setSaveStatus("saved");
@@ -2002,6 +2187,15 @@ export default function FloorPlanPage({
       // re-rendered yet, so `activeFloorIdRef.current` could still be
       // null. The explicit override guarantees the new room's
       // `floor_plan_id` is set deterministically.
+      //
+      // CRITICAL: pass `roomUuid` as the canvasRoomId. Spec 01H Phase 2
+      // (duplicate-name fix, 2026-04-27) routes the client-generated
+      // UUID to the backend so the canvas room and backend job_rooms
+      // row share the same id. Pre-fix this site passed `undefined` →
+      // handleCreateRoom omitted `id` from the POST body → backend
+      // generated its own UUID → canvas state and backend diverged →
+      // pin POST 500'd with PGRST116 because the canvas-side UUID
+      // didn't exist as a job_rooms row.
       const widthFt = Math.round((pendingBounds.width / gridSize) * 10) / 10;
       const heightFt = Math.round((pendingBounds.height / gridSize) * 10) / 10;
       handleCreateRoom(
@@ -2015,7 +2209,7 @@ export default function FloorPlanPage({
           materialFlags: roomData.materialFlags,
           affected: roomData.affected,
         },
-        undefined,
+        roomUuid,
         targetFloor.id,
       );
     } catch (err) {
@@ -2243,7 +2437,7 @@ export default function FloorPlanPage({
           // Gating readiness via `canvasReady` (sticky state) means mount
           // happens ONCE when data is ready, and the only subsequent remount is
           // the unavoidable "new"→real-id transition on first save.
-          key={activeFloor?.id ?? "new"}
+          key={`${activeFloor?.id ?? "new"}:${canvasRemountSeed}`}
           initialData={
             pendingBackup
               // Carry user's in-memory canvas across the remount that happens when
@@ -2334,12 +2528,15 @@ export default function FloorPlanPage({
               Floor plan needs to be reloaded
             </p>
             <p className="text-[12px] text-on-surface-variant mb-3">
-              Your most recent edits couldn&apos;t be saved against the
-              current state of this floor plan — either another editor
-              wrote since you last read, or your view is out of sync with
-              the server. Reload to pick up the latest state. We&apos;ve
-              saved your unsaved work and will offer to restore it on top
-              after the reload.
+              Another editor saved this floor plan since you last
+              opened it, so your changes can&apos;t land on top
+              directly. Reload to pick up the latest state.
+              <strong className="text-on-surface">
+                {" "}
+                Your unsaved work is safe — after the reload, look for
+                the &ldquo;Restore my edits&rdquo; prompt at the top of
+                the page and click it to bring your changes back.
+              </strong>
             </p>
             <div className="flex gap-2">
               <button
@@ -2420,14 +2617,16 @@ export default function FloorPlanPage({
           enough that merging would produce garbage). */}
       {conflictDraft && !staleConflict && (
         <div className="fixed inset-x-0 top-4 z-[70] flex justify-center px-4">
-          <div className="max-w-md w-full rounded-xl bg-surface-container-lowest border border-amber-300 shadow-lg p-4">
-            <p className="text-[13px] font-semibold text-on-surface mb-1">
-              Unsaved edits from your last session
+          <div className="max-w-md w-full rounded-xl bg-amber-50 border-2 border-amber-400 shadow-lg p-4">
+            <p className="text-[13px] font-semibold text-amber-900 mb-1">
+              Restore your unsaved edits?
             </p>
-            <p className="text-[12px] text-on-surface-variant mb-3">
-              A previous save couldn&apos;t land because another editor was
-              faster. Your work was saved locally — you can apply it on
-              top of the current version now, or discard it.
+            <p className="text-[12px] text-amber-900/80 mb-3">
+              Before the reload, you had unsaved changes that conflicted
+              with another editor&apos;s save. Your work is preserved —
+              click <strong>Restore my edits</strong> to apply it on top
+              of the current floor plan, or <strong>Discard</strong> to
+              start fresh from the server&apos;s state.
             </p>
             <div className="flex gap-2">
               <button

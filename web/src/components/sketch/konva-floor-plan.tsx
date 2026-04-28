@@ -11,6 +11,7 @@ import {
   type FloorOpeningData,
   emptyFloorPlan,
   uid,
+  newRoomUuid,
   snapToGrid,
   findNearestWall,
   snapEndpoint,
@@ -689,7 +690,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       // when the name is non-unique ("Bedroom 1 / Bedroom 2") — guards
       // the HIGH #5 regression where dragging Bedroom 2 would
       // translate pins on Bedroom 1 via the first-match-wins trap.
-      const candidateIds = resolveCanvasRoomCandidateIds(room, floorScopedPropertyRooms);
+      const candidateIds = resolveCanvasRoomCandidateIds(room);
       if (candidateIds.size === 0) continue;
 
       // Collect pins to move so we do a single cache update before
@@ -986,6 +987,15 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       // bookkeeping (the backend just assigned a UUID to a row the user
       // didn't explicitly link), not a canvas action the user would
       // sensibly want to undo.
+      //
+      // NOTE: Updates ONLY ``propertyRoomId``, not ``id``. After a call
+      // from the same-name dedup branch in ``handleCreateRoom``, the
+      // canvas room's ``id`` is still the fresh UUID minted at draw-
+      // time but ``propertyRoomId`` is the existing backend row's UUID
+      // — so ``id !== propertyRoomId`` for that room. Any code reading
+      // back the room must use ``propertyRoomId`` for backend lookups
+      // and ``id`` for canvas-internal references. See the RoomData
+      // type comment in ``floor-plan-tools.ts`` for the full contract.
       patchRef.current((prev) => {
         const existing = prev.rooms.find((r) => r.id === canvasRoomId);
         if (!existing || existing.propertyRoomId === backendId) return prev;
@@ -1154,17 +1164,39 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         // for the orphan canvas room, which POSTs a new basement
         // Bathroom row, backfills the canvas room's propertyRoomId,
         // and the next tap places correctly.
-        const propertyRoom = canvasRoom
-          ? resolveCanvasRoomBackendRow(canvasRoom, floorScopedPropertyRooms)
-          : undefined;
-        if (!propertyRoom) {
-          // Canvas room has no backend twin (never synced, or stale
-          // propertyRoomId pointing at a deleted job_room). Trigger a
-          // create-or-backfill through the parent so the next tap resolves
-          // — parent handler no-ops create if a job_room with this name
-          // already exists and just backfills propertyRoomId. Fire-and-
-          // forget; the nudge tells the user to try again.
-          if (canvasRoom && onCreateRoom) {
+        // Spec 01H Phase 2 (duplicate-name fix): pin placement uses the
+        // canvas room's propertyRoomId DIRECTLY rather than going
+        // through the backend-row resolver. Why:
+        //
+        //   - Post-fix, every canvas room owns its propertyRoomId
+        //     from t=0 (newRoomUuid() in floor-plan-tools.ts), so the
+        //     id is always available locally.
+        //   - The backend row may not yet be in the React Query cache
+        //     (POST /rooms in flight, refetch hasn't landed). Going
+        //     through resolveCanvasRoomBackendRow against the cached
+        //     `floorScopedPropertyRooms` list would falsely report
+        //     "no row found" and trigger the "Syncing this room"
+        //     nudge — exactly the user-reported regression.
+        //   - The pin's INSERT into moisture_pins references room_id
+        //     by FK; if the room row doesn't exist yet at INSERT time,
+        //     the FK fails and the request retries naturally (the
+        //     pin-create RPC is atomic — no partial state).
+        //
+        // Empty material_flags default is safe — flags only drive the
+        // placement sheet's "Suggested materials" hint; for a fresh
+        // room they're legitimately empty until the backend row's
+        // form values land. The propertyRoom backfill from the cache
+        // is preserved when available so we DO get material_flags
+        // when the cache catches up.
+        if (!canvasRoom) {
+          triggerNudge("empty");
+          return;
+        }
+        if (!canvasRoom.propertyRoomId) {
+          // Truly orphan canvas room (legacy data, no propertyRoomId
+          // set at draw-time, no backend row). Trigger create through
+          // the parent and nudge — same recovery path as before.
+          if (onCreateRoom) {
             const dims =
               typeof canvasRoom.width === "number" && typeof canvasRoom.height === "number"
                 ? { width: canvasRoom.width, height: canvasRoom.height }
@@ -1176,10 +1208,16 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           }
           return;
         }
+        // Prefer the cached backend row's material_flags when available;
+        // fall back to canvas-only data for the fresh-room window.
+        const propertyRoom = resolveCanvasRoomBackendRow(
+          canvasRoom,
+          floorScopedPropertyRooms,
+        );
         setPlacement({
-          roomId: propertyRoom.id,
-          roomName: propertyRoom.room_name,
-          roomMaterialFlags: propertyRoom.material_flags ?? [],
+          roomId: canvasRoom.propertyRoomId,
+          roomName: propertyRoom?.room_name ?? canvasRoom.name,
+          roomMaterialFlags: propertyRoom?.material_flags ?? [],
           canvas_x: Math.round(cx),
           canvas_y: Math.round(cy),
         });
@@ -1626,9 +1664,25 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     // `floorPlanIdOverride` parameter on `handleCreateRoom` plus the
     // dedupe-by-(name, floor, unclaimed) check — neither of which
     // requires this branch to fire on a fresh property.
+    // 2026-04-27 second-pass fix (Spec 01H Phase 2 — duplicate-name
+    // bug investigation): the previous gate required
+    // `activeFloorLevel` to be truthy, on the assumption that a fresh
+    // property would seed the floor via the regular `onCreateRoom`
+    // path. That assumption was wrong: when `activeFloorLevel` is
+    // null at click-time, the regular path runs, adds the room to
+    // LOCAL canvas state, then the next debounced save lands on
+    // whichever floor the canvas state is associated with —
+    // which is `activeFloorIdRef.current` (the OLD active floor)
+    // rather than the floor the user actually picked. The job_rooms
+    // row gets the right `floor_plan_id` (via my handleCreateRoom
+    // metadata branch) but the canvas RECTANGLE lands on the wrong
+    // floor's canvas_data, so visually the room appears on the
+    // wrong floor. Routing to cross-floor whenever the user's pick
+    // differs (including the "active is null" case) closes this gap
+    // — `handleCreateRoomOnDifferentFloor` does its own ensureFloor,
+    // so the fresh-property case is handled.
     if (
       data.floorLevel
-      && activeFloorLevel
       && data.floorLevel !== activeFloorLevel
       && onCreateRoomOnDifferentFloor
     ) {
@@ -1649,8 +1703,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       return;
     }
 
+    // Spec 01H Phase 2 (duplicate-name fix): canvas room id is now a
+    // real UUID, generated client-side at draw-time. The same UUID
+    // becomes the backend job_rooms.id when handleCreateRoom POSTs
+    // — propertyRoomId is set from t=0 with no transient unsaved-room
+    // window. Pin attribution by propertyRoomId is unambiguous even
+    // for two same-named rooms (each gets its own UUID), and the
+    // canvas-room-resolver's name-match fallback becomes unreachable.
+    //
+    // For RE-CREATE scenarios (existing form data carries a
+    // propertyRoomId — e.g., editing a room or after a 412 reload
+    // re-binds), prefer that value so we don't break the existing
+    // canvas room ↔ backend row link.
+    const roomUuid = data.propertyRoomId ?? newRoomUuid();
     const newRoom: RoomData = {
-      id: uid("room"),
+      id: roomUuid,
       x: pendingRoom.x,
       y: pendingRoom.y,
       width: pendingRoom.width,
@@ -1660,7 +1727,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       points: pendingRoom.points,
       name: data.name,
       fill: data.affected ? "#fee2e2" : "#fff3ed",
-      propertyRoomId: data.propertyRoomId,
+      propertyRoomId: roomUuid,
     };
     const roomWalls = wallsForRoom(newRoom);
     // New room may instantly be adjacent to an existing room — run shared-wall
@@ -2237,7 +2304,18 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
         {pendingRoom && (
           <RoomConfirmationCard
             existingRooms={state.rooms}
-            propertyRooms={propertyRooms}
+            // Spec 01H Phase 2 fix (2026-04-27): pass FLOOR-SCOPED
+            // propertyRooms only. The card's name suggestion picker
+            // uses this list to offer "bind to existing job_room"
+            // shortcuts. Pre-fix, the unfiltered list let the user pick
+            // a same-named room from a DIFFERENT floor (e.g., basement
+            // Garage) when creating a room on main → the card called
+            // setPropertyRoomId(basement_room_id) → finalizePendingRoom
+            // generated newRoom.propertyRoomId = basement_room_id →
+            // pin POST sent room_id = basement_room_id → pin landed on
+            // basement instead of main. Floor-scoping the suggestions
+            // closes the cross-floor binding leak at the UI source.
+            propertyRooms={floorScopedPropertyRooms}
             onConfirm={finalizePendingRoom}
             onCancel={() => {
               setPendingRoom(null);
@@ -4059,10 +4137,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                   // previously both claim pin.room_id pointing at
                   // Bedroom 1 via first-match-wins).
                   for (const canvasRoom of displayRooms) {
-                    const ids = resolveCanvasRoomCandidateIds(
-                      canvasRoom,
-                      floorScopedPropertyRooms,
-                    );
+                    const ids = resolveCanvasRoomCandidateIds(canvasRoom);
                     if (ids.has(pin.room_id)) return true;
                   }
                   return false;
