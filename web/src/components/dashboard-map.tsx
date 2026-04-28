@@ -173,19 +173,37 @@ export default function DashboardMap({ jobs, selectedStage }: DashboardMapProps)
         position = { lat: position.lat + Math.cos(angle) * offset, lng: position.lng + Math.sin(angle) * offset };
       }
 
-      const marker = new google.maps.Marker({
+      // Spec 01K, Option A — disputed is the only "act now" alarm color in
+      // the palette. Saturated red-orange fill (--status-disputed) + 3px
+      // brand-orange ring (--status-active) makes it read as live alert,
+      // distinct from on-hold's quiet amber. "!" glyph inside the pin.
+      const isDisputed = job.stage === "disputed";
+      const markerOpts: google.maps.MarkerOptions = {
         map,
         position,
         title: job.address_line1,
-        icon: {
-          path: google.maps.SymbolPath.CIRCLE,
-          scale: 8,
-          fillColor: job.color,
-          fillOpacity: 1,
-          strokeColor: "#ffffff",
-          strokeWeight: 2,
-        },
-      });
+        icon: isDisputed
+          ? {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 9,
+              fillColor: "#c8501a",   // --status-disputed (red-orange alarm)
+              fillOpacity: 1,
+              strokeColor: "#e85d26", // --status-active (brand-orange ring)
+              strokeWeight: 3,
+            }
+          : {
+              path: google.maps.SymbolPath.CIRCLE,
+              scale: 8,
+              fillColor: job.color,
+              fillOpacity: 1,
+              strokeColor: "#ffffff",
+              strokeWeight: 2,
+            },
+      };
+      if (isDisputed) {
+        markerOpts.label = { text: "!", color: "#fff", fontSize: "12px", fontWeight: "700" };
+      }
+      const marker = new google.maps.Marker(markerOpts);
 
       // Click pin to show info window, click again or click link to navigate
       marker.addListener("click", () => {
