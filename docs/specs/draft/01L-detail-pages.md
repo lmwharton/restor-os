@@ -50,9 +50,7 @@ Same component pattern, different root entity. One issue, ships together.
 ## Done When
 
 ### Schema
-- [ ] `properties.gate_code TEXT NULL` — **encrypted at rest via app-layer Fernet** (Decision #15). Stored value is the Fernet token, not plaintext.
-- [ ] `properties.key_location TEXT NULL CHECK (length(key_location) <= 500)`
-- [ ] `properties.access_notes TEXT NULL CHECK (length(access_notes) <= 5000)`
+- [ ] `properties.notes TEXT NULL CHECK (notes IS NULL OR length(notes) <= 10000)` — **encrypted at rest via app-layer Fernet** (Decision #15). One unified notes column matching Brett's actual PDF UI ("Property Notes" section with one Edit button), not three separate columns. Gate codes, key location, access info all live free-text within this one field.
 - [ ] No new tables.
 
 (`last_activity_at` column + trigger lands in 01J's migration per 01J Decision #21.)
@@ -60,8 +58,8 @@ Same component pattern, different root entity. One issue, ships together.
 ### Backend
 - [ ] `GET /v1/properties/{id}/jobs` — chronological list (ORDER BY `created_at DESC, id DESC` — deterministic tiebreak); pagination via `limit`/`offset`. Each item: `id, job_number, status, job_type, loss_date, created_at, completed_at`.
 - [ ] `GET /v1/properties/{id}/photos` — paginated single-query JOIN. **Deterministic ordering: `ORDER BY photos.created_at DESC, photos.id DESC`** (multiple photos can share a created_at second). Query: `WHERE jobs.property_id = $id AND jobs.company_id = get_my_company_id() AND photos.company_id = get_my_company_id() AND jobs.deleted_at IS NULL AND photos.deleted_at IS NULL`. Default `page_size=50`, max 200 (`Field(default=50, ge=1, le=200)`). Response item shape includes nested `job: { id, job_number }` for client-side grouping.
-- [ ] `PATCH /v1/properties/{id}/notes` — **the ONLY endpoint that accepts notes**. Body accepts subset of `{ gate_code, key_location, access_notes }` with `extra="forbid"`. Member role allowed (operational notes — gate code, key under mat — must be tech-editable). `access_notes` passed through `bleach.clean(strip=True)` server-side before insert (strip all HTML; plaintext only). Per Decision #15: `gate_code` encrypted via Fernet at rest.
-- [ ] **`PATCH /v1/properties/{id}` (the main route from 01J) explicitly REJECTS `gate_code`, `key_location`, `access_notes` via `extra="forbid"`.** Single endpoint per concern — main PATCH is for `customer_id` (admin-only) + address changes (per 01K).
+- [ ] `PATCH /v1/properties/{id}/notes` — **the ONLY endpoint that accepts notes**. Body: `{ notes: str | None }` with `extra="forbid"`. Member role allowed (operational content — gate codes, key location, access info — must be tech-editable). Server-side: `bleach.clean(strip=True)` first (strip HTML), then Fernet-encrypt before insert. Read path decrypts before returning to caller.
+- [ ] **`PATCH /v1/properties/{id}` (the main route from 01J) explicitly REJECTS `notes` via `extra="forbid"`.** Single endpoint per concern — main PATCH is for `customer_id` (admin-only) + address changes (per 01K).
 - [ ] `GET /v1/customers/{id}/properties` — owned properties with latest-job summary. **Single-query implementation via `LATERAL JOIN` or `DISTINCT ON (property_id) ... ORDER BY property_id, created_at DESC`** — no per-property subquery (N+1 prevention). Response item: `{ id, address_line1, city, state, zip, last_activity_at, latest_job: LatestJobSummary | null, job_count }`. `LatestJobSummary` Pydantic model projects ONLY `{ id, job_number, job_type, status, completed_at }` — never `claim_number`, `adjuster_*`, `loss_cause`, `notes`. Test asserts insurance fields absent from response.
 - [ ] `GET /v1/properties` and `GET /v1/customers` list endpoints sort by `last_activity_at DESC NULLS LAST` (using denormalized column from 01J Decision #21).
 - [ ] All endpoints use authenticated client (RLS-scoped). Tests assert RLS isolation across companies.
@@ -106,26 +104,22 @@ Same component pattern, different root entity. One issue, ships together.
 | 12 | Mobile: tabs become scrollable horizontally, header stacks vertically, "Change Owner" moves to overflow menu | Field-first — most techs use this on mobile. |
 | 13 | URL deep-linking via `?tab=sketch` (etc.) on Property Detail | Lets users bookmark "Sarah's house, photos tab" or share that link with a teammate. |
 | 14 | Address-edit conflict (changing a property's address to one that already exists in the company) returns 409 | Existing 01K canonicalization will catch this. UI shows "This address already belongs to <other property>. Use that property instead?" with a deep-link. |
-| 15 | **`gate_code` encrypted at rest** via app-layer Fernet (`cryptography.fernet.MultiFernet` for key rotation). Key in `GATE_CODE_FERNET_KEY` env var (Railway secret). Plaintext NEVER logged. Decrypt-on-read in service layer; encrypt-on-write. | Gate code is a physical-access credential (entry to a customer's home). Plaintext storage is unacceptable for any future leak/breach scenario. Same pattern works for V2 lockbox codes / alarm PINs. |
-| 16 | `access_notes` server-side sanitized via `bleach.clean(value, strip=True, tags=[], attributes={})` before insert/update — plaintext only, no HTML | Notes flow into UI, audit logs, and potentially future report exports. XSS / log-injection prevention. Pre-empts a tech writing scriptable content. |
-| 17 | `gate_code`, `key_location`, `access_notes` are **explicitly excluded** from any share-link projection (continues 01J Decision #19). Adjuster scope never sees these. | Adjusters don't need internal operational notes; "owner is hostile" type content must never leak externally. |
+| 15 | **`properties.notes` encrypted at rest** via app-layer Fernet (`cryptography.fernet.MultiFernet` for key rotation). Key in `GATE_CODE_FERNET_KEYS` env var (Railway secret). Plaintext NEVER logged. Decrypt-on-read in service layer; encrypt-on-write. The whole notes field is encrypted because gate codes (physical-access credentials) live alongside operational text. | Single column, single encryption boundary. Backup leak doesn't expose physical-access codes. Bleach sanitize runs BEFORE Fernet encrypt. Decrypt happens in the read service before returning to caller. |
+| 16 | Notes content server-side sanitized via `bleach.clean(value, strip=True, tags=[], attributes={})` before encrypt → plaintext only, no HTML | XSS / log-injection prevention. Order of operations: sanitize → encrypt → store. |
+| 17 | `properties.notes` is **explicitly excluded** from any share-link projection (continues 01J Decision #19). Adjuster scope never sees notes. | Adjusters don't need internal operational notes; "owner is hostile" type content must never leak externally. |
 | 18 | `?tab=` query param is `Literal["sketch", "jobs", "photos", "notes"]`; unknown values fall back to `"sketch"` | Type-safe routing. Defends against URL-injection in case anything templates the value. |
-| 19 | Notes inline-edit uses single-field PATCH (one field per request) with 500ms debounce. **Field-level lock client-side: while a PATCH is in flight for `gate_code`, additional `gate_code` edits queue; cross-field edits don't block.** | Avoids the race where rapid switching between fields fires concurrent multi-field PATCHes that arrive out of order. |
+| 19 | Notes inline-edit uses 500ms debounced PATCH with a single in-flight request — additional edits during a PATCH queue locally and re-fire when the in-flight request resolves. | One field, one writer. No cross-field race possible. Optimistic UI shows latest input; reconciles on PATCH success. |
 
 ---
 
 ## Database Schema
 
 ```sql
--- Three notes columns added to properties.
--- gate_code stores Fernet ciphertext (Decision #15) — DB sees opaque bytes-as-text.
-ALTER TABLE properties ADD COLUMN gate_code TEXT;
+-- Single notes column on properties — stores Fernet ciphertext (Decision #15).
+-- DB sees opaque bytes-as-text; cap length conservatively (encrypted form is ~1.4x plaintext).
 ALTER TABLE properties
-    ADD COLUMN key_location TEXT
-    CHECK (key_location IS NULL OR length(key_location) <= 500);
-ALTER TABLE properties
-    ADD COLUMN access_notes TEXT
-    CHECK (access_notes IS NULL OR length(access_notes) <= 5000);
+    ADD COLUMN notes TEXT
+    CHECK (notes IS NULL OR length(notes) <= 16000);
 
 -- No new tables, no new indexes (notes are queried per-property only).
 ```
@@ -133,20 +127,25 @@ ALTER TABLE properties
 Encryption helper lives in `backend/api/shared/encryption.py`:
 
 ```python
-"""Fernet encryption for sensitive operational fields (gate_code).
+"""Fernet encryption for sensitive notes content (properties.notes).
 
 Uses MultiFernet so key rotation is non-blocking. Old keys decrypt; new keys encrypt.
 """
 import os
 from cryptography.fernet import Fernet, MultiFernet
 
-def _build_fernet() -> MultiFernet:
-    keys_csv = os.environ["GATE_CODE_FERNET_KEYS"]  # comma-separated, newest first
-    return MultiFernet([Fernet(k.strip()) for k in keys_csv.split(",") if k.strip()])
-
 _fernet: MultiFernet | None = None
 
-def encrypt_gate_code(plaintext: str | None) -> str | None:
+
+def _build_fernet() -> MultiFernet:
+    keys_csv = os.environ["GATE_CODE_FERNET_KEYS"]  # comma-separated, newest first
+    keys = [k.strip() for k in keys_csv.split(",") if k.strip()]
+    if not keys:
+        raise RuntimeError("GATE_CODE_FERNET_KEYS is empty")
+    return MultiFernet([Fernet(k) for k in keys])
+
+
+def encrypt_notes(plaintext: str | None) -> str | None:
     if not plaintext:
         return None
     global _fernet
@@ -154,7 +153,8 @@ def encrypt_gate_code(plaintext: str | None) -> str | None:
         _fernet = _build_fernet()
     return _fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
-def decrypt_gate_code(ciphertext: str | None) -> str | None:
+
+def decrypt_notes(ciphertext: str | None) -> str | None:
     if not ciphertext:
         return None
     global _fernet
@@ -163,7 +163,7 @@ def decrypt_gate_code(ciphertext: str | None) -> str | None:
     return _fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
 ```
 
-`downgrade()` drops the three columns.
+`downgrade()` drops the `notes` column.
 
 ---
 

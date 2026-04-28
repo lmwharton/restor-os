@@ -29,8 +29,8 @@
 | `backend/api/customers/service.py` | 01J/01K | CRUD + dedup + match |
 | `backend/api/customers/router.py` | 01J/01K | 5 + 1 endpoints |
 | `backend/api/shared/phone.py` | 01J | `normalize_phone()` E.164 helper |
-| `backend/api/shared/encryption.py` | 01L | Fernet helpers for `gate_code` |
-| `backend/api/shared/sanitize_notes.py` | 01L | `sanitize_access_notes()` via bleach |
+| `backend/api/shared/encryption.py` | 01L | Fernet helpers for `properties.notes` |
+| `backend/api/shared/sanitize_notes.py` | 01L | `sanitize_notes()` via bleach |
 | `backend/api/shared/rate_limit.py` (if not present) | 01K | Per-user 60/min rate limit decorator for match endpoints |
 | `backend/tests/test_customers.py` | 01J | ~30 tests |
 | `backend/tests/test_phone_normalization.py` | 01J | ~6 tests |
@@ -38,7 +38,8 @@
 | `backend/tests/test_property_detail_endpoints.py` | 01L | ~12 tests |
 | `backend/tests/test_customer_detail_endpoints.py` | 01L | ~6 tests |
 | `backend/tests/test_job_clone.py` | 01M | ~14 tests |
-| `backend/tests/test_gate_code_encryption.py` | 01L | ~5 tests |
+| `backend/tests/test_notes_encryption.py` | 01L | ~5 tests |
+| `backend/tests/test_sanitize_notes.py` | 01L | ~4 tests |
 
 ### Created — Frontend
 | Path | Spec | Purpose |
@@ -238,11 +239,8 @@ CREATE POLICY "customers_delete" ON customers FOR DELETE USING (false);
 -- ============================================================================
 ALTER TABLE properties
     ADD COLUMN customer_id UUID REFERENCES customers(id) ON DELETE SET NULL;
-ALTER TABLE properties ADD COLUMN gate_code TEXT;  -- Fernet ciphertext (01L)
-ALTER TABLE properties ADD COLUMN key_location TEXT
-    CHECK (key_location IS NULL OR length(key_location) <= 500);
-ALTER TABLE properties ADD COLUMN access_notes TEXT
-    CHECK (access_notes IS NULL OR length(access_notes) <= 5000);
+ALTER TABLE properties ADD COLUMN notes TEXT  -- Fernet ciphertext (01L Decision #15)
+    CHECK (notes IS NULL OR length(notes) <= 16000);
 ALTER TABLE properties ADD COLUMN last_activity_at TIMESTAMPTZ;
 
 CREATE INDEX idx_properties_customer
@@ -359,9 +357,7 @@ ALTER TABLE jobs ADD COLUMN customer_email TEXT;
 DROP INDEX IF EXISTS idx_properties_company_last_activity;
 DROP INDEX IF EXISTS idx_properties_customer;
 ALTER TABLE properties DROP COLUMN IF EXISTS last_activity_at;
-ALTER TABLE properties DROP COLUMN IF EXISTS access_notes;
-ALTER TABLE properties DROP COLUMN IF EXISTS key_location;
-ALTER TABLE properties DROP COLUMN IF EXISTS gate_code;
+ALTER TABLE properties DROP COLUMN IF EXISTS notes;
 ALTER TABLE properties DROP COLUMN IF EXISTS customer_id;
 DROP TABLE IF EXISTS customers CASCADE;
 """)
@@ -483,64 +479,58 @@ git commit -m "shared: normalize_phone E.164 helper (01J)"
 
 ## Phase 3: Encryption + sanitization helpers (01L)
 
-### Task 3.1: Implement Fernet `gate_code` encryption helpers
+### Task 3.1: Implement Fernet notes encryption helpers
 
-**Files:** `backend/api/shared/encryption.py`, `backend/tests/test_gate_code_encryption.py`
+**Files:** `backend/api/shared/encryption.py`, `backend/tests/test_notes_encryption.py`
 
 - [ ] **Step 1:** Write failing tests:
 
 ```python
-# backend/tests/test_gate_code_encryption.py
-import os
+# backend/tests/test_notes_encryption.py
 import pytest
 from cryptography.fernet import Fernet
-from api.shared.encryption import encrypt_gate_code, decrypt_gate_code
+from api.shared.encryption import encrypt_notes, decrypt_notes
 
 
 @pytest.fixture(autouse=True)
 def setup_keys(monkeypatch):
     monkeypatch.setenv("GATE_CODE_FERNET_KEYS", Fernet.generate_key().decode())
-    # Reset module-level state
     import api.shared.encryption as enc
     enc._fernet = None
 
 
-def test_encrypt_decrypt_roundtrip():
-    plaintext = "1234"
-    ct = encrypt_gate_code(plaintext)
+def test_roundtrip():
+    plaintext = "Gate code: 1234. Key under mat. Dog in yard."
+    ct = encrypt_notes(plaintext)
     assert ct != plaintext
-    assert decrypt_gate_code(ct) == plaintext
+    assert decrypt_notes(ct) == plaintext
 
 
-def test_encrypt_none_returns_none():
-    assert encrypt_gate_code(None) is None
-    assert encrypt_gate_code("") is None
+def test_none_passthrough():
+    assert encrypt_notes(None) is None
+    assert encrypt_notes("") is None
+    assert decrypt_notes(None) is None
 
 
-def test_decrypt_none_returns_none():
-    assert decrypt_gate_code(None) is None
-
-
-def test_decrypt_invalid_raises():
+def test_invalid_token_raises():
     from cryptography.fernet import InvalidToken
     with pytest.raises(InvalidToken):
-        decrypt_gate_code("not-a-valid-token")
+        decrypt_notes("not-a-valid-token")
 
 
-def test_multifernet_rotates(monkeypatch):
-    """Old key still decrypts after new key prepended."""
+def test_multifernet_rotation(monkeypatch):
     old_key = Fernet.generate_key().decode()
     monkeypatch.setenv("GATE_CODE_FERNET_KEYS", old_key)
     import api.shared.encryption as enc
     enc._fernet = None
-    ct_old = encrypt_gate_code("9999")
+    ct_old = encrypt_notes("Gate 1234")
 
     new_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", f"{new_key},{old_key}")  # new first
+    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", f"{new_key},{old_key}")
     enc._fernet = None
-    assert decrypt_gate_code(ct_old) == "9999"  # old token still decrypts
-    ct_new = encrypt_gate_code("9999")
-    assert ct_new != ct_old  # encrypted with new key
+    assert decrypt_notes(ct_old) == "Gate 1234"
+    ct_new = encrypt_notes("Gate 1234")
+    assert ct_new != ct_old
 ```
 
 - [ ] **Step 2:** Run tests, expect failure.
@@ -562,7 +552,7 @@ def _build_fernet() -> MultiFernet:
     return MultiFernet([Fernet(k) for k in keys])
 
 
-def encrypt_gate_code(plaintext: str | None) -> str | None:
+def encrypt_notes(plaintext: str | None) -> str | None:
     if not plaintext:
         return None
     global _fernet
@@ -571,7 +561,7 @@ def encrypt_gate_code(plaintext: str | None) -> str | None:
     return _fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
 
 
-def decrypt_gate_code(ciphertext: str | None) -> str | None:
+def decrypt_notes(ciphertext: str | None) -> str | None:
     if not ciphertext:
         return None
     global _fernet
@@ -584,40 +574,40 @@ def decrypt_gate_code(ciphertext: str | None) -> str | None:
 
 ### Task 3.2: Notes sanitization helper
 
-**Files:** `backend/api/shared/sanitize_notes.py`, tests inline
+**Files:** `backend/api/shared/sanitize_notes.py`, `backend/tests/test_sanitize_notes.py`
 
-- [ ] **Step 1:** Implement (tests trivial — single function):
+- [ ] **Step 1:** Implement:
 
 ```python
 # backend/api/shared/sanitize_notes.py
 import bleach
 
-def sanitize_access_notes(value: str | None) -> str | None:
+def sanitize_notes(value: str | None) -> str | None:
     if not value:
         return value
-    # Strip ALL HTML tags + attributes; plaintext only
     return bleach.clean(value, tags=[], attributes={}, strip=True)
 ```
 
-- [ ] **Step 2:** Add tests in `backend/tests/test_sanitize_notes.py`:
+- [ ] **Step 2:** Tests:
 
 ```python
-from api.shared.sanitize_notes import sanitize_access_notes
+from api.shared.sanitize_notes import sanitize_notes
 
 def test_strips_html_tags():
-    assert sanitize_access_notes("<script>alert(1)</script>hello") == "hello"
+    assert sanitize_notes("<script>alert(1)</script>hello") == "hello"
 
 def test_strips_links():
-    assert sanitize_access_notes('<a href="x">link</a>') == "link"
+    assert sanitize_notes('<a href="x">link</a>') == "link"
 
 def test_passes_through_plain_text():
-    assert sanitize_access_notes("Dog in yard, bring treats") == "Dog in yard, bring treats"
+    assert sanitize_notes("Gate 1234. Dog in yard, call before arriving.") == \
+        "Gate 1234. Dog in yard, call before arriving."
 
 def test_none_passthrough():
-    assert sanitize_access_notes(None) is None
+    assert sanitize_notes(None) is None
 ```
 
-- [ ] **Step 3:** Run tests, commit.
+- [ ] **Step 3:** Run, commit.
 
 ---
 
@@ -991,37 +981,36 @@ async def list_property_photos(token, company_id, property_id, limit=50, offset=
 ### Task 5.6: PATCH /v1/properties/{id}/notes (the only notes endpoint)
 
 - [ ] **Step 1:** Tests:
-  - `test_partial_patch_only_changes_specified_fields`
+  - `test_set_notes` — body `{"notes": "Gate 1234. Dog in yard."}` → 200, GET returns same plaintext
+  - `test_clear_notes_with_explicit_null`
   - `test_member_can_edit` (NOT admin-only)
-  - `test_max_lengths_enforced`
-  - `test_access_notes_html_stripped` — body `<script>alert(1)</script>hello` → stored `hello`
-  - `test_gate_code_encrypted_at_rest` — DB row's `gate_code` differs from input plaintext
-  - `test_extra_fields_rejected`
+  - `test_max_length_enforced` — 16001 chars → 422
+  - `test_html_stripped_before_encrypt` — `<script>alert(1)</script>hi` → GET returns `hi`
+  - `test_notes_encrypted_at_rest` — direct DB SELECT shows ciphertext, not plaintext
+  - `test_extra_fields_rejected` — body with anything other than `notes` → 422
+  - `test_main_property_patch_rejects_notes_field` — main `PATCH /v1/properties/{id}` with `notes` body → 422
 
-- [ ] **Step 2:** Add `PropertyNotesUpdate` schema:
+- [ ] **Step 2:** Add `PropertyNotesUpdate` schema in `backend/api/properties/schemas.py`:
 
 ```python
 class PropertyNotesUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    gate_code: str | None = Field(None, max_length=128)
-    key_location: str | None = Field(None, max_length=500)
-    access_notes: str | None = Field(None, max_length=5000)
+    notes: str | None = Field(None, max_length=10000)
 ```
 
 - [ ] **Step 3:** Implement `update_property_notes`:
 
 ```python
-from api.shared.encryption import encrypt_gate_code
-from api.shared.sanitize_notes import sanitize_access_notes
+from api.shared.encryption import encrypt_notes, decrypt_notes
+from api.shared.sanitize_notes import sanitize_notes
 
 
 async def update_property_notes(token, company_id, user_id, property_id, body: PropertyNotesUpdate):
     client = await get_authenticated_client(token)
     update_data = body.model_dump(exclude_unset=True)
-    if "gate_code" in update_data:
-        update_data["gate_code"] = encrypt_gate_code(update_data["gate_code"])
-    if "access_notes" in update_data:
-        update_data["access_notes"] = sanitize_access_notes(update_data["access_notes"])
+    if "notes" in update_data:
+        clean = sanitize_notes(update_data["notes"])
+        update_data["notes"] = encrypt_notes(clean)
     if not update_data:
         return await get_property(token, company_id, property_id)
     result = await (
@@ -1033,12 +1022,25 @@ async def update_property_notes(token, company_id, user_id, property_id, body: P
     )
     if not result.data:
         raise AppException(404, "Property not found", "PROPERTY_NOT_FOUND")
-    return result.data
+    # Decrypt before returning
+    row = result.data
+    if row.get("notes"):
+        row["notes"] = decrypt_notes(row["notes"])
+    return row
 ```
 
-Note: when reading back property via `get_property`, decrypt `gate_code` before returning. Add a `_decrypt_property_row()` helper in service.
+Add `_decrypt_property_row(row)` helper in service.py and call it from `get_property`, `list_properties`, and any other read path:
 
-- [ ] **Step 4:** Add router endpoint, run tests, commit.
+```python
+def _decrypt_property_row(row: dict) -> dict:
+    if row.get("notes"):
+        row["notes"] = decrypt_notes(row["notes"])
+    return row
+```
+
+- [ ] **Step 4:** Update main `PATCH /v1/properties/{id}` schema (`PropertyUpdate`) to NOT include `notes` (extra="forbid" handles rejection automatically since `notes` isn't a declared field).
+
+- [ ] **Step 5:** Add router endpoint for `/notes`. Run tests, commit.
 
 ---
 
