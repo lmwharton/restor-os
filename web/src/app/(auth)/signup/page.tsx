@@ -2,33 +2,10 @@
 
 import { useState, useMemo, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import Link from "next/link";
 import FormField from "@/components/forms/FormField";
 import { createClient } from "@/lib/supabase/client";
-
-/**
- * Brand wordmark — water droplet + lowercase "crewmatic".
- * Mirrors the onboarding page mark so the two screens feel like one journey.
- */
-function WaterDropIcon() {
-  return (
-    <svg width="28" height="28" viewBox="0 0 28 28" fill="none" aria-hidden="true">
-      <path
-        d="M14 3C14 3 6 12.5 6 17.5C6 22 9.58 25 14 25C18.42 25 22 22 22 17.5C22 12.5 14 3 14 3Z"
-        fill="url(#signupDropGrad)"
-        stroke="#a63500"
-        strokeWidth="1.5"
-        strokeLinejoin="round"
-      />
-      <defs>
-        <linearGradient id="signupDropGrad" x1="6" y1="3" x2="22" y2="25" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#e85d26" stopOpacity="0.15" />
-          <stop offset="1" stopColor="#a63500" stopOpacity="0.08" />
-        </linearGradient>
-      </defs>
-    </svg>
-  );
-}
 
 function GoogleLogo() {
   return (
@@ -248,11 +225,13 @@ export default function SignupPage() {
       <div className="relative z-10 w-full max-w-[480px]">
 
         {/*
-          Floating feature badge — bottom-right, tilted, overlapping card edge.
-          Mirrors the login page's "Field Sync" / "AI Moisture Analysis"
+          Floating feature badge — top-right, tilted, overlapping card edge.
+          Mirrors the login page's "Field Sync" / "Moisture Analysis"
           pattern. Different feature on each auth/onboarding screen so the
           journey previews different parts of the product.
-          /signup highlights AI Photo Scope — the headline differentiator.
+          /signup highlights Photo Scope — the headline differentiator.
+          (No "AI" prefix anywhere — Crewmatic is positioned as the
+          contractor's restoration partner, not an AI tool.)
         */}
         <div
           className="pointer-events-none absolute -right-4 -top-2 z-20 w-[150px] overflow-hidden rounded-xl sm:-right-20 sm:top-12 sm:w-[180px]"
@@ -268,7 +247,7 @@ export default function SignupPage() {
               className="text-[8px] font-semibold uppercase tracking-[0.1em] font-[family-name:var(--font-geist-mono)] sm:text-[9px]"
               style={{ color: "rgba(255,255,255,0.6)" }}
             >
-              AI Photo Scope
+              Photo Scope
             </p>
           </div>
           <div className="flex items-baseline gap-1.5 px-3 pb-1">
@@ -304,15 +283,18 @@ export default function SignupPage() {
               "0 4px 32px rgba(166, 53, 0, 0.06), 0 1px 4px rgba(166, 53, 0, 0.04)",
           }}
         >
-          {/* Brand wordmark */}
-          <div className="mb-8 flex items-center justify-center gap-2.5">
-            <WaterDropIcon />
-            <span
-              className="text-[17px] font-semibold lowercase"
-              style={{ color: "#1f1b17", letterSpacing: "-0.45px" }}
-            >
-              crewmatic
-            </span>
+          {/* Brand wordmark — uses the official logo art (lowercase
+              "crewmatic" with droplet over the i). Replaces the prior
+              SVG droplet + text combo. */}
+          <div className="mb-8 flex items-center justify-center">
+            <Image
+              src="/crewmatic-logo.png"
+              alt="Crewmatic"
+              width={160}
+              height={42}
+              priority
+              className="h-auto w-[140px] sm:w-[160px]"
+            />
           </div>
 
           {/* Heading */}
@@ -320,15 +302,14 @@ export default function SignupPage() {
             className="mb-2 text-center text-[28px] font-bold leading-tight"
             style={{ color: "#1f1b17" }}
           >
-            Your AI estimating partner starts here
+            Your restoration partner starts here
           </h1>
           <p
             className="mb-8 text-center text-[15px] leading-relaxed"
             style={{ color: "#594139" }}
           >
-            Damage photos in. Xactimate-ready estimates out.
-            <br className="hidden sm:inline" />
-            Built for restoration contractors.
+            Damage photos in. Xactimate-ready estimates out. Built for
+            restoration contractors.
           </p>
 
           {/* Form */}

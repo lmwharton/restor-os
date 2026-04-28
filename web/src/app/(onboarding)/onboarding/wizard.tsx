@@ -325,8 +325,8 @@ function QuickAddModal({
  * has a discreet "Need help?" link to /support.
  *
  * `featureBadge` overlaps the card edge with a tilted "what you'll
- * unlock" preview pill — same pattern as `/login`'s "Field Sync" + "AI
- * Moisture Analysis" badges. Each onboarding step previews a different
+ * unlock" preview pill — same pattern as `/login`'s "Field Sync" +
+ * "Moisture Analysis" badges. Each onboarding step previews a different
  * product moment so the journey feels exciting, not transactional.
  */
 function Shell({

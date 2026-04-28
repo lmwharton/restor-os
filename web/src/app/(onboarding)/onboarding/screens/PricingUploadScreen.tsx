@@ -221,9 +221,9 @@ export default function PricingUploadScreen({
           Drop your prices in once. Save 2-4 hours per job.
         </h1>
         <p className="mt-2 text-[14px] leading-relaxed" style={{ color: "#594139" }}>
-          Upload your Xactimate spreadsheet now — the AI estimate engine
-          (shipping next) auto-applies these to every generated line item.
-          Optional; you can do this later from Settings.
+          Upload your Xactimate spreadsheet now — Photo Scope (shipping
+          next) auto-applies these to every generated line item. Optional;
+          you can do this later from Settings.
         </p>
       </div>
 

@@ -19,6 +19,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { PrimaryButton, SecondaryButton } from "../components/UiBits";
 import { getMyAccount, setOnboardingStep } from "@/lib/onboarding-api";
 
@@ -87,48 +88,19 @@ export default function WelcomeScreen({ companyName, hasPricing }: Props) {
     <div className="space-y-8 text-center sm:text-left">
       <div>
         {/*
-          Celebratory hero mark — large water-droplet on a soft brand-orange
-          ring. Replaces the 🎉 emoji (felt off-brand and WhatsApp-ish);
-          the droplet ties back to the wordmark and to "water restoration"
-          as the wedge product. Decorative — aria-hidden.
+          Celebratory hero — the official Crewmatic wordmark logo. Larger
+          than the in-wizard BrandHeader so it reads as a "you've arrived"
+          moment without leaning on a 🎉 emoji.
         */}
-        <div
-          className="mb-5 inline-flex h-16 w-16 items-center justify-center rounded-full"
-          aria-hidden
-          style={{
-            background:
-              "radial-gradient(circle at 30% 30%, #fff4ed 0%, #fde6d8 70%, #fbcab5 100%)",
-            boxShadow: "0 1px 0 rgba(166, 53, 0, 0.05)",
-          }}
-        >
-          <svg
-            width="36"
-            height="36"
-            viewBox="0 0 28 28"
-            fill="none"
-            aria-hidden
-          >
-            <path
-              d="M14 3C14 3 6 12.5 6 17.5C6 22 9.58 25 14 25C18.42 25 22 22 22 17.5C22 12.5 14 3 14 3Z"
-              fill="url(#welcomeDropGrad)"
-              stroke="#a63500"
-              strokeWidth="1.5"
-              strokeLinejoin="round"
-            />
-            <defs>
-              <linearGradient
-                id="welcomeDropGrad"
-                x1="6"
-                y1="3"
-                x2="22"
-                y2="25"
-                gradientUnits="userSpaceOnUse"
-              >
-                <stop stopColor="#e85d26" stopOpacity="0.45" />
-                <stop offset="1" stopColor="#a63500" stopOpacity="0.20" />
-              </linearGradient>
-            </defs>
-          </svg>
+        <div className="mb-5 flex justify-center sm:justify-start" aria-hidden>
+          <Image
+            src="/crewmatic-logo.png"
+            alt=""
+            width={220}
+            height={54}
+            priority
+            className="h-auto w-[180px] sm:w-[220px]"
+          />
         </div>
         <h1
           className="text-[28px] sm:text-[32px] font-bold leading-tight"
@@ -140,9 +112,9 @@ export default function WelcomeScreen({ companyName, hasPricing }: Props) {
           className="mt-3 text-[15px] sm:text-[16px] leading-relaxed"
           style={{ color: "#594139" }}
         >
-          You&apos;re all set. From here, Crewmatic turns damage photos into
-          Xactimate-ready estimates and keeps your job documentation tight
-          for every claim.
+          You&apos;re all set. From here, Crewmatic is your shop&apos;s
+          command center — log jobs, capture damage, and keep your
+          documentation tight for every claim.
         </p>
       </div>
 
