@@ -2,7 +2,7 @@
 
 import { use, useMemo } from "react";
 import Link from "next/link";
-import { useJob, useRooms, usePhotos, useReadings, useJobEvents } from "@/lib/hooks/use-jobs";
+import { useJob, useRooms, usePhotos, useJobEvents } from "@/lib/hooks/use-jobs";
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -123,9 +123,6 @@ export default function JobTimelinePage({
   const { data: job } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
   const { data: photos } = usePhotos(jobId);
-  // Fetch readings for the first room (for GPP display)
-  const firstRoomId = rooms?.[0]?.id ?? "";
-  const { data: readings } = useReadings(jobId, firstRoomId);
   const { data: events } = useJobEvents(jobId);
 
   const lossDate = job?.loss_date ?? null;
@@ -139,12 +136,6 @@ export default function JobTimelinePage({
   const photosForAi = photos?.filter((p) => p.selected_for_ai).length ?? 0;
   const untaggedPhotos = photos?.filter((p) => !p.room_id).length ?? 0;
   const totalPhotos = photos?.length ?? job?.photo_count ?? 0;
-
-  // GPP trend from readings
-  const gppValues = (readings ?? [])
-    .sort((a, b) => a.reading_date.localeCompare(b.reading_date))
-    .map((r) => r.atmospheric_gpp)
-    .filter((v): v is number => v !== null);
 
   if (!job) {
     return (
@@ -254,49 +245,7 @@ export default function JobTimelinePage({
       ),
     },
 
-    // 4. Readings
-    {
-      label: "Readings",
-      status:
-        gppValues.length === 0
-          ? "not-started"
-          : gppValues[gppValues.length - 1]! <= 45
-            ? "complete"
-            : "in-progress",
-      content: (
-        <div>
-          {gppValues.length > 0 ? (
-            <>
-              <p className="mb-1 text-[13px] font-medium text-on-surface">
-                {gppValues.map((v, i) => (
-                  <span key={i}>
-                    {Math.round(v)}
-                    {i < gppValues.length - 1 ? " \u2192 " : ""}
-                  </span>
-                ))}
-                {gppValues.length >= 2 &&
-                  gppValues[gppValues.length - 1]! <
-                    gppValues[gppValues.length - 2]! && (
-                    <span> &#8595;</span>
-                  )}
-              </p>
-              <p className="text-[12px] text-on-surface-variant">
-                Target: 45
-              </p>
-              {gppValues[gppValues.length - 1]! > 45 && (
-                <p className="mt-2 text-[13px] font-medium text-brand-accent">
-                  Day {dayNumber} &mdash; log readings
-                </p>
-              )}
-            </>
-          ) : (
-            <p className="text-[13px] text-on-surface-variant">
-              No readings yet
-            </p>
-          )}
-        </div>
-      ),
-    },
+    // 4. Moisture pins — Phase 2 rollup lands in a follow-up commit.
 
     // 5. Tech Notes
     {
@@ -462,15 +411,6 @@ export default function JobTimelinePage({
                     <circle cx="12" cy="13" r="4" stroke="currentColor" strokeWidth="1.5" />
                   </svg>
                   <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-semibold mt-1 uppercase tracking-[0.04em]">Photos</span>
-                </Link>
-                <Link
-                  href={`/jobs/${jobId}/readings`}
-                  className="flex flex-col items-center justify-center h-16 rounded-xl text-brand-accent bg-brand-accent/8 hover:bg-brand-accent/12 transition-colors border border-brand-accent/20"
-                >
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M18 20V10M12 20V4M6 20v-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <span className="text-[10px] font-[family-name:var(--font-geist-mono)] font-bold mt-1 uppercase tracking-[0.04em]">Readings</span>
                 </Link>
                 <Link
                   href={`/jobs/${jobId}/report`}

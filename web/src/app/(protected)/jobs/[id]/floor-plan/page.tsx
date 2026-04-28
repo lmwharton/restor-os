@@ -1,7 +1,7 @@
 "use client";
 
 import { use, useState, useCallback, useEffect, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import dynamic from "next/dynamic";
 import {
@@ -25,6 +25,8 @@ import type { KonvaFloorPlanHandle } from "@/components/sketch/konva-floor-plan"
 import { RoomConfirmationCard, type RoomConfirmationData } from "@/components/sketch/room-confirmation-card";
 import { FloorSelector } from "@/components/sketch/floor-selector";
 import { PickFloorModal } from "@/components/sketch/pick-floor-modal";
+import { CanvasModeSwitcher } from "@/components/sketch/canvas-mode-switcher";
+import { type CanvasMode } from "@/components/sketch/moisture-mode";
 import type { WallSegment } from "@/lib/types";
 import { isJobArchived as isJobArchivedStatus } from "@/lib/job-status";
 
@@ -300,6 +302,13 @@ let _wallSyncInFlight = false;
 let _canvasSaveInFlight = false;
 let _canvasDeferredDuringSave = false;
 
+// Rooms whose wall-sync GET has already failed at least once in this
+// session. Stale canvas_data can reference backend rooms that were later
+// deleted — retrying their sync on every autosave just spams the console.
+// Circuit-break per-id so the first failure silences subsequent attempts
+// without blocking other rooms' sync. Cleared naturally on full refresh.
+const _wallSyncBadRoomIds = new Set<string>();
+
 async function syncWallsToBackend(
   canvasData: FloorPlanData,
   jobRooms: Array<{ id: string; room_name: string }> | undefined,
@@ -345,6 +354,10 @@ async function _syncWallsToBackendImpl(
     if (!backendRoomId) continue;
     if (syncedBackendRoomIds.has(backendRoomId)) continue;
     syncedBackendRoomIds.add(backendRoomId);
+    // Circuit-break against rooms that already failed this session (stale
+    // canvas_data → backend room was deleted). Re-trying just spams the
+    // console on every autosave and burns a request per save.
+    if (_wallSyncBadRoomIds.has(backendRoomId)) continue;
 
     const roomWalls = wallsByRoom.get(room.id) ?? [];
     if (roomWalls.length === 0) continue;
@@ -418,6 +431,10 @@ async function _syncWallsToBackendImpl(
         canvasToBackendWallId.set(w.id, created.id);
       }
     } catch (err) {
+      // First-time warn so genuine failures still surface. Mark the id as
+      // bad so subsequent autosaves skip it quietly — covers the stale
+      // canvas_data case where the backend room no longer exists.
+      _wallSyncBadRoomIds.add(backendRoomId);
       console.warn("Wall sync failed for room", backendRoomId, err);
     }
   }
@@ -808,6 +825,11 @@ export default function FloorPlanPage({
   const { data: jobRooms } = useRooms(jobId);
   const createRoom = useCreateRoom(jobId);
   const updateRoom = useUpdateRoom(jobId);
+  // Forward-declared ref for the active floor id — its value is synced
+  // below (after the useState is declared) and read inside
+  // handleCreateRoom so the mutation carries floor_plan_id without
+  // depending on a closure over a variable not yet in scope.
+  const activeFloorIdRef = useRef<string | null>(null);
   const handleCreateRoom = useCallback((
     name: string,
     dimensions?: { width: number; height: number },
@@ -836,6 +858,16 @@ export default function FloorPlanPage({
     createRoom.mutate(
       {
         room_name: name,
+        // Critical: link the new job_rooms row to the floor the tech
+        // just drew it on. Without this, `job_rooms.floor_plan_id`
+        // lands as NULL and every downstream per-floor query (the
+        // moisture-report view, the adjuster portal, anything that
+        // buckets data by floor) can't attribute the room to its
+        // floor. Room creation before this fix silently produced
+        // orphan rows that rendered fine in the editor — because the
+        // editor keys off canvas_data, not `job_rooms.floor_plan_id`
+        // — but broke every join-based consumer.
+        floor_plan_id: activeFloorIdRef.current ?? undefined,
         length_ft: dimensions?.height ?? null,
         width_ft: dimensions?.width ?? null,
         // Persist the form's metadata so floor_level / room_type / ceiling / etc.
@@ -996,6 +1028,16 @@ export default function FloorPlanPage({
 
   const [activeFloorIdx, setActiveFloorIdx] = useState(0);
   const [activeFloorId, setActiveFloorId] = useState<string | null>(null);
+  // Canvas mode — Sketch (default, drawing) vs Moisture (pin placement + readings).
+  // Phase 3 will add Equipment, phase 4 Photos. Driven entirely by CANVAS_MODES
+  // config in components/sketch/moisture-mode.ts.
+  // Honor a ?mode=moisture deeplink (used by the Drying Progress card on the
+  // job detail page) so the canvas opens directly in the mode that matches
+  // the user's intent instead of a sketch-then-switch extra tap.
+  const searchParams = useSearchParams();
+  const initialMode: CanvasMode =
+    searchParams.get("mode") === "moisture" ? "moisture" : "sketch";
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>(initialMode);
   const lastCanvasRef = useRef<{ floorId: string | null; data: FloorPlanData } | null>(null);
   // Signature of the most recently saved canvas geometry (rooms/walls/doors/
   // windows). Guards against save handler re-invocations with identical data
@@ -1207,7 +1249,9 @@ export default function FloorPlanPage({
   // Keep refs so the save callback always uses the latest values
   const activeFloorRef = useRef(activeFloor);
   activeFloorRef.current = activeFloor;
-  const activeFloorIdRef = useRef(activeFloorId);
+  // Sync the forward-declared ref (see where handleCreateRoom is
+  // defined) so the create-room mutation always carries the current
+  // floor_plan_id, not a stale closure value.
   activeFloorIdRef.current = activeFloorId;
 
   const wasPendingRef = useRef(false);
@@ -2010,12 +2054,34 @@ export default function FloorPlanPage({
             }
           }}
           disabled={saveStatus === "saving"}
-          className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 ${
+          // min-w-[62px] reserves room for "Saving..." / "Saved ✓" / "Offline"
+          // so the Mode switcher to the right doesn't jog horizontally across
+          // save transitions. 62px comfortably fits every status string at 11px.
+          className={`ml-2 px-2.5 py-1 rounded-lg text-[11px] font-semibold cursor-pointer transition-opacity disabled:opacity-70 shrink-0 min-w-[62px] text-center ${
             saveStatus === "offline" ? "bg-on-surface-variant/70 text-white" : "bg-brand-accent text-on-primary hover:opacity-90"
           }`}
         >
           {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved ✓" : saveStatus === "offline" ? "Offline" : saveStatus === "error" ? "Retry" : "Save"}
         </button>
+
+        {/* Canvas mode switcher — Sketch ↔ Moisture. Cyan accent when Moisture
+            is active; icon-only on mobile, icon + label on sm+. Sits between
+            Save and the floor selector so mode + floor share the same header
+            row without adding new chrome. */}
+        <div className="ml-2 shrink-0">
+          <CanvasModeSwitcher
+            mode={canvasMode}
+            onChange={setCanvasMode}
+            // Do NOT disable on archived jobs. Mode switching is a
+            // pure navigation — Moisture Mode becomes an audit view
+            // (pin taps open a read-only reading sheet; writes are
+            // hidden in UI and 403'd by the backend). Blocking the
+            // switcher would leave archived-job techs unable to
+            // inspect historical drying data, which is exactly what
+            // the carrier expects them to be able to reference.
+            disabled={saveStatus === "saving"}
+          />
+        </div>
 
         {/* Floor selector — 4 preset slots (Basement/Main/Upper/Attic) with version chip on active */}
         <div className="ml-auto min-w-0">
@@ -2094,7 +2160,16 @@ export default function FloorPlanPage({
             handleChange(data);
           }}
           readOnly={isJobArchived}
-          rooms={jobRooms?.map((r) => ({ id: r.id, room_name: r.room_name, affected: r.affected }))}
+          rooms={jobRooms?.map((r) => ({
+            id: r.id,
+            room_name: r.room_name,
+            affected: r.affected,
+            // material_flags feeds the "Suggested materials" group in the
+            // moisture placement sheet — a bedroom's ["carpet","drywall"] will
+            // float carpet_pad + drywall to the top of the material dropdown.
+            // Coerce null → undefined so the prop type stays optional[].
+            material_flags: r.material_flags ?? undefined,
+          }))}
           onCreateRoom={handleCreateRoom}
           activeFloorLevel={activeFloorLevel}
           onCreateRoomOnDifferentFloor={handleCreateRoomOnDifferentFloor}
@@ -2103,6 +2178,7 @@ export default function FloorPlanPage({
           jobId={jobId}
           onSelectionChange={handleSelectionChange}
           onEditRoom={handleDesktopEditRoom}
+          canvasMode={canvasMode}
         />}
       </div>
 

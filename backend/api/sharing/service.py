@@ -11,6 +11,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
+from postgrest.exceptions import APIError
 from supabase import AsyncClient
 
 from api.config import settings
@@ -18,6 +19,22 @@ from api.shared.database import get_supabase_admin_client
 from api.shared.events import log_event
 from api.shared.exceptions import AppException
 from api.sharing.schemas import VALID_SCOPES, ShareLinkCreate
+
+# PostgREST / Postgres error codes we tolerate silently on optional
+# sub-queries — the cluster is misconfigured or the schema is
+# pre-migration, and the caller still deserves photos + line items even
+# if a moisture sub-query fails. All other APIErrors log AND re-raise
+# so ops has something to chase. Don't drop one of these thinking it's
+# redundant — they cover three distinct schema-cache / migration-state
+# failure modes that all surface as "table or column not findable":
+#
+#   PGRST205 — PostgREST: "Could not find the table in the schema cache"
+#              (table genuinely missing, or schema cache stale post-migration)
+#   PGRST204 — PostgREST: "Could not find the column in the schema cache"
+#              (column dropped, or post-rename cache miss)
+#   42P01    — Postgres SQLSTATE: undefined_table (relation does not exist
+#              at the database level — older migration state on this cluster)
+_POSTGREST_MISSING_TABLE_CODES = {"PGRST205", "PGRST204", "42P01"}
 
 logger = logging.getLogger(__name__)
 
@@ -73,13 +90,12 @@ async def create_share_link(
     except Exception as e:
         error_msg = str(e).lower()
         is_rpc_missing = "rpc_create_share_link" in error_msg and (
-            "not found" in error_msg or "does not exist" in error_msg
+            "not found" in error_msg
+            or "does not exist" in error_msg
             or "could not find" in error_msg
         )
         if is_rpc_missing:
-            logger.info(
-                "rpc_create_share_link not available, falling back to non-atomic path"
-            )
+            logger.info("rpc_create_share_link not available, falling back to non-atomic path")
             link = await _create_share_link_fallback(
                 client, job_id, company_id, user_id, body, token_hash, expires_at
             )
@@ -91,12 +107,17 @@ async def create_share_link(
     share_url = f"{base_url}/shared/{raw_token}"
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("share_link_created", extra={"extra_data": {
-        "job_id": str(job_id),
-        "scope": body.scope,
-        "expires_days": body.expires_days,
-        "duration_ms": duration_ms,
-    }})
+    logger.info(
+        "share_link_created",
+        extra={
+            "extra_data": {
+                "job_id": str(job_id),
+                "scope": body.scope,
+                "expires_days": body.expires_days,
+                "duration_ms": duration_ms,
+            }
+        },
+    )
 
     return {
         "share_url": share_url,
@@ -265,19 +286,128 @@ async def get_shared_job(token: str) -> dict:
     for photo in photos:
         photo["signed_url"] = url_map.get(photo.get("storage_url", ""), "")
 
-    # Fetch moisture readings (if scope allows)
-    moisture_readings: list[dict] = []
+    # Moisture pins + readings. Scope-gated so `photos_only` stays lean.
+    # Spec 01H Phase 2C (Brett §8.6): the adjuster portal renders a
+    # moisture report showing every pin's full reading history on a
+    # user-selected date; shipping both pins and their readings in the
+    # shared payload lets the portal route render without any
+    # follow-up queries.
+    moisture_pins: list[dict] = []
+    floor_plans: list[dict] = []
+    # Track when a moisture-scope query hit a tolerated "table missing"
+    # code — lets us surface "temporarily unavailable" to the adjuster
+    # instead of the generic "no readings logged yet" empty state, and
+    # gives ops a specific signal to chase.
+    moisture_unavailable = False
     if scope in ("full", "restoration_only"):
-        readings_result = await (
-            admin.table("moisture_readings")
-            .select("*")
-            .eq("job_id", job_id)
-            .order("reading_date")
-            .execute()
-        )
-        moisture_readings = readings_result.data or []
+        try:
+            pins_result = await (
+                admin.table("moisture_pins")
+                .select(
+                    "*, "
+                    "readings:moisture_pin_readings(*), "
+                    "room:job_rooms!room_id(floor_plan_id)",
+                )
+                .eq("job_id", job_id)
+                .eq("company_id", company_id)
+                .order("created_at", desc=False)
+                .order(
+                    "reading_date",
+                    desc=True,
+                    foreign_table="readings",
+                )
+                .execute()
+            )
+            # Flatten the room embed into a scalar `floor_plan_id` on
+            # each pin so the portal wrapper can filter without a
+            # secondary join. Same shape as list_pins_by_job.
+            moisture_pins = []
+            for pin in pins_result.data or []:
+                room_embed = pin.pop("room", None)
+                if isinstance(room_embed, list):
+                    room_embed = room_embed[0] if room_embed else None
+                pin["floor_plan_id"] = (
+                    room_embed.get("floor_plan_id")
+                    if room_embed
+                    else None
+                )
+                moisture_pins.append(pin)
+        except APIError as e:
+            # Pre-Phase-2 DBs lack moisture_pins; tolerate that but log
+            # every failure so an empty moisture_pins[] in a supposedly
+            # in-scope share is attributable (pr-review-lessons #2).
+            if getattr(e, "code", None) in _POSTGREST_MISSING_TABLE_CODES:
+                logger.warning(
+                    "shared_resolve: moisture_pins table missing "
+                    "(job_id=%s scope=%s code=%s) — returning empty",
+                    job_id,
+                    scope,
+                    getattr(e, "code", None),
+                )
+                moisture_unavailable = True
+            else:
+                logger.exception(
+                    "shared_resolve: moisture_pins query failed "
+                    "(job_id=%s scope=%s)",
+                    job_id,
+                    scope,
+                )
+                raise
 
-    # Fetch line items (if they exist)
+        # ALL current floor plans for the job's property — the portal's
+        # moisture report needs every floor the job touches, not just
+        # the single row pinned via jobs.floor_plan_id. Multi-floor
+        # jobs (basement / main / upper / attic) ship pins across
+        # floors; rendering only one floor drops the rest silently.
+        # Scope by property_id so sibling jobs on the same property
+        # don't leak their floors into this report.
+        prop_id = job.get("property_id")
+        if prop_id:
+            try:
+                # Defense-in-depth: property_id is already tenant-scoped
+                # (properties belong to exactly one company), but the
+                # admin client bypasses RLS, so adding company_id guards
+                # against a future data-ops bug where a property gets
+                # re-parented. Not currently exploitable; cheap to add.
+                fps_res = await (
+                    admin.table("floor_plans")
+                    .select(
+                        "id, floor_number, floor_name, canvas_data, "
+                        "is_current, property_id",
+                    )
+                    .eq("property_id", prop_id)
+                    .eq("company_id", company_id)
+                    .eq("is_current", True)
+                    .order("floor_number", desc=False)
+                    .execute()
+                )
+                floor_plans = fps_res.data or []
+            except APIError as e:
+                if getattr(e, "code", None) in _POSTGREST_MISSING_TABLE_CODES:
+                    logger.warning(
+                        "shared_resolve: floor_plans table missing "
+                        "(job_id=%s scope=%s code=%s) — returning empty",
+                        job_id,
+                        scope,
+                        getattr(e, "code", None),
+                    )
+                    moisture_unavailable = True
+                else:
+                    logger.exception(
+                        "shared_resolve: floor_plans query failed "
+                        "(job_id=%s scope=%s)",
+                        job_id,
+                        scope,
+                    )
+                    raise
+
+    # Fetch line items (if they exist). Same narrowed-except shape as
+    # the moisture_pins + floor_plans blocks above — tolerate the
+    # "table missing" PGRST codes silently (for pre-Phase-N DBs), but
+    # log + re-raise anything else so an empty `line_items` is never
+    # attributable-to-nothing. Previously this was a bare `except
+    # Exception: pass` — siblings of the H2 fix landed but this one
+    # was missed, flagged in review round 2.
     line_items: list[dict] = []
     if scope in ("full", "restoration_only"):
         try:
@@ -285,8 +415,23 @@ async def get_shared_job(token: str) -> dict:
                 admin.table("line_items").select("*").eq("job_id", job_id).execute()
             )
             line_items = items_result.data or []
-        except Exception:
-            pass  # Table may not exist yet
+        except APIError as e:
+            if getattr(e, "code", None) in _POSTGREST_MISSING_TABLE_CODES:
+                logger.warning(
+                    "shared_resolve: line_items table missing "
+                    "(job_id=%s scope=%s code=%s) — returning empty",
+                    job_id,
+                    scope,
+                    getattr(e, "code", None),
+                )
+            else:
+                logger.exception(
+                    "shared_resolve: line_items query failed "
+                    "(job_id=%s scope=%s)",
+                    job_id,
+                    scope,
+                )
+                raise
 
     # Fetch company info (public fields only)
     company_result = await (
@@ -299,18 +444,48 @@ async def get_shared_job(token: str) -> dict:
     company = company_result.data or {}
 
     duration_ms = round((time.perf_counter() - start) * 1000, 1)
-    logger.info("share_link_resolved", extra={"extra_data": {
-        "job_id": job_id,
-        "scope": scope,
-        "photo_count": len(photos),
-        "duration_ms": duration_ms,
-    }})
+    logger.info(
+        "share_link_resolved",
+        extra={
+            "extra_data": {
+                "job_id": job_id,
+                "scope": scope,
+                "photo_count": len(photos),
+                "duration_ms": duration_ms,
+            }
+        },
+    )
+
+    # Moisture-access discriminant — collapses four distinct "empty"
+    # states into one value the portal can branch on. Previously the
+    # portal saw moisture_pins=[] and guessed; now it knows which of
+    # {scope-denied, backend-unavailable, not-yet-logged, present}
+    # applies so the empty-state copy can match the cause.
+    if scope not in ("full", "restoration_only"):
+        moisture_access = "denied"
+    elif moisture_unavailable:
+        moisture_access = "unavailable"
+    elif not floor_plans or not moisture_pins:
+        moisture_access = "empty"
+    else:
+        moisture_access = "present"
 
     return {
         "job": job,
         "rooms": rooms,
         "photos": photos,
-        "moisture_readings": moisture_readings,
         "line_items": line_items,
+        "moisture_pins": moisture_pins,
+        "floor_plans": floor_plans,
         "company": company,
+        "moisture_access": moisture_access,
+        # Scope-gated alongside moisture_pins + floor_plans. A
+        # photos_only adjuster shouldn't see the moisture primary
+        # floor pointer even though a UUID is opaque — the field
+        # semantically belongs to the restoration scope.
+        "primary_floor_id": (
+            job.get("floor_plan_id")
+            if scope in ("full", "restoration_only")
+            else None
+        ),
     }

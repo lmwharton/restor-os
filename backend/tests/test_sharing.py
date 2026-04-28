@@ -14,8 +14,6 @@ boundaries, auth requirements on protected endpoints.
 import hashlib
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
-
-from tests.conftest import AsyncSupabaseMock
 from uuid import uuid4
 
 import jwt
@@ -25,6 +23,7 @@ from fastapi.testclient import TestClient
 from api.config import settings
 from api.main import app
 from api.sharing.service import _hash_token
+from tests.conftest import AsyncSupabaseMock
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -210,7 +209,7 @@ def _shared_view_table_router(mock_admin, link_data, job_data, photos=None):
                 MagicMock(data=job_data)
             )
             return t
-        if name in ("job_rooms", "moisture_readings"):
+        if name == "job_rooms":
             t = AsyncSupabaseMock()
             t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                 MagicMock(data=[])
@@ -239,13 +238,22 @@ def _shared_view_table_router(mock_admin, link_data, job_data, photos=None):
 
 def _shared_view_table_router_with_data(
     mock_admin, link_data, job_data, rooms=None, photos=None,
-    moisture_readings=None, line_items=None, company=None,
+    line_items=None, moisture_pins=None, floor_plans=None, company=None,
 ):
-    """Fully configurable table router for shared view tests."""
+    """Fully configurable table router for shared view tests.
+
+    The ``moisture_readings`` kwarg was removed in Spec 01H Phase 2 —
+    the sharing service no longer queries that table. Pin-based
+    moisture is served via ``moisture_pins`` kwarg (Phase 2C per Brett
+    §8.6). Tests that exercise the portal's moisture-report data path
+    set ``moisture_pins=[...]`` and ``floor_plans=[<row>, ...]``
+    (one row per floor).
+    """
     rooms = rooms or []
     photos = photos or []
-    moisture_readings = moisture_readings or []
     line_items = line_items or []
+    moisture_pins = moisture_pins or []
+    floor_plans = floor_plans or []
     company = company or {"name": "DryPros", "phone": "555-0000", "logo_url": None}
 
     def table_router(name):
@@ -273,17 +281,36 @@ def _shared_view_table_router_with_data(
                 MagicMock(data=photos)
             )
             return t
-        if name == "moisture_readings":
-            t = AsyncSupabaseMock()
-            t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-                MagicMock(data=moisture_readings)
-            )
-            return t
         if name == "line_items":
             t = AsyncSupabaseMock()
             t.select.return_value.eq.return_value.execute.return_value = MagicMock(
                 data=line_items
             )
+            return t
+        if name == "moisture_pins":
+            # Mirror the service's query shape: .select(…).eq(job_id)
+            # .eq(company_id).order("created_at").order(reading_date, foreign_table).execute()
+            # The fake just returns whatever moisture_pins was set to;
+            # the service unwraps `.data` and passes through.
+            t = AsyncSupabaseMock()
+            (
+                t.select.return_value.eq.return_value.eq.return_value.order
+                .return_value.order.return_value.execute.return_value
+            ) = MagicMock(data=moisture_pins)
+            return t
+        if name == "floor_plans":
+            # Service queries:
+            #   .select(...)
+            #   .eq(property_id).eq(company_id).eq(is_current)  # 3 eq()s
+            #   .order(floor_number)
+            #   .execute()
+            # Third eq() is defense-in-depth company_id scoping (added
+            # in review round 2). Returns a LIST of rows.
+            t = AsyncSupabaseMock()
+            (
+                t.select.return_value.eq.return_value.eq.return_value
+                .eq.return_value.order.return_value.execute.return_value
+            ) = MagicMock(data=floor_plans)
             return t
         if name == "companies":
             t = AsyncSupabaseMock()
@@ -1092,7 +1119,7 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """photos_only scope returns empty moisture_readings and line_items."""
+        """photos_only scope returns empty line_items and excludes moisture."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "e" * 32
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1100,14 +1127,15 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="photos_only"
         )
 
-        # Use the detailed router so we can verify moisture/line_items are NOT fetched
+        # Use the detailed router so we can verify line_items is NOT fetched.
+        # moisture was removed from the shared payload in Spec 01H Phase 2 —
+        # no longer a key on the response, so no assertion needed here.
         _shared_view_table_router_with_data(
             mock_admin,
             link_data,
             {**mock_job_data},
             rooms=[{"id": str(uuid4()), "name": "Living Room", "sort_order": 1}],
             photos=[{"id": str(uuid4()), "storage_url": None, "created_at": "2026-03-25T10:00:00Z"}],
-            moisture_readings=[{"id": str(uuid4()), "value": 42}],
             line_items=[{"id": str(uuid4()), "code": "WTR DRYOUT"}],
         )
 
@@ -1115,12 +1143,13 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            # photos_only scope should NOT include moisture readings or line items
-            assert data["moisture_readings"] == []
+            # photos_only scope should NOT include line items
             assert data["line_items"] == []
             # But job, rooms, photos, company should still be present
             assert data["job"] is not None
             assert len(data["rooms"]) == 1
+            # moisture_readings key no longer in the payload at all
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_restoration_only_scope(
         self,
@@ -1129,7 +1158,8 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """restoration_only scope includes moisture readings and line items."""
+        """restoration_only scope includes line items (moisture shipped
+        separately via pin-based payload in Phase 2C)."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "f" * 32
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1137,14 +1167,12 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="restoration_only"
         )
 
-        moisture = [{"id": str(uuid4()), "value": 42, "reading_date": "2026-03-25"}]
         items = [{"id": str(uuid4()), "code": "WTR DRYOUT", "quantity": 1}]
 
         _shared_view_table_router_with_data(
             mock_admin,
             link_data,
             {**mock_job_data},
-            moisture_readings=moisture,
             line_items=items,
         )
 
@@ -1152,8 +1180,8 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            assert len(data["moisture_readings"]) == 1
             assert len(data["line_items"]) == 1
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_full_scope_includes_all(
         self,
@@ -1162,7 +1190,8 @@ class TestPublicSharedView:
         mock_company_id,
         mock_job_data,
     ):
-        """full scope includes moisture readings and line items."""
+        """full scope includes line items + rooms (moisture shipped
+        separately via pin-based payload in Phase 2C)."""
         mock_admin = AsyncSupabaseMock()
         raw_token = "abcd" * 8
         token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -1170,7 +1199,6 @@ class TestPublicSharedView:
             mock_job_id, mock_company_id, token_hash, scope="full"
         )
 
-        moisture = [{"id": str(uuid4()), "value": 55, "reading_date": "2026-03-26"}]
         items = [{"id": str(uuid4()), "code": "DRYWLL RR", "quantity": 2}]
         rooms = [{"id": str(uuid4()), "name": "Bedroom", "sort_order": 1}]
 
@@ -1179,7 +1207,6 @@ class TestPublicSharedView:
             link_data,
             {**mock_job_data},
             rooms=rooms,
-            moisture_readings=moisture,
             line_items=items,
         )
 
@@ -1187,9 +1214,9 @@ class TestPublicSharedView:
             response = client.get(f"/v1/shared/{raw_token}")
             assert response.status_code == 200
             data = response.json()
-            assert len(data["moisture_readings"]) == 1
             assert len(data["line_items"]) == 1
             assert len(data["rooms"]) == 1
+            assert "moisture_readings" not in data
 
     def test_public_shared_view_with_photos_and_signed_urls(
         self,
@@ -1240,12 +1267,6 @@ class TestPublicSharedView:
                 t = AsyncSupabaseMock()
                 t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                     MagicMock(data=photos)
-                )
-                return t
-            if name == "moisture_readings":
-                t = AsyncSupabaseMock()
-                t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
-                    MagicMock(data=[])
                 )
                 return t
             if name == "line_items":
@@ -1397,7 +1418,7 @@ class TestPublicSharedView:
                     MagicMock(data={**mock_job_data})
                 )
                 return t
-            if name in ("job_rooms", "moisture_readings"):
+            if name == "job_rooms":
                 t = AsyncSupabaseMock()
                 t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
                     MagicMock(data=[])
@@ -1411,9 +1432,17 @@ class TestPublicSharedView:
                 return t
             if name == "line_items":
                 t = AsyncSupabaseMock()
-                # Simulate table not existing yet
-                t.select.return_value.eq.return_value.execute.side_effect = Exception(
-                    "relation 'line_items' does not exist"
+                # Simulate the exact PostgREST shape the narrowed
+                # except block tolerates — APIError with code PGRST205
+                # ("table not found in schema cache"). Any other
+                # exception shape would correctly re-raise now.
+                from postgrest.exceptions import APIError
+
+                t.select.return_value.eq.return_value.execute.side_effect = APIError(
+                    {
+                        "code": "PGRST205",
+                        "message": "relation 'line_items' does not exist",
+                    }
                 )
                 return t
             if name == "companies":
@@ -1432,6 +1461,284 @@ class TestPublicSharedView:
             data = response.json()
             # line_items gracefully falls back to empty list
             assert data["line_items"] == []
+
+    def test_public_shared_view_moisture_pins_apierror_unavailable(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """When the moisture_pins query hits a tolerated PGRST table-
+        missing code, the response surfaces moisture_access='unavailable'
+        rather than collapsing to 'empty'. Pins the discriminant
+        precedence (denied → unavailable → empty → present) and gives
+        the portal the signal to render the "temporarily unavailable"
+        copy instead of "no readings logged yet."
+        """
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "u" * 32
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="restoration_only"
+        )
+
+        from postgrest.exceptions import APIError
+
+        def table_router(name):
+            if name == "share_links":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+                    MagicMock(data=link_data)
+                )
+                return t
+            if name == "jobs":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+                    MagicMock(data={**mock_job_data})
+                )
+                return t
+            if name == "job_rooms":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+                    MagicMock(data=[])
+                )
+                return t
+            if name == "photos":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.order.return_value.execute.return_value = (
+                    MagicMock(data=[])
+                )
+                return t
+            if name == "moisture_pins":
+                # Simulate the schema-cache-miss case the narrowed
+                # except tolerates. Should NOT raise to the caller;
+                # should land moisture_access='unavailable'.
+                t = AsyncSupabaseMock()
+                (
+                    t.select.return_value.eq.return_value.eq.return_value
+                    .order.return_value.order.return_value.execute.side_effect
+                ) = APIError({"code": "PGRST205", "message": "missing"})
+                return t
+            if name == "line_items":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.execute.return_value = (
+                    MagicMock(data=[])
+                )
+                return t
+            if name == "companies":
+                t = AsyncSupabaseMock()
+                t.select.return_value.eq.return_value.single.return_value.execute.return_value = (
+                    MagicMock(data={"name": "DryPros", "phone": None, "logo_url": None})
+                )
+                return t
+            return AsyncSupabaseMock()
+
+        mock_admin.table.side_effect = table_router
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["moisture_access"] == "unavailable"
+            assert data["moisture_pins"] == []
+
+    def test_public_shared_view_photos_only_omits_primary_floor_id(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """primary_floor_id is scope-gated alongside moisture_pins +
+        floor_plans. A photos_only adjuster should never see the
+        moisture primary-floor pointer, even though the underlying
+        UUID is opaque — the field semantically belongs to the
+        restoration scope. Pinning this prevents a future regression
+        where someone hoists primary_floor_id outside the scope check.
+        """
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "p" * 32
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="photos_only"
+        )
+
+        # Job HAS a pinned floor_plan_id — the test verifies it stays
+        # OUT of the response, not that it was missing upstream.
+        _shared_view_table_router_with_data(
+            mock_admin,
+            link_data,
+            {**mock_job_data, "floor_plan_id": str(uuid4())},
+        )
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["moisture_access"] == "denied"
+            assert data["primary_floor_id"] is None
+
+    # ─── Moisture pins scope gating (Brett §8.6 adjuster-portal view) ─
+
+    def test_public_shared_view_photos_only_excludes_moisture_pins(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """photos_only scope returns an empty moisture_pins list and
+        empty floor_plans — the portal's moisture-report route should
+        404-or-empty on a photos_only share link rather than exposing
+        pin data the adjuster wasn't authorized to see."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "m1" * 16
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="photos_only"
+        )
+
+        _shared_view_table_router_with_data(
+            mock_admin,
+            link_data,
+            {**mock_job_data, "floor_plan_id": str(uuid4())},
+            # Even though pins exist on the job, photos_only scope
+            # must not surface them.
+            moisture_pins=[
+                {
+                    "id": str(uuid4()),
+                    "location_name": "Floor, NW Corner",
+                    "readings": [],
+                },
+            ],
+            floor_plans=[{"id": str(uuid4()), "canvas_data": {}, "is_current": True}],
+        )
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert data["moisture_pins"] == []
+            assert data["floor_plans"] == []
+
+    def test_public_shared_view_restoration_only_includes_moisture_pins(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """restoration_only scope MUST include moisture_pins +
+        floor_plans — without them the adjuster-portal moisture-report
+        route has nothing to render (Brett §8.6 "available in the
+        adjuster portal without requiring a PDF export"). Multi-floor
+        jobs get every floor, not just the pinned one."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "m2" * 16
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="restoration_only"
+        )
+
+        fp_id = str(uuid4())
+        pins = [
+            {
+                "id": str(uuid4()),
+                "location_name": "Floor, Center, Kitchen",
+                "material": "drywall",
+                "dry_standard": 16.0,
+                "canvas_x": 100.0,
+                "canvas_y": 100.0,
+                "readings": [
+                    {
+                        "id": str(uuid4()),
+                        "reading_value": 18,
+                        "reading_date": "2026-04-22",
+                    },
+                ],
+            },
+        ]
+        _shared_view_table_router_with_data(
+            mock_admin,
+            link_data,
+            {**mock_job_data, "floor_plan_id": fp_id, "property_id": str(uuid4())},
+            moisture_pins=pins,
+            # Two floors returned (basement + main). Real multi-floor
+            # jobs place pins on both — the portal must render each.
+            floor_plans=[
+                {
+                    "id": str(uuid4()),
+                    "floor_number": 0,
+                    "floor_name": "Basement",
+                    "canvas_data": {"rooms": [], "walls": []},
+                    "is_current": True,
+                    "property_id": "prop-1",
+                },
+                {
+                    "id": fp_id,
+                    "floor_number": 1,
+                    "floor_name": "Main",
+                    "canvas_data": {"rooms": [], "walls": []},
+                    "is_current": True,
+                    "property_id": "prop-1",
+                },
+            ],
+        )
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["moisture_pins"]) == 1
+            assert data["moisture_pins"][0]["location_name"] == (
+                "Floor, Center, Kitchen"
+            )
+            # Readings survive the round-trip for the report view's
+            # per-pin history rendering.
+            assert len(data["moisture_pins"][0]["readings"]) == 1
+            assert len(data["floor_plans"]) == 2
+            # Ordering matches service: sorted by floor_number asc.
+            assert [fp["floor_name"] for fp in data["floor_plans"]] == [
+                "Basement",
+                "Main",
+            ]
+
+    def test_public_shared_view_full_includes_moisture_pins(
+        self,
+        client,
+        mock_job_id,
+        mock_company_id,
+        mock_job_data,
+    ):
+        """full scope is a superset of restoration_only — includes
+        moisture_pins + floor_plans + everything else."""
+        mock_admin = AsyncSupabaseMock()
+        raw_token = "m3" * 16
+        token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+        link_data = _make_share_link_data(
+            mock_job_id, mock_company_id, token_hash, scope="full"
+        )
+
+        _shared_view_table_router_with_data(
+            mock_admin,
+            link_data,
+            {**mock_job_data, "floor_plan_id": str(uuid4()), "property_id": "prop-1"},
+            moisture_pins=[
+                {"id": str(uuid4()), "location_name": "Wall, North", "readings": []},
+                {"id": str(uuid4()), "location_name": "Floor, Center", "readings": []},
+            ],
+            floor_plans=[
+                {"id": str(uuid4()), "canvas_data": {}, "is_current": True, "floor_number": 1},
+            ],
+        )
+
+        with _patch_public_only(mock_admin):
+            response = client.get(f"/v1/shared/{raw_token}")
+            assert response.status_code == 200
+            data = response.json()
+            assert len(data["moisture_pins"]) == 2
+            assert len(data["floor_plans"]) == 1
 
 
 # ---------------------------------------------------------------------------

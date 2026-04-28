@@ -198,43 +198,6 @@ async def get_valid_room(
     return room
 
 
-async def get_valid_reading(
-    reading_id: UUID = Path(..., description="Reading ID"),
-    job_id: UUID = Path(..., description="Job ID"),
-    ctx: AuthContext = Depends(get_auth_context),
-    request: Request = None,
-) -> dict:
-    """Validate moisture reading exists and belongs to the job + company.
-
-    Uses PostgREST embedded resource syntax to fetch the reading WITH its
-    parent job in a single query, validating both ownership and existence
-    without an extra roundtrip. Returns the reading row dict (without the
-    nested jobs key).
-    """
-    token = _get_token(request)
-    client = await get_authenticated_client(token)
-
-    result = await (
-        client.table("moisture_readings")
-        .select("*, jobs!inner(id, company_id, deleted_at)")
-        .eq("id", str(reading_id))
-        .eq("job_id", str(job_id))
-        .eq("jobs.company_id", str(ctx.company_id))
-        .is_("jobs.deleted_at", "null")
-        .single()
-        .execute()
-    )
-    if not result.data:
-        raise AppException(
-            status_code=404,
-            detail="Reading not found",
-            error_code="READING_NOT_FOUND",
-        )
-    # Remove the embedded jobs data before returning — callers expect a flat reading dict
-    reading = {k: v for k, v in result.data.items() if k != "jobs"}
-    return reading
-
-
 async def get_valid_property(
     property_id: UUID = Path(..., description="Property ID"),
     ctx: AuthContext = Depends(get_auth_context),

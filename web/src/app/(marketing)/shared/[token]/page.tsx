@@ -3,7 +3,6 @@ import type {
   Job,
   Room,
   Photo,
-  MoistureReading,
 } from "@/lib/types";
 
 // ─── Types for the shared endpoint response ────────────────────────────
@@ -17,7 +16,6 @@ interface SharedJobResponse {
   job: Job;
   rooms: Room[];
   photos: Photo[];
-  moisture_readings: MoistureReading[];
   company: SharedCompany;
 }
 
@@ -124,7 +122,7 @@ export default async function SharedJobPage({
     );
   }
 
-  const { job, rooms, photos, moisture_readings, company } = data;
+  const { job, rooms, photos, company } = data;
 
   return (
     <div className="min-h-dvh bg-surface">
@@ -267,74 +265,7 @@ export default async function SharedJobPage({
           </section>
         )}
 
-        {/* ── Moisture Readings ─────────────────────────────── */}
-        {moisture_readings.length > 0 && (
-          <section className="space-y-3">
-            <h3 className="text-base font-semibold text-on-surface">
-              Moisture Readings ({moisture_readings.length})
-            </h3>
-            <div className="space-y-3">
-              {moisture_readings.map((reading) => (
-                <div
-                  key={reading.id}
-                  className="rounded-xl border border-outline-variant/30 bg-surface-container-lowest p-4 space-y-3"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-sm font-medium text-on-surface">
-                        {reading.day_number !== null ? `Day ${reading.day_number}` : "Reading"} &mdash; {formatDate(reading.reading_date)}
-                      </p>
-                    </div>
-                    <div className="flex gap-4 text-xs font-[family-name:var(--font-geist-mono)] text-on-surface-variant">
-                      {reading.atmospheric_temp_f !== null && (
-                        <span>{reading.atmospheric_temp_f}F</span>
-                      )}
-                      {reading.atmospheric_rh_pct !== null && (
-                        <span>{reading.atmospheric_rh_pct}% RH</span>
-                      )}
-                      {reading.atmospheric_gpp !== null && (
-                        <span>{reading.atmospheric_gpp} GPP</span>
-                      )}
-                    </div>
-                  </div>
-
-                  {reading.points.length > 0 && (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                      {reading.points.map((pt) => (
-                        <div
-                          key={pt.id}
-                          className="flex items-center justify-between rounded-lg bg-surface-container-low px-3 py-2"
-                        >
-                          <span className="text-xs text-on-surface-variant truncate mr-2">
-                            {pt.location_name}
-                          </span>
-                          <span className="text-sm font-semibold font-[family-name:var(--font-geist-mono)] text-on-surface tabular-nums">
-                            {pt.reading_value}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {reading.dehus.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {reading.dehus.map((d) => (
-                        <span
-                          key={d.id}
-                          className="inline-flex items-center gap-1.5 rounded-full bg-tertiary/10 px-3 py-1 text-xs text-tertiary font-[family-name:var(--font-geist-mono)]"
-                        >
-                          {d.dehu_model ?? "Dehu"}
-                          {d.rh_out_pct !== null && ` ${d.rh_out_pct}%`}
-                          {d.temp_out_f !== null && ` ${d.temp_out_f}F`}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
+        {/* Moisture floor plan + pin history renders here in Phase 2C (portal view). */}
       </div>
 
       {/* ── Footer ───────────────────────────────────────────── */}

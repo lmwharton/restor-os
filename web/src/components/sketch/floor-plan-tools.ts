@@ -9,7 +9,8 @@ export type ToolType =
   | "cutout"
   | "select"
   | "delete"
-  | "trace";
+  | "trace"
+  | "pin";
 
 /** Floor opening (stairwell, HVAC shaft, elevator): a rectangular cutout
  *  inside a room that subtracts from its floor SF. Lives on the parent
@@ -371,6 +372,10 @@ export const TOOLS: Array<{ id: ToolType; label: string; icon: string; group: "d
   { id: "window", label: "Window", icon: "window", group: "place" },
   { id: "opening", label: "Opening", icon: "opening", group: "place" },
   { id: "cutout", label: "Cutout", icon: "cutout", group: "place" },
+  // Pin: Moisture Mode primary action. Only surfaces when canvas is in
+  // Moisture Mode (filtered via CANVAS_MODES.moisture.tools). Never shows
+  // in Sketch Mode so Phase 1 users aren't confused by a tool they can't use.
+  { id: "pin", label: "Pin", icon: "pin", group: "place" },
   { id: "select", label: "Select", icon: "pointer", group: "edit" },
   { id: "delete", label: "Delete", icon: "trash", group: "edit" },
 ];

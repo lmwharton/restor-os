@@ -1,0 +1,1219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Moisture Mode v2 — Mobile + Desktop Consistency (Crewmatic)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono:wght@400;500;600;700&family=Geist:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+  :root {
+    --brand-accent: #e85d26;
+    --on-primary: #ffffff;
+    --surface: #fdfcfb;
+    --surface-container-lowest: #ffffff;
+    --surface-container-low: #f7f5f3;
+    --surface-container: #f0ede9;
+    --surface-container-high: #e8e3dd;
+    --surface-container-highest: #ded8d0;
+    --on-surface: #1f1b17;
+    --on-surface-variant: #6b6459;
+    --outline-variant: #d9d3ca;
+    --moisture: #0891b2;
+
+    --pin-red: #dc2626;
+    --pin-amber: #f59e0b;
+    --pin-green: #16a34a;
+
+    --moisture-tint: rgba(8, 145, 178, 0.14);
+  }
+  html, body { font-family: 'Geist', ui-sans-serif, system-ui, sans-serif; color: var(--on-surface); background: #ece8e2; }
+  .font-mono { font-family: 'Geist Mono', ui-monospace, monospace; }
+
+  /* ── Frames ─────────────────────────────────────────────────── */
+  .phone {
+    width: 390px;
+    background: var(--surface-container-lowest);
+    border-radius: 28px;
+    box-shadow: 0 20px 60px -20px rgba(31, 27, 23, 0.25);
+    overflow: hidden;
+    border: 1px solid var(--outline-variant);
+  }
+  .desktop {
+    width: 960px;
+    background: var(--surface-container-lowest);
+    border-radius: 12px;
+    box-shadow: 0 20px 60px -20px rgba(31, 27, 23, 0.2);
+    overflow: hidden;
+    border: 1px solid var(--outline-variant);
+  }
+
+  /* ── Grids ──────────────────────────────────────────────────── */
+  .grid-sketch {
+    background-image:
+      linear-gradient(to right,  rgba(107, 100, 89, 0.08) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(107, 100, 89, 0.08) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+  .grid-moisture {
+    background-color: #fbfafa;
+    background-image:
+      linear-gradient(to right,  var(--moisture-tint) 1px, transparent 1px),
+      linear-gradient(to bottom, var(--moisture-tint) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+  .dim-sketch .room, .dim-sketch .wall, .dim-sketch .room-label { opacity: 0.30; }
+
+  /* ── Top bar elements ───────────────────────────────────────── */
+  .topbar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--outline-variant);
+    background: var(--surface-container-lowest);
+  }
+  .back-arrow {
+    width: 40px; height: 40px;
+    border-radius: 12px;
+    background: var(--surface-container-low);
+    display: inline-flex; align-items: center; justify-content: center;
+    color: var(--on-surface-variant);
+    flex-shrink: 0;
+  }
+  .save-btn {
+    display: inline-flex; align-items: center;
+    height: 36px;
+    padding: 0 14px;
+    border-radius: 999px;
+    background: var(--brand-accent);
+    color: var(--on-primary);
+    font-weight: 600; font-size: 13px;
+    flex-shrink: 0;
+  }
+  .desktop-save-btn {
+    height: 36px;
+    padding: 0 18px;
+    border-radius: 10px;
+    background: var(--brand-accent);
+    color: var(--on-primary);
+    font-weight: 600; font-size: 13px;
+    display: inline-flex; align-items: center;
+  }
+
+  .mode-toggle {
+    display: inline-flex;
+    background: var(--surface-container-low);
+    border: 1px solid var(--outline-variant);
+    border-radius: 10px;
+    padding: 2px;
+    height: 36px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .mode-seg {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 32px; height: 32px;
+    border-radius: 8px;
+    color: var(--on-surface-variant);
+    transition: background 150ms ease, color 150ms ease;
+  }
+  .mode-seg.active { background: var(--brand-accent); color: var(--on-primary); box-shadow: 0 1px 2px rgba(232, 93, 38, 0.3); }
+  .mode-seg.moisture.active { background: var(--moisture); box-shadow: 0 1px 2px rgba(8, 145, 178, 0.3); }
+  .mode-seg-wide {
+    width: auto; padding: 0 10px; height: 32px; gap: 6px;
+    font-size: 12px; font-weight: 600;
+  }
+
+  .floor-pills {
+    display: flex; gap: 6px;
+    overflow-x: auto;
+    flex: 1;
+    scrollbar-width: none;
+  }
+  .floor-pills::-webkit-scrollbar { display: none; }
+  .floor-pill {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 0 10px; height: 28px;
+    border-radius: 999px;
+    background: var(--surface-container);
+    font-size: 12px; font-weight: 600;
+    color: var(--on-surface-variant);
+    white-space: nowrap;
+  }
+  .floor-pill.active { background: #1f1b17; color: white; }
+  .floor-pill .count {
+    font-family: 'Geist Mono', monospace; font-size: 10px;
+    background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 999px;
+    min-width: 14px; text-align: center;
+  }
+  .floor-pill:not(.active) .count { background: var(--surface-container-highest); color: var(--on-surface-variant); }
+
+  /* ── Tool row ───────────────────────────────────────────────── */
+  .tool-row {
+    display: flex; gap: 2px;
+    padding: 6px 8px;
+    background: var(--surface-container-low);
+    border-bottom: 1px solid var(--outline-variant);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tool-row::-webkit-scrollbar { display: none; }
+  .tool-btn {
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 4px 10px;
+    border-radius: 8px;
+    color: var(--on-surface-variant);
+    font-size: 10px; font-weight: 500;
+    gap: 2px;
+    min-width: 48px;
+  }
+  .tool-btn.active { background: var(--brand-accent); color: var(--on-primary); }
+  .tool-btn.active.moisture { background: var(--moisture); }
+
+  /* ── Pins ───────────────────────────────────────────────────── */
+  .pin {
+    position: absolute;
+    width: 26px; height: 26px;
+    border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 0 0 1px #fff, 0 1px 3px rgba(0, 0, 0, 0.25);
+    transform: translate(-50%, -50%);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px; font-weight: 600;
+    color: white;
+  }
+  .pin.red { background: var(--pin-red); }
+  .pin.amber { background: var(--pin-amber); }
+  .pin.green { background: var(--pin-green); }
+  .pin .regress {
+    position: absolute;
+    top: -4px; right: -5px;
+    width: 12px; height: 12px;
+    background: var(--pin-amber);
+    clip-path: polygon(50% 0, 100% 100%, 0 100%);
+    box-shadow: 0 0 0 1px #fff;
+  }
+  .pin.selected {
+    animation: pin-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes pin-pulse {
+    0%, 100% { box-shadow: 0 0 0 1px #fff, 0 0 0 3px rgba(8, 145, 178, 0.45), 0 1px 3px rgba(0,0,0,0.25); }
+    50% { box-shadow: 0 0 0 1px #fff, 0 0 0 8px rgba(8, 145, 178, 0.00), 0 1px 3px rgba(0,0,0,0.25); }
+  }
+
+  /* ── Rooms ──────────────────────────────────────────────────── */
+  .room {
+    position: absolute;
+    border: 2px solid #1f1b17;
+    background: rgba(232, 93, 38, 0.08);
+  }
+  .room-label {
+    position: absolute; text-align: center; pointer-events: none;
+    font-size: 11px; font-weight: 600; color: var(--on-surface);
+  }
+  .room-label .sf {
+    display: block;
+    font-family: 'Geist Mono', monospace;
+    font-size: 9px; font-weight: 500; color: var(--on-surface-variant);
+  }
+  .compass {
+    position: absolute;
+    left: 14px; bottom: 14px;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: #1f1b17; color: white;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+    font-family: 'Geist Mono', monospace;
+  }
+  .mode-cue {
+    position: absolute;
+    top: 10px; right: 10px;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: rgba(8, 145, 178, 0.10);
+    color: var(--moisture);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px; font-weight: 600;
+    letter-spacing: 0.04em;
+  }
+  .mode-cue .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--moisture);
+    animation: cue-pulse 2s ease-in-out infinite;
+  }
+  @keyframes cue-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+  /* ── Canvas host ────────────────────────────────────────────── */
+  .canvas-host { position: relative; overflow: hidden; }
+
+  /* ── Chips (rounded-lg both breakpoints) ───────────────────── */
+  .chip {
+    display: inline-flex; align-items: center; justify-content: center;
+    height: 28px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 12px; font-weight: 500;
+    border: 1px solid var(--outline-variant);
+    color: var(--on-surface-variant);
+    background: transparent;
+    white-space: nowrap;
+    transition: all 120ms ease;
+  }
+  @media (min-width: 640px) {
+    .chip { height: 36px; padding: 0 12px; font-size: 13px; }
+  }
+  .chip.selected {
+    background: var(--brand-accent);
+    color: var(--on-primary);
+    border-color: var(--brand-accent);
+  }
+
+  /* ── Action row buttons ─────────────────────────────────────── */
+  .btn-primary {
+    flex: 1;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--brand-accent);
+    color: var(--on-primary);
+    font-weight: 600; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 6px;
+  }
+  .btn-ghost {
+    flex: 1;
+    height: 40px;
+    border-radius: 10px;
+    background: var(--surface-container-low);
+    color: var(--on-surface);
+    font-weight: 500; font-size: 14px;
+    display: inline-flex; align-items: center; justify-content: center;
+  }
+  /* Removed btn-amber — update actions use brand orange. Color is mode signaling only. */
+
+  /* ── Sheet + Desktop modal ──────────────────────────────────── */
+  .sheet {
+    background: var(--surface-container-lowest);
+    border-radius: 20px 20px 0 0;
+    box-shadow: 0 -8px 32px rgba(31, 27, 23, 0.12);
+    display: flex; flex-direction: column;
+    max-height: 78vh; overflow: hidden;
+  }
+  .modal {
+    background: var(--surface-container-lowest);
+    border-radius: 16px;
+    box-shadow: 0 20px 60px -20px rgba(31, 27, 23, 0.25);
+    display: flex; flex-direction: column;
+    width: 440px;
+    max-height: 80vh;
+    overflow: hidden;
+  }
+  .sheet-handle {
+    width: 44px; height: 4px;
+    background: var(--surface-container-highest);
+    border-radius: 999px;
+    margin: 8px auto 4px;
+  }
+  .sheet-body { overflow-y: auto; padding: 4px 20px 20px; flex: 1; }
+  .sheet-footer {
+    border-top: 1px solid var(--outline-variant);
+    padding: 12px 20px;
+    background: var(--surface-container-lowest);
+    display: flex; gap: 10px;
+    flex-shrink: 0;
+  }
+  .modal-body { overflow-y: auto; padding: 20px; flex: 1; }
+  .modal-footer {
+    border-top: 1px solid var(--outline-variant);
+    padding: 12px 20px;
+    background: var(--surface-container-lowest);
+    display: flex; gap: 10px; justify-content: flex-end;
+    flex-shrink: 0;
+  }
+  .modal-footer .btn-primary, .modal-footer .btn-ghost {
+    flex: 0 0 auto;
+    padding: 0 20px;
+    height: 36px;
+    font-size: 13px;
+  }
+  .modal-header {
+    padding: 18px 20px 0;
+    display: flex; align-items: flex-start; justify-content: space-between;
+  }
+
+  /* ── Labels + inputs ────────────────────────────────────────── */
+  .field-label {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px; letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--on-surface-variant);
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+  .num-input {
+    display: flex; align-items: center;
+    height: 40px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 10px;
+    padding: 0 12px;
+    background: var(--surface-container-lowest);
+  }
+  .num-input input {
+    flex: 1; border: none; outline: none; background: transparent;
+    font-family: 'Geist Mono', monospace;
+    font-size: 15px; font-weight: 600;
+    color: var(--on-surface);
+  }
+  .num-input .suffix {
+    font-family: 'Geist Mono', monospace;
+    font-size: 13px; color: var(--on-surface-variant);
+  }
+  .num-input.focused {
+    border-color: var(--brand-accent);
+    box-shadow: 0 0 0 2px rgba(232,93,38,0.12);
+  }
+
+  .room-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(8, 145, 178, 0.08);
+    color: var(--moisture);
+    font-size: 12px; font-weight: 600;
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-family: 'Geist Mono', monospace;
+  }
+
+  .material-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    border: 1px solid var(--outline-variant);
+    border-radius: 10px;
+    background: var(--surface-container-lowest);
+  }
+  .material-row .name { font-size: 14px; font-weight: 500; }
+  .material-row .meta { font-family: 'Geist Mono', monospace; font-size: 11px; color: var(--on-surface-variant); }
+
+  .backdrop { background: rgba(31, 27, 23, 0.42); backdrop-filter: blur(2px); }
+
+  /* ── Layout helpers ─────────────────────────────────────────── */
+  .caption {
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px; letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: #6b6459;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .section-title {
+    font-size: 24px; font-weight: 700;
+    color: #1f1b17; margin-bottom: 4px;
+    letter-spacing: -0.02em;
+  }
+  .section-desc {
+    font-size: 13px; color: #6b6459;
+    margin-bottom: 18px;
+    max-width: 50ch; line-height: 1.5;
+  }
+  .frame-label {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: var(--surface-container);
+    color: var(--on-surface-variant);
+    font-family: 'Geist Mono', monospace;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.08em;
+    margin-bottom: 10px;
+  }
+  .frame-label.desktop { background: rgba(8,145,178,0.12); color: var(--moisture); }
+  .frame-label.mobile { background: rgba(232,93,38,0.12); color: var(--brand-accent); }
+  .check-table td { padding: 8px 12px; border-bottom: 1px solid var(--outline-variant); font-size: 13px; }
+  .check-table tr:last-child td { border: none; }
+  .check-table .ok { color: var(--pin-green); font-weight: 700; }
+</style>
+</head>
+<body class="min-h-screen py-10 px-6">
+
+<div class="max-w-7xl mx-auto space-y-14">
+
+  <header class="space-y-2 max-w-2xl">
+    <div class="caption">Spec 01H Phase 2 · Moisture Mode · v2</div>
+    <h1 class="section-title" style="font-size: 36px;">Mobile + desktop consistency pass</h1>
+    <p class="section-desc" style="max-width: 62ch;">
+      v1 locked the <em>what</em> — 8 placement decisions. v2 locks the <em>how</em>: exact chip heights,
+      sticky footer patterns, modal-vs-sheet on desktop, and every piece verified against web/CLAUDE.md.
+      Same visual language (cyan moisture tint, warm orange brand, Geist fonts, pin colors).
+    </p>
+    <p class="section-desc font-mono" style="font-size: 11px; color: var(--moisture); max-width: 60ch;">
+      CHANGES FROM v1 → (1) desktop frames added for every surface, (2) chip heights tightened to h-7 sm:h-9,
+      (3) sheets become centered modals on desktop (canvas stays fully visible), (4) explicit compliance checklist.
+    </p>
+  </header>
+
+  <!-- ═══ 01. TOP BAR — BOTH BREAKPOINTS ═══ -->
+  <section>
+    <div class="caption">01 · Top bar (Row 1)</div>
+    <h2 class="section-title">Mode switcher, same position at both breakpoints</h2>
+    <p class="section-desc">
+      The toggle sits between Save and the floor pills on mobile AND desktop. Desktop just has more room to
+      breathe — the chrome doesn't rearrange.
+    </p>
+
+    <div class="flex flex-col gap-8 items-start">
+      <div>
+        <div class="frame-label mobile">MOBILE · 390w</div>
+        <div class="phone">
+          <div class="topbar">
+            <div class="back-arrow">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <span class="save-btn">Save</span>
+            <div class="mode-toggle">
+              <span class="mode-seg">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+              </span>
+              <span class="mode-seg moisture active">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M12 2.5s6 6.5 6 11.5a6 6 0 1 1-12 0c0-5 6-11.5 6-11.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+              </span>
+            </div>
+            <div class="floor-pills">
+              <span class="floor-pill active">Base <span class="count">8</span></span>
+              <span class="floor-pill">Main <span class="count">1</span></span>
+              <span class="floor-pill">Upper <span class="count">5</span></span>
+              <span class="floor-pill">Att</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="frame-label desktop">DESKTOP · 960w</div>
+        <div class="desktop">
+          <div class="topbar" style="padding: 12px 20px; gap: 12px;">
+            <div class="back-arrow">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M15 18l-6-6 6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+            </div>
+            <span class="desktop-save-btn">Save floor plan</span>
+            <!-- Desktop toggle — wider segments with labels -->
+            <div class="mode-toggle">
+              <span class="mode-seg mode-seg-wide">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                Sketch
+              </span>
+              <span class="mode-seg mode-seg-wide moisture active">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M12 2.5s6 6.5 6 11.5a6 6 0 1 1-12 0c0-5 6-11.5 6-11.5z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+                Moisture
+              </span>
+            </div>
+            <div class="floor-pills" style="padding-left: 4px;">
+              <span class="floor-pill active">Base <span class="count">8</span></span>
+              <span class="floor-pill">Main <span class="count">1</span></span>
+              <span class="floor-pill">Upper <span class="count">5</span></span>
+              <span class="floor-pill">Attic</span>
+              <span class="floor-pill" style="background: transparent; border: 1px dashed var(--outline-variant); color: var(--on-surface-variant);">+ Floor</span>
+            </div>
+            <!-- Right-aligned actions on desktop -->
+            <div class="flex gap-2" style="margin-left: auto;">
+              <span class="room-pill" style="background: rgba(8,145,178,0.08); font-size: 11px;">• MOISTURE · DAY 3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mt-4 max-w-4xl text-[12px] text-[color:var(--on-surface-variant)]">
+      <strong class="text-[color:var(--on-surface)]">Desktop variation:</strong> segments expand from 32px icon-only to <span class="font-mono">auto-width with label</span>
+      ("Sketch" · "Moisture") — takes advantage of horizontal room without losing the visual pattern.
+      Mobile stays icon-only to conserve width.
+    </div>
+  </section>
+
+  <!-- ═══ 02. CANVAS — BOTH BREAKPOINTS ═══ -->
+  <section>
+    <div class="caption">02 · Canvas in Moisture Mode</div>
+    <h2 class="section-title">Same canvas, same pins, same dim logic</h2>
+    <p class="section-desc">
+      Sketch layer drops to 0.30 opacity, pins render above on a dedicated Konva layer. Cue badge top-right.
+      Desktop renders a wider canvas; pin sizes and typography stay identical.
+    </p>
+
+    <div class="flex flex-col gap-8 items-start">
+      <div>
+        <div class="frame-label mobile">MOBILE</div>
+        <div class="phone">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 480px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 16px; top: 30px; width: 120px; height: 90px;"></div>
+            <div class="room-label" style="left: 30px; top: 60px;">Hallway<span class="sf">264 SF net</span></div>
+            <div class="room" style="left: 70px; top: 180px; width: 180px; height: 160px;"></div>
+            <div class="room-label" style="left: 120px; top: 240px;">Living Room<span class="sf">225 SF</span></div>
+            <div class="room" style="left: 90px; top: 340px; width: 120px; height: 80px;"></div>
+            <div class="room-label" style="left: 110px; top: 368px;">Bathroom<span class="sf">108 SF</span></div>
+            <span class="pin red" style="left: 105px; top: 205px;">38</span>
+            <span class="pin amber" style="left: 170px; top: 225px;">22</span>
+            <span class="pin red" style="left: 230px; top: 315px;">29<span class="regress"></span></span>
+            <span class="pin green" style="left: 120px; top: 300px;">14</span>
+            <span class="pin amber" style="left: 170px; top: 375px;">20</span>
+            <div class="compass">N</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="frame-label desktop">DESKTOP</div>
+        <div class="desktop">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 480px;">
+            <div class="mode-cue" style="top: 14px; right: 14px;"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <!-- Scaled up room positions -->
+            <div class="room" style="left: 60px; top: 40px; width: 220px; height: 120px;"></div>
+            <div class="room-label" style="left: 140px; top: 90px;">Hallway<span class="sf">264 SF net</span></div>
+            <div class="room" style="left: 300px; top: 100px; width: 320px; height: 240px;"></div>
+            <div class="room-label" style="left: 440px; top: 210px;">Living Room<span class="sf">225 SF</span></div>
+            <div class="room" style="left: 400px; top: 360px; width: 200px; height: 100px;"></div>
+            <div class="room-label" style="left: 470px; top: 398px;">Bathroom<span class="sf">108 SF</span></div>
+            <span class="pin red" style="left: 340px; top: 135px;">38</span>
+            <span class="pin amber" style="left: 440px; top: 180px;">22</span>
+            <span class="pin red" style="left: 600px; top: 310px;">29<span class="regress"></span></span>
+            <span class="pin green" style="left: 400px; top: 280px;">14</span>
+            <span class="pin amber" style="left: 500px; top: 420px;">20</span>
+            <div class="compass" style="left: 20px; bottom: 20px;">N</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 03. PLACEMENT — BOTTOM SHEET vs. CENTERED MODAL ═══ -->
+  <section>
+    <div class="caption">03 · Placement flow</div>
+    <h2 class="section-title">Sheet on mobile, modal on desktop</h2>
+    <p class="section-desc">
+      Same fields, same field order, same component logic. The container changes to match platform convention —
+      bottom sheet for thumb reach on mobile; centered modal on desktop so the canvas stays in view behind it
+      (we don't want a side panel because the canvas itself is already the focus).
+    </p>
+
+    <div class="flex flex-col xl:flex-row gap-8 items-start">
+      <!-- Mobile placement sheet -->
+      <div>
+        <div class="frame-label mobile">MOBILE · bottom sheet</div>
+        <div class="phone">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 200px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 160px;"></div>
+            <div class="room-label" style="left: 120px; top: 80px;">Living Room<span class="sf">225 SF</span></div>
+            <span style="position:absolute; left: 170px; top: 100px; transform: translate(-50%, -50%); width: 28px; height: 28px; border-radius: 50%; border: 2px dashed var(--moisture); opacity: 0.7;"></span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2;">
+            <div class="sheet-handle"></div>
+            <div class="sheet-body">
+              <div class="flex items-center justify-between mb-3 mt-2">
+                <div>
+                  <div class="text-lg font-semibold">New moisture pin</div>
+                  <div class="room-pill mt-1">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
+                    Living Room
+                  </div>
+                </div>
+                <button class="text-[color:var(--on-surface-variant)] text-[20px]" style="width:32px; height:32px;">×</button>
+              </div>
+
+              <div class="space-y-4 mt-3">
+                <div>
+                  <div class="field-label">Surface</div>
+                  <div class="flex gap-2">
+                    <span class="chip selected">Floor</span>
+                    <span class="chip">Wall</span>
+                    <span class="chip">Ceiling</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Position</div>
+                  <div class="grid grid-cols-5 gap-2">
+                    <span class="chip">NW</span>
+                    <span class="chip selected">NE</span>
+                    <span class="chip">C</span>
+                    <span class="chip">SW</span>
+                    <span class="chip">SE</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Material</div>
+                  <div class="material-row">
+                    <div>
+                      <span class="name">Drywall</span>
+                      <span class="text-[10px] font-mono ml-2" style="color: var(--brand-accent);">SUGGESTED</span>
+                    </div>
+                    <span class="meta">16% · ⌄</span>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <div class="field-label">Dry standard</div>
+                    <div class="num-input"><input value="16.0" /><span class="suffix">%</span></div>
+                  </div>
+                  <div>
+                    <div class="field-label">Initial reading</div>
+                    <div class="num-input focused"><input value="38.0" /><span class="suffix">%</span></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="sheet-footer">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Save pin</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop placement modal -->
+      <div>
+        <div class="frame-label desktop">DESKTOP · centered modal</div>
+        <div class="desktop" style="position: relative; height: 540px;">
+          <!-- Background canvas dim -->
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 100%;">
+            <div class="mode-cue" style="top: 14px; right: 14px;"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 60px; top: 40px; width: 220px; height: 120px; opacity: 0.18;"></div>
+            <div class="room" style="left: 300px; top: 100px; width: 320px; height: 240px; opacity: 0.18;"></div>
+            <div class="room" style="left: 400px; top: 360px; width: 200px; height: 100px; opacity: 0.18;"></div>
+            <span style="position:absolute; left: 460px; top: 200px; transform: translate(-50%, -50%); width: 28px; height: 28px; border-radius: 50%; border: 2px dashed var(--moisture); opacity: 0.7;"></span>
+          </div>
+          <!-- Modal overlay -->
+          <div class="absolute inset-0 backdrop flex items-center justify-center">
+            <div class="modal">
+              <div class="modal-header">
+                <div>
+                  <div class="text-lg font-semibold">New moisture pin</div>
+                  <div class="room-pill mt-1">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
+                    Living Room
+                  </div>
+                </div>
+                <button class="text-[color:var(--on-surface-variant)] text-[20px]" style="width:32px; height:32px;">×</button>
+              </div>
+
+              <div class="modal-body space-y-4">
+                <div>
+                  <div class="field-label">Surface</div>
+                  <div class="flex gap-2">
+                    <span class="chip selected">Floor</span>
+                    <span class="chip">Wall</span>
+                    <span class="chip">Ceiling</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Position</div>
+                  <div class="grid grid-cols-5 gap-2">
+                    <span class="chip">NW</span>
+                    <span class="chip selected">NE</span>
+                    <span class="chip">C</span>
+                    <span class="chip">SW</span>
+                    <span class="chip">SE</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Material</div>
+                  <div class="material-row">
+                    <div>
+                      <span class="name">Drywall</span>
+                      <span class="text-[10px] font-mono ml-2" style="color: var(--brand-accent);">SUGGESTED</span>
+                    </div>
+                    <span class="meta">16% · ⌄</span>
+                  </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                  <div>
+                    <div class="field-label">Dry standard</div>
+                    <div class="num-input"><input value="16.0" /><span class="suffix">%</span></div>
+                  </div>
+                  <div>
+                    <div class="field-label">Initial reading</div>
+                    <div class="num-input focused"><input value="38.0" /><span class="suffix">%</span></div>
+                  </div>
+                </div>
+              </div>
+              <div class="modal-footer">
+                <button class="btn-ghost">Cancel</button>
+                <button class="btn-primary">Save pin</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ 04. READING SHEET — BOTH STATES + BREAKPOINTS ═══ -->
+  <section>
+    <div class="caption">04 · Tap an existing pin</div>
+    <h2 class="section-title">Reading sheet — Add / Update states</h2>
+    <p class="section-desc">
+      State A opens blank when no reading exists for today. State B opens prefilled when one does,
+      and the Save button gates through a <span class="font-mono">&lt;ConfirmModal&gt;</span> overlay inside the sheet.
+    </p>
+
+    <div class="flex flex-col xl:flex-row gap-8 items-start">
+      <!-- Mobile Add state -->
+      <div>
+        <div class="frame-label mobile">MOBILE · A · add</div>
+        <div class="phone">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 180px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 140px;"></div>
+            <div class="room-label" style="left: 120px; top: 70px;">Living Room<span class="sf">225 SF</span></div>
+            <span class="pin red selected" style="left: 105px; top: 45px;">38</span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2;">
+            <div class="sheet-handle"></div>
+            <div class="sheet-body">
+              <div class="flex items-start justify-between mt-1 mb-3">
+                <div>
+                  <div class="field-label" style="margin:0;">Pin · Floor · NW</div>
+                  <div class="text-lg font-semibold mt-0.5">Living Room</div>
+                  <div class="flex items-center gap-3 mt-2 font-mono text-[12px] text-[color:var(--on-surface-variant)]">
+                    <span>Drywall</span><span class="opacity-30">·</span><span>Dry std 16%</span>
+                  </div>
+                </div>
+                <div style="position: relative; width: 40px; height: 40px;">
+                  <span class="pin red" style="left:20px; top:20px; position: absolute;">38</span>
+                </div>
+              </div>
+
+              <div class="mt-5">
+                <div class="field-label">Today's reading · Apr 20</div>
+                <div class="num-input focused">
+                  <input placeholder="Enter meter value" />
+                  <span class="suffix">%</span>
+                </div>
+                <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed">
+                  Previous: <span class="font-mono">38% on Apr 19</span>. A lower value updates the pin color.
+                </p>
+                <!-- Meter photo attachment (optional) -->
+                <button class="mt-3 flex items-center gap-2 w-full h-10 rounded-lg border border-dashed text-[13px] font-medium"
+                        style="border-color: var(--outline-variant); color: var(--on-surface-variant); background: transparent;">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" style="margin-left: 12px;">
+                    <path d="M23 19a2 2 0 01-2 2H3a2 2 0 01-2-2V8a2 2 0 012-2h4l2-3h6l2 3h4a2 2 0 012 2z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="12" cy="13" r="4" stroke="currentColor" stroke-width="1.5"/>
+                  </svg>
+                  <span>Add meter photo</span>
+                  <span class="ml-auto mr-3 text-[11px] font-mono" style="color: var(--on-surface-variant); opacity: 0.6;">optional</span>
+                </button>
+              </div>
+            </div>
+            <div class="sheet-footer">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Save reading</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Mobile Update state with ConfirmModal -->
+      <div>
+        <div class="frame-label mobile">MOBILE · B · update + confirm</div>
+        <div class="phone" style="position: relative;">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 180px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 140px;"></div>
+            <div class="room-label" style="left: 120px; top: 70px;">Living Room<span class="sf">225 SF</span></div>
+            <span class="pin amber selected" style="left: 170px; top: 90px;">22</span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2;">
+            <div class="sheet-handle"></div>
+            <div class="sheet-body">
+              <div class="flex items-start justify-between mt-1 mb-3">
+                <div>
+                  <div class="field-label" style="margin:0;">Pin · Floor · NE</div>
+                  <div class="text-lg font-semibold mt-0.5">Living Room</div>
+                  <div class="flex items-center gap-3 mt-2 font-mono text-[12px] text-[color:var(--on-surface-variant)]">
+                    <span>Drywall</span><span class="opacity-30">·</span><span>Dry std 16%</span>
+                  </div>
+                </div>
+                <div style="position: relative; width: 40px; height: 40px;">
+                  <span class="pin amber" style="left:20px; top:20px; position: absolute;">22</span>
+                </div>
+              </div>
+
+              <div class="mt-5">
+                <div class="field-label flex items-center justify-between">
+                  <span>Today's reading · Apr 20</span>
+                  <span style="background: rgba(245,158,11,0.14); color: #b45309; font-family: 'Geist Mono', monospace; text-transform: none; letter-spacing: normal; padding: 2px 7px; border-radius: 6px; font-size: 10px;">ALREADY LOGGED</span>
+                </div>
+                <div class="num-input focused"><input value="22.0" /><span class="suffix">%</span></div>
+                <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed">
+                  You already logged <span class="font-mono">22.0%</span> today. Saving will overwrite it.
+                </p>
+              </div>
+            </div>
+            <div class="sheet-footer">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Update</button>
+            </div>
+
+            <!-- ConfirmModal overlay inside the sheet -->
+            <div class="absolute inset-0 backdrop flex items-center justify-center p-5" style="border-radius: 20px 20px 0 0; z-index: 10;">
+              <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-5 max-w-[300px]" style="box-shadow: 0 12px 40px rgba(0,0,0,0.2); border: 1px solid var(--outline-variant);">
+                <div class="space-y-2 mb-4">
+                  <div class="text-[15px] font-semibold">Replace today's reading?</div>
+                  <p class="text-[13px] leading-relaxed text-[color:var(--on-surface-variant)]">
+                    This pin already has <span class="font-mono">22.0%</span> logged for Apr 20. The new value will overwrite it.
+                  </p>
+                </div>
+                <div class="flex gap-2">
+                  <button class="btn-ghost" style="height: 40px;">Cancel</button>
+                  <button class="btn-primary" style="height: 40px;">Yes, update</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Desktop versions (compact, both states in one frame) -->
+      <div>
+        <div class="frame-label desktop">DESKTOP · both states (centered modal)</div>
+        <div class="desktop" style="position: relative; height: 540px;">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 100%;">
+            <div class="mode-cue" style="top: 14px; right: 14px;"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 60px; top: 40px; width: 220px; height: 120px; opacity: 0.18;"></div>
+            <div class="room" style="left: 300px; top: 100px; width: 320px; height: 240px; opacity: 0.18;"></div>
+            <span class="pin amber selected" style="left: 440px; top: 200px;">22</span>
+          </div>
+
+          <div class="absolute inset-0 backdrop flex items-center justify-center">
+            <div class="modal">
+              <div class="modal-header">
+                <div>
+                  <div class="field-label" style="margin:0;">Pin · Floor · NE</div>
+                  <div class="text-lg font-semibold mt-0.5">Living Room</div>
+                  <div class="flex items-center gap-3 mt-2 font-mono text-[12px] text-[color:var(--on-surface-variant)]">
+                    <span>Drywall</span><span class="opacity-30">·</span><span>Dry std 16%</span>
+                  </div>
+                </div>
+                <div style="position: relative; width: 40px; height: 40px;">
+                  <span class="pin amber" style="left:20px; top:20px; position: absolute;">22</span>
+                </div>
+              </div>
+              <div class="modal-body">
+                <div class="field-label flex items-center justify-between">
+                  <span>Today's reading · Apr 20</span>
+                  <span style="background: rgba(245,158,11,0.14); color: #b45309; font-family: 'Geist Mono', monospace; text-transform: none; letter-spacing: normal; padding: 2px 7px; border-radius: 6px; font-size: 10px;">ALREADY LOGGED</span>
+                </div>
+                <div class="num-input focused"><input value="22.0" /><span class="suffix">%</span></div>
+                <p class="text-[12px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed">
+                  You already logged <span class="font-mono">22.0%</span> today. Saving will overwrite it.
+                </p>
+              </div>
+              <div class="modal-footer">
+                <button class="btn-ghost">Cancel</button>
+                <button class="btn-primary">Update</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══ NEW · 05b. EDITING A PIN ═══ -->
+  <section>
+    <div class="caption">05b · Editing an existing pin (material / dry_standard / location)</div>
+    <h2 class="section-title">Rare, but always possible</h2>
+    <p class="section-desc" style="max-width: 62ch;">
+      Dry standard and material are set at placement but stay <em>editable</em> — the tech might realize mid-job
+      that a wall is moisture-resistant drywall (needs dry_standard bumped from 16 to 21), or that they picked
+      the wrong material entirely. This flow is secondary — hidden behind one tap, not daily chrome.
+    </p>
+
+    <div class="grid md:grid-cols-3 gap-3 max-w-5xl mb-6">
+      <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-4" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+        <div class="caption" style="margin:0 0 4px;">Daily</div>
+        <p class="text-[13px] leading-relaxed"><strong>Reading value.</strong> Tap pin → reading sheet → type number → save. Every day.</p>
+      </div>
+      <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-4" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+        <div class="caption" style="margin:0 0 4px;">Rare</div>
+        <p class="text-[13px] leading-relaxed"><strong>Material + dry standard.</strong> Set at placement, edited only if categorization was wrong.</p>
+      </div>
+      <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-4" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+        <div class="caption" style="margin:0 0 4px;">Never</div>
+        <p class="text-[13px] leading-relaxed"><strong>Position on canvas.</strong> The physical spot doesn't move. (If wrong, delete + re-drop.)</p>
+      </div>
+    </div>
+
+    <div class="flex flex-col xl:flex-row gap-8 items-start">
+
+      <!-- Entry point on reading sheet -->
+      <div>
+        <div class="frame-label mobile">A · entry point on reading sheet</div>
+        <div class="phone">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 140px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 100px;"></div>
+            <div class="room-label" style="left: 120px; top: 60px;">Living Room<span class="sf">225 SF</span></div>
+            <span class="pin amber selected" style="left: 170px; top: 70px;">22</span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2;">
+            <div class="sheet-handle"></div>
+            <div class="sheet-body">
+              <div class="flex items-start justify-between mt-1 mb-3">
+                <div>
+                  <div class="field-label" style="margin:0;">Pin · Floor · NE</div>
+                  <div class="text-lg font-semibold mt-0.5">Living Room</div>
+                  <div class="flex items-center gap-3 mt-2 font-mono text-[12px] text-[color:var(--on-surface-variant)]">
+                    <span>Drywall</span><span class="opacity-30">·</span><span>Dry std 16%</span>
+                    <button class="flex items-center gap-1 px-2 h-6 rounded-md" style="background: var(--surface-container-low); color: var(--on-surface-variant); font-size: 11px; font-weight: 500; font-family: 'Geist', sans-serif; text-transform: none; letter-spacing: normal;">
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none"><path d="M12 20h9M16.5 3.5l4 4L7 21H3v-4L16.5 3.5z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                      Edit pin
+                    </button>
+                  </div>
+                </div>
+                <div style="position: relative; width: 40px; height: 40px;">
+                  <span class="pin amber" style="left:20px; top:20px; position: absolute;">22</span>
+                </div>
+              </div>
+
+              <div class="mt-5">
+                <div class="field-label">Today's reading · Apr 20</div>
+                <div class="num-input focused">
+                  <input placeholder="Enter meter value" />
+                  <span class="suffix">%</span>
+                </div>
+                <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed">
+                  Previous: <span class="font-mono">28% on Apr 19</span>
+                </p>
+              </div>
+            </div>
+            <div class="sheet-footer">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Save reading</button>
+            </div>
+          </div>
+        </div>
+        <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed max-w-[390px]">
+          Small <span class="font-mono">Edit pin</span> button in the metadata row. Secondary weight —
+          muted background, no brand accent. Doesn't compete with Save reading.
+        </p>
+      </div>
+
+      <!-- Edit pin sheet -->
+      <div>
+        <div class="frame-label mobile">B · edit pin sheet</div>
+        <div class="phone">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 140px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 100px;"></div>
+            <span class="pin amber selected" style="left: 170px; top: 70px;">22</span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2;">
+            <div class="sheet-handle"></div>
+            <div class="sheet-body">
+              <div class="flex items-center justify-between mb-3 mt-2">
+                <div>
+                  <div class="text-lg font-semibold">Edit pin</div>
+                  <div class="room-pill mt-1">
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="4"/></svg>
+                    Living Room
+                  </div>
+                </div>
+                <button class="text-[color:var(--on-surface-variant)] text-[20px]" style="width:32px; height:32px;">×</button>
+              </div>
+
+              <div class="space-y-4 mt-3">
+                <div>
+                  <div class="field-label">Surface</div>
+                  <div class="flex gap-2">
+                    <span class="chip selected">Floor</span>
+                    <span class="chip">Wall</span>
+                    <span class="chip">Ceiling</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Position</div>
+                  <div class="grid grid-cols-5 gap-2">
+                    <span class="chip">NW</span>
+                    <span class="chip selected">NE</span>
+                    <span class="chip">C</span>
+                    <span class="chip">SW</span>
+                    <span class="chip">SE</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label">Material</div>
+                  <div class="material-row">
+                    <div><span class="name">Drywall</span></div>
+                    <span class="meta">16% · ⌄</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div class="field-label flex items-center justify-between">
+                    <span>Dry standard</span>
+                    <span style="background: rgba(245,158,11,0.14); color: #b45309; font-family: 'Geist Mono', monospace; text-transform: none; letter-spacing: normal; padding: 2px 7px; border-radius: 6px; font-size: 10px;">CHANGED</span>
+                  </div>
+                  <div class="num-input focused"><input value="21.0" /><span class="suffix">%</span></div>
+                  <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed">
+                    Was <span class="font-mono">16.0%</span>. Changing this will re-evaluate all 2 past readings at this pin.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div class="sheet-footer">
+              <button class="btn-ghost">Cancel</button>
+              <button class="btn-primary">Save changes</button>
+            </div>
+          </div>
+        </div>
+        <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed max-w-[390px]">
+          Same fields as placement, no reading input (readings live in the reading sheet). Changed
+          dry_standard shows a mono "CHANGED" badge + a warning line about retroactive re-evaluation.
+        </p>
+      </div>
+
+      <!-- Confirm on save with recompute preview -->
+      <div>
+        <div class="frame-label mobile">C · confirm retroactive recolor</div>
+        <div class="phone" style="position: relative;">
+          <div class="canvas-host grid-moisture dim-sketch" style="height: 140px;">
+            <div class="mode-cue"><span class="dot"></span>MOISTURE · DAY 3</div>
+            <div class="room" style="left: 70px; top: 20px; width: 180px; height: 100px;"></div>
+            <span class="pin amber selected" style="left: 170px; top: 70px;">22</span>
+          </div>
+          <div class="sheet" style="margin-top: -16px; position: relative; z-index: 2; min-height: 480px;">
+            <div class="absolute inset-0 backdrop flex items-center justify-center p-5" style="border-radius: 20px 20px 0 0; z-index: 10;">
+              <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-5 max-w-[320px]" style="box-shadow: 0 12px 40px rgba(0,0,0,0.2); border: 1px solid var(--outline-variant);">
+                <div class="space-y-2 mb-4">
+                  <div class="text-[15px] font-semibold">Change dry standard?</div>
+                  <p class="text-[13px] leading-relaxed text-[color:var(--on-surface-variant)]">
+                    Changing from <span class="font-mono">16.0%</span> to <span class="font-mono">21.0%</span>
+                    will re-evaluate the 2 past readings at this pin.
+                  </p>
+                  <div class="flex items-center gap-3 bg-[color:var(--surface-container-low)] rounded-lg p-3 mt-3">
+                    <div style="position: relative; width: 28px; height: 28px;">
+                      <span class="pin amber" style="left:14px; top:14px; position:absolute;">22</span>
+                    </div>
+                    <div class="flex items-center gap-1 text-[11px]">
+                      <span class="font-mono text-[color:var(--on-surface-variant)]">AMBER</span>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+                      <span class="font-mono" style="color: var(--pin-green);">GREEN</span>
+                    </div>
+                    <span class="text-[11px] text-[color:var(--on-surface-variant)]">1 reading will change</span>
+                  </div>
+                </div>
+                <div class="flex gap-2">
+                  <button class="btn-ghost" style="height: 40px;">Cancel</button>
+                  <button class="btn-primary" style="height: 40px;">Yes, update</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p class="text-[11px] text-[color:var(--on-surface-variant)] mt-2 leading-relaxed max-w-[390px]">
+          ConfirmModal shows a <em>preview of impact</em> — which colors will flip, how many readings affected.
+          Makes the retroactive recolor visible before it happens.
+        </p>
+      </div>
+    </div>
+
+    <div class="mt-6 max-w-5xl bg-[color:var(--surface-container-lowest)] rounded-xl p-5" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+      <div class="caption" style="margin:0 0 10px;">Answer to "how does editing work?"</div>
+      <table class="check-table w-full">
+        <tr>
+          <td style="width: 180px;"><strong>Where to edit</strong></td>
+          <td>From the reading sheet → tap <span class="font-mono">Edit pin</span> in the metadata row. Secondary UI — never competes with the daily Save reading action.</td>
+        </tr>
+        <tr>
+          <td><strong>What's editable</strong></td>
+          <td>Surface, Position, Material, Dry standard. (Location's x/y is not — to move a pin, delete and re-drop.)</td>
+        </tr>
+        <tr>
+          <td><strong>When to use it</strong></td>
+          <td>Rarely. Only when the initial material categorization was wrong (moisture-resistant drywall, cement backer, custom override).</td>
+        </tr>
+        <tr>
+          <td><strong>Confirm modal</strong></td>
+          <td>Fires only when <span class="font-mono">dry_standard</span> changed. Shows which colors will flip. Otherwise (e.g., renaming location only) saves silently.</td>
+        </tr>
+        <tr>
+          <td><strong>Backend endpoint</strong></td>
+          <td><span class="font-mono">PATCH /v1/jobs/{jobId}/moisture-pins/{pinId}</span> — already built, already wired in the <span class="font-mono">useUpdateMoisturePin</span> hook.</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+  <!-- ═══ 05. COMPLIANCE CHECKLIST ═══ -->
+  <section>
+    <div class="caption">05 · Implementation checklist</div>
+    <h2 class="section-title">Every web/CLAUDE.md rule, mapped to an element</h2>
+    <p class="section-desc">
+      If any of these deviate during coding, we stop and revisit. No quiet drift.
+    </p>
+
+    <div class="grid lg:grid-cols-2 gap-4 max-w-6xl">
+      <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-5" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+        <div class="caption" style="margin:0 0 10px;">The 8 placement decisions</div>
+        <table class="check-table w-full">
+          <tr><td class="ok">✓</td><td>Mode toggle in Row 1 (between Save and pills)</td></tr>
+          <tr><td class="ok">✓</td><td>Tool palette swaps content per mode</td></tr>
+          <tr><td class="ok">✓</td><td>Canvas unchanged — rooms/walls dim to 0.30</td></tr>
+          <tr><td class="ok">✓</td><td>Pins on top Konva layer</td></tr>
+          <tr><td class="ok">✓</td><td>Placement → bottom sheet (mobile) / centered modal (desktop)</td></tr>
+          <tr><td class="ok">✓</td><td>Reading → same pattern as placement</td></tr>
+          <tr><td class="ok">✓</td><td>ConfirmModal inside the reading sheet (overlay, not separate fullscreen)</td></tr>
+          <tr><td class="ok">✓</td><td>Tap-outside-room → inline nudge, 1.6s fade</td></tr>
+        </table>
+      </div>
+
+      <div class="bg-[color:var(--surface-container-lowest)] rounded-xl p-5" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--outline-variant);">
+        <div class="caption" style="margin:0 0 10px;">web/CLAUDE.md conventions honored</div>
+        <table class="check-table w-full">
+          <tr><td class="ok">✓</td><td>Selection chips <span class="font-mono text-[11px]">rounded-lg</span>, <span class="font-mono text-[11px]">h-7 sm:h-9</span></td></tr>
+          <tr><td class="ok">✓</td><td>Action buttons <span class="font-mono text-[11px]">h-10 rounded-lg flex-1</span> inside sheet/modal</td></tr>
+          <tr><td class="ok">✓</td><td>Back arrow <span class="font-mono text-[11px]">w-10 h-10 rounded-xl bg-surface-container-low</span></td></tr>
+          <tr><td class="ok">✓</td><td>Cards <span class="font-mono text-[11px]">bg-surface-container-lowest rounded-xl</span></td></tr>
+          <tr><td class="ok">✓</td><td>Material dropdown uses select pattern (<span class="font-mono text-[11px]">h-9 rounded-lg</span>)</td></tr>
+          <tr><td class="ok">✓</td><td>Sub-page headers <span class="font-mono text-[11px]">text-lg font-semibold</span></td></tr>
+          <tr><td class="ok">✓</td><td>Sticky footer <span class="font-mono text-[11px]">border-t</span>, outside scroll</td></tr>
+          <tr><td class="ok">✓</td><td>No native confirm → <span class="font-mono text-[11px]">&lt;ConfirmModal&gt;</span></td></tr>
+          <tr><td class="ok">✓</td><td>Same chip shape at every breakpoint (no <span class="font-mono text-[11px]">rounded-full</span> on mobile)</td></tr>
+          <tr><td class="ok">✓</td><td>Geist Sans + Geist Mono typography</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="mt-6 bg-[color:var(--surface-container-lowest)] rounded-xl p-5 max-w-6xl" style="box-shadow: 0 1px 3px rgba(31,27,23,0.04); border: 1px solid var(--moisture);">
+      <div class="caption" style="margin:0 0 10px; color: var(--moisture);">Platform-specific patterns</div>
+      <table class="check-table w-full">
+        <tr>
+          <td style="width: 120px;"><strong>Mobile</strong></td>
+          <td>Sheet slides from bottom · handle · sticky action footer · full-width (flex-1) Cancel + Save</td>
+        </tr>
+        <tr>
+          <td><strong>Desktop</strong></td>
+          <td>Centered modal over canvas backdrop · width 440px · sticky footer with compact buttons (inline-flex px-5, h-9)</td>
+        </tr>
+        <tr>
+          <td><strong>Both</strong></td>
+          <td>Same field order, same components, same data flow — container changes, contents don't</td>
+        </tr>
+      </table>
+    </div>
+  </section>
+
+</div>
+
+</body>
+</html>

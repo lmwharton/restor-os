@@ -4,11 +4,12 @@
 
 | Field | Value |
 |-------|-------|
-| **Phase 1 progress** | █████████████████████ 100% — feature-complete |
-| **Overall 01H progress** | ███████░░░░░░░░░░░░░ ~30% (Phase 1 done; Phases 2–5 untouched) |
-| **State** | Ready for review |
+| **Phase 1 progress** | █████████████████████ 100% — merged to `main` 2026-04-23 (PR #10, 5 review rounds) |
+| **Phase 2 progress** | █████████████████████ 100% — moisture pins + readings + delete + edit + local-date TZ fix + clinical sparkline + Moisture Report View (Tasks 6 + 7) + sharing-payload extension + per-floor isolation + orphan-pin handling. **2 critical-review rounds CLOSED** (round 1: 4 HIGH / 5 MEDIUM / 2 LOW; round 2: 1 MEDIUM / 1 LOW + 2 test-gap closures). 114 frontend / 61 backend tests green. Ready for PR. |
+| **Overall 01H progress** | ████████████░░░░░░░░░ ~55% (Phases 1 + 2 done; Phase 3 proposal drafted but out-of-scope for this PR; Phases 4–5 untouched) |
+| **State** | Phase 2 ready for PR |
 | **Blocker** | None |
-| **Branch** | `feature/01h-floor-plan-v2-phase1` |
+| **Branch** | `feature/01h-floor-plan-v2-phase2` (stacked on merged `main`) |
 | **Depends on** | Spec 01C (Floor Plan Konva rebuild — in review), Spec 01B (Reconstruction — merged) |
 | **Source** | Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026) |
 
@@ -198,6 +199,177 @@ Lakshman's round-5 review of the round-5 batch itself surfaced one HIGH (M1) + t
 
 ---
 
+## Phase 2 Changelog (feature-level, in progress)
+
+Consolidated across implementation passes. Branch: `feature/01h-floor-plan-v2-phase2`. Commit history carries per-pass detail.
+
+**Schema + backend**
+- Migration `b8f2a1c3d4e5` drops legacy `moisture_readings` / `moisture_points` / `dehu_outputs`; creates `moisture_pins` + `moisture_pin_readings` with RLS and `UNIQUE(pin_id, reading_date)`.
+- `backend/api/moisture_pins/` module — Pydantic schemas, service (color compute, regression compute, polygon validation, CRUD), router (8 endpoints at `/v1/jobs/{id}/moisture-pins`).
+- Legacy `backend/api/moisture/` deleted; `rooms/service.py` + `sharing/` stopped querying the dropped tables (had been 500-ing `/rooms`).
+- 16 pure-function pytest cases in `test_moisture_pins.py` covering pin color boundaries, regression detection, and material default lookup (`TestComputePinColor` × 8, `TestComputeIsRegressing` × 6, `TestDryStandards` × 2).
+
+**Canvas + frontend**
+- Canvas Mode abstraction (`moisture-mode.ts`, `canvas-mode-switcher.tsx`); toolbar mode-aware filtering; sketch layers dim to 0.30 in Moisture Mode.
+- Moisture pin Konva layer: colored circle (red/amber/green) with reading text inside, regression badge, draggable within room polygon with fail-closed snap-back.
+- Placement sheet (`moisture-placement-sheet.tsx`): Surface + Position chips, Material dropdown with room-material suggestions, `dry_standard` pre-filled from material dict and editable, initial reading input.
+- Reading sheet (`moisture-reading-sheet.tsx`): tap-to-log today's reading (silent upsert on same-date overwrite); chronological history list (newest first) with per-row `↑ up` chevron on day-over-day increases and a trailing trash affordance that opens a `ConfirmModal` before the `DELETE /readings/{id}` mutation; mid-delete rows dim to 40% + stop listening to prevent double-fire; clinical sparkline (320×104) with D1…DN day labels under each dot, inline `X%` label on the dashed dry-standard line, color-matched latest-value callout above the latest (enlarged) dot; amber banner when latest reading exceeds previous.
+- Pin edit sheet (`moisture-edit-sheet.tsx`): correct `material` + `dry_standard` on an existing pin without losing reading history. Header chip on the reading sheet opens it; successful Update closes both sheets (the job is done — no redundant return to the reading sheet); Cancel closes only the edit sheet.
+- Shared date helpers (`web/src/lib/dates.ts`): `todayLocalIso()` + `formatShortDateLocal()` consolidate the previous per-file date logic. `reading_date` is a `DATE` column — writes must use the tech's wall clock, not UTC. Prior code used `new Date().toISOString().slice(0, 10)` on both write paths (reading-sheet save + pin creation at canvas tap), which rolled the calendar day forward after ~5 PM Pacific and caused `UNIQUE(pin_id, reading_date)` upsert collisions with the next morning's reading. Pairs with lesson #15 in `docs/pr-review-lessons.md`.
+- Last-reading delete guard: the trash affordance in the history list is disabled when `history.asc.length === 1`. Deleting the only reading would leave the pin alive on canvas in the "no reading yet" neutral-gray state (`konva-floor-plan.tsx:3810`), which the tech read as a stuck / broken pin. If they want the pin gone, the canvas Delete tool is the correct path — cascading readings along with it.
+- Reading-sheet history derivation extracted to `web/src/lib/moisture-reading-history.ts` (`deriveReadingHistory`, `findTodayReading`, `validateReadingInput`, `isChangedFromToday`). Component useMemo blocks now wrap the pure helpers instead of carrying the algorithm inline. Unlocks reuse by the adjuster portal view (Task 7) + PDF export (Task 6) without re-deriving.
+- Full frontend test coverage for the moisture reading sheet: 22 pure unit tests in `moisture-reading-history.test.ts` (empty series, single reading, regression flagging, strict `>` vs `≥` boundary, mixed up/down series, out-of-order input, today-row lookup, input validation across empty/non-numeric/out-of-range/decimal/boundary, isChanged semantics) and 10 RTL integration tests in `moisture-reading-sheet.test.tsx` (loading skeleton → real history transition, last-reading trash disabled with hint, ≥ 2 readings enabled + correct aria-labels, ConfirmModal open/close on trash/cancel, delete mutation fires with correct reading id on confirm, today's reading prefilled via `todayLocalIso` — pinned at 8 PM US Pacific to guard the TZ regression — edit chip visibility + onEditRequest wiring).
+- Sparkline sizing + label tier work detailed above is visually exercised by the component tests' presence assertions (history count, skeleton vs loaded, etc.); pixel-exact SVG geometry is deliberately NOT asserted — would ossify the visual tuning without adding safety.
+- Pin Tool added to sidebar instruction map (`floor-plan-sidebar.tsx`).
+- Delete-tool UX: pins mid-`DELETE` render at 35% opacity and stop listening; per-pin `pendingDeleteIds` set prevents double-tap from stacking a second 404-ing DELETE.
+- Client-side coercion of `reading_value` to `Number` in the reading-sheet memos — the backend serializes DB `NUMERIC` as a string, so naked `>`/`<` on reading values would silently lexicographic-compare (`"7.00" > "19.00" === true`) and fire false regressions.
+- Wall-sync hardening carried over from bonus Phase 1 work: `_wallSyncInFlight` mutex + idempotent short-circuit.
+
+**Room dry-status rollup + Drying Progress card (Task 2)**
+- Worst-pin-wins derivation in `web/src/lib/moisture-room-status.ts` — a room is `dry` only when every pin reads green, `wet` as soon as any pin is red, `drying` otherwise (including pins placed with no reading yet). Keeps the rollup independent of the canvas + sheet components so the adjuster portal (Task 7) and PDF export (Task 6) inherit the same semantics without duplicating the truth table.
+- Canvas room-name tint in Moisture Mode: label color mirrors the room's status (green/amber/red/default) so the tech can scan an entire floor for wet-spot clustering without opening any sheet. Tint is keyed on backend `property_room_id`; empty rooms stay neutral.
+- `DryingProgressCard` on the job-detail page (mitigation jobs only; silent on recon jobs and on mitigation jobs with zero pins). Per-room status badge + pin count, `"N of M rooms dry"` header, deep-link button `View Floor Plan →` that routes to `/jobs/{id}/floor-plan?mode=moisture`.
+
+**Canvas room backend-id resolver (shared)**
+- `web/src/lib/canvas-room-resolver.ts` centralizes the "which backend `job_room` does this canvas room map to?" question. Two provenances coexist in the wild — the `propertyRoomId` backfilled after first save, and a fallback name match against `propertyRooms` for the narrow window between room creation and backfill. The helpers prefer `propertyRoomId` when present and only accept a name match when it's unambiguous; ambiguous names contribute nothing rather than attributing data to the wrong sibling room. Three call sites now share this helper: the Moisture Mode tap-to-place resolver, the pin-follow-room translation effect, and the Affected Mode dim lookup. Prevents the duplicate-name sibling attribution bug (Bedroom 1 / Bedroom 2 in duplexes) that would otherwise land pins on the wrong room or propagate wrong `affected` flags.
+
+**Test coverage (Phase 2, pre-PR)**
+
+Backend — 37 pytest cases across two files:
+
+| File | Count | Covers |
+|---|---|---|
+| `backend/tests/test_moisture_pins.py` | 16 | Pin color red/amber/green boundaries (8), regression-detection latest-vs-previous semantics (6), material → default dry-standard lookup (2). |
+| `backend/tests/test_moisture_pins_archive_guard.py` | 21 | Archive guard on every mutating endpoint (6 — one per endpoint), cross-job pin rejection on every reading endpoint (6 — including list for the read-only case), `update_pin` placement re-validation on coord / room / material patches (5), `create_pin` polygon rejection (1), 409 on duplicate `(pin_id, reading_date)` (1), atomic-RPC failure propagation (1), partial-coord merge against existing y (1). |
+
+Frontend — 61 vitest + RTL cases across five files:
+
+| File | Count | Covers |
+|---|---|---|
+| `web/src/lib/__tests__/moisture-reading-history.test.ts` | 22 | `deriveReadingHistory` truth table (empty, single, strict `>` regression, plateau, decreasing series, mixed up/down, out-of-order sort stability, no-mutation invariant), `findTodayReading` (hit / miss / empty), `validateReadingInput` (empty rejection, non-numeric, negative, >100, decimals, boundary 0/100), `isChangedFromToday` (no-today row, null input, equal value, changed value, transient-clear). |
+| `web/src/components/sketch/__tests__/moisture-reading-sheet.test.tsx` | 10 | Loading skeleton → real history transition, last-reading trash disabled with aria-label hint, ≥ 2 readings enabled with correct aria-labels, ConfirmModal open + delete-mutation fire + cancel-without-fire, today's reading prefill via `todayLocalIso` pinned at 8 PM US Pacific (guards the TZ regression), edit chip visibility gated on `onEditRequest`, edit chip click passes the pin id through. |
+| `web/src/lib/__tests__/moisture-room-status.test.ts` | 7 | `deriveRoomStatus` truth table — empty (both no pins + pins in a different room), dry (all green), drying (amber present), drying (null color = unmeasured pin), wet (any red trumps green/amber), ignore pins in other rooms, + `ROOM_STATUS_COPY` label + hex coverage. |
+| `web/src/lib/__tests__/dates.test.ts` | 7 | `todayLocalIso` at 8 PM US Pacific (guards the UTC-rollover bug), zero-pad months + days, year boundary, `YYYY-MM-DD` shape; `formatShortDateLocal` local-component parse, malformed fallback, round-trip agreement with `todayLocalIso`. |
+| `web/src/lib/__tests__/canvas-room-resolver.test.ts` | 15 | `resolveCanvasRoomBackendId` (propertyRoomId wins, unique-name fallback, name-collision → null, no match → null, empty/undefined `propertyRooms`, propertyRoomId wins even without `propertyRooms`), `resolveCanvasRoomBackendRow` (returns full row, preserves caller-extended fields via generic, ambiguous-name → undefined, unique-name fallback, empty/undefined), `resolveCanvasRoomCandidateIds` (propertyRoomId included, unique-name included, ambiguous-name skipped, dual-provenance combined, empty set on no-match). |
+
+Grand total: **98 cases** pinning the Phase 2 invariants. PDF-export snapshot tests (Task 6) and adjuster-portal integration tests (Task 7) deferred to their own commits.
+
+**Internal review (pre-PR, 2026-04-23)**
+
+Three self-review passes against the pre-PR tree using `/critical-review`. "Internal" to distinguish from the **external** review rounds (Phase 1's PR #10 was 5 rounds with Lakshman + Codex) that will follow PR submission. The planned Gemini Pro cross-check after Tasks 6 + 7 is also internal — all of this happens before Lakshman sees the branch.
+
+Pass-1 was the first discovery pass; passes 2 + 3 were verification passes against the prior numbered findings. Structure mirrors the Phase 1 "PR10 Round N" convention so the review cadence is legible when this work ships.
+
+- **Internal pass 1 (discovery) — 2 CRITICAL, 3 HIGH, 6 MEDIUM, 3 LOW:**
+  - **C1 (CRITICAL)** — `raise_if_archived` / `ensure_job_mutable` missing on every moisture_pins mutating endpoint. Direct sibling-miss of Phase 1 Round 2 R6. Stale tabs on archived jobs could mutate frozen data. **Closed** by threading `ensure_job_mutable` through `create_pin` + `_assert_pin_on_job_and_mutable` through the five remaining mutating service methods.
+  - **C2 (CRITICAL)** — Reading CRUD endpoints took `pin_id` without cross-checking against the URL's `job_id`. A same-company tech (or cached URL) could write to a different job's pin; when combined with C1, could land writes on an archived Job B via an unarchived Job A URL. **Closed** by `_assert_pin_on_job` (read-only variant, 404s on mismatch without leaking parent-job existence) and `_assert_pin_on_job_and_mutable` (mutate variant, layers archive guard on the *pin's real parent*, not the URL job).
+  - **H1 (HIGH)** — `update_pin` silently skipped `create_pin`'s point-in-polygon validation on canvas_x/canvas_y/room_id patches. Drag-to-move would orphan pins outside any room polygon. **Closed** by `_validate_pin_placement` helper shared between create + update paths; merges partial patches against existing values so `{canvas_x}` still validates against existing y + room. Material → dry_standard default sync added for API callers that PATCH material alone.
+  - **H2 (HIGH)** — `backend/tests/test_sharing.py` asserted `data["moisture_readings"]` after the key was removed from the shared payload + schema. Would `KeyError` on next `pytest`. **Closed** by updating the two scope-filter tests + dropping the dead kwarg from the helper router.
+  - **H3 (HIGH)** — `propertyRooms.find((pr) => pr.room_name === room.name)` first-match-wins in the pin-follow-room effect + pin visibility filter. Duplicate names like "Bedroom 1 / Bedroom 2" would translate the wrong pins + hide legitimate ones. **Closed** by extracting `resolveCanvasRoomBackendId` / `resolveCanvasRoomBackendRow` / `resolveCanvasRoomCandidateIds` into the shared `canvas-room-resolver` module and rewiring three canvas sites (tap resolver, pin-follow-room effect, pin visibility filter, Affected Mode dim lookup — **four** sites closed total after Round 3 caught two sibling sites Round 2 missed).
+  - **M1** — Rapid pin drags fired back-to-back PATCHes without mutation queuing; out-of-order network replies could leave a pin at a stale position. **Closed** by `queuePinCoordUpdate` with per-pin in-flight + pending-collapse, mirroring the Phase 1 Round 5 autosave pattern (P2 #1).
+  - **M2** — Spec target "Full test coverage per phase" wasn't met — only pure-function tests existed. **Closed** by adding `test_moisture_pins_archive_guard.py` (21 cases covering the archive-guard invariants + cross-job rejection + polygon validation + 409 + RPC failure propagation). Uses scripted fake-client pattern so CI-free runs still exercise the contracts.
+  - **M3** — `create_pin` Python-side two-step INSERT had a silent-failure window (compensating DELETE itself un-guarded; orphan pin if both INSERT-reading and DELETE-pin failed). **Closed** by migration `e1f2a3b4c5d6`: new `create_moisture_pin_with_reading` SECURITY DEFINER RPC does both INSERTs inside a single pgsql transaction with JWT-derived tenant check; `create_pin` swapped to `.rpc(...)`. New merge migration `d0e1f2a3b4c5` keeps the Phase 1 Round 5 migration chain contiguous.
+  - **M4** — `MoistureEditSheet` initialized state from `pin` prop once; a future refactor that kept the sheet mounted across pin switches would show stale values. **Closed** by `key={pin.id}` on the render call site with explanatory comment.
+  - **M5** — `list_pins_by_job` sorted embedded readings in Python after the query; fragile if `reading_date` ever changes type. **Closed** by pushing the sort into the PostgREST embed: `readings:moisture_pin_readings(*, order(reading_date.desc))`.
+  - **M6** — Seed script `backend/scripts/seed_moisture_history.py` used bare `sys.argv` without UUID validation. **Not addressed** — pure dev tool, acceptable as-is; can switch to `argparse` if the script grows.
+  - **L1–L3** — dead defensive branch in `create_pin` (closed, uses subscript), `delete_reading` missing `log_event` (closed, audit parity restored), reading-sheet `prefillKey` re-seed could overwrite in-progress input (closed, now keys on `pin.id` only).
+
+- **Internal pass 2 (verification):** 13/14 findings CLOSED, 1 PARTIAL. H3 was closed at the two sites named in pass 1 but the same bug shape was still live at `konva-floor-plan.tsx:1059` (tap resolver) and `:2479` (Affected Mode dim). Lesson #19 in action — fix at code-location scope vs invariant scope. All other findings confirmed closed with grep + test evidence.
+
+- **Internal pass 3 (verification):** PARTIAL from pass 2 → **CLOSED**. Added `resolveCanvasRoomBackendRow<T>` for call sites that need the full row (not just the id), rewired both remaining sites. `grep -nE "propertyRooms\??\.find" konva-floor-plan.tsx` → only id-based lookups remain. Invariant now enforced at every name-match site. STOP signal on internal Claude rounds: further fresh-context passes would surface only narrower siblings. Next step is the planned internal Gemini Pro cross-check after Tasks 6 + 7 land, then external review on PR.
+
+---
+
+**Moisture Report View — Tasks 6 + 7 (2026-04-23)**
+
+> **Internal review round 1 (2026-04-23) — CONDITIONAL → closed.** 4 HIGH / 5 MEDIUM / 2 LOW findings addressed in one pass:
+> - **H1** — alembic migration `f1e2d3c4b5a6` backfills `job_rooms.floor_plan_id` from `jobs.floor_plan_id` (pinned) or the property's sole `is_current` floor (unambiguous). Ran against dev: 122 rooms resolved, 23 remaining NULL (properties with no floor plans — correct to leave). Closes the silent-pin-drop bomb for every pre-fix environment.
+> - **H2** — narrowed the two new `except Exception: pass` blocks in `sharing/service.py` to `except APIError`; tolerated codes `PGRST205 / PGRST204 / 42P01` with a `logger.warning`, all others `logger.exception(...)` + re-raise. Ops now has an attributable log line instead of silence.
+> - **H3** — added `moisture_access: "denied" | "empty" | "present"` discriminant + `primary_floor_id: UUID | None` to `SharedJobResponse`. Portal branches empty-state copy on the discriminant: `denied` → "out of scope", `empty` → "No readings logged yet", `present` → render. Old payloads without the discriminant fall back to legacy derive-from-arrays so portal-ahead-of-backend deploys don't crash.
+> - **H4** — `firstDryDayNumber` switched from calendar-day delta to sequence-position within the pin's own `asc` array (correct for the per-pin "Dry on Day N" chip). Summary-table cell computes its day label from the job-wide `allDates.indexOf(firstDryDate) + 1` instead of reading `firstDryDayNumber`, so the Dry-Date cell's `(Dn)` always matches the column header it sits under — even when readings skip days. Added vitest case `Apr 18 / Apr 22 / Apr 24` to pin the semantics.
+> - **M1–M5 + L1–L2** — stray files deleted, `computePinColor` moved into `lib/moisture-reading-history.ts` (re-exported from `hooks/use-moisture-pins` for back-compat), `buildMoistureReportProps` extracted as shared derivation between tech + portal wrappers, width/height/propertyRooms props dropped from `MoistureReportCanvas` (YAGNI), drying-progress card actions wrapped in `role="group" aria-label`, single-floor picker renders as a plain `<span>` not a disabled-grey select.
+> - **Post-review visual tweak** — Dry-Date cell reads `22 Apr · D2` in one emerald phrase (tick dropped; `(D2)` → `· D2` middle-dot); empty dashes center-aligned in day columns so the placeholder stops drifting to the numeric right edge.
+>
+> Pre-PR gates (post-fix): `npx vitest run` → 114 green / 10 files; `npx tsc --noEmit` clean; `ruff check` clean on all touched backend files; moisture + sharing pytest paths pass (pre-existing failures in `TestCreateShareLink`/`ListShareLinks`/`RevokeShareLink` are unrelated — auth middleware mock drift, out-of-scope for this branch).
+
+> **Internal review round 2 (2026-04-23) — CONDITIONAL → closed.** All round-1 findings verified CLOSED via Gemini Pro + Flash cross-verification. Round-2 surfaced 1 MEDIUM + 1 LOW + 2 test gaps + 1 doc nit, all addressed:
+> - **MEDIUM — `buildMoistureReportProps` mixed-pin branch.** The previous `anyPinHasFloorId` all-or-nothing fallback silently dropped pins on multi-floor jobs where some pins had `floor_plan_id` and some didn't (post-backfill ambiguous rows). Replaced with strict per-floor bucketing + a new `orphanPins[]` output. View renders an "Uncategorized pins (N)" amber callout above the canvas and includes them in the reading log with a `+ N uncategorized` annotation in the section header — the data is preserved end-to-end and the gap is surfaced honestly instead of crammed onto the primary floor (which falsely concentrated the damage picture). Pins lesson #27 ("helpers with `.some()` / `.every()` need an explicit mixed-case branch").
+> - **LOW — Portal fallback default.** Client-side fallback for missing `moisture_access` was `denied`, which wrongly told a restoration_only adjuster on day 1 of mitigation to ask for a different link they didn't need. Flipped to `empty` ("No readings logged yet, check back").
+> - **Bonus close — `moisture_access: "unavailable"` (4th state).** When `moisture_pins` or `floor_plans` queries hit a tolerated PGRST table-missing code, the discriminant now surfaces `unavailable` (distinct from `empty`). Portal renders "Moisture data temporarily unavailable" instead of misleading "no readings yet" copy. Pins lesson #28 ("discriminants should enumerate failure modes BEFORE picking enum values").
+> - **Bonus close — `floor_plans` defense-in-depth.** Admin-client query now also filters `.eq("company_id", company_id)` (admin client bypasses RLS, so adding the filter guards a future data-ops bug where a property gets re-parented).
+> - **Doc nit — `_POSTGREST_MISSING_TABLE_CODES` rationale.** Inline comment explains all three codes (`PGRST205` undefined table / `PGRST204` undefined column / `42P01` Postgres-level undefined relation) so a future contributor doesn't drop one thinking it's redundant.
+> - **Test gaps closed (2 backend cases).** `test_public_shared_view_moisture_pins_apierror_unavailable` pins the discriminant precedence on PGRST205. `test_public_shared_view_photos_only_omits_primary_floor_id` regression-pins the `primary_floor_id` scope gate.
+> - **CSS / UX tail.** Dragging on a freshly-tapped pin used to require a "warm-up" tap because Konva's default `dragDistance=0` swallowed the first tap into drag arbitration; set `dragDistance={5}` on the Stage so static taps fire as taps immediately. `handlePinTap` now defaults to opening the reading sheet for any tool state other than `delete` (closes the silent no-op when toolbar landed in a transient state).
+>
+> Pre-PR gates (post-round-2 fix): `npx vitest run` → **114 green / 10 files**; `npx tsc --noEmit` clean; `ruff check` clean; **61 backend pytest cases** across `test_moisture_pins.py` (16) + `test_moisture_pins_archive_guard.py` (21) + `TestPublicSharedView` (24, +2 from round-2 test gaps).
+
+Carrier-grade snapshot document per Brett §8.6: *"the moisture floor plan exports as a single-page PDF for carrier documentation… available in the adjuster portal without requiring a PDF export."* One shared `MoistureReportView` component, two mount points.
+
+Frontend-only route pattern (same as Phase 1's `/jobs/[id]/report` — HTML page + `window.print()`, no PDF library, no server-side rendering). Reuses every derivation helper built during Blocks 3A/3B: `deriveReadingHistory`, `deriveRoomStatus`, `canvas-room-resolver`, `dates`.
+
+- New route `/jobs/[id]/moisture-report?date=YYYY-MM-DD&floor=<id>` — protected, tech-facing. Back-arrow (icon-only on mobile) + Print / Save PDF button. Global print CSS already hides chrome via `.no-print` + `header:not(.print-section *)`; route wraps the view in `.print-section`.
+- New route `/shared/[token]/moisture?date=YYYY-MM-DD&floor=<id>` — public adjuster portal. Same view, no print chrome. Scope-gated via the existing share-link flow (empty state when `photos_only`).
+- Shared view component in `web/src/components/moisture-report/`:
+  - `moisture-report-view.tsx` — header (logo + job metadata + floor picker + snapshot picker + rollup), single canvas section, reading log section. Empty states: "no floor plans yet" (view-level, short-circuits canvas + table both), "no pins on this floor" (below canvas), "no pins existed as of this date" (hides reading log + rollup inflation).
+  - `moisture-report-canvas.tsx` — read-only Konva stage. Fit-to-box scale against ResizeObserver-measured container (responsive mobile vs desktop). Pins rendered at `canvas_x/y` with colors from `computePinColorAsOf(readings, snapshotDate, dry_standard)` — date-scoped rather than latest-reading-only. Pin radius 9px mobile (<500px viewport) / 13px desktop.
+  - `moisture-report-summary-table.tsx` — Location · Material · Dry std · D1..DN · Dry date. Columns = distinct reading_dates across the active floor's visible pins. Dry date column reads `history.dryMilestone.firstDryDate` (computed — never persisted); pins that never dried show "—". Inline color-coded cell dots per Brett §8.4.
+- New entry point in the Drying Progress card (job detail page): two inline links — "View Floor Plan →" (existing) + "Open Moisture Report →" (new). Wraps on mobile; same visual weight so neither is buried.
+
+**Per-floor isolation (the hardest part):**
+
+Brett: *"no floors should collide."* Implementing this revealed a pre-existing data bug — `handleCreateRoom` on the floor-plan page never passed `floor_plan_id` on `POST /v1/jobs/:id/rooms`, so every `job_rooms` row in the database had `floor_plan_id = NULL`. The editor worked (hydrates from `canvas_data` JSONB), but every relational consumer was broken from day one. Fix:
+
+- `handleCreateRoom` now passes `floor_plan_id: activeFloorIdRef.current` at creation time. Forward-declared ref at the top of the component so the useCallback doesn't fall out of scope order. All new rooms carry their floor link going forward.
+- Backfilled existing rooms in the dev DB via SQL UPDATE.
+- `list_pins_by_job` now embeds `room:job_rooms!room_id(floor_plan_id)` server-side and flattens the result onto each pin as `pin.floor_plan_id`. Frontend filters `pin.floor_plan_id === selectedFloor.id` — no fragile client-side join.
+- **`MoisturePinResponse` Pydantic schema declares `readings: list[...] | None` and `floor_plan_id: UUID | None`** so FastAPI's serialization layer doesn't silently strip them on `response_model` validation (this was the single most expensive bug in the sprint; pairs with lesson #24).
+- Shared-view service also updated: `/v1/shared/resolve` now returns `moisture_pins[]` (each carrying full readings + floor_plan_id) and `floor_plans[]` (all current floors for the property, ordered by floor_number) — scope-gated.
+
+**Snapshot-date semantics:**
+
+- Floor picker scopes EVERY surface (canvas, reading log, rollup, date picker options).
+- Snapshot picker drives pin colors via `computePinColorAsOf` (latest reading ≤ selected date). Canvas + rollup + reading log ALL filter to pins whose `earliestReading.reading_date <= selectedDate`. Pins created after the selected date are hidden entirely — not rendered as stale grey dots.
+- `dryMilestone.firstDryDate` logic: first reading where `value ≤ dry_standard`. Regressions after dry do NOT reset the milestone (compliance-relevant "drying was achieved" fact). See `moisture-reading-history.ts`.
+
+**Canonical floor names:**
+
+- Dropdown always shows "Basement / Main / Upper / Attic" for floor_numbers 0–3, regardless of any stored `floor_name`. Custom names respected only for floor_numbers 4+ (future roof / crawl).
+- Disabled on single-floor jobs so the tech sees which floor they're viewing (informational, not interactive).
+
+**Sharing payload changes (backend):**
+
+- `SharedJobResponse` schema: added `moisture_pins: list[dict]` + `floor_plans: list[dict]`.
+- `get_shared_job` service fetches both with scope gating: `photos_only` → empty, `restoration_only` + `full` → populated.
+- Moisture pins embed includes readings + room.floor_plan_id (same shape as list_pins_by_job).
+- Floor plans query: `.eq("property_id", ...).eq("is_current", true).order("floor_number")` — every current floor on the property, ordered basement → attic.
+
+**Test coverage additions (this sprint):**
+
+Frontend — 18 new vitest cases:
+- `moisture-reading-history.test.ts` — 6 new cases for `computePinColorAsOf`: empty series → null, date before first reading → null, exact-date match, between-readings (latest ≤ date wins), after-last-reading, dry-standard boundary sensitivity.
+- `moisture-report-view.test.tsx` — 5 new cases: header + date picker + summary for multi-reading pin, date picker fires onChange with new date, dry rollup scopes to selected date (0 of 1 dry on Apr 22, 1 of 1 on Apr 24 for a pin that dries Apr 24), ONE empty state only (no-floors), Dry Date column shows D-N + date for dried pins.
+- `moisture-reading-sheet.test.tsx` — 2 new cases on cold-open / user-typed lock: reading sheet re-seeds when today's reading arrives after mount, does NOT re-seed once the tech has typed.
+
+Backend — 3 new pytest cases:
+- `test_sharing.py::TestPublicSharedView` — scope gating matrix: `photos_only` excludes moisture_pins + floor_plans (both empty), `restoration_only` includes both with multi-floor ordering, `full` includes both.
+
+**Pre-PR critical-review gates this sprint closed:**
+
+- Every mutating endpoint on the new routes is READ-ONLY (no writes), so archive guard doesn't apply — intentional; carriers must view archived jobs. Reads verified against archived jobs (status=collected).
+- Cross-floor isolation verified by `pin.floor_plan_id` filter in both wrappers + `selectedFloor.pins` scope through the view.
+- Pin ID + reading ID cross-checks flow through unchanged (no new reading surfaces introduced — the report is read-only; the existing reading-sheet flow still owns all the writes).
+- `formatShortDateLocal` used on every date display — no UTC drift.
+- Every `propertyRooms.find` now goes through the `canvas-room-resolver` — no new name-match-first-wins regressions (pin-attribution in the moisture-report canvas uses the server-provided floor_plan_id instead, which is even safer).
+
+**Lessons that fell out of this sprint (added to `docs/pr-review-lessons.md`):**
+
+- **#22 Calendar-day vs instant** — `DATE` columns use local wall clock; `TIMESTAMPTZ` uses UTC.
+- **#23 Scripted fake clients don't validate wire format** — unit tests over Python don't catch PostgREST embed-syntax errors or RPC schema-cache drift.
+- **#24 FastAPI `response_model` silently drops undeclared fields** — service log shape ≠ HTTP response shape; add the field to the schema or the browser never sees it.
+- **#25 Denormalized truth masks missing FK** — the floor-plan editor read rooms from `canvas_data` JSONB and worked fine, while every relational consumer saw orphans. When a denormalized store works independently of the normalized store, they will drift silently until the next relational consumer surfaces it.
+
+---
+
 
 ## Summary
 
@@ -353,17 +525,31 @@ Both items below were identified during manual QA and deferred. Neither blocks P
    **Target after (a) + (b):** a full room-edit save drops from ~14 calls to ~4 (`POST /versions`, `PUT /walls`, single PATCH per room, no refetches). Worth doing before user load scales.
 
 ### Phase 2: Moisture Pins
-- [ ] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
-- [ ] `moisture_pin_readings` table created — time-series reading values per pin
-- [ ] Pin drop on canvas tap with placement card: location descriptor, material type, reading value
-- [ ] Pin color: red (>10 percentage points above dry standard), amber (within 10 points), green (at/below)
-- [ ] Tap existing pin → enter new daily reading (pin shows latest color)
-- [ ] Pin history panel: chronological readings with sparkline trend chart
-- [ ] Regression detection: amber warning icon if reading increases day-over-day at the same pin
-- [ ] Room dry status: not dry until every pin in room is green
-- [ ] Dry standard lookup by material type (hardcoded constants, editable per-pin)
-- [ ] Moisture floor plan PDF export: single-page carrier document with pin locations + color-coded snapshot + summary table
-- [ ] Full test coverage: pin color boundaries, regression detection, dry standard lookup, PDF export snapshot
+- [x] `moisture_pins` table created — persistent spatial locations (canvas x/y, material, dry standard)
+- [x] `moisture_pin_readings` table created — time-series reading values per pin
+- [x] Pin drop on canvas tap with placement card: location descriptor, material type, reading value
+- [x] Pin color: red (>10 percentage points above dry standard), amber (within 10 points), green (at/below)
+- [x] Tap existing pin → enter new daily reading (pin shows latest color)
+- [x] Pin history panel: chronological readings with sparkline trend chart
+- [x] Regression detection: amber warning icon if reading increases day-over-day at the same pin
+- [x] Room dry status: not dry until every pin in room is green
+- [x] Dry standard lookup by material type (hardcoded constants, editable per-pin)
+- [x] Per-reading delete affordance in the history panel with confirmation (single-tap trash → `ConfirmModal` → `DELETE /readings/{id}`; mid-delete row dims + disables to prevent double-fire)
+- [x] Dry-standard-met milestone per Brett §8.5 — green checkmark + "Dry on Day N · date" chip in the reading sheet; same `dryMilestone` datum from `deriveReadingHistory` feeds the Dry Date column in the moisture-report summary table. Computed at read time via "first reading where value ≤ dry_standard"; never persisted as a column (so edits/deletes to readings automatically re-derive without sync work).
+- [x] Structured location descriptor per Brett §8.3 — placement card's Surface + Position chips produce "Floor, Center, Kitchen" style descriptors. Auto date/time via `moisture_pin_readings.reading_date` (local-wall-clock per `todayLocalIso`); auto tech name via `moisture_pins.created_by` = session user.
+- [x] Moisture Report View — shared component (§ Moisture Report View section) mounted at two routes:
+  - Protected tech-facing print route `/jobs/[id]/moisture-report?date=YYYY-MM-DD&floor=<id>` with Print / Save PDF button and back-arrow (icon-only on mobile)
+  - Public adjuster-portal route `/shared/[token]/moisture?date=YYYY-MM-DD&floor=<id>` with no print chrome
+  - Floor picker in the header — canonical names (Basement / Main / Upper / Attic); shown disabled on single-floor jobs so the tech sees which floor they're viewing
+  - User-selected snapshot date (Brett §8.6) via the Snapshot picker; picker options are the reading dates on the active floor
+  - Canvas renders pins that existed at close of the selected snapshot date (pins whose first reading is after that date are hidden); pin colors computed via `computePinColorAsOf(readings, selectedDate, dry_standard)`
+  - Summary table: Location · Material · Dry std · D1..DN columns · Dry Date (first-hit per pin); scoped to pins visible on the active floor and snapshot date
+  - Entry points: "Open Moisture Report →" button on the Drying Progress card (job detail page)
+  - Responsive canvas on mobile (fit-to-container with 9px pin radius below 500px viewport vs 13px desktop)
+- [x] Sharing payload includes `moisture_pins` (with full readings array + floor_plan_id via PostgREST embed) + `floor_plans` (all floors on the property) (scope-gated: excluded on `photos_only`, included on `restoration_only` + `full`). Required for the adjuster-portal route above to render without requiring a PDF export (Brett §8.6).
+- [x] `list_pins_by_job` endpoint now embeds readings and `job_rooms.floor_plan_id` on every pin via PostgREST foreign-table selects — eliminates the fragile client-side room→floor join that previously leaked pins across floors. `MoisturePinResponse` schema declares both fields so FastAPI doesn't strip them on serialization.
+- [x] Room creation now passes `floor_plan_id` (the active canvas floor) on `POST /v1/jobs/:id/rooms`. Prior behavior silently stored rooms with `floor_plan_id = NULL`, which broke every per-floor consumer while the editor itself worked (the editor reads from `canvas_data`, not the relational column). Closes lesson #25.
+- [x] Full test coverage: pin color boundaries (backend ✓), regression detection (backend ✓ + frontend ✓), dry standard lookup (backend ✓), reading-sheet derivation logic + integration flows (frontend ✓ — 33 pure unit tests + 12 RTL tests covering loading skeleton, last-reading guard, delete confirm flow, local-date prefill, edit wiring, read-only mode, dry-milestone, computePinColorAsOf), moisture-report view (frontend ✓ — 5 RTL tests covering multi-reading render, date picker change, per-date rollup, empty state, Dry Date column), sharing payload scope gating (backend ✓ — 3 tests: photos_only excludes moisture, restoration_only + full include pins + floor_plans, multi-floor listing order). **Total as of this sprint (post-review-round-2 fixes): 114 frontend vitest passes across 10 files, 61 backend pytest passes across the moisture + sharing suites (round-2 added the unavailable-discriminant + photos_only-primary_floor_id regression pins).**
 
 ### Phase 3: Equipment Pins
 - [ ] `equipment_placements` table — one record per individual unit
@@ -1123,21 +1309,42 @@ Rendered on canvas as dashed rectangle with "Opening" label.
 
 ---
 
-## Moisture Floor Plan PDF
+## Moisture Report View (PDF + Adjuster Portal)
 
-Server-side endpoint: `GET /v1/jobs/{jobId}/moisture-pdf?date=YYYY-MM-DD`
+Per Brett §8.6, *"the moisture floor plan exports as a single-page PDF for carrier documentation… This document is available in the adjuster portal without requiring a PDF export."* One rendered view, two mount points:
 
-Output: single-page PDF with:
-1. **Header:** Company logo, job number, property address, date of snapshot
-2. **Floor plan:** scaled rendering of canvas with all moisture pins at their locations
-3. **Pin overlay:** each pin shows reading value + color-coded dot (red/amber/green for selected date)
-4. **Summary table:**
+- **Tech-facing print route** — `/jobs/[id]/moisture-report?date=YYYY-MM-DD` — protected route with a **Print / Save PDF** button that calls `window.print()`. Matches Phase 1's existing `jobs/[id]/report` pattern — no server-side PDF library, no backend endpoint. The date query param drives the color snapshot; default is today.
+- **Adjuster-facing portal route** — `/shared/[token]/moisture?date=YYYY-MM-DD` — public route mounted via the existing share-link flow (read-only, no auth). Same view, no print chrome.
+
+### Output contents (identical across both mount points)
+
+1. **Header** — Company logo, job number, property address, date-of-snapshot selector (dropdown of all reading dates in the job, defaulting to latest).
+2. **Floor plan** — rasterized Konva stage with all moisture pins at their saved coordinates. Pin colors reflect the selected snapshot date (not "current latest") so historical snapshots are reproducible.
+3. **Pin overlay** — each pin shows its reading value for the selected date + color-coded dot (red/amber/green).
+4. **Dry-standard-met milestone** — per Brett §8.5, *"green checkmark appears when dry standard is met — with the date it was achieved."* Shown inline in the summary table's `Dry Date` column and as a summary strip at the top ("3 of 7 pins dry as of Apr 22").
+5. **Summary table:**
 
 | Pin Location | Material | Dry Standard | Day 1 | Day 2 | Day 3 | ... | Dry Date |
 |-------------|----------|-------------|-------|-------|-------|-----|----------|
-| Floor, NW Corner, Living Room | drywall | 16% | 38% | 32% | 24% | ... | Day 5 |
+| Floor, NW Corner, Living Room | drywall | 16% | 38% | 32% | 24% | ... | Apr 22 (Day 5) |
 
-Generated via existing PDF library (already in use for job reports — `web/src/app/(protected)/jobs/[id]/report/`).
+Dry-date semantics: the **first** date the pin reached the dry standard — not the most recent. Regressions after initial dry-date do not reset the milestone (carrier documentation needs to prove "drying was achieved," and a regression is captured separately via the amber flag per §8.5).
+
+### Shared-view architecture
+
+```
+web/src/components/moisture-report/
+  moisture-report-view.tsx       ← the actual view (Konva + overlay + summary table)
+  moisture-report-date-picker.tsx ← user-selected snapshot date (Brett 8.6)
+
+web/src/app/(protected)/jobs/[id]/moisture-report/page.tsx
+  ← protected wrapper + Print button + print CSS                (Task 6)
+
+web/src/app/(marketing)/shared/[token]/moisture/page.tsx
+  ← public adjuster-portal wrapper, no print chrome             (Task 7)
+```
+
+Reuses: `moisture-reading-history.ts` (derivation), `moisture-room-status.ts` (room rollup), `canvas-room-resolver.ts` (name-match safety), `@/lib/dates` (local-wall-clock date display).
 
 ---
 
@@ -1617,10 +1824,20 @@ Round-5 follow-up integration tests (live-DB, skip without Supabase):
 
 ### Frontend (Vitest + Testing Library)
 
-- `KonvaFloorPlan.test.tsx` — renders rooms from props, handles room creation events
-- `RoomConfirmationCard.test.tsx` — material defaults populate from room type, editable
-- `MoisturePinPanel.test.tsx` — renders sparkline, shows regression warning
-- `EquipmentPicker.test.tsx` — quantity selector triggers place-N flow
+**Shipped in Phase 2** (8 test files, 78 passing tests as of 2026-04-23):
+- `src/lib/__tests__/moisture-reading-history.test.ts` — 22 unit tests on the extracted derivation module: empty series / single / strict-`>` regression boundary / mixed up-down / out-of-order sort / no-mutation contract / `findTodayReading` / `validateReadingInput` across empty/non-numeric/negative/>100/decimal/boundary / `isChangedFromToday` across null-today + clearing-input cases.
+- `src/lib/__tests__/moisture-room-status.test.ts` — 7 unit tests on `deriveRoomStatus` (worst-pin-wins truth table, null-color handling, cross-room scope).
+- `src/lib/__tests__/dates.test.ts` — 7 unit tests on `todayLocalIso()` + `formatShortDateLocal()` — pinned at 8 PM US Pacific (regression anchor), year boundary, malformed input, symmetric write/read round-trip.
+- `src/components/sketch/__tests__/moisture-reading-sheet.test.tsx` — 10 RTL integration tests on the reading sheet: loading skeleton ↔ real history transition, last-reading trash disabled with hint, ≥ 2 readings enabled with correct aria-labels, ConfirmModal open/close on trash/cancel, delete mutation fires with correct reading id on confirm, today's reading prefilled via `todayLocalIso` (pinned at 8 PM US Pacific to guard the TZ regression), edit chip visibility + `onEditRequest` wiring.
+- Plus pre-existing lib tests (`api`, `api-server`, `types`) unchanged by Phase 2 — all 78 tests green on every run.
+
+**Still pending** (Phase 2 Tasks 6 + 7):
+- Moisture PDF export snapshot test.
+- Adjuster portal moisture view — read-only render parity with the reading sheet's derivation module (reuses `moisture-reading-history.ts` so no algorithm re-test needed; coverage there will be presence + correct scoping).
+
+**Explicitly out-of-scope** (would ossify without adding safety):
+- Pixel-exact sparkline SVG geometry. Presence and data flow are asserted; coordinate math is not.
+- Konva-layer interactions (drag/drop). Stage + Layer are Konva-controlled; covered by the Phase 2 manual QA in §"Cumulative Test Coverage (Phase 2)".
 
 ### Frontend E2E (Playwright)
 
@@ -1920,4 +2137,111 @@ Product-intent decision (carried over, still valid):
 
 ---
 
-*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16. Round 2 hardening: 2026-04-22. Round 3 hardening: 2026-04-22.*
+## Cumulative Test Coverage (Phase 2 — Automated + Manual QA)
+
+Phase 2 ships with frontend test infrastructure that Phase 1 deferred: extracted pure logic + RTL integration over the moisture-reading flow + the Moisture Report View (Tasks 6+7). Automated totals as of 2026-04-23 (sprint close, post-review-round-2 fixes): **114 frontend vitest cases across 10 files**, **37 backend pytest cases across `test_moisture_pins.py` + `test_moisture_pins_archive_guard.py`** plus **24 cases in `TestPublicSharedView`** (round 2 added 2: `moisture_pins_apierror_unavailable` pinning the new "unavailable" discriminant state, `photos_only_omits_primary_floor_id` pinning the scope-gate). Typecheck + lint clean. Full suite runs in ~1.6s frontend.
+
+> **Note on pin + dropdown positions.** Pin coordinates are stored in `moisture_pins.canvas_x` / `canvas_y` columns (Decimal, normalized floor-plan space). Any drag writes to those columns via `PATCH /moisture-pins/{id}`, and the Moisture Report View reads the *current* values at render time. There is no per-date position snapshot — the pin's spatial location is a property of the pin, not the reading. So if you move a pin or reposition a room, the report reflects the new layout immediately on next fetch; historical *readings* stay attached to the pin regardless of where it sits. Dropdowns (floor + snapshot-date) are URL-param driven on the portal route and local state on the tech route; they re-render the canvas without invalidating any cache.
+
+### Automated — Backend (pytest)
+
+- **Color compute** — boundaries at `dry_standard`, `dry_standard + 10`, and above. Covers the red / amber / green truth table and the regression edge case where latest == previous (not flagged).
+- **Regression compute** — strict `>` semantics (equal consecutive values do NOT flag).
+- **CRUD** (`test_moisture_pins.py`, 16 cases) — pin create / update / delete, reading create / update / delete, RLS cross-tenant isolation, atomic `create_moisture_pin_with_reading` RPC rollback on failure, whitespace-drop rejection (room_id required), polygon validation (pin placement rejected when canvas coordinates fall outside the target room's polygon).
+- **Archive guard** (`test_moisture_pins_archive_guard.py`, 21 cases) — every mutation endpoint (pin create / patch / delete, reading create / patch / delete) returns 409 when the parent job is `archived`; read endpoints (list pins, list readings) return 200 so the tech can still open Moisture Mode in read-only view.
+- **Sharing payload — moisture scope gate** (`test_sharing.py`, 3 new cases in `TestPublicSharedView`) — `restoration_only` and `full` scopes emit `moisture_pins[]` + `floor_plans[]`; `recon_only` omits both arrays; expired/revoked tokens 404 without leaking pin data.
+
+### Automated — Frontend (Vitest + React Testing Library)
+
+Organized by risk surface:
+
+**Pure derivation logic (`src/lib/__tests__/`):**
+- `moisture-reading-history.test.ts` — 33 cases. Anchors `deriveReadingHistory` (empty, single, ascending-regression, descending-dry, equal-plateau boundary, mixed up/down, out-of-order input sort, no-mutation contract), `findTodayReading` (today-hit, today-miss, empty), `validateReadingInput` (empty / non-numeric / negative / >100 / decimal / 0 + 100 boundaries), `isChangedFromToday` (5 state combinations including the subtle "user cleared the prefilled input" case), plus **11 new cases for `computePinColorAsOf`** (snapshot date before first reading → null; snapshot on exact reading date returns that reading's color; snapshot between readings returns the most-recent-on-or-before; future snapshot returns latest; dry_standard boundary / +10 boundary colors; out-of-order input still sorts; empty array → null; single-reading happy path; stale snapshot beyond all readings).
+- `moisture-room-status.test.ts` — 7 cases. Worst-pin-wins truth table for Drying Progress / canvas room-label tint.
+- `dates.test.ts` — 7 cases. `todayLocalIso()` pinned at **8 PM US Pacific** (the exact regression anchor), year boundary, YYYY-MM-DD shape invariant; `formatShortDateLocal()` on valid / malformed / empty; symmetric write/read round-trip guard.
+- `canvas-room-resolver.test.ts` — 15 cases. Three resolvers covering: prefer `propertyRoomId` when present; fall back to unambiguous name match; return null on duplicate-name ambiguity (never arbitrary pick); trim + case-insensitive comparison; empty / whitespace-only inputs rejected; no-mutation contract on the input arrays. Guards the drag-to-new-room flow from wiring a pin to the wrong `job_rooms.id` when two rooms share a name.
+
+**Integration (`src/components/sketch/__tests__/`):**
+- `moisture-reading-sheet.test.tsx` — 14 cases. Loading skeleton renders with `aria-busy` while the readings query is pending and swaps cleanly to real history on arrival. Last-reading trash is disabled with the correct hint aria-label; ≥ 2 readings all enable with row-specific labels. ConfirmModal opens with row value + formatted date, Cancel closes without mutating, Confirm calls the delete mutation with the exact reading id. Today's-reading prefill is verified at **8 PM US Pacific frozen-clock** so a future regression back to UTC-based `today` fails this test. Edit chip visibility is conditional on `onEditRequest` prop; clicking fires the prop with the pin id. **Two new cases**: (a) cold-open prefill — sheet opens before readings query resolves, data lands post-mount, input re-seeds from today's row via the `(pin.id, todayReading.id)` two-key effect; (b) user-typed lock — once `userTypedRef` flips, subsequent query settles do NOT overwrite the in-progress value even when today's reading id changes mid-flight.
+
+**Integration (`src/components/moisture-report/__tests__/`):**
+- `moisture-report-view.test.tsx` — 5 cases. (1) Multi-reading render: pins draw at their canvas coords with the color computed for the selected snapshot date, value label is the reading on/before that date. (2) Date-picker change re-derives color + value without remount (same pin nodes, different fills). (3) Per-date rollup in the summary table matches the canvas colors and the "Dry Date" column populates from `dryMilestone.firstDryDate`. (4) Empty state consolidation — when no pins are visible for the selected floor+date, a single "No moisture pins" message renders at the view level (not duplicated by the summary table). (5) Snapshot-before-birth — pins whose earliest reading postdates the selected snapshot are filtered out of canvas + table + rollup, consistent across all three surfaces.
+
+### Manual QA (verified in the browser by the user during this session)
+
+**Pin placement + moisture mode**
+- Toggle Moisture Mode → sketch layers dim to 30%, toolbar filters to mode-relevant tools, Pin tool becomes active.
+- Tap inside a room → placement sheet opens with surface + position chips, material dropdown (defaults to room material when set), `dry_standard` pre-fills from the material dict and is editable, initial reading input.
+- Tap outside any room → inline nudge ("Tap inside a room to drop a pin") appears and auto-fades.
+- Save creates the pin on canvas at the tapped coordinates, color-coded (red / amber / green) by the backend compute, with the reading value rendered inside the circle.
+
+**Reading logging**
+- Tap existing pin with Pin tool in Moisture Mode → reading sheet opens. If today's row exists, the input prefills to that value.
+- Save creates or silently upserts today's reading — no ConfirmModal (the history list makes the existing value self-evident).
+- Pin color on canvas and reading value inside re-derive from the new latest value without a refresh.
+- Day-over-day regression banner fires when latest strictly exceeds previous; per-row `↑ up` chevron marks individual rows that increased vs the row before them.
+
+**History panel**
+- Sparkline renders with `D1…DN` day labels beneath each dot, dashed dry-standard line with inline `16%` label at its right end, color-matched latest-value callout above the (enlarged) latest dot.
+- History list newest-first, reading count in the header, per-row color dot matches the on-canvas pin color.
+- First-open loading skeleton pulses the sparkline slot + two ghost list rows with `aria-busy="true"`; swaps cleanly to real history once the query settles (no layout jump).
+
+**Delete reading flow**
+- Trash button muted by default on desktop, turns red on hover (`bg-red-100` circle + red icon); on touch devices it renders in muted red by default (via `[@media(hover:none)]`) so clickability is discoverable without a hover signal.
+- Last-reading row: trash disabled at `opacity-30` with the hint `"Last reading — delete the pin instead"` in both `title` and `aria-label`.
+- Click active trash → ConfirmModal with `"Delete reading? The X% reading from <date> will be removed. This can't be undone."` Danger variant (red Confirm button).
+- Confirm → row fades to opacity-40 during in-flight DELETE (`pendingDeleteIds` set), disappears on success; pin color recomputes on canvas from the new latest (or goes neutral gray only if we bypassed the last-reading guard — which is impossible via UI).
+- Cancel / backdrop tap / Escape → modal closes, no network, no mutation.
+- Rapid double-tap on the same trash → second tap is absorbed by `pointer-events-none` during the pending window; no duplicate DELETE lands.
+
+**Edit pin flow**
+- Edit chip (rounded-lg brand-accent/10 tint) in the reading-sheet header opens the edit sheet layered on top.
+- Material dropdown lists all options with their `X% std` defaults; selecting a new material auto-fills the dry_standard with its default and surfaces a "Reset to default" affordance when the value diverges.
+- Update → mutation fires; on success **both sheets close** (no redundant return to the reading sheet); pin color and sparkline recompute from the new dry_standard on canvas.
+- Cancel → only the edit sheet closes; reading sheet stays open (user can still log a reading).
+
+**Room rollup + drying progress**
+- Room polygon label tints red / amber / green in Moisture Mode by worst-pin-wins across pins inside that room's polygon.
+- Drying Progress card on `/jobs/<id>` lists only rooms with ≥ 1 pin, mitigation-only (never shown on recon-linked jobs).
+- Deeplink from the card (`?mode=moisture`) lands on the floor-plan page pre-switched to Moisture Mode with the target room visible.
+
+**Timezone regression guard (the bug that nearly shipped)**
+- Simulated 8 PM local Pacific (system clock at `2026-04-22 20:00:00` with UTC already reading `2026-04-23 03:00Z`) → `todayLocalIso()` returns `2026-04-22`, reading writes with `reading_date=2026-04-22`, display reads "Apr 22" in the history row. Next-morning Wednesday log has its own `reading_date=2026-04-23` — no upsert collision.
+- Pinned at unit-test level in `dates.test.ts` and at integration-test level in `moisture-reading-sheet.test.tsx`. A regression would fail both.
+
+**Canvas + mode integration carried forward from Task 2/3 work**
+- Pin drag within the room polygon snaps back to the last valid position on fail-closed polygon check.
+- Pins translate with their host room when the room is moved / resized (optimistic TanStack cache update — no visual lag waiting for refetch).
+- Wall-sync circuit breaker (per-session bad-id set) prevents an invalid room polygon from stampeding save attempts.
+
+**Manual QA — Moisture Report View (Tasks 6+7)**
+- Tech route (`/jobs/<id>/moisture-report`) renders with floor dropdown + snapshot-date picker + canvas + summary table + print button. Canonical floor names (Basement / Main / Upper / Attic) appear in the dropdown for floor_numbers 0–3 regardless of stored `floor_name`.
+- Per-floor isolation — pins placed on Upper never leak into the Main floor view; backed by `moisture_pins.floor_plan_id` joined through `job_rooms`. Verified by placing pins on two floors and switching the dropdown.
+- Snapshot-date picker — moving the date earlier than a pin's first reading hides that pin from canvas + summary + rollup; moving forward restores it. No grey "no-data" pins in the historical view — hidden means hidden.
+- Mobile (<500px viewport) — pin radius scales down to 9px / 8px font; floor dropdown stays visible; canvas shrinks proportionally via ResizeObserver without overflowing parent.
+- Portal route (`/shared/<token>/moisture?floor=<id>&date=<iso>`) — same view rendered from `/v1/shared/resolve` payload; `restoration_only` and `full` scopes populate moisture_pins + floor_plans, `recon_only` returns empty arrays.
+- Print button (`window.print()`) — CSS `@media print` + `.print-section` class strips chrome; floor-plan canvas + summary table print on a single page for carrier documentation.
+- Archived job — tech can still open Moisture Report and view historical readings; every mutation attempt surfaces as a 409 disabled state (no write affordances rendered).
+
+### Explicitly out-of-scope for Phase 2 automated coverage
+
+- Pixel-exact sparkline SVG geometry. Covered by presence + data-flow assertions, not coordinate math.
+- Drag-to-dismiss touch gestures on modal sheets. jsdom's touch event support is shallow; the mechanic is shared with `moisture-placement-sheet.tsx` + `cutout-editor-sheet.tsx`, exercised in Phase 1 manual QA.
+- Konva canvas interaction (drag, pan, tap resolver). The canvas stack is Konva-controlled; covered by the manual QA sweep above. The Moisture Report canvas is render-only (no drag / tap) so Konva is mocked via `vi.mock("react-konva")` in the view tests.
+- Actual PDF rasterization. We use `window.print()` + print CSS rather than a headless-chromium PDF pipeline; the "PDF" is whatever the OS print dialog produces. No byte-level output comparison — the single-page-fits assertion is manual.
+
+---
+
+## Phase 2 — Known limitations / follow-ups
+
+Non-blocking. Captured here so they surface in the first critical-review sweep instead of being forgotten.
+
+- ~~**PDF export (Task 6)**~~ — ✅ Shipped 2026-04-23 as `window.print()` + `@media print` CSS against the shared `MoistureReportView` component (see "Moisture Report View — Tasks 6 + 7" changelog entry above). No headless-chromium PDF service; OS print dialog produces the file.
+- ~~**Adjuster portal moisture view (Task 7)**~~ — ✅ Shipped 2026-04-23. Route: `/shared/<token>/moisture?floor=<id>&date=<iso>`. Reuses `moisture-reading-history.ts` + `MoistureReportView` / `MoistureReportCanvas` components — zero algorithm duplication between tech and portal.
+- **Reading-sheet atmospheric integration** — atmospheric fields (room temp / RH / GPP) are NOT yet wired into the reading sheet flow; they live on the legacy atmospheric-readings page noted in `feedback_readings_ux.md`. Phase 2 scope is spatial pins only; atmospheric integration is a Phase 3 or post-V1 decision.
+- **Undo after delete** — no soft-delete path. Backend endpoint is a hard delete; the last-reading guard prevents the most obvious "oh no" case. Acceptable for V1.
+- **Reading edit (value)** — no UI for editing a past reading's value (only deletion). Backend `PATCH /readings/{id}` exists but is not exercised by any frontend surface. Techs who mis-type typically delete + re-log; if this turns out to be high-friction in field testing, a pencil affordance per row is a small follow-up.
+
+---
+
+*Created: 2026-04-15. Source: Brett's Sketch & Floor Plan Tool Product Design Specification v2.0 (April 13, 2026). Eng review: 2026-04-16. Round 2 hardening: 2026-04-22. Round 3 hardening: 2026-04-22. Phase 2 in progress 2026-04-23.*

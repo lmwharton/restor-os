@@ -33,6 +33,19 @@ import { RoomConfirmationCard, type RoomConfirmationData } from "./room-confirma
 import { WallContextMenu } from "./wall-context-menu";
 import { CutoutEditorSheet } from "./cutout-editor-sheet";
 import { ShapePickerModal, type ShapeTemplate } from "./shape-picker-modal";
+import { CANVAS_MODES, DIM_SKETCH_OPACITY, type CanvasMode } from "./moisture-mode";
+import { MoisturePlacementSheet, type PlacementSheetData } from "./moisture-placement-sheet";
+import { MoistureReadingSheet } from "./moisture-reading-sheet";
+import { MoistureEditSheet } from "./moisture-edit-sheet";
+import { useCreateMoisturePin, useMoisturePins, useUpdateMoisturePin, useDeleteMoisturePin } from "@/lib/hooks/use-moisture-pins";
+import { useQueryClient } from "@tanstack/react-query";
+import type { MoisturePin } from "@/lib/types";
+import { deriveRoomStatus, ROOM_STATUS_COPY } from "@/lib/moisture-room-status";
+import { todayLocalIso } from "@/lib/dates";
+import {
+  resolveCanvasRoomBackendRow,
+  resolveCanvasRoomCandidateIds,
+} from "@/lib/canvas-room-resolver";
 
 /* ------------------------------------------------------------------ */
 /*  Props                                                              */
@@ -66,7 +79,17 @@ interface KonvaFloorPlanProps {
   initialData?: FloorPlanData | null;
   onChange?: (data: FloorPlanData) => void;
   readOnly?: boolean;
-  rooms?: Array<{ id: string; room_name: string; affected?: boolean }>;
+  rooms?: Array<{
+    id: string;
+    room_name: string;
+    affected?: boolean;
+    /** Room-level material tags (e.g. ["drywall", "carpet", "paint"]) from
+     *  job_rooms.material_flags. Used by the moisture placement sheet to
+     *  surface material suggestions — a bedroom pre-promotes carpet_pad +
+     *  drywall to the top of the material dropdown. Optional because Phase 1
+     *  room creation may not have captured them. */
+    material_flags?: string[];
+  }>;
   onCreateRoom?: (
     name: string,
     dimensions?: { width: number; height: number },
@@ -107,6 +130,12 @@ interface KonvaFloorPlanProps {
   jobId?: string;
   onSelectionChange?: (info: { selectedId: string; type: "room"; name: string; widthFt: number; heightFt: number; propertyRoomId?: string; isPolygon?: boolean } | null) => void;
   onEditRoom?: () => void;
+  /** Canvas mode — "sketch" (default) or "moisture". Drives tool filtering in
+   *  the toolbar and dims the rooms/walls/openings layers when on a non-sketch
+   *  mode so the mode-specific layer (pins in Block 2) pops. Defaults to
+   *  "sketch" when omitted so this component stays backwards-compatible with
+   *  any caller that hasn't been updated. */
+  canvasMode?: CanvasMode;
 }
 
 /* ------------------------------------------------------------------ */
@@ -308,7 +337,14 @@ function MobileOpeningEditor({ type, isOpening, width, height, onWidthChange, on
 /*  Main Component                                                     */
 /* ------------------------------------------------------------------ */
 
-const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, onSelectionChange, onEditRoom }, ref) {
+const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(function KonvaFloorPlan({ initialData, onChange, readOnly = false, rooms: propertyRooms, onCreateRoom, activeFloorLevel, onCreateRoomOnDifferentFloor, noActiveFloor = false, onDrawAttemptWithoutFloor, jobId, onSelectionChange, onEditRoom, canvasMode = "sketch" }, ref) {
+  const modeConfig = CANVAS_MODES[canvasMode];
+  // Only "sketch" mode permits sketch-entity interactions. In non-sketch modes
+  // the sketch layer is read-only context; clicks on rooms/walls/doors/windows/
+  // openings/cutouts should be no-ops so they don't select, delete, or otherwise
+  // mutate Phase 1 geometry. Phase 2 hooks into a different event (canvas-level
+  // tap handler inside the moisture pin layer) for pin placement.
+  const isSketchMode = canvasMode === "sketch";
   // Merge defaults UNDER initialData so a partial canvas_data (e.g. an empty
   // {} from a freshly-created floor shell) still gets walls/rooms/doors/windows
   // arrays. Without this, state.walls is undefined and every iteration crashes.
@@ -324,6 +360,24 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   const [stageSize, setStageSize] = useState({ width: 800, height: 600 });
   const containerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<Konva.Stage>(null);
+
+  // Reset sketch-interaction state when leaving Sketch Mode AND default the
+  // tool to each mode's primary action. Users expect to drop pins the moment
+  // they toggle to Moisture Mode, not hunt for the Pin tool; and they expect
+  // Select when switching back. Only runs on mode transitions — never touches
+  // pure Sketch-Mode flows.
+  useEffect(() => {
+    if (!isSketchMode) {
+      setSelectedId(null);
+      setWallContextMenu(null);
+      setVertexDragPreview(null);
+    }
+    if (canvasMode === "moisture") {
+      setTool("pin");
+    } else if (canvasMode === "sketch") {
+      setTool("select");
+    }
+  }, [isSketchMode, canvasMode]);
 
   // Close wall context menu when selection changes away from that wall
   useEffect(() => {
@@ -416,6 +470,213 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   // Zoom/pan state
   const [stageScale, setStageScale] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
+
+  // ── Moisture Mode state ────────────────────────────────────────────
+  // Pending placement — opened when the tech taps inside a room while the
+  // Pin tool is active. Collects the structured location + first reading
+  // via the bottom sheet / desktop modal, then fires useCreateMoisturePin.
+  const [placement, setPlacement] = useState<
+    | null
+    | {
+        roomId: string;
+        roomName: string;
+        roomMaterialFlags: string[];
+        canvas_x: number;
+        canvas_y: number;
+      }
+  >(null);
+  // Pin whose reading sheet is currently open (Block 3A). Null when no
+  // sheet is mounted. Stores just the id so the sheet always picks up
+  // the freshest pin row from the query cache after mutations invalidate.
+  const [readingPinId, setReadingPinId] = useState<string | null>(null);
+  // Edit sheet — opened from the reading sheet's "Edit" affordance.
+  // Separate state from readingPinId so the edit sheet can layer on top
+  // of the reading sheet (the reading sheet stays open behind it; after
+  // a successful update it re-renders with the new material/dry_standard).
+  const [editingPinId, setEditingPinId] = useState<string | null>(null);
+  // Pins currently mid-delete. Added when the user taps a pin with the
+  // Delete tool, removed in mutation onSettled. While a pin is in this
+  // set it renders dimmed + ignores further taps, so an impatient double-
+  // tap can't fire a second DELETE (which would 404 after the first).
+  const [pendingDeleteIds, setPendingDeleteIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // Inline nudge shown briefly in Moisture Mode when a tap can't resolve
+  // to a backend job_room. Two variants: "empty tap" (landed outside any
+  // room polygon) and "syncing" (landed inside a room but the room has
+  // no backend twin yet — kick off a background sync, ask user to retry).
+  // Auto-clears after 1.6s — no user dismiss needed.
+  const [nudgeVisible, setNudgeVisible] = useState(false);
+  const [nudgeVariant, setNudgeVariant] = useState<"empty" | "syncing">("empty");
+  const nudgeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Moisture pin mutations / queries — only fire when jobId is provided.
+  const moisturePinsQuery = useMoisturePins(jobId ?? "");
+  // Stable reference via useMemo — the fallback [] on undefined jobId was
+  // creating a new array each render, which cascaded into useCallback
+  // dependency arrays and re-created pin-tap / drag handlers on every pass.
+  const moisturePins = useMemo(
+    () => (jobId ? moisturePinsQuery.data ?? [] : []),
+    [jobId, moisturePinsQuery.data],
+  );
+
+  // Room-label tint in moisture mode: worst-pin-wins rollup keyed by
+  // backend property_room_id. Empty rooms fall back to the default fill.
+  const roomStatusByBackendId = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof deriveRoomStatus>>();
+    const seen = new Set<string>();
+    for (const pin of moisturePins) {
+      if (pin.room_id) seen.add(pin.room_id);
+    }
+    for (const backendRoomId of seen) {
+      map.set(backendRoomId, deriveRoomStatus(moisturePins, backendRoomId));
+    }
+    return map;
+  }, [moisturePins]);
+
+  // Scope pins to the currently-shown floor. `initialData` is already
+  // per-floor (the page re-mounts this component when activeFloorId
+  // changes), so the canvas-rooms set naturally defines "visible" pins.
+  // Pins whose room lives on another floor would otherwise render at
+  // their original coordinates on top of an empty or unrelated canvas
+  // — a pin without a surrounding room polygon.
+  const createPin = useCreateMoisturePin(jobId ?? "");
+  const updatePin = useUpdateMoisturePin(jobId ?? "");
+  const deletePin = useDeleteMoisturePin(jobId ?? "");
+  const pinQueryClient = useQueryClient();
+
+  // Per-pin mutation serializer — closes the M1 race where rapid
+  // drags fire sequential PATCHes that react-query doesn't queue.
+  // Under network reordering the older PATCH can land last and leave
+  // the pin at a stale position. Same shape as the Phase 1 Round 5
+  // autosave in-flight guard.
+  //
+  // Behavior: if no mutation is in flight for this pin, fire it. If
+  // one IS in flight, stash the latest coords in ``pending``; when
+  // the current one settles we fire the stashed coords (collapsing
+  // any intermediate drags — only the last one the user ended on
+  // matters). Discarding older pendings is intentional: we only
+  // need to converge on the final position, not replay every
+  // intermediate one.
+  const pinMutationStateRef = useRef<Map<string, {
+    inFlight: boolean;
+    pending: { canvas_x: number; canvas_y: number } | null;
+  }>>(new Map());
+
+  const queuePinCoordUpdate = useCallback(
+    (pinId: string, coords: { canvas_x: number; canvas_y: number }) => {
+      const fireOne = (c: { canvas_x: number; canvas_y: number }) => {
+        updatePin.mutate(
+          { pinId, canvas_x: c.canvas_x, canvas_y: c.canvas_y },
+          {
+            onSettled: () => {
+              const st = pinMutationStateRef.current.get(pinId);
+              if (!st) return;
+              if (st.pending) {
+                const next = st.pending;
+                st.pending = null;
+                // inFlight stays true while we chain the queued coords.
+                pinMutationStateRef.current.set(pinId, st);
+                fireOne(next);
+              } else {
+                st.inFlight = false;
+                pinMutationStateRef.current.set(pinId, st);
+              }
+            },
+          },
+        );
+      };
+
+      const existing = pinMutationStateRef.current.get(pinId);
+      if (existing?.inFlight) {
+        // Stash only the latest coords; drop older pendings.
+        existing.pending = coords;
+        pinMutationStateRef.current.set(pinId, existing);
+        return;
+      }
+      pinMutationStateRef.current.set(pinId, {
+        inFlight: true,
+        pending: null,
+      });
+      fireOne(coords);
+    },
+    [updatePin],
+  );
+
+  // Pin-follow-room: whenever a canvas room's bbox top-left moves
+  // (drag, vertex drag, resize handle, edit-from-card, undo/redo),
+  // translate that room's moisture pins by the same delta. Pins are
+  // anchored to the room semantically — a wet wall-corner moves with
+  // the room on the sketch. Hooking this reactively against state.rooms
+  // covers every mutation path without plumbing translate calls into
+  // each drag-end / vertex-drag-end / resize handler individually.
+  //
+  // First render primes prevRoomsRef and does not translate, so the
+  // initial canvas hydration (which pops rooms into state from saved
+  // canvas_data) doesn't fire phantom PATCHes.
+  const prevRoomsRef = useRef<RoomData[] | null>(null);
+  useEffect(() => {
+    const prev = prevRoomsRef.current;
+    prevRoomsRef.current = state.rooms;
+    if (!prev) return;
+    for (const room of state.rooms) {
+      const old = prev.find((r) => r.id === room.id);
+      if (!old) continue;
+      const dx = room.x - old.x;
+      const dy = room.y - old.y;
+      if (dx === 0 && dy === 0) continue;
+      // A canvas room can legitimately correspond to MULTIPLE backend
+      // room ids in the wild: a stale propertyRoomId (pointing at a
+      // deleted job_room) + a live name-matched job_room. Pins dropped
+      // via name-match carry the live id; pins dropped after a backfill
+      // carry the propertyRoomId. Translate any pin whose room_id hits
+      // EITHER candidate so both provenances follow the room.
+      //
+      // The shared resolver skips the name-match candidate entirely
+      // when the name is non-unique ("Bedroom 1 / Bedroom 2") — guards
+      // the HIGH #5 regression where dragging Bedroom 2 would
+      // translate pins on Bedroom 1 via the first-match-wins trap.
+      const candidateIds = resolveCanvasRoomCandidateIds(room, propertyRooms);
+      if (candidateIds.size === 0) continue;
+
+      // Collect pins to move so we do a single cache update before
+      // firing PATCHes. Optimistic: the cache update makes pins render
+      // at the new spot immediately; PATCHes persist in the background.
+      // Without this, the pin visually lags while waiting for PATCH +
+      // refetch, and a racing invalidation can leave it looking stuck.
+      const pinsToMove: MoisturePin[] = [];
+      for (const pin of moisturePins) {
+        if (!pin.room_id || !candidateIds.has(pin.room_id)) continue;
+        pinsToMove.push(pin);
+      }
+      if (pinsToMove.length === 0) continue;
+
+      // Number() casts: backend serializes NUMERIC as strings ("150.00"),
+      // and Math.round("150.00" + 130) would JS-concat → NaN.
+      pinQueryClient.setQueryData<MoisturePin[]>(
+        ["moisture-pins", jobId ?? ""],
+        (cached) => {
+          if (!cached) return cached;
+          return cached.map((p) => {
+            const target = pinsToMove.find((pm) => pm.id === p.id);
+            if (!target) return p;
+            return {
+              ...p,
+              canvas_x: Math.round(Number(target.canvas_x) + dx),
+              canvas_y: Math.round(Number(target.canvas_y) + dy),
+            };
+          });
+        },
+      );
+
+      for (const pin of pinsToMove) {
+        queuePinCoordUpdate(pin.id, {
+          canvas_x: Math.round(Number(pin.canvas_x) + dx),
+          canvas_y: Math.round(Number(pin.canvas_y) + dy),
+        });
+      }
+    }
+  }, [state.rooms, moisturePins, propertyRooms, queuePinCoordUpdate, pinQueryClient, jobId]);
 
   // Long-press resize mode for mobile
   const [resizeActive, setResizeActive] = useState(false);
@@ -760,6 +1021,227 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
   /*  Mouse / touch handlers                                           */
   /* ---------------------------------------------------------------- */
 
+  // Shared room-tap handler — routes per canvas mode.
+  // Empty-canvas tap in Moisture Mode — shows the "Tap inside a room" nudge.
+  // Declared BEFORE handleRoomTap because that callback's deps reference it.
+  const triggerNudge = useCallback((variant: "empty" | "syncing" = "empty") => {
+    setNudgeVariant(variant);
+    setNudgeVisible(true);
+    if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    nudgeTimerRef.current = setTimeout(() => setNudgeVisible(false), 1800);
+  }, []);
+
+  // Sketch Mode: preserves Phase 1 behavior (toggle select / delete).
+  // Moisture Mode with Pin tool: open the placement sheet for this room
+  // with the tap's canvas coordinates.
+  // Any other mode/tool combination: no-op.
+  const handleRoomTap = useCallback(
+    (roomId: string, e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+      if (isSketchMode) {
+        if (tool === "select") setSelectedId((cur) => (cur === roomId ? null : roomId));
+        if (tool === "delete") deleteElement(roomId);
+        return;
+      }
+      if (canvasMode === "moisture" && tool === "pin" && !readOnly) {
+        const stage = e.target.getStage();
+        const pointer = stage?.getPointerPosition();
+        if (!stage || !pointer) return;
+        const cx = (pointer.x - stagePos.x) / stageScale;
+        const cy = (pointer.y - stagePos.y) / stageScale;
+        // Canvas rooms carry a generated uid (e.g. "room_1776581712776_1").
+        // The backend's moisture_pins.room_id FK targets job_rooms.id (UUID).
+        // Resolve via the shared helper so duplicate room names
+        // ("Bedroom 1 / Bedroom 2") don't collide into the first
+        // match — the resolver only accepts a name fallback when the
+        // match is unambiguous. If BOTH the propertyRoomId AND the
+        // safe name match fail we nudge.
+        const canvasRoom = displayRooms.find((r) => r.id === roomId);
+        const propertyRoom = canvasRoom
+          ? resolveCanvasRoomBackendRow(canvasRoom, propertyRooms)
+          : undefined;
+        if (!propertyRoom) {
+          // Canvas room has no backend twin (never synced, or stale
+          // propertyRoomId pointing at a deleted job_room). Trigger a
+          // create-or-backfill through the parent so the next tap resolves
+          // — parent handler no-ops create if a job_room with this name
+          // already exists and just backfills propertyRoomId. Fire-and-
+          // forget; the nudge tells the user to try again.
+          if (canvasRoom && onCreateRoom) {
+            const dims =
+              typeof canvasRoom.width === "number" && typeof canvasRoom.height === "number"
+                ? { width: canvasRoom.width, height: canvasRoom.height }
+                : undefined;
+            onCreateRoom(canvasRoom.name, dims, undefined, canvasRoom.id);
+            triggerNudge("syncing");
+          } else {
+            triggerNudge("empty");
+          }
+          return;
+        }
+        setPlacement({
+          roomId: propertyRoom.id,
+          roomName: propertyRoom.room_name,
+          roomMaterialFlags: propertyRoom.material_flags ?? [],
+          canvas_x: Math.round(cx),
+          canvas_y: Math.round(cy),
+        });
+      }
+    },
+    [isSketchMode, tool, canvasMode, readOnly, stagePos, stageScale, propertyRooms, displayRooms, deleteElement, triggerNudge, onCreateRoom],
+  );
+
+  // Drag a pin to fine-tune its position. The drag updates the Konva
+  // Group's (x, y) live during the drag; on release, we validate the new
+  // position is still inside the pin's room polygon and PATCH the
+  // backend. If the drop lands outside the room, we snap back (no move).
+  const handlePinDragEnd = useCallback(
+    (
+      pinId: string,
+      roomId: string | null,
+      e: Konva.KonvaEventObject<DragEvent>,
+    ) => {
+      const newX = e.target.x();
+      const newY = e.target.y();
+      // Resolve the pin's room polygon. Try: canvas propertyRoomId match,
+      // canvas id match, then name-match via propertyRooms. Matches the
+      // handleRoomTap resolver so drag + placement agree.
+      let canvasRoom = roomId
+        ? displayRooms.find((r) => r.propertyRoomId === roomId || r.id === roomId)
+        : undefined;
+      if (!canvasRoom && roomId) {
+        const propRoom = propertyRooms?.find((pr) => pr.id === roomId);
+        if (propRoom) {
+          canvasRoom = displayRooms.find((r) => r.name === propRoom.room_name);
+        }
+      }
+      // Fail closed: if we can't resolve the room polygon OR the new
+      // position isn't inside it, snap the pin back to its original coords.
+      const isInside =
+        canvasRoom
+          ? pointInPolygon({ x: newX, y: newY }, getRoomPoints(canvasRoom))
+          : false;
+      if (!isInside) {
+        const original = moisturePins.find((p) => p.id === pinId);
+        if (original) {
+          e.target.x(Number(original.canvas_x));
+          e.target.y(Number(original.canvas_y));
+          e.target.getLayer()?.batchDraw();
+        }
+        triggerNudge();
+        return;
+      }
+      queuePinCoordUpdate(pinId, {
+        canvas_x: Math.round(newX),
+        canvas_y: Math.round(newY),
+      });
+    },
+    [displayRooms, propertyRooms, moisturePins, queuePinCoordUpdate, triggerNudge],
+  );
+
+  // Pin tap: in Moisture Mode. With Delete tool active, the tap
+  // performs the destructive action (canonical pin-delete path).
+  // With ANY OTHER tool — including Pin or a transient/unset tool
+  // state during a mode switch — the reading sheet opens. The
+  // permissive default fixes the silent no-op the user reported
+  // when the toolbar happened to land in a non-Pin / non-Delete
+  // state mid-transition.
+  //
+  // On archived (read-only) jobs, ALL pin taps open the sheet in
+  // read-only mode — the Delete tool is hidden / inert anyway, but
+  // we explicitly skip it so a stale in-memory tool=delete from a
+  // pre-archive session can't trigger a destructive mutation.
+  const handlePinTap = useCallback(
+    (pinId: string) => {
+      if (canvasMode !== "moisture") return;
+      if (readOnly) {
+        setReadingPinId(pinId);
+        return;
+      }
+      if (tool === "delete") {
+        // Guard against double-tap: the mutation is async, the pin stays
+        // in the cache until success + invalidate. Second tap would hit
+        // a 404 and confuse the user. Track pending ids and no-op on repeat.
+        setPendingDeleteIds((prev) => {
+          if (prev.has(pinId)) return prev;
+          const next = new Set(prev);
+          next.add(pinId);
+          return next;
+        });
+        deletePin.mutate(pinId, {
+          onSettled: () => {
+            setPendingDeleteIds((prev) => {
+              if (!prev.has(pinId)) return prev;
+              const next = new Set(prev);
+              next.delete(pinId);
+              return next;
+            });
+          },
+        });
+        return;
+      }
+      // Default for Pin tool + any other state: open the reading sheet.
+      setReadingPinId(pinId);
+    },
+    [canvasMode, readOnly, tool, deletePin],
+  );
+
+  // Save placement: fire the create mutation, close the sheet on success.
+  // Errors surface as toasts via TanStack Query's default error handling —
+  // for MVP we log + close, and the sheet's state is discarded.
+  const handlePlacementSave = useCallback(
+    (data: PlacementSheetData) => {
+      if (!jobId || !placement) return;
+      const todayIso = todayLocalIso();
+      createPin.mutate(
+        {
+          room_id: placement.roomId,
+          canvas_x: placement.canvas_x,
+          canvas_y: placement.canvas_y,
+          location_name: data.location_name,
+          material: data.material,
+          dry_standard: data.dry_standard,
+          initial_reading: {
+            reading_value: data.initial_reading,
+            reading_date: todayIso,
+          },
+        },
+        {
+          onSuccess: () => setPlacement(null),
+          onError: (err) => {
+            // Keep the sheet open so the user sees their inputs; log for
+            // debugging. Future iteration: surface inline error text.
+            console.error("moisture pin create failed", err);
+          },
+        },
+      );
+    },
+    [jobId, placement, createPin],
+  );
+
+  // Clear nudge timer on unmount to prevent leaks.
+  useEffect(() => {
+    return () => {
+      if (nudgeTimerRef.current) clearTimeout(nudgeTimerRef.current);
+    };
+  }, []);
+
+  // Drop a stale readingPinId if the pin it points at no longer exists
+  // in the query cache (e.g., deleted from another tab). Keeps the sheet
+  // from silently pointing at a non-existent row. Same guard for the
+  // edit sheet — if the pin vanishes mid-edit, close the sheet.
+  useEffect(() => {
+    if (!readingPinId) return;
+    if (!moisturePins.some((p) => p.id === readingPinId)) {
+      setReadingPinId(null);
+    }
+  }, [readingPinId, moisturePins]);
+  useEffect(() => {
+    if (!editingPinId) return;
+    if (!moisturePins.some((p) => p.id === editingPinId)) {
+      setEditingPinId(null);
+    }
+  }, [editingPinId, moisturePins]);
+
   const getPos = useCallback(() => {
     const stage = stageRef.current;
     if (!stage) return { x: 0, y: 0 };
@@ -882,11 +1364,33 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       }
     }
 
+    // Moisture Mode pin-drop with Pin tool: if the user tapped empty canvas
+    // (no known element in the target's ancestor chain), show the "tap
+    // inside a room" nudge. Walk up from target → ancestors looking for a
+    // room or pin — identified by either elementId or a recognised name.
+    if (canvasMode === "moisture" && tool === "pin" && !readOnly) {
+      // Walk up from target looking for a room / pin marker. Covers every
+      // target permutation (room Line/Rect, room-name Text, pin hit Circle,
+      // pin Group, etc.) without caring which exact shape Konva picked.
+      let node: Konva.Node | null = e.target;
+      let hit = false;
+      while (node) {
+        if (node.attrs?.elementId || node.attrs?.name === "moisture-pin" || node.attrs?.name === "room") {
+          hit = true;
+          break;
+        }
+        node = node.getParent();
+      }
+      if (!hit) {
+        triggerNudge();
+      }
+    }
+
     if (tool === "delete") {
       const id = e.target.attrs?.elementId;
       if (id) deleteElement(id);
     }
-  }, [tool, readOnly, getPos, gs, state, push, wallStart, traceVertices, deleteElement, noActiveFloor, onDrawAttemptWithoutFloor]);
+  }, [tool, readOnly, getPos, gs, state, push, wallStart, traceVertices, deleteElement, noActiveFloor, onDrawAttemptWithoutFloor, canvasMode, triggerNudge]);
 
   const handleMouseMove = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     // Pinch-to-zoom + two-finger pan (works in readOnly too)
@@ -933,7 +1437,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
     }
   }, [tool, readOnly, getPos, gs, drawStart, wallStart, traceVertices.length, state.walls]);
 
-  const handleMouseUp = useCallback((e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
+  const handleMouseUp = useCallback((_e: Konva.KonvaEventObject<MouseEvent | TouchEvent>) => {
     // Reset pinch tracking
     lastPinchDist.current = null;
     lastPinchCenter.current = null;
@@ -1131,6 +1635,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
       // Re-run shared-wall detection so adjacent edges get re-flagged.
       const updatedWalls = detectSharedWalls(shiftedWalls);
       push({ ...state, rooms: state.rooms.map((r) => (r.id === id ? updatedRoom : r)), walls: updatedWalls });
+      // Pin translation is handled reactively via the pin-follow-room
+      // effect (watches state.rooms top-left for any position change —
+      // drag, vertex drag, resize — and PATCHes pins by the same delta).
     }
     if (type === "wall") {
       const wall = state.walls.find((w) => w.id === id);
@@ -1553,6 +2060,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           stageRef={stageRef}
           affectedOverlay={affectedOverlay}
           onToggleAffectedOverlay={() => setAffectedOverlay((v) => !v)}
+          canvasMode={canvasMode}
         />
       )}
 
@@ -1630,6 +2138,106 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           onPick={handleShapePicked}
           onCancel={handleShapePickerCancel}
         />
+
+        {/* Moisture pin placement sheet — mobile bottom sheet / desktop modal.
+            Opens when the tech taps inside a room in Moisture Mode with the
+            Pin tool active. onSave fires useCreateMoisturePin and closes on
+            success. */}
+        {placement && (
+          <MoisturePlacementSheet
+            open={true}
+            roomName={placement.roomName}
+            roomMaterialFlags={placement.roomMaterialFlags}
+            onSave={handlePlacementSave}
+            onClose={() => setPlacement(null)}
+            isSaving={createPin.isPending}
+          />
+        )}
+
+        {/* Moisture reading sheet — opens when the tech taps an existing
+            pin in Moisture Mode with the Pin tool. Pin row is pulled fresh
+            from the query cache so post-mutation colors stay current.
+            If the target pin vanishes (e.g., deleted elsewhere) the sheet
+            renders nothing; the orphan id is cleaned up by the effect
+            below to avoid setState-during-render. */}
+        {readingPinId && jobId && (() => {
+          const pin = moisturePins.find((p) => p.id === readingPinId);
+          if (!pin) return null;
+          return (
+            <MoistureReadingSheet
+              open
+              jobId={jobId}
+              pin={pin}
+              onClose={() => setReadingPinId(null)}
+              // Edit chip hidden by the sheet itself when readOnly,
+              // so we can always hand in the prop — simpler than
+              // conditionally omitting it here.
+              onEditRequest={(pinId) => setEditingPinId(pinId)}
+              readOnly={readOnly}
+            />
+          );
+        })()}
+
+        {/* Edit sheet — layered on top of the reading sheet when the
+            tech taps the header's Edit affordance. Lets them correct
+            material / dry_standard on an existing pin without losing
+            its reading history. On successful update we close BOTH
+            sheets — the job is done and returning the tech to the
+            reading sheet behind would be redundant. Cancel closes only
+            the edit sheet so an accidentally-opened edit can back out
+            without losing the reading sheet context. */}
+        {editingPinId && jobId && (() => {
+          const pin = moisturePins.find((p) => p.id === editingPinId);
+          if (!pin) return null;
+          return (
+            <MoistureEditSheet
+              // Remount on pin swap. The sheet seeds its material +
+              // dry_standard state from props via useState which only
+              // runs on mount — without a unique key, a future refactor
+              // that keeps the sheet mounted across pin switches would
+              // silently show the previous pin's values for the new pin.
+              // Cheap guard against a class of stale-state bug.
+              key={pin.id}
+              open
+              pin={pin}
+              onClose={() => setEditingPinId(null)}
+              isSaving={updatePin.isPending}
+              onSave={({ material, dry_standard }) => {
+                updatePin.mutate(
+                  { pinId: pin.id, material, dry_standard },
+                  {
+                    onSuccess: () => {
+                      setEditingPinId(null);
+                      setReadingPinId(null);
+                    },
+                  },
+                );
+              }}
+            />
+          );
+        })()}
+
+        {/* Inline nudge — shown when a Moisture Mode tap lands outside any
+            room polygon. Floats over the viewport center, auto-fades after
+            1.6s. Pointer-events none so it doesn't absorb taps. Fixed
+            positioning so we don't need to thread `position: relative`
+            through the canvas host tree. */}
+        {nudgeVisible && canvasMode === "moisture" && (
+          <div
+            className="pointer-events-none fixed inset-x-0 top-1/2 -translate-y-1/2 z-40 flex justify-center"
+            aria-live="polite"
+          >
+            <div className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-on-surface/90 text-surface-container-lowest text-[13px] font-medium shadow-[0_8px_24px_rgba(31,27,23,0.25)] animate-in fade-in zoom-in-95 duration-150">
+              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" aria-hidden>
+                <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" />
+                <path d="M12 8v4M12 16h.01" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              {nudgeVariant === "syncing"
+                ? "Syncing this room — tap again in a moment"
+                : "Tap inside a room to drop a pin"}
+            </div>
+          </div>
+        )}
 
         {/* Cutout dimensions editor — opens immediately after placement and
             on any subsequent tap (Select tool). Find the cutout fresh from
@@ -1790,6 +2398,14 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           scaleY={stageScale}
           x={stagePos.x}
           y={stagePos.y}
+          // Konva default `dragDistance` is 0 — any pixel of movement
+          // triggers drag resolution, which on touch causes the first
+          // tap on a draggable child (e.g. a moisture pin) to be
+          // swallowed by the stage's drag-vs-tap arbitration. Result:
+          // user taps pin once (no modal), taps again (modal opens).
+          // Setting a small threshold lets static taps fire as taps
+          // immediately while preserving normal pan + pin-drag behavior.
+          dragDistance={5}
           // Stage panning: enabled for any tool whose primary interaction is a
           // SINGLE TAP (place on wall, delete target, select empty). Disabled
           // for tools that use tap-drag to draw (room, cutout) or multi-click
@@ -1822,7 +2438,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
           onTouchStart={handleMouseDown}
           onTouchMove={handleMouseMove}
           onTouchEnd={handleMouseUp}
-          style={{ cursor: tool === "room" || tool === "wall" || tool === "trace" ? "crosshair" : tool === "door" || tool === "window" || tool === "opening" ? "crosshair" : tool === "delete" ? "not-allowed" : "default" }}
+          style={{
+            cursor:
+              tool === "room" || tool === "wall" || tool === "trace"
+                ? "crosshair"
+                : tool === "door" || tool === "window" || tool === "opening"
+                  ? "crosshair"
+                  : tool === "pin"
+                    // Pin uses copy cursor — reads as "click to place a new
+                    // instance here" on desktop. Signals the drop affordance
+                    // clearly on hover over rooms in Moisture Mode.
+                    ? "copy"
+                    : tool === "delete"
+                      ? "not-allowed"
+                      : "default",
+          }}
         >
           {/* Grid layer — lines rendered over pre-padded bounds. Bounds only
               re-memoize when pan crosses a cell (qx/qy quantization). */}
@@ -1840,21 +2470,40 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             ))}
           </Layer>
 
-          {/* Rooms layer */}
-          <Layer>
+          {/* Rooms layer — dims in Moisture Mode so pins pop on top.
+              Per-handler early returns (`if (!isSketchMode) return;`) in
+              each room onClick/onTap are the source of truth for blocking
+              sketch-entity interactions in non-sketch modes. Layer-level
+              `listening` is intentionally NOT set here — setting it
+              explicitly even to `true` alters Konva's hit-graph rebuild
+              pattern and suppressed some child events in testing. */}
+          <Layer opacity={modeConfig.dimSketch ? DIM_SKETCH_OPACITY : 1}>
             {displayRooms.map((room) => {
               // Affected Mode: non-affected rooms fade so mitigation scope stands out.
               // `affected` lives on the per-job room (job_rooms.affected), not on
-              // the canvas room, so we look it up via propertyRoomId → propertyRooms.
-              const linkedPropertyRoom = room.propertyRoomId
-                ? propertyRooms?.find((r) => r.id === room.propertyRoomId)
-                : propertyRooms?.find((r) => r.room_name === room.name);
+              // the canvas room. Shared resolver drops the name fallback
+              // when the room_name is non-unique — otherwise "Bedroom 1 /
+              // Bedroom 2" would have Bedroom 1's affected flag
+              // visually apply to Bedroom 2. Same invariant as the pin
+              // translation + visibility filters (HIGH #5).
+              const linkedPropertyRoom = resolveCanvasRoomBackendRow(
+                room,
+                propertyRooms,
+              );
               const isAffected = !!linkedPropertyRoom?.affected;
               const isDimmed = affectedOverlay && !isAffected;
               const isPolygon = !!room.points && room.points.length >= 3;
               return (
               <Group
                 key={room.id}
+                // elementId on the Group so any tap inside the room — on the
+                // Line/Rect, room-name Text, dimension labels, SF chip, etc.
+                // — resolves via the Moisture Mode ancestor walk in
+                // handleMouseUp to this room. Without it, tapping a label
+                // inside the room fires the "tap inside a room" nudge
+                // erroneously because the immediate target (Text) has no id.
+                elementId={room.id}
+                name="room"
                 // Polygon rooms store absolute points and sit at group-origin (0,0).
                 // Rect rooms use group origin = (room.x, room.y) with local 0..width/height.
                 x={isPolygon ? 0 : room.x}
@@ -1938,14 +2587,11 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 }}
                 // Tap toggles selection: tapping an already-selected room
                 // deselects it (hides vertex handles, closes mobile panel).
-                onClick={() => {
-                  if (tool === "select") setSelectedId((cur) => (cur === room.id ? null : room.id));
-                  if (tool === "delete") deleteElement(room.id);
-                }}
-                onTap={() => {
-                  if (tool === "select") setSelectedId((cur) => (cur === room.id ? null : room.id));
-                  if (tool === "delete") deleteElement(room.id);
-                }}
+                // In Moisture Mode with the Pin tool, a tap opens the pin
+                // placement sheet with this room pre-filled. The cross-mode
+                // routing lives in the shared handler below.
+                onClick={(e) => handleRoomTap(room.id, e)}
+                onTap={(e) => handleRoomTap(room.id, e)}
               >
                 {isPolygon ? (
                   <Line
@@ -2045,10 +2691,21 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     ? Math.max(8, Math.round(fitSize * 0.85))
                     : Math.max(7, Math.round(fitSize * 0.75));
                   const sfW = sfText.length * CHAR_W * (sfSize / 13);
+                  // Tint the room name by dry-status in moisture mode.
+                  // Keyed by backend property_room_id; canvas rooms carry
+                  // that via propertyRoomId once backfilled.
+                  const dryStatus =
+                    canvasMode === "moisture" && room.propertyRoomId
+                      ? roomStatusByBackendId.get(room.propertyRoomId)
+                      : undefined;
+                  const labelFill =
+                    dryStatus && dryStatus !== "empty"
+                      ? ROOM_STATUS_COPY[dryStatus].colorHex
+                      : "#1a1a1a";
                   return (
                     <>
                       <Text x={labelX} y={labelY} text={label}
-                        fontSize={fitSize} fontFamily="var(--font-geist-mono), monospace" fill="#1a1a1a" align="center" offsetX={labelWpx / 2} />
+                        fontSize={fitSize} fontFamily="var(--font-geist-mono), monospace" fill={labelFill} align="center" offsetX={labelWpx / 2} />
                       <Text
                         x={labelX}
                         y={labelY + fitSize + 3}
@@ -2417,6 +3074,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                         });
                       }}
                       onClick={() => {
+                        if (!isSketchMode) return;
                         if (tool === "select") {
                           setSelectedId(op.id);
                           setEditingCutoutId(op.id);
@@ -2424,6 +3082,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                         if (tool === "delete") deleteElement(op.id);
                       }}
                       onTap={() => {
+                        if (!isSketchMode) return;
                         if (tool === "select") {
                           setSelectedId(op.id);
                           setEditingCutoutId(op.id);
@@ -2681,8 +3340,10 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             )}
           </Layer>
 
-          {/* Walls layer */}
-          <Layer>
+          {/* Walls layer — dims with the rooms layer in Moisture Mode.
+              Same reasoning as the rooms layer: per-handler gates, not
+              layer-level listening. */}
+          <Layer opacity={modeConfig.dimSketch ? DIM_SKETCH_OPACITY : 1}>
             {displayWalls.map((wall) => {
               const len = Math.hypot(wall.x2 - wall.x1, wall.y2 - wall.y1);
               const midX = (wall.x1 + wall.x2) / 2;
@@ -3007,6 +3668,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     elementId={wall.id}
                     onClick={(e) => {
                       if (readOnly) return;
+                      if (!isSketchMode) return;
                       if (tool === "delete") { deleteElement(wall.id); return; }
                       if (tool !== "select") return;
                       // Konva fires click after a drag on some browsers —
@@ -3038,6 +3700,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                     }}
                     onTap={(e) => {
                       if (readOnly) return;
+                      if (!isSketchMode) return;
                       if (tool === "delete") { deleteElement(wall.id); return; }
                       if (tool !== "select") return;
                       if (wallJustDraggedRef.current === wall.id) {
@@ -3084,8 +3747,9 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
             )}
           </Layer>
 
-          {/* Doors & Windows layer */}
-          <Layer>
+          {/* Doors & Windows layer — dims with the sketch layers in Moisture Mode.
+              Per-handler gates block interactions in non-sketch modes. */}
+          <Layer opacity={modeConfig.dimSketch ? DIM_SKETCH_OPACITY : 1}>
             {state.doors.map((door) => {
               const wall = wallMap.get(door.wallId);
               if (!wall) return null;
@@ -3096,6 +3760,7 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               const leafDir = (swing === 0 || swing === 3) ? -1 : 1;
               const isSelected = selectedId === door.id;
               const handleDoorInteract = () => {
+                if (!isSketchMode) return;
                 if (tool === "select") {
                   if (isSelected) {
                     push({ ...state, doors: state.doors.map((d) => d.id === door.id ? { ...d, swing: ((swing + 1) % 4) as 0 | 1 | 2 | 3 } : d) });
@@ -3159,8 +3824,8 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
                 <Group
                   key={win.id} x={px} y={py} rotation={(angle * 180) / Math.PI}
                   draggable={tool === "select" && !readOnly}
-                  onClick={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
-                  onTap={() => { if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
+                  onClick={() => { if (!isSketchMode) return; if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
+                  onTap={() => { if (!isSketchMode) return; if (tool === "select") setSelectedId(win.id); if (tool === "delete") deleteElement(win.id); }}
                   onDragMove={(e) => {
                     if (tool !== "select") return;
                     const t = projectOntoWall(e.target.x(), e.target.y(), wall);
@@ -3199,6 +3864,133 @@ const KonvaFloorPlan = forwardRef<KonvaFloorPlanHandle, KonvaFloorPlanProps>(fun
               );
             })}
           </Layer>
+
+          {/* ── Moisture Pin Layer ─────────────────────────────────────
+              Renders only in Moisture Mode. Each pin is a 26px colored
+              circle (red/amber/green from backend's compute_pin_color)
+              with the latest reading value inside. A small amber triangle
+              at upper-right indicates regression (today > yesterday).
+              Clicks are stubbed for now — Block 3 wires the reading sheet. */}
+          {canvasMode === "moisture" && (
+            <Layer>
+              {moisturePins
+                .filter((pin) => {
+                  if (!pin.room_id) return false;
+                  // Visible if pin.room_id hits any candidate id for
+                  // any canvas room on this floor. The shared
+                  // resolver merges propertyRoomId (backfilled) with
+                  // a unique name-match fallback — duplicate names
+                  // drop the name candidate to avoid the HIGH #5
+                  // cross-attribution ("Bedroom 1 / Bedroom 2" would
+                  // previously both claim pin.room_id pointing at
+                  // Bedroom 1 via first-match-wins).
+                  for (const canvasRoom of displayRooms) {
+                    const ids = resolveCanvasRoomCandidateIds(
+                      canvasRoom,
+                      propertyRooms,
+                    );
+                    if (ids.has(pin.room_id)) return true;
+                  }
+                  return false;
+                })
+                .map((pin) => {
+                const fill =
+                  pin.color === "red" ? "#dc2626"
+                    : pin.color === "amber" ? "#f59e0b"
+                    : pin.color === "green" ? "#16a34a"
+                    : "#9ca3af"; // no reading yet — neutral gray
+                const valueText = pin.latest_reading
+                  ? String(Math.round(Number(pin.latest_reading.reading_value)))
+                  : "—";
+                // Pins mid-delete dim to ~35% and stop listening so another
+                // tap can't stack a second DELETE on a pin that's already
+                // going away. Drag is also disabled during the window.
+                const isDeleting = pendingDeleteIds.has(pin.id);
+                return (
+                  <Group
+                    key={pin.id}
+                    x={Number(pin.canvas_x)}
+                    y={Number(pin.canvas_y)}
+                    opacity={isDeleting ? 0.35 : 1}
+                    listening={!isDeleting}
+                    // Name + elementId both set on the Group itself so
+                    // handleMouseUp's "empty canvas" nudge check sees the
+                    // pin as a real element, not background. Konva reports
+                    // the Group as e.target when child Circles have
+                    // listening=false, so the attrs must live here too.
+                    name="moisture-pin"
+                    elementId={pin.id}
+                    // Draggable in Moisture Mode so the tech can fine-tune
+                    // the pin's position by a few pixels without deleting
+                    // and re-dropping. handlePinDragEnd validates the new
+                    // position stays inside the pin's room polygon.
+                    draggable={!readOnly && !isDeleting}
+                    onDragEnd={(e) => handlePinDragEnd(pin.id, pin.room_id, e)}
+                    onClick={() => handlePinTap(pin.id)}
+                    onTap={() => handlePinTap(pin.id)}
+                  >
+                    {/* Invisible hit target — 38px so fingers don't miss the
+                        26px visible circle. elementId tags this as a known
+                        element so handleMouseUp's "empty-canvas" nudge
+                        check treats it as a hit, not background. */}
+                    <Circle
+                      radius={19}
+                      fill="transparent"
+                      listening={true}
+                      elementId={pin.id}
+                    />
+                    {/* White halo ring under the main fill — one-pixel gap
+                        that makes the pin pop against both white grid and
+                        dimmed room fills. */}
+                    <Circle radius={14} fill="#ffffff" listening={false} />
+                    {/* Main colored circle */}
+                    <Circle radius={13} fill={fill} listening={false} />
+                    {/* Reading value in tabular mono, white, centered. The
+                        x-offset accounts for Konva's text origin being at
+                        the top-left of the bounding box. */}
+                    <Text
+                      text={valueText}
+                      fontSize={10}
+                      fontStyle="600"
+                      fontFamily="Geist Mono, ui-monospace, monospace"
+                      fill="#ffffff"
+                      x={-13}
+                      y={-5}
+                      width={26}
+                      align="center"
+                      listening={false}
+                    />
+                    {/* Regression badge — small amber triangle at upper-right.
+                        Only renders when the pin is flagged as regressing. */}
+                    {pin.is_regressing && (
+                      <>
+                        <Line
+                          points={[9, -16, 17, -8, 1, -8]}
+                          closed
+                          fill="#f59e0b"
+                          stroke="#ffffff"
+                          strokeWidth={1}
+                          listening={false}
+                        />
+                        <Text
+                          text="!"
+                          fontSize={8}
+                          fontStyle="700"
+                          fontFamily="Geist Mono, ui-monospace, monospace"
+                          fill="#ffffff"
+                          x={6}
+                          y={-13}
+                          width={6}
+                          align="center"
+                          listening={false}
+                        />
+                      </>
+                    )}
+                  </Group>
+                );
+              })}
+            </Layer>
+          )}
         </Stage>
       </div>
 

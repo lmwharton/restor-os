@@ -5,7 +5,6 @@ import {
   useJob,
   useRooms,
   usePhotos,
-  useAllReadings,
   useReconPhases,
 } from "@/lib/hooks/use-jobs";
 import { useMe } from "@/lib/hooks/use-me";
@@ -80,7 +79,6 @@ export default function ReportPage() {
   const { data: job, isLoading: jobLoading } = useJob(jobId);
   const { data: rooms } = useRooms(jobId);
   const { data: photos } = usePhotos(jobId);
-  const { data: readings } = useAllReadings(jobId);
   const { data: reconPhases } = useReconPhases(jobId);
   const { data: profile } = useMe();
   const company = profile?.company;
@@ -112,20 +110,12 @@ export default function ReportPage() {
 
   const roomList = rooms ?? [];
   const photoList = photos ?? [];
-  const readingList = readings ?? [];
 
   /* Build a room name lookup */
   const roomNameMap = new Map<string, string>();
   for (const r of roomList) {
     roomNameMap.set(r.id, r.room_name);
   }
-
-  /* Sort readings by date, then room */
-  const sortedReadings = [...readingList].sort((a, b) => {
-    const dateCompare = new Date(a.reading_date).getTime() - new Date(b.reading_date).getTime();
-    if (dateCompare !== 0) return dateCompare;
-    return (roomNameMap.get(a.room_id) ?? "").localeCompare(roomNameMap.get(b.room_id) ?? "");
-  });
 
   return (
     <div className="report-root bg-white min-h-screen">
@@ -369,42 +359,8 @@ export default function ReportPage() {
           </section>
         )}
 
-        {/* ── MOISTURE READING LOG (mitigation only) ── */}
-        {job.job_type === "mitigation" && sortedReadings.length > 0 && (
-          <section className="print-section mb-8">
-            <h2 className="report-section-title">Moisture Reading Log</h2>
-            <table className="report-table w-full">
-              <thead>
-                <tr>
-                  <th className="text-left">Date</th>
-                  <th className="text-center">Day #</th>
-                  <th className="text-left">Room</th>
-                  <th className="text-right">Temp (F)</th>
-                  <th className="text-right">RH %</th>
-                  <th className="text-right">GPP</th>
-                  <th className="text-left">Points</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedReadings.map((reading) => (
-                  <tr key={reading.id}>
-                    <td>{fmtDate(reading.reading_date)}</td>
-                    <td className="text-center">{reading.day_number ?? "--"}</td>
-                    <td>{roomNameMap.get(reading.room_id) ?? "--"}</td>
-                    <td className="text-right">{reading.atmospheric_temp_f ?? "--"}</td>
-                    <td className="text-right">{reading.atmospheric_rh_pct ?? "--"}</td>
-                    <td className="text-right">{reading.atmospheric_gpp ?? "--"}</td>
-                    <td className="text-[11px]">
-                      {reading.points.length > 0
-                        ? reading.points.map((p) => `${p.location_name}: ${p.reading_value}`).join(", ")
-                        : "--"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </section>
-        )}
+        {/* Moisture Reading Log is rendered separately on the moisture PDF */}
+        {/* (Spec 01H Phase 2 — implemented in a later commit). */}
 
         {/* ── TECH NOTES ── */}
         {job.tech_notes && (
