@@ -1,33 +1,42 @@
 // Resolve a canvas room's corresponding backend job_rooms identity.
 //
-// ─── Why this exists ─────────────────────────────────────────────────
+// ─── Why this exists, post-Phase-2 location-split ─────────────────────
 //
-// A Konva canvas carries rooms that need to link to backend `job_rooms`
-// rows for moisture-pin attribution, visibility filtering, and the
-// pin-follow-room translation effect. Two id provenances coexist:
+// A Konva canvas carries rooms that link to backend `job_rooms` rows
+// for moisture-pin attribution, visibility filtering, and the
+// pin-follow-room translation effect. Phase 2 location-split (Spec
+// 01H, migration e2b3c4d5f6a7) eliminated the transient
+// "unsaved-room" window: every canvas room owns its
+// `propertyRoomId` from t=0 (generated client-side via
+// `newRoomUuid()` in `floor-plan-tools.ts` and committed to backend
+// idempotently by `create_room`). The previous name-match fallback
+// — which guessed the backend id by matching `propertyRooms.find(pr
+// => pr.room_name === room.name)` when `propertyRoomId` was missing
+// — became unreachable after that change AND was the failure trigger
+// for the duplicate-name bug: two "Bedroom"s with no propertyRoomId
+// collided under name match, ambiguity returned null, pin-follow
+// silently no-op'd on drag.
 //
-//  1. `propertyRoomId` — backfilled onto each canvas room after the
-//     first save round-trip. Ground truth once set.
-//  2. Name match against `propertyRooms` — a fallback for the narrow
-//     window between room creation and first-save backfill, where the
-//     canvas room has no propertyRoomId yet.
+// This module now does pure ID lookup. If `propertyRoomId` is
+// missing on a canvas room, we return `null` — a loud signal to the
+// caller that the room can't be resolved (probably legacy
+// canvas_data predating the fix; should be rare in practice and
+// requires manual fixup or re-saving the floor plan to backfill).
 //
-// The bug this module closes: two rooms named "Bedroom" in the same
-// job (a daily residential pattern — "Bedroom 1 / Bedroom 2" in
-// duplexes, ADUs, upstairs stacks) collide under naive
-// `propertyRooms.find(pr => pr.room_name === room.name)` — Array.find
-// returns the first match, so pins on the second "Bedroom" get
-// attributed to the first one. Symptoms: pin-follow-room translates
-// the wrong pins when Bedroom 2 is dragged; visibility filter hides
-// pins that genuinely belong to Bedroom 2. See pr-review-lessons #5
-// (HIGH) in the Phase 2 critical review.
-//
-// The fix: prefer `propertyRoomId` when present, only accept a
-// name-match when it's unambiguous (exactly one match). When
-// ambiguous, return `null` — safer than guessing wrong.
+// Lesson #2 ("never silently coerce to a default"): we explicitly do
+// NOT guess via name; the caller decides what "can't resolve"
+// means in its context (skip pin in render, log + continue in
+// follow, etc.).
 
 export interface CanvasRoomLike {
+  /** Optional in the type because hydrating pre-Phase-2 canvas_data
+   *  may produce rooms without it. New rooms always set this at
+   *  creation via `newRoomUuid()`. Resolver returns null when
+   *  missing rather than falling back to name-match. */
   propertyRoomId?: string;
+  /** Kept on the interface for component-level display ("Bedroom"
+   *  vs "Kitchen") but no longer used for backend identity
+   *  resolution. */
   name: string;
 }
 
@@ -37,71 +46,45 @@ export interface PropertyRoomLike {
 }
 
 /**
- * Return the single canonical backend id for a canvas room, or
- * `null` when it can't be resolved unambiguously.
- *
- * - If `canvasRoom.propertyRoomId` is set, it wins every time — that
- *   id was backfilled from a real save round-trip.
- * - Otherwise fall back to a name match in `propertyRooms`. Only
- *   accept the match when the name is unique in that list.
- * - Duplicate names with no `propertyRoomId` → `null`. The caller
- *   skips rather than guessing.
+ * Return the canvas room's backend `job_rooms.id`, or `null` if it
+ * isn't resolvable.
  */
 export function resolveCanvasRoomBackendId(
   canvasRoom: CanvasRoomLike,
-  propertyRooms: ReadonlyArray<PropertyRoomLike> | undefined,
 ): string | null {
-  if (canvasRoom.propertyRoomId) return canvasRoom.propertyRoomId;
-  if (!propertyRooms || propertyRooms.length === 0) return null;
-  const matches = propertyRooms.filter(
-    (pr) => pr.room_name === canvasRoom.name,
-  );
-  return matches.length === 1 ? matches[0].id : null;
+  return canvasRoom.propertyRoomId ?? null;
 }
 
 /**
  * Companion to :func:`resolveCanvasRoomBackendId` that returns the
- * full property-room row instead of just its id.
- *
- * Call sites that need per-row fields (e.g. ``affected`` for dim
- * logic) skip the id-then-second-find boilerplate. Generic ``T`` so
- * callers that thread extra fields through ``propertyRooms`` (beyond
- * the ``id`` / ``room_name`` required by this module) keep access
- * to those fields on the returned row.
+ * full property-room row instead of just its id. Call sites that
+ * need per-row fields (e.g. `affected` for dim logic) skip the
+ * id-then-second-find boilerplate. Generic `T` so callers that
+ * thread extra fields through `propertyRooms` keep access to those
+ * fields on the returned row.
  */
 export function resolveCanvasRoomBackendRow<T extends PropertyRoomLike>(
   canvasRoom: CanvasRoomLike,
   propertyRooms: ReadonlyArray<T> | undefined,
 ): T | undefined {
-  const id = resolveCanvasRoomBackendId(canvasRoom, propertyRooms);
-  if (!id) return undefined;
-  return propertyRooms?.find((pr) => pr.id === id);
+  if (!canvasRoom.propertyRoomId) return undefined;
+  return propertyRooms?.find((pr) => pr.id === canvasRoom.propertyRoomId);
 }
 
 /**
- * Return the full set of backend job_room ids that pins on this
- * canvas room might be attributed to.
+ * Return the set of backend job_room ids that pins on this canvas
+ * room might be attributed to.
  *
- * Both provenances can legitimately coexist for a single canvas
- * room: pins dropped pre-backfill carry the name-matched id; pins
- * dropped post-backfill carry the propertyRoomId. The pin-follow-room
- * translation effect needs both to track correctly.
- *
- * Same duplicate-name guard as `resolveCanvasRoomBackendId`: a
- * name match with multiple candidates contributes nothing rather
- * than risk attributing pins to the wrong sibling room.
+ * Pre-Phase-2 this returned both `propertyRoomId` AND a unique
+ * name match (some pins were attributed via name-match before
+ * propertyRoomId was backfilled). Post-fix, every pin uses
+ * `propertyRoomId` exclusively, so this returns at most a one-element
+ * set. Kept as a `Set<string>` for call-site signature stability.
  */
 export function resolveCanvasRoomCandidateIds(
   canvasRoom: CanvasRoomLike,
-  propertyRooms: ReadonlyArray<PropertyRoomLike> | undefined,
 ): Set<string> {
   const ids = new Set<string>();
   if (canvasRoom.propertyRoomId) ids.add(canvasRoom.propertyRoomId);
-  if (propertyRooms) {
-    const matches = propertyRooms.filter(
-      (pr) => pr.room_name === canvasRoom.name,
-    );
-    if (matches.length === 1) ids.add(matches[0].id);
-  }
   return ids;
 }
