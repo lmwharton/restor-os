@@ -33,6 +33,44 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
+# Spec defaults (mirror of migration 01k_a1_lifecycle_status seed)
+# ---------------------------------------------------------------------------
+# When a company existed BEFORE the migration's DO-block ran, the seed should
+# have populated these rows — but if it didn't (race / manual delete /
+# whatever), `closeout_settings` for that company × job_type may be empty.
+# In that case we fall back to these spec defaults so the modal still shows
+# the correct gates rather than collapsing to zero.
+#
+# Source of truth: backend/alembic/versions/01k_a1_lifecycle_status.py — the
+# `jsonb_build_array('mitigation', ...)` block in `rpc_seed_closeout_settings`.
+# Keep this in sync if the migration's seed changes.
+SPEC_DEFAULT_GATES: dict[str, list[tuple[str, str]]] = {
+    "mitigation": [
+        ("contract_signed", "acknowledge"),
+        ("photos_final_after", "warn"),
+        ("moisture_per_room", "warn"),
+        ("all_rooms_dry_standard", "warn"),
+        ("all_equipment_pulled", "warn"),
+        ("scope_finalized", "warn"),
+        ("certificate_generated", "warn"),
+    ],
+    "reconstruction": [
+        ("contract_signed", "acknowledge"),
+        ("photos_final_after", "warn"),
+        ("scope_finalized", "warn"),
+    ],
+    "fire_smoke": [
+        ("contract_signed", "acknowledge"),
+        ("photos_final_after", "warn"),
+        ("scope_finalized", "warn"),
+        ("certificate_generated", "warn"),
+    ],
+    # `remodel` has no seed in the migration — empty list mirrors that.
+    "remodel": [],
+}
+
+
+# ---------------------------------------------------------------------------
 # Snapshot
 # ---------------------------------------------------------------------------
 
@@ -259,25 +297,44 @@ async def get_gates_for_target(
     # The settings list scopes per-company-per-job_type. Filter to the right
     # rows. If a setting doesn't exist for an item × job_type, the item is
     # n/a and we skip it.
-    relevant = [s for s in snap.settings if s.job_type == job_type]
+    relevant: list[tuple[str, str]] = [
+        (s.item_key, s.gate_level) for s in snap.settings if s.job_type == job_type
+    ]
+
     if not relevant:
-        # Nothing configured for this job type — no gates surface.
-        return CloseoutGatesResponse(job_id=job_id, target_status=target_status, gates=[])
+        # Defensive fallback: a company that existed BEFORE the migration's
+        # DO-block (or had its rows manually wiped) may have no settings rows
+        # for this job_type. Onboarding seeds new companies, but we can't
+        # rely on it for legacy ones. Fall back to the spec defaults so the
+        # modal still surfaces the right gates rather than zero.
+        defaults = SPEC_DEFAULT_GATES.get(job_type, [])
+        if not defaults:
+            # job_type genuinely has no gates per spec (e.g. remodel) — empty
+            # response is correct.
+            return CloseoutGatesResponse(job_id=job_id, target_status=target_status, gates=[])
+        logger.warning(
+            "closeout_settings empty for company=%s job_type=%s, falling back to spec defaults",
+            company_id,
+            job_type,
+        )
+        relevant = list(defaults)
 
     gates: list[CloseoutGate] = []
-    for setting in relevant:
-        evaluator = GATE_EVALUATORS.get(setting.item_key)
+    for item_key, gate_level in relevant:
+        evaluator = GATE_EVALUATORS.get(item_key)
         if not evaluator:
             # Unknown item_key — skip silently. Future items can be added
             # without a migration; just register an evaluator here.
             continue
         passed, detail = evaluator(snap)
-        gates.append(CloseoutGate(
-            item_key=setting.item_key,
-            label=GATE_LABELS.get(setting.item_key, setting.item_key),
-            detail=detail,
-            status="ok" if passed else setting.gate_level,
-        ))
+        gates.append(
+            CloseoutGate(
+                item_key=item_key,
+                label=GATE_LABELS.get(item_key, item_key),
+                detail=detail,
+                status="ok" if passed else gate_level,
+            )
+        )
 
     return CloseoutGatesResponse(job_id=job_id, target_status=target_status, gates=gates)
 
