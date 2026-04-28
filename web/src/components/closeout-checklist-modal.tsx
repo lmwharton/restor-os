@@ -73,19 +73,33 @@ export function CloseoutChecklistModal({
   const stats = useMemo(() => countGates(gates), [gates]);
 
   const hardBlocks = gates.filter((g) => g.status === "hard_block");
-  const ackFails   = gates.filter((g) => g.status === "acknowledge" || g.status === "warn");
+  // Spec 01K voice: warn = surfaces in the list but doesn't block close
+  // (no reason required). acknowledge = must select a Close Anyway reason.
+  // Treating warn like acknowledge would make the seed default (most gates
+  // = warn) demand a reason for every imperfect job, which the spec explicitly
+  // rejects ("soft gate by default — not a hard block").
+  const acknowledgeFails = gates.filter((g) => g.status === "acknowledge");
   const hasHardBlock = hardBlocks.length > 0;
-  const needsAcknowledgment = ackFails.length > 0;
+  const needsAcknowledgment = acknowledgeFails.length > 0;
 
-  // Submit is allowed if:
-  //  - no hard_blocks
-  //  - if any acknowledge-level fails, a reason is selected (and "other" has text)
-  const canSubmit = !hasHardBlock
+  // Submit gates:
+  //  - Block while gates are still loading. Without this, gates=[] →
+  //    hasHardBlock=false → "Mark Completed" enabled → a fast click bypasses
+  //    hard_block evaluation entirely (the PATCH /status endpoint does NOT
+  //    re-evaluate gates server-side; it trusts the client's override list).
+  //  - Block if any hard_block gate is failing.
+  //  - If any acknowledge-level gate failed, require a Close Anyway reason
+  //    (and "other" requires free text).
+  //  - Block during pending mutation.
+  const canSubmit = !isLoading
+    && !hasHardBlock
     && (!needsAcknowledgment || (reason && (reason !== "other" || otherReason.trim().length > 0)))
     && !updateStatus.isPending;
 
   function handleSubmit() {
-    const overrideGates = ackFails.filter((g) => g.status === "acknowledge").map((g) => g.item_key);
+    // Only acknowledge-level gates need explicit override + reason.
+    // warn-level gates surface in the modal but are non-fatal — no override.
+    const overrideGates = acknowledgeFails.map((g) => g.item_key);
     const overrideReason = needsAcknowledgment
       ? (reason === "other" ? `other: ${otherReason.trim()}` : reason)
       : undefined;
@@ -188,7 +202,7 @@ export function CloseoutChecklistModal({
             <GateIcon kind="warn" />
             <div className="flex-1">
               <div className="text-[13px] font-bold" style={{ color: TOKEN.warnInk }}>
-                {ackFails.length} item{ackFails.length === 1 ? "" : "s"} need{ackFails.length === 1 ? "s" : ""} acknowledgment
+                {acknowledgeFails.length} item{acknowledgeFails.length === 1 ? "" : "s"} need{acknowledgeFails.length === 1 ? "s" : ""} acknowledgment
               </div>
               <div className="mt-1 text-[12px] leading-snug" style={{ color: TOKEN.warnInk }}>
                 Pick a reason to close anyway. We&rsquo;ll log it to the job timeline.
