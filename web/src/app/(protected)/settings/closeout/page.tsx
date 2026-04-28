@@ -49,9 +49,11 @@ const JOB_TYPE_COLUMNS: { key: CloseoutSetting["job_type"]; label: string }[] = 
   { key: "fire_smoke",     label: "Fire / Smoke" },
 ];
 
+// Spec 01K Option A — no blue. Severity ramp uses warm hues only:
+// warn (soft amber) → acknowledge (warm tan, "needs your sign-off") → hard_block (red).
 const GATE_LEVEL_META: Record<GateLevel, { label: string; color: string; bg: string; border: string }> = {
-  warn:        { label: "Warning",          color: "#d97706", bg: "#fef3e2", border: "#f3d8a8" },
-  acknowledge: { label: "Must acknowledge", color: "#5b6abf", bg: "#eef0fb", border: "#cdd2ee" },
+  warn:        { label: "Warning",          color: "#b8801f", bg: "#fdefd8", border: "#f0d6a3" },
+  acknowledge: { label: "Must acknowledge", color: "#8a7560", bg: "#f3ece4", border: "#e0d6c9" },
   hard_block:  { label: "Hard block",       color: "#9b1c1c", bg: "#fbe6e6", border: "#f0c2c2" },
 };
 

@@ -164,8 +164,8 @@ export default function ReportPage() {
               <div className="flex items-center gap-2 mt-1">
                 <span className={`px-2 py-0.5 rounded text-[11px] font-bold uppercase tracking-wide ${
                   job.job_type === "reconstruction"
-                    ? "bg-[#fff3ed] text-[#e85d26]"
-                    : "bg-[#eff6ff] text-[#3b82f6]"
+                    ? "bg-[var(--type-reconstruction-bg)] text-[var(--type-reconstruction)]"
+                    : "bg-[var(--type-mitigation-bg)] text-[var(--type-mitigation)]"
                 }`}>
                   {job.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
                 </span>

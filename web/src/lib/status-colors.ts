@@ -43,8 +43,11 @@ export const STATUS_BG: Record<JobStatus, string> = {
   lost:      "#f0ece8",
 } as const;
 
+// Job type indicator dots — distinct from lifecycle status colors. Spec 01K
+// Option A bans pure blue; mitigation gets a desaturated teal that still
+// reads as "water / drying" without breaking the warm palette.
 export const JOB_TYPE_COLORS = {
-  mitigation:     "#3b82f6",
+  mitigation:     "#3a8a8c",
   reconstruction: "#e85d26",
 } as const;
 

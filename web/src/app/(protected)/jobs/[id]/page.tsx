@@ -46,7 +46,7 @@ import { ConfirmModal } from "@/components/confirm-modal";
 import { JobStatusBadge } from "@/components/job-status-badge";
 import { ChangeStatusModal } from "@/components/change-status-modal";
 import { CloseoutChecklistModal } from "@/components/closeout-checklist-modal";
-import { STATUS_COLORS, JOB_TYPE_COLORS, withAlpha } from "@/lib/status-colors";
+import { STATUS_COLORS, withAlpha } from "@/lib/status-colors";
 import { isJobArchived } from "@/lib/job-status";
 
 /* ------------------------------------------------------------------ */
@@ -576,7 +576,7 @@ function AccordionSection({
 // These are work-state indicators on individual reconstruction phases.
 const PHASE_STATUSES: { value: ReconPhaseStatus; label: string; color: string; bg: string; border: string }[] = [
   { value: "pending",     label: "Pending",     color: "#b5b0aa",                  bg: withAlpha("#b5b0aa", 0.1),                  border: withAlpha("#b5b0aa", 0.3) },
-  { value: "in_progress", label: "In Progress", color: JOB_TYPE_COLORS.mitigation, bg: withAlpha(JOB_TYPE_COLORS.mitigation, 0.1), border: withAlpha(JOB_TYPE_COLORS.mitigation, 0.3) },
+  { value: "in_progress", label: "In Progress", color: STATUS_COLORS.active,       bg: withAlpha(STATUS_COLORS.active, 0.1),       border: withAlpha(STATUS_COLORS.active, 0.3) },
   { value: "on_hold",     label: "On Hold",     color: STATUS_COLORS.on_hold,      bg: withAlpha(STATUS_COLORS.on_hold, 0.1),      border: withAlpha(STATUS_COLORS.on_hold, 0.3) },
   { value: "complete",    label: "Complete",    color: STATUS_COLORS.completed,    bg: withAlpha(STATUS_COLORS.completed, 0.1),    border: withAlpha(STATUS_COLORS.completed, 0.3) },
 ];
@@ -680,7 +680,7 @@ function SortablePhaseRow({
           </span>
           <span
             className="text-[12px] font-[family-name:var(--font-geist-mono)]"
-            style={{ color: phase.status === "complete" ? "#10b981" : phase.status === "in_progress" ? "#3b82f6" : phase.status === "on_hold" ? "#d97706" : "#b5b0aa" }}
+            style={{ color: phase.status === "complete" ? STATUS_COLORS.completed : phase.status === "in_progress" ? STATUS_COLORS.active : phase.status === "on_hold" ? STATUS_COLORS.on_hold : "#b5b0aa" }}
           >
             {phase.status === "complete" && phase.completed_at
               ? `Completed ${new Date(phase.completed_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
@@ -846,7 +846,7 @@ function ReconPhasesSection({ phases: initialPhases, jobId }: { phases: ReconPha
                 className="h-full rounded-full transition-all duration-500"
                 style={{
                   width: `${pct}%`,
-                  background: "linear-gradient(90deg, #3b82f6, #2a9d5c)",
+                  background: `linear-gradient(90deg, ${STATUS_COLORS.active}, ${STATUS_COLORS.paid})`,
                 }}
               />
             </div>
@@ -1966,7 +1966,7 @@ export default function JobDetailPage() {
                 {job.job_number}
               </p>
               <span className={`px-2 py-0.5 rounded-md text-[10px] font-semibold ${
-                job.job_type === "mitigation" ? "bg-[#eff6ff] text-type-mitigation" : "bg-[#fff3ed] text-type-reconstruction"
+                job.job_type === "mitigation" ? "bg-[var(--type-mitigation-bg)] text-type-mitigation" : "bg-[var(--type-reconstruction-bg)] text-type-reconstruction"
               }`}>
                 {job.job_type === "mitigation" ? "MIT" : "REC"}
               </span>

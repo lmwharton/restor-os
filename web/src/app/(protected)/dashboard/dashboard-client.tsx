@@ -490,8 +490,8 @@ function JobsList({
               >
                 <span
                   className="w-2 h-2 rounded-full shrink-0"
-                  style={{ backgroundColor: JOB_TYPE_COLORS[job?.job_type as keyof typeof JOB_TYPE_COLORS] || JOB_TYPE_COLORS.mitigation }}
-                  aria-label={job?.job_type === "reconstruction" ? "Reconstruction" : "Mitigation"}
+                  style={{ backgroundColor: meta.color }}
+                  aria-label={meta.label}
                 />
                 <div className="min-w-0 flex-1">
                   <p className="text-[13px] font-semibold text-on-surface group-hover:text-brand-accent transition-colors truncate">
@@ -544,7 +544,10 @@ function LiveOperationsMap({ selectedStage, jobs }: { selectedStage: PipelineSta
       zip: job.zip,
       stage,
       stageLabel: STAGE_META[stage].label,
-      color: job.job_type === "reconstruction" ? "#e85d26" : "#3b82f6",
+      // Spec 01K Option A — map pins read lifecycle status, not job type.
+      // Pipeline strip already filters by status; the map's job is to show
+      // where × what stage. Job type is exposed in the InfoWindow popup.
+      color: STATUS_COLORS[stage],
       customerName: job.customer_name,
       latitude: job.latitude,
       longitude: job.longitude,
@@ -833,7 +836,7 @@ export default function DashboardClient({
         <div className="space-y-3">
           <PipelineBar
             label="Mitigation"
-            dotColor="#3b82f6"
+            dotColor={JOB_TYPE_COLORS.mitigation}
             stageOrder={JOB_STATUSES}
             stageCounts={mitCounts}
             selectedStage={filter?.jobType === "mitigation" ? filter.stage : null}
@@ -842,7 +845,7 @@ export default function DashboardClient({
           />
           <PipelineBar
             label="Reconstruction"
-            dotColor="#e85d26"
+            dotColor={JOB_TYPE_COLORS.reconstruction}
             stageOrder={JOB_STATUSES}
             stageCounts={recCounts}
             selectedStage={filter?.jobType === "reconstruction" ? filter.stage : null}

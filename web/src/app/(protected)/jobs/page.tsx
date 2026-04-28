@@ -8,6 +8,7 @@ import { useJobs, usePhotos, useUpdateJob } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus, JobType } from "@/lib/types";
 import { JOB_STATUSES } from "@/lib/types";
 import { STATUS_META } from "@/lib/labels";
+import { STATUS_COLORS } from "@/lib/status-colors";
 import { JobStatusBadge } from "@/components/job-status-badge";
 
 /* ------------------------------------------------------------------ */
@@ -51,7 +52,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
 
 function TypeBadge({ type }: { type: JobType }) {
   return type === "mitigation" ? (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#eff6ff] text-[#3b82f6]">
+    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[var(--type-mitigation-bg)] text-[var(--type-mitigation)]">
       MIT
     </span>
   ) : (
@@ -396,13 +397,16 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
 
 function JobCard({ job }: { job: JobDetail; isFirst?: boolean }) {
   const days = daysSince(job.created_at);
-  const typeColor = job.job_type === "mitigation" ? "bg-[#3b82f6]" : "bg-[#e85d26]";
+  // Spec 01K — list dot mirrors the lifecycle status badge on the same row.
+  // Job type is shown via the MIT/REC pill, so the dot doesn't need to repeat it.
+  const status = (job.status ?? "lead") as keyof typeof STATUS_COLORS;
+  const dotColor = STATUS_COLORS[status] ?? STATUS_COLORS.lead;
 
   return (
     <Link href={`/jobs/${job.id}`} className="block group">
       <div className="bg-surface-container-lowest rounded-xl px-3.5 py-3 shadow-[0_1px_3px_rgba(31,27,23,0.04)] flex items-center gap-3">
-        {/* Type dot */}
-        <span className={`w-2 h-2 rounded-full ${typeColor} shrink-0`} />
+        {/* Status dot — matches the badge */}
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
 
         {/* Address + status */}
         <div className="flex-1 min-w-0">
@@ -714,12 +718,12 @@ export default function JobsPage() {
               <Link
                 href="/jobs/new?type=mitigation"
                 onClick={() => setShowNewJobSheet(false)}
-                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[#eff6ff] transition-all active:scale-[0.97]"
+                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[var(--type-mitigation-bg)] transition-all active:scale-[0.97]"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#3b82f6]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[var(--type-mitigation)]">
                   <path d="M12 2.69l.66.72C13.52 4.35 16.5 7.7 16.5 11.5a4.5 4.5 0 0 1-9 0c0-3.8 2.98-7.15 3.84-8.09L12 2.69Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.15" />
                 </svg>
-                <span className="text-[13px] font-semibold text-[#3b82f6]">Mitigation</span>
+                <span className="text-[13px] font-semibold text-[var(--type-mitigation)]">Mitigation</span>
               </Link>
               <Link
                 href="/jobs/new?type=reconstruction"

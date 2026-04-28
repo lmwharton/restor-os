@@ -66,9 +66,12 @@ textarea:focus::placeholder {
   --status-cancelled-bg: #ebe7e3;
   --status-lost-bg:      #f0ece8;
 
-  /* Job type colors */
-  --type-mitigation: #3b82f6;
+  /* Job type colors — spec 01K Option A bans pure blue. Mitigation gets a
+     desaturated teal (water/drying semantic, warm-aware) instead of #3b82f6. */
+  --type-mitigation: #3a8a8c;
+  --type-mitigation-bg: #e7f2f2;
   --type-reconstruction: #e85d26;
+  --type-reconstruction-bg: #fff3ed;
 
   /* Bottom-sheet timing — backdrop and panel transitions share this
      duration so they land in lockstep. iOS-style ease curve. */
