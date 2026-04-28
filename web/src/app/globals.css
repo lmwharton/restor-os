@@ -41,20 +41,39 @@ textarea:focus::placeholder {
   --inverse-on-surface: #f8efe8;
   --brand-accent: #e85d26;
 
-  /* Status colors — change here to update everywhere */
-  --status-new: #14b8a6;
-  --status-contracted: #f59e0b;
-  --status-mitigation: #e85d26;
-  --status-drying: #2563eb;
-  --status-complete: #14b8a6;
-  --status-submitted: #818cf8;
-  --status-collected: #10b981;
-  --status-scoping: #7c3aed;
-  --status-in-progress: #d97706;
+  /* Status colors — Spec 01K 9-status lifecycle, Option A 4-bucket palette.
+     Keep in sync with web/src/lib/status-colors.ts and web/src/lib/labels.ts.
+     Buckets: motion (orange) · waiting (amber) · won (green) · closed (gray). */
+  --status-lead:      #8a7560;  /* warm tan — quiet "in motion" */
+  --status-active:    #e85d26;  /* brand orange — full motion */
+  --status-on-hold:   #b8801f;  /* amber — waiting */
+  --status-disputed:  #c8501a;  /* red-orange — only "act now" alarm */
+  --status-completed: #5fae7d;  /* light green — won */
+  --status-invoiced:  #2f8a5b;  /* mid green — money invoiced */
+  --status-paid:      #1f7a48;  /* deep green — money landed */
+  --status-cancelled: #7a746e;  /* warm gray — closed */
+  --status-lost:      #a39990;  /* lighter gray — lost */
+
+  /* Status backgrounds — hand-tuned warm tints (NOT alpha overlays).
+     Mirror of STATUS_BG in web/src/lib/status-colors.ts. */
+  --status-lead-bg:      #f3ece4;
+  --status-active-bg:    #fff3ed;
+  --status-on-hold-bg:   #fdefd8;
+  --status-disputed-bg:  #fbe8dc;
+  --status-completed-bg: #e3f1e7;
+  --status-invoiced-bg:  #dcefe2;
+  --status-paid-bg:      #d4e8dc;
+  --status-cancelled-bg: #ebe7e3;
+  --status-lost-bg:      #f0ece8;
 
   /* Job type colors */
   --type-mitigation: #3b82f6;
   --type-reconstruction: #e85d26;
+
+  /* Bottom-sheet timing — backdrop and panel transitions share this
+     duration so they land in lockstep. iOS-style ease curve. */
+  --sheet-duration: 240ms;
+  --sheet-ease: cubic-bezier(0.32, 0.72, 0, 1);
 }
 
 @theme inline {
@@ -108,16 +127,16 @@ textarea:focus::placeholder {
   /* Brand accent */
   --color-brand-accent: var(--brand-accent);
 
-  /* Status colors — for badges and pipeline */
-  --color-status-new: var(--status-new);
-  --color-status-contracted: var(--status-contracted);
-  --color-status-mitigation: var(--status-mitigation);
-  --color-status-drying: var(--status-drying);
-  --color-status-complete: var(--status-complete);
-  --color-status-submitted: var(--status-submitted);
-  --color-status-collected: var(--status-collected);
-  --color-status-scoping: var(--status-scoping);
-  --color-status-in-progress: var(--status-in-progress);
+  /* Status colors — for badges and pipeline (Spec 01K) */
+  --color-status-lead:      var(--status-lead);
+  --color-status-active:    var(--status-active);
+  --color-status-on-hold:   var(--status-on-hold);
+  --color-status-completed: var(--status-completed);
+  --color-status-invoiced:  var(--status-invoiced);
+  --color-status-disputed:  var(--status-disputed);
+  --color-status-paid:      var(--status-paid);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-lost:      var(--status-lost);
 
   /* Job type indicator colors */
   --color-type-mitigation: var(--type-mitigation);
