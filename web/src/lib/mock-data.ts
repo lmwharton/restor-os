@@ -1287,18 +1287,32 @@ export const mockDashboardKPIs: DashboardKPIs = {
   cycle_change_days: -0.8,
 };
 
-// Spec 01K — single 9-status lifecycle pipeline.
-export const mockPipeline: PipelineStageData[] = [
-  { stage: "lead",      label: "Lead",      count: 2, amount: 0,     color: "#6b6560" },
-  { stage: "active",    label: "Active",    count: 4, amount: 32700, color: "#e85d26" },
-  { stage: "on_hold",   label: "On Hold",   count: 1, amount: 0,     color: "#d97706" },
-  { stage: "completed", label: "Completed", count: 0, amount: 0,     color: "#2a9d5c" },
-  { stage: "invoiced",  label: "Invoiced",  count: 1, amount: 12600, color: "#5b6abf" },
-  { stage: "disputed",  label: "Disputed",  count: 0, amount: 0,     color: "#b45309" },
-  { stage: "paid",      label: "Paid",      count: 4, amount: 41200, color: "#059669" },
-  { stage: "cancelled", label: "Cancelled", count: 0, amount: 0,     color: "#9b1c1c" },
-  { stage: "lost",      label: "Lost",      count: 0, amount: 0,     color: "#8a847e" },
-];
+// Spec 01K — single 9-status lifecycle pipeline. Colors + labels source
+// from STATUS_META so the mock dashboard reflects the same Option A
+// palette as production data — no hex drift if the palette flips.
+import { STATUS_META } from "./labels";
+import type { JobStatus } from "./types";
+
+const PIPELINE_COUNTS: Record<JobStatus, { count: number; amount: number }> = {
+  lead:      { count: 2, amount: 0 },
+  active:    { count: 4, amount: 32700 },
+  on_hold:   { count: 1, amount: 0 },
+  completed: { count: 0, amount: 0 },
+  invoiced:  { count: 1, amount: 12600 },
+  disputed:  { count: 0, amount: 0 },
+  paid:      { count: 4, amount: 41200 },
+  cancelled: { count: 0, amount: 0 },
+  lost:      { count: 0, amount: 0 },
+};
+
+export const mockPipeline: PipelineStageData[] = (
+  Object.keys(PIPELINE_COUNTS) as JobStatus[]
+).map((stage) => ({
+  stage,
+  label: STATUS_META[stage].label,
+  color: STATUS_META[stage].color,
+  ...PIPELINE_COUNTS[stage],
+}));
 
 export const mockPriorityTasks: PriorityTask[] = [
   // New
