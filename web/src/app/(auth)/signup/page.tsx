@@ -246,6 +246,55 @@ export default function SignupPage() {
       </div>
 
       <div className="relative z-10 w-full max-w-[480px]">
+
+        {/*
+          Floating feature badge — bottom-right, tilted, overlapping card edge.
+          Mirrors the login page's "Field Sync" / "AI Moisture Analysis"
+          pattern. Different feature on each auth/onboarding screen so the
+          journey previews different parts of the product.
+          /signup highlights AI Photo Scope — the headline differentiator.
+        */}
+        <div
+          className="pointer-events-none absolute -right-4 -top-2 z-20 w-[150px] overflow-hidden rounded-xl sm:-right-20 sm:top-12 sm:w-[180px]"
+          aria-hidden="true"
+          style={{
+            backgroundColor: "#1f1b17",
+            boxShadow: "0 8px 32px rgba(31, 27, 23, 0.25)",
+            transform: "rotate(6deg)",
+          }}
+        >
+          <div className="px-3 pt-2.5 sm:pt-3">
+            <p
+              className="text-[8px] font-semibold uppercase tracking-[0.1em] font-[family-name:var(--font-geist-mono)] sm:text-[9px]"
+              style={{ color: "rgba(255,255,255,0.6)" }}
+            >
+              AI Photo Scope
+            </p>
+          </div>
+          <div className="flex items-baseline gap-1.5 px-3 pb-1">
+            <span
+              className="text-[24px] font-bold leading-none font-[family-name:var(--font-geist-mono)] sm:text-[30px]"
+              style={{ color: "#ffffff" }}
+            >
+              12
+            </span>
+            <span
+              className="text-[10px] font-medium font-[family-name:var(--font-geist-sans)] sm:text-[12px]"
+              style={{ color: "rgba(255,255,255,0.7)" }}
+            >
+              line items
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 px-3 pb-2.5 sm:pb-3">
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+              <path d="M5 13l4 4L19 7" stroke="#e85d26" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="text-[9px] font-semibold font-[family-name:var(--font-geist-mono)] sm:text-[10px]" style={{ color: "#e85d26" }}>
+              S500 cited
+            </span>
+          </div>
+        </div>
+
         <div
           className="rounded-2xl border px-6 py-10 sm:px-10"
           style={{
@@ -271,13 +320,15 @@ export default function SignupPage() {
             className="mb-2 text-center text-[28px] font-bold leading-tight"
             style={{ color: "#1f1b17" }}
           >
-            Create Your Account
+            Your AI estimating partner starts here
           </h1>
           <p
-            className="mb-8 text-center text-sm leading-relaxed"
+            className="mb-8 text-center text-[15px] leading-relaxed"
             style={{ color: "#594139" }}
           >
-            Restoration documentation, built for contractors.
+            Damage photos in. Xactimate-ready estimates out.
+            <br className="hidden sm:inline" />
+            Built for restoration contractors.
           </p>
 
           {/* Form */}

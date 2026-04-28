@@ -158,10 +158,11 @@ export default function CompanyProfileScreen({
 
       <div>
         <h1 className="text-[26px] sm:text-[28px] font-bold leading-tight" style={{ color: "#1f1b17" }}>
-          Tell us about your company
+          Let&apos;s get your shop set up
         </h1>
         <p className="mt-2 text-[14px] leading-relaxed" style={{ color: "#594139" }}>
-          We use this to brand your reports and route your team to jobs.
+          90 seconds. Then we start turning damage photos into Xactimate-ready
+          estimates with S500/OSHA citations on every line item.
         </p>
       </div>
 

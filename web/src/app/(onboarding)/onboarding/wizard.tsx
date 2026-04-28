@@ -190,10 +190,14 @@ export default function OnboardingWizard({ initialStatus }: Props) {
   }
 
   const stepNumber: 1 | 2 = phase === "company_profile" ? 1 : 2;
+  const phaseBadge =
+    phase === "company_profile" ? <S500BadgeStep1 /> :
+    phase === "pricing" ? <SmartMatchBadgeStep2 /> :
+    null;
 
   return (
     <>
-      <Shell>
+      <Shell featureBadge={phaseBadge}>
         <ProgressBar current={stepNumber} totalSteps={2} />
         <BrandHeader />
 
@@ -319,13 +323,20 @@ function QuickAddModal({
  * Outer chrome — warm background, decorative blobs, white card. Card is
  * `wide` for screens with denser content (Quick Add, Welcome). Header
  * has a discreet "Need help?" link to /support.
+ *
+ * `featureBadge` overlaps the card edge with a tilted "what you'll
+ * unlock" preview pill — same pattern as `/login`'s "Field Sync" + "AI
+ * Moisture Analysis" badges. Each onboarding step previews a different
+ * product moment so the journey feels exciting, not transactional.
  */
 function Shell({
   children,
   wide,
+  featureBadge,
 }: {
   children: React.ReactNode;
   wide?: boolean;
+  featureBadge?: React.ReactNode;
 }) {
   return (
     <main
@@ -346,6 +357,7 @@ function Shell({
       <div
         className={`relative z-10 w-full ${wide ? "max-w-[640px]" : "max-w-[560px]"}`}
       >
+        {featureBadge}
         <div
           className="rounded-2xl border px-6 pt-10 pb-9 sm:px-10"
           style={{
@@ -379,5 +391,105 @@ function Shell({
         </div>
       </div>
     </main>
+  );
+}
+
+// ─── Feature preview badges ──────────────────────────────────────────
+// Each step shows ONE distinct product moment so the journey teases what's
+// coming, not just collects data. Same visual language as login's two
+// badges. All decorative — pointer-events-none, aria-hidden.
+
+/** Step 1 preview — S500/OSHA citations as a "trust badge" pulled from a
+ * future estimate. White card, brand-orange accent, tilted slightly. */
+function S500BadgeStep1() {
+  return (
+    <div
+      className="pointer-events-none absolute -right-6 top-20 z-20 w-[170px] rounded-xl border bg-white p-3 sm:-right-20 sm:top-28 sm:w-[195px]"
+      aria-hidden="true"
+      style={{
+        borderColor: "#e8ddd6",
+        boxShadow: "0 8px 32px rgba(166, 53, 0, 0.10)",
+        transform: "rotate(5deg)",
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <div
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg"
+          style={{ backgroundColor: "#fff0e8" }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+            <path
+              d="M12 2L4 6v6c0 5 3.5 9 8 10 4.5-1 8-5 8-10V6l-8-4z"
+              fill="none"
+              stroke="#e85d26"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+            <path d="M9 12l2 2 4-4" stroke="#e85d26" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <p
+          className="text-[11px] font-bold leading-tight"
+          style={{ color: "#1f1b17" }}
+        >
+          Every line item
+          <br />
+          S500-cited.
+        </p>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        <span className="rounded-full px-1.5 py-0.5 text-[8px] font-semibold tracking-[0.04em]" style={{ backgroundColor: "#fff0e8", color: "#a63500" }}>S500</span>
+        <span className="rounded-full px-1.5 py-0.5 text-[8px] font-semibold tracking-[0.04em]" style={{ backgroundColor: "#fff0e8", color: "#a63500" }}>OSHA</span>
+        <span className="rounded-full px-1.5 py-0.5 text-[8px] font-semibold tracking-[0.04em]" style={{ backgroundColor: "#fff0e8", color: "#a63500" }}>EPA</span>
+      </div>
+    </div>
+  );
+}
+
+/** Step 2 preview — Smart Code Match. Shows "WTR DRYOUT → matched" with a
+ * count, signaling what uploaded pricing unlocks. Cyan card to differentiate
+ * from Step 1 + login badges. */
+function SmartMatchBadgeStep2() {
+  return (
+    <div
+      className="pointer-events-none absolute -left-6 top-24 z-20 w-[160px] overflow-hidden rounded-xl sm:-left-24 sm:top-28 sm:w-[185px]"
+      aria-hidden="true"
+      style={{
+        backgroundColor: "#1a8a9a",
+        boxShadow: "0 8px 32px rgba(26, 138, 154, 0.25)",
+        transform: "rotate(-5deg)",
+      }}
+    >
+      <div className="px-3 pt-2.5 sm:pt-3">
+        <p
+          className="text-[8px] font-semibold uppercase tracking-[0.1em] font-[family-name:var(--font-geist-mono)] sm:text-[9px]"
+          style={{ color: "rgba(255,255,255,0.7)" }}
+        >
+          Smart Code Match
+        </p>
+      </div>
+      <div className="px-3 pb-1">
+        <p
+          className="text-[14px] font-bold leading-tight font-[family-name:var(--font-geist-mono)] sm:text-[15px]"
+          style={{ color: "#ffffff" }}
+        >
+          WTR DRYOUT
+        </p>
+        <p
+          className="text-[10px] leading-tight font-[family-name:var(--font-geist-sans)]"
+          style={{ color: "rgba(255,255,255,0.85)" }}
+        >
+          matched · your tier A price
+        </p>
+      </div>
+      <div className="flex items-center gap-1.5 px-3 pb-2.5 sm:pb-3">
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="none">
+          <path d="M5 13l4 4L19 7" stroke="#7be8c0" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="text-[9px] font-semibold font-[family-name:var(--font-geist-mono)] sm:text-[10px]" style={{ color: "#7be8c0" }}>
+          147 of 147
+        </span>
+      </div>
+    </div>
   );
 }
