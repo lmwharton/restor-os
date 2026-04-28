@@ -8,12 +8,22 @@
  * Cancel / Confirm row never disappears under the iOS browser chrome and tall
  * forms keep the actions visible.
  *
- * - Backdrop click dismisses
- * - Escape key dismisses
- * - Drag-handle grabber at top (visual affordance, not yet draggable)
- * - Slide-up animation on open
- * - Body scroll locked while open
- * - 48px minimum tap targets via `tap` callers
+ * Behavior matrix:
+ *   mobile (< sm)         desktop (>= sm)
+ *   ─────────────────     ─────────────────
+ *   slides up from        fades + scales in
+ *   bottom edge           centered dialog
+ *   drag handle visible   handle hidden, X close button visible
+ *   drag-to-dismiss       click backdrop / Escape / X
+ *   safe-area aware       comfortable margins
+ *
+ * Both modes share:
+ *   • Backdrop click dismisses
+ *   • Escape key dismisses
+ *   • Body scroll locked
+ *   • Sticky footer outside scroll
+ *   • 48px minimum tap targets via `tap` callers
+ *   • --sheet-duration / --sheet-ease CSS tokens drive timing in lockstep
  *
  * Usage:
  *
@@ -28,7 +38,7 @@
  *   </BottomSheet>
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 interface BottomSheetProps {
   open: boolean;
@@ -43,6 +53,9 @@ interface BottomSheetProps {
   ariaLabel?: string;
 }
 
+/** Dismiss when drag exceeds this many px past the panel top edge. */
+const DRAG_DISMISS_THRESHOLD_PX = 100;
+
 function BottomSheetContent({
   onClose,
   title,
@@ -53,6 +66,16 @@ function BottomSheetContent({
   ariaLabel,
 }: Omit<BottomSheetProps, "open">) {
   const [visible, setVisible] = useState(false);
+  // Live drag offset in px — only non-zero while user is dragging.
+  const [dragY, setDragY] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const scrollBodyRef = useRef<HTMLDivElement>(null);
+  // Touch tracking refs — refs (not state) so handlers don't rebind every frame.
+  const touchStartYRef = useRef<number | null>(null);
+  // Lock-in flag: once we decide a gesture is a sheet-drag (vs an inner scroll)
+  // we keep dragging even if scrollTop changes mid-gesture.
+  const dragLockedRef = useRef(false);
 
   // Slide-up animation on mount
   useEffect(() => {
@@ -84,6 +107,61 @@ function BottomSheetContent({
     [onClose],
   );
 
+  // ── Drag-to-dismiss (mobile) ────────────────────────────────────────
+  // Touch events naturally don't fire from mouse on desktop, so we don't
+  // gate by breakpoint. The drag handle is hidden at sm: anyway.
+  //
+  // Rule: only treat a drag as a sheet-dismiss if the inner scroll body is
+  // at scrollTop === 0. If the user is mid-scroll inside the body, gestures
+  // belong to the scroller. Once a sheet-drag has started, we lock it in
+  // until touchend so a fling doesn't accidentally hand off to the scroller.
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    touchStartYRef.current = e.touches[0].clientY;
+    dragLockedRef.current = false;
+  }, []);
+
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (touchStartYRef.current === null || e.touches.length !== 1) return;
+    const dy = e.touches[0].clientY - touchStartYRef.current;
+    // Ignore upward drags — sheet only dismisses by pulling down.
+    if (dy <= 0) {
+      if (isDragging) setIsDragging(false);
+      setDragY(0);
+      return;
+    }
+    // Only start dragging if the scroll body is at the top OR drag is locked.
+    const scrollTop = scrollBodyRef.current?.scrollTop ?? 0;
+    if (!dragLockedRef.current && scrollTop > 0) {
+      // User is scrolling content, not dragging the sheet.
+      return;
+    }
+    dragLockedRef.current = true;
+    if (!isDragging) setIsDragging(true);
+    setDragY(dy);
+  }, [isDragging]);
+
+  const handleTouchEnd = useCallback(() => {
+    touchStartYRef.current = null;
+    if (!dragLockedRef.current) return;
+    dragLockedRef.current = false;
+    setIsDragging(false);
+    if (dragY > DRAG_DISMISS_THRESHOLD_PX) {
+      onClose();
+    } else {
+      // Snap back — transition re-enables since isDragging flips false.
+      setDragY(0);
+    }
+  }, [dragY, onClose]);
+
+  // Compose transform: closed → 100% (off-screen), dragging → translateY(dragY px),
+  // open → 0. Mixing px and % gets handled by always sending one or the other.
+  const panelTransform = !visible
+    ? "translateY(100%)"
+    : isDragging
+      ? `translateY(${dragY}px)`
+      : "translateY(0)";
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center sm:items-center"
@@ -91,7 +169,8 @@ function BottomSheetContent({
         backgroundColor: "rgba(26,22,18,0.42)",
         backdropFilter: "blur(2px)",
         opacity: visible ? 1 : 0,
-        transition: "opacity 200ms ease-out",
+        // Backdrop and panel share --sheet-duration so they land in lockstep.
+        transition: "opacity var(--sheet-duration) ease-out",
       }}
       onClick={handleOverlayClick}
       role="dialog"
@@ -99,12 +178,22 @@ function BottomSheetContent({
       aria-label={ariaLabel ?? title}
     >
       <div
-        className="w-full max-w-md flex flex-col bg-background rounded-t-2xl sm:rounded-2xl border-t sm:border border-outline-variant/50"
+        className="w-full max-w-md flex flex-col bg-background rounded-t-2xl sm:rounded-2xl border-t sm:border border-outline-variant/50 relative"
         style={{
           maxHeight: `${maxHeightPct}vh`,
-          transform: visible ? "translateY(0)" : "translateY(100%)",
-          transition: "transform 240ms cubic-bezier(0.32, 0.72, 0, 1)",
+          transform: panelTransform,
+          // Disable transition while finger is down so the panel tracks the
+          // drag 1:1; re-enable on release for snap-back / dismiss easing.
+          transition: isDragging ? "none" : "transform var(--sheet-duration) var(--sheet-ease)",
+          // pan-y allows our vertical drag-to-dismiss; contain stops Chrome's
+          // pull-to-refresh from firing when the user drags the sheet.
+          touchAction: "pan-y",
+          overscrollBehavior: "contain",
         }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onTouchCancel={handleTouchEnd}
       >
         {/* Drag handle (grabber) — mobile-only iOS-style affordance.
             On desktop the modal is centered, so the handle is meaningless
@@ -113,8 +202,23 @@ function BottomSheetContent({
           <div className="w-9 h-1 rounded-full bg-outline-variant/70" aria-hidden="true" />
         </div>
 
-        {/* Header — title + subtitle */}
-        <div className="px-5 pt-3 pb-3 shrink-0">
+        {/* Desktop-only close button — at sm: and above the drag handle is
+            hidden, so without an explicit X the only dismiss affordance is
+            backdrop click / Escape. Add a 32px tap target in the corner. */}
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="hidden sm:flex absolute top-3 right-3 w-8 h-8 items-center justify-center rounded-full text-on-surface-variant hover:bg-surface-container-low active:scale-[0.95] transition"
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M6 6l12 12M18 6L6 18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+        </button>
+
+        {/* Header — title + subtitle. Top padding respects the iPhone notch
+            in landscape (safe-area-inset-top); falls back to 12px otherwise. */}
+        <div className="px-5 pb-3 pr-12 sm:pr-12 shrink-0" style={{ paddingTop: "max(env(safe-area-inset-top), 12px)" }}>
           <h2 className="text-[18px] font-bold tracking-[-0.01em] text-on-surface">{title}</h2>
           {subtitle && (
             <div className="mt-1.5 text-[13px] text-on-surface-variant leading-snug">
@@ -127,7 +231,7 @@ function BottomSheetContent({
         <div className="h-px bg-outline-variant/40 shrink-0" />
 
         {/* Scrollable content */}
-        <div className="px-5 py-4 overflow-y-auto flex-1 scrollbar-hide">{children}</div>
+        <div ref={scrollBodyRef} className="px-5 py-4 overflow-y-auto flex-1 scrollbar-hide">{children}</div>
 
         {/* Sticky footer — sits OUTSIDE scroll, never disappears */}
         {footer && (
