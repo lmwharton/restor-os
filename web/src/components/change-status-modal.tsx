@@ -19,7 +19,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { BottomSheet, SheetFooterButton } from "./bottom-sheet";
 import { JobStatusBadge } from "./job-status-badge";
-import { useUpdateJobStatus } from "@/lib/hooks/use-jobs";
+import { useUpdateJobStatus, isStatusConflictError } from "@/lib/hooks/use-jobs";
 import { apiGet } from "@/lib/api";
 import type { JobStatus } from "@/lib/types";
 import type { CloseoutGatesResponse } from "@/lib/hooks/use-closeout";
@@ -235,16 +235,74 @@ export function ChangeStatusModal({
         </div>
       )}
 
-      {/* Error display — surfaces 409 stale-status conflicts and other errors */}
+      {/* Error display — branches on JobStatusUpdateError.kind so the 409
+          stale-status case gets an explicit refresh prompt with a CTA, and
+          everything else gets a flat error block. */}
       {updateStatus.isError && (
-        <div className="mt-4 rounded-xl border border-status-cancelled/30 bg-status-cancelled/10 p-3.5 text-[13px] text-on-surface">
-          <div className="font-semibold text-[#9b1c1c]">Status update failed</div>
-          <div className="mt-1 text-on-surface-variant">
-            {updateStatus.error instanceof Error
-              ? updateStatus.error.message
-              : "Something went wrong. The job may have been updated by someone else — try refreshing."}
+        isStatusConflictError(updateStatus.error) ? (
+          <div
+            className="mt-4 rounded-xl p-3.5"
+            style={{
+              backgroundColor: "color-mix(in srgb, var(--status-on-hold) 12%, var(--surface-container-lowest))",
+              border: "1px solid color-mix(in srgb, var(--status-on-hold) 30%, transparent)",
+            }}
+          >
+            <div className="flex items-start gap-2.5">
+              <div
+                className="w-6 h-6 rounded-full flex items-center justify-center shrink-0"
+                style={{ backgroundColor: "color-mix(in srgb, var(--status-on-hold) 18%, transparent)" }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v3.5h3.5" stroke="var(--status-on-hold)" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-bold" style={{ color: "color-mix(in srgb, var(--status-on-hold) 75%, var(--on-surface))" }}>
+                  This job&rsquo;s status changed since you opened this modal.
+                </div>
+                <div className="mt-1 text-[12px] leading-snug" style={{ color: "color-mix(in srgb, var(--status-on-hold) 75%, var(--on-surface))" }}>
+                  Someone else may have already moved it. Refresh to see the new state.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    // Force a re-fetch so the next time the modal opens it
+                    // sees the new current_status. We close immediately —
+                    // the parent reopens via the JobStatusBadge click.
+                    qc.invalidateQueries({ queryKey: ["jobs", jobId] });
+                    qc.invalidateQueries({ queryKey: ["jobs"] });
+                    onClose();
+                  }}
+                  className="mt-2.5 h-9 px-3.5 rounded-lg text-[12px] font-bold inline-flex items-center gap-1.5 active:scale-[0.98] transition"
+                  style={{ backgroundColor: "var(--status-on-hold)", color: "#fff" }}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M4 12a8 8 0 1 0 2.5-5.8M4 4v3.5h3.5" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Refresh now
+                </button>
+              </div>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div
+            className="mt-4 rounded-xl p-3.5 text-[13px]"
+            style={{
+              // Generic application failure — use the --error token, not
+              // var(--status-cancelled). Cancelled is now warm gray under
+              // Option A and would read as neutral instead of an error.
+              backgroundColor: "var(--error-container)",
+              border: "1px solid color-mix(in srgb, var(--error) 30%, transparent)",
+            }}
+          >
+            <div className="font-semibold" style={{ color: "var(--error)" }}>
+              Status update failed
+            </div>
+            <div className="mt-1" style={{ color: "color-mix(in srgb, var(--error) 60%, var(--on-surface))" }}>
+              {updateStatus.error?.message || "Something went wrong. Try again."}
+            </div>
+          </div>
+        )
       )}
     </BottomSheet>
   );
