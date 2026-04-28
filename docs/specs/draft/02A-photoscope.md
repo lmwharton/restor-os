@@ -1,5 +1,13 @@
 # PhotoScope — Damage Photos → Xactimate Line Items
 
+> **🔖 Open question (revisit before scheduling):**
+> 02A depends on photos being captured first. Photo Capture currently
+> lives at 03A under the "Capture Foundation" umbrella. Brett asked
+> whether 03A should move into the 02 block (alongside this spec) since
+> it's tightly coupled to PhotoScope, while Voice Capture (03B) is an
+> independent need. See the matching note in `03-capture-foundation.md`.
+> Don't reshape until 02A is on deck. Filed 2026-04-27.
+
 ## Status
 | Field | Value |
 |-------|-------|
