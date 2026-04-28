@@ -64,6 +64,21 @@ export function ChangeStatusModal({
   const updateStatus = useUpdateJobStatus(jobId);
   const qc = useQueryClient();
 
+  // Reset transient state every time the modal (re-)opens or currentStatus
+  // shifts under us. Without this, target keeps a stale value from a prior
+  // open — e.g. user opens on a `lead` job, picks "active", cancels; later
+  // opens on a `completed` job and target still says "active" (which is
+  // legal-by-coincidence but reason/resumeDate could be carrying stale text
+  // from the prior session and `canSubmit` allows submit on transitions
+  // that look fine but aren't). The modal is conditionally mounted by
+  // BottomSheet so this fires once per open.
+  useEffect(() => {
+    if (!open) return;
+    setTarget(legalTargets[0] ?? null);
+    setReason("");
+    setResumeDate("");
+  }, [open, currentStatus, legalTargets]);
+
   // Prefetch closeout gates the instant the user picks 'completed'.
   // The closeout-checklist modal that opens next reads from the same
   // ['closeout-gates', jobId, 'completed'] cache key, so by the time it
