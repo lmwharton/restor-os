@@ -41,7 +41,10 @@ export type JobTypeChoice =
   | "Mold Remediation"
   | "Reconstruction";
 
-export type JobStatusChoice = "Lead" | "Scoped" | "Submitted";
+// Spec 01K — backend `_normalize_batch_status` only maps Lead/Active/Invoiced
+// (or raw snake_case enum values). Sending "Scoped" or "Submitted" returns
+// 400 INVALID_STATUS now that the legacy 7-stage pipeline is gone.
+export type JobStatusChoice = "Lead" | "Active" | "Invoiced";
 
 export interface CompanyCreatePayload {
   name: string;
