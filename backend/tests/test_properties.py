@@ -84,8 +84,9 @@ def _make_stateful_properties_mock(user_row, call_sequence):
     def table_side_effect(table_name):
         mock_table = AsyncSupabaseMock()
         if table_name == "users":
+            # Auth middleware uses .maybe_single() (commit 7423ce2) — match it.
             (
-                mock_table.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                mock_table.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
             ).data = user_row
         elif table_name == "event_history":
             mock_table.insert.return_value.execute.return_value = AsyncSupabaseMock()

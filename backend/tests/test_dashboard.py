@@ -89,7 +89,7 @@ def sample_jobs(mock_company_id):
             "address_line1": "123 Main St",
             "city": "Troy",
             "state": "MI",
-            "status": "new",
+            "status": "lead",
             "customer_name": "John Doe",
             "loss_type": "water",
             "created_at": NOW_ISO,
@@ -102,7 +102,7 @@ def sample_jobs(mock_company_id):
             "address_line1": "456 Oak Ave",
             "city": "Detroit",
             "state": "MI",
-            "status": "mitigation",
+            "status": "active",
             "customer_name": "Jane Smith",
             "loss_type": "fire",
             "created_at": NOW_ISO,
@@ -115,7 +115,7 @@ def sample_jobs(mock_company_id):
             "address_line1": "789 Elm Blvd",
             "city": "Ann Arbor",
             "state": "MI",
-            "status": "job_complete",
+            "status": "completed",
             "customer_name": "Bob Wilson",
             "loss_type": "water",
             "created_at": OLD_ISO,
@@ -128,7 +128,7 @@ def sample_jobs(mock_company_id):
             "address_line1": "321 Pine Rd",
             "city": "Troy",
             "state": "MI",
-            "status": "drying",
+            "status": "on_hold",
             "customer_name": "Alice Brown",
             "loss_type": "water",
             "created_at": NOW_ISO,
@@ -161,7 +161,8 @@ def sample_events(mock_company_id):
 def _users_table_mock(user_row):
     t = AsyncSupabaseMock()
     chain = t.select.return_value.eq.return_value.is_.return_value
-    chain.single.return_value.execute.return_value = MagicMock(data=user_row)
+    # Auth middleware uses .maybe_single() (commit 7423ce2).
+    chain.maybe_single.return_value.execute.return_value = MagicMock(data=user_row)
     return t
 
 
@@ -246,7 +247,7 @@ class TestDashboardSuccess:
     def test_pipeline_has_all_stages(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers
     ):
-        """Pipeline includes all 7 stages."""
+        """Spec 01K: pipeline includes all 9 lifecycle stages in canonical order."""
         mock_admin, mock_auth = _build_mocks(
             mock_user_row,
             {
@@ -260,14 +261,14 @@ class TestDashboardSuccess:
         pipeline = resp.json()["pipeline"]
         stages = [p["stage"] for p in pipeline]
         assert stages == [
-            "new", "contracted", "mitigation", "drying",
-            "job_complete", "submitted", "collected",
+            "lead", "active", "on_hold", "completed", "invoiced",
+            "disputed", "paid", "cancelled", "lost",
         ]
 
     def test_pipeline_counts_correct(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers
     ):
-        """Pipeline counts match the sample jobs."""
+        """Pipeline counts match the sample jobs (4 jobs across 4 different statuses)."""
         mock_admin, mock_auth = _build_mocks(
             mock_user_row,
             {
@@ -279,13 +280,17 @@ class TestDashboardSuccess:
             resp = client.get("/v1/dashboard", headers=auth_headers)
 
         pipeline = {p["stage"]: p["count"] for p in resp.json()["pipeline"]}
-        assert pipeline["new"] == 1
-        assert pipeline["mitigation"] == 1
-        assert pipeline["drying"] == 1
-        assert pipeline["job_complete"] == 1
-        assert pipeline["contracted"] == 0
-        assert pipeline["submitted"] == 0
-        assert pipeline["collected"] == 0
+        # sample_jobs has one each of: lead, active, completed, on_hold
+        assert pipeline["lead"] == 1
+        assert pipeline["active"] == 1
+        assert pipeline["completed"] == 1
+        assert pipeline["on_hold"] == 1
+        # The other 5 stages have no sample data
+        assert pipeline["invoiced"] == 0
+        assert pipeline["disputed"] == 0
+        assert pipeline["paid"] == 0
+        assert pipeline["cancelled"] == 0
+        assert pipeline["lost"] == 0
 
     def test_kpis_active_jobs(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers
@@ -302,8 +307,9 @@ class TestDashboardSuccess:
             resp = client.get("/v1/dashboard", headers=auth_headers)
 
         kpis = resp.json()["kpis"]
-        # new(1) + mitigation(1) + drying(1) = 3 active (job_complete is terminal)
-        assert kpis["active_jobs"] == 3
+        # Spec 01K active_jobs = lead + active + on_hold + completed = 4
+        # (active list excludes paid/cancelled/lost; disputed is excluded from KPI).
+        assert kpis["active_jobs"] == 4
 
     def test_kpis_jobs_this_month(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers
@@ -326,7 +332,7 @@ class TestDashboardSuccess:
     def test_priority_jobs_only_actionable(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers
     ):
-        """Priority jobs only includes new and mitigation status jobs."""
+        """Spec 01K priority jobs surface lead/on_hold/disputed (need owner attention)."""
         mock_admin, mock_auth = _build_mocks(
             mock_user_row,
             {
@@ -338,9 +344,10 @@ class TestDashboardSuccess:
             resp = client.get("/v1/dashboard", headers=auth_headers)
 
         priority = resp.json()["priority_jobs"]
+        # sample_jobs has one lead and one on_hold — both need attention.
         assert len(priority) == 2
         statuses = {p["status"] for p in priority}
-        assert statuses == {"new", "mitigation"}
+        assert statuses == {"lead", "on_hold"}
 
     def test_recent_events_returned(
         self, client, jwt_secret, mock_user_row, sample_jobs, sample_events, auth_headers

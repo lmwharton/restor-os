@@ -79,11 +79,12 @@ def _make_mock_client(user_row, table_handlers=None):
         call_counts[table_name] += 1
 
         if table_name == "users":
+            # Auth middleware uses .maybe_single() (commit 7423ce2).
             (
                 mock_table.select.return_value
                 .eq.return_value
                 .is_.return_value
-                .single.return_value
+                .maybe_single.return_value
                 .execute.return_value
             ).data = user_row
         elif table_name == "event_history":

@@ -681,16 +681,16 @@ class TestJobsBatchValidation:
 
     @pytest.mark.asyncio
     async def test_status_normalize_ui_labels(self):
-        """Lead/Scoped/Submitted UI labels map to enum values."""
+        """Spec 01K labels (Lead/Active/Invoiced) map to lifecycle enum values."""
         from api.jobs.service import _normalize_batch_status
 
-        assert _normalize_batch_status("Lead") == "new"
-        assert _normalize_batch_status("scoped") == "mitigation"
-        assert _normalize_batch_status("Submitted") == "submitted"
-        assert _normalize_batch_status(None) == "new"
+        assert _normalize_batch_status("Lead") == "lead"
+        assert _normalize_batch_status("active") == "active"
+        assert _normalize_batch_status("Invoiced") == "invoiced"
+        assert _normalize_batch_status(None) == "lead"
         # Pass-through enum values
-        assert _normalize_batch_status("new") == "new"
-        assert _normalize_batch_status("mitigation") == "mitigation"
+        assert _normalize_batch_status("lead") == "lead"
+        assert _normalize_batch_status("active") == "active"
 
     @pytest.mark.asyncio
     async def test_status_normalize_rejects_unknown(self):
@@ -742,7 +742,7 @@ class TestJobsBatchValidation:
                     "state": "MI",
                     "zip": "48083",
                     "loss_type": "water",
-                    "status": "Lead",
+                    "status": "Lead",  # Spec 01K — UI label "Lead" → enum "lead"
                 },
                 {
                     "address_line1": "456 Oak Ave",
@@ -750,12 +750,12 @@ class TestJobsBatchValidation:
                     "state": "MI",
                     "zip": "48201",
                     "loss_type": "fire",
-                    "status": "Scoped",
+                    "status": "Active",
                 },
                 {
                     "address_line1": "789 Birch Ln",
                     "loss_type": "mold",
-                    "status": "Submitted",
+                    "status": "Invoiced",
                 },
             ]
         }
@@ -772,7 +772,7 @@ class TestJobsBatchValidation:
         assert captured["name"] == "rpc_create_jobs_batch"
         # Status labels should be normalized to enum values before hitting RPC
         statuses = [j["status"] for j in captured["params"]["p_jobs"]]
-        assert statuses == ["new", "mitigation", "submitted"]
+        assert statuses == ["lead", "active", "invoiced"]
 
 
 # ---------------------------------------------------------------------------
@@ -796,10 +796,20 @@ class TestCompanyCreateExtendedProfile:
         mock_auth_response.user.user_metadata = {"full_name": "Owner Name"}
         mock_client.auth.admin.get_user_by_id.return_value = mock_auth_response
 
+        # Spec 01K: onboarding now calls rpc_seed_closeout_settings after
+        # rpc_onboard_user. We need to capture each RPC by name so the test
+        # below can assert on the rpc_onboard_user call specifically.
+        captured_by_name: dict = {}
+
         def rpc_side_effect(name, params):
+            captured_by_name[name] = params
             captured["name"] = name
             captured["params"] = params
             inner = AsyncSupabaseMock()
+            if name == "rpc_seed_closeout_settings":
+                # Best-effort post-onboarding seed — return empty success.
+                inner.execute.return_value = MagicMock(data=None)
+                return inner
             company_row = {
                 "id": str(mock_company_id),
                 "name": params["p_company_name"],
@@ -858,7 +868,9 @@ class TestCompanyCreateExtendedProfile:
             )
 
         assert resp.status_code == 201, resp.text
-        params = captured["params"]
+        # Assert on the rpc_onboard_user payload (not the last RPC call,
+        # which is now rpc_seed_closeout_settings — Spec 01K addition).
+        params = captured_by_name["rpc_onboard_user"]
         assert params["p_company_name"] == "Dryco LLC"
         assert params["p_company_phone"] == "(586) 555-1212"
         assert params["p_company_address"] == "100 Main St"
@@ -866,6 +878,9 @@ class TestCompanyCreateExtendedProfile:
         assert params["p_company_state"] == "MI"
         assert params["p_company_zip"] == "48089"
         assert params["p_service_area"] == ["Warren/Macomb", "Oakland"]
+        # And confirm the closeout-settings seed actually fired for the new company.
+        assert "rpc_seed_closeout_settings" in captured_by_name
+        assert captured_by_name["rpc_seed_closeout_settings"]["p_company_id"] == str(mock_company_id)
 
 
 # ---------------------------------------------------------------------------

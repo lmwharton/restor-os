@@ -34,7 +34,7 @@ def _job_row(
     state="MI",
     zip_code="48083",
     loss_type="water",
-    status="new",
+    status="lead",  # Spec 01K — default lifecycle starting state
     customer_name=None,
     customer_phone=None,
     customer_email=None,
@@ -246,7 +246,7 @@ class TestCreateJob:
         data = response.json()
         assert data["id"] == str(job_id)
         assert data["job_number"].startswith("JOB-")
-        assert data["status"] == "new"
+        assert data["status"] == "lead"
         assert data["room_count"] == 0
         assert data["photo_count"] == 0
         assert data["floor_plan_count"] == 0
@@ -512,7 +512,7 @@ class TestListJobs:
         self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id
     ):
         """Filter by status returns matching jobs."""
-        rows = [_job_row(company_id=mock_company_id, status="mitigation")]
+        rows = [_job_row(company_id=mock_company_id, status="active")]
 
         def jobs_handler(mock_table):
             result = MagicMock()
@@ -855,46 +855,23 @@ class TestUpdateJob:
         assert response.status_code == 200
         assert response.json()["customer_name"] == "Updated Name"
 
-    def test_update_job_status(
-        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id
+    def test_update_job_rejects_status_field(
+        self, client, auth_headers, jwt_secret, mock_user_row
     ):
-        """Update job status returns 200."""
-        job_id = uuid4()
-        updated_row = _job_row(job_id=job_id, company_id=mock_company_id, status="mitigation")
-        updated_row["job_type"] = "mitigation"
-        updated_row["linked_job_id"] = None
-
-        def jobs_handler(mock_table):
-            result = MagicMock()
-            result.data = [updated_row]
-            (
-                mock_table.update.return_value.eq.return_value.eq.return_value.is_.return_value.execute.return_value
-            ) = result
-            # Per-job-type status validation: select("job_type").eq().eq().is_().single().execute()
-            (
-                mock_table.select.return_value.eq.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
-            ).data = {"job_type": "mitigation"}
-
-        mock_client = make_mock_supabase(
-            mock_user_row,
-            {
-                "jobs": jobs_handler,
-                "job_rooms": _counts_handler,
-                "photos": _counts_handler,
-                "floor_plans": _counts_handler,
-                "line_items": _counts_handler,
-            },
-        )
+        """Spec 01K: status changes go through PATCH /jobs/{id}/status, not PATCH /jobs/{id}."""
+        # Pydantic strips unknown fields, so {"status": "active"} ends up as a no-op
+        # update — confirm the endpoint rejects empty payloads with NO_UPDATES.
+        mock_client = make_mock_supabase(mock_user_row)
 
         with _patch_all(jwt_secret, mock_client):
             response = client.patch(
-                f"/v1/jobs/{job_id}",
-                json={"status": "mitigation"},
+                f"/v1/jobs/{uuid4()}",
+                json={"status": "active"},
                 headers=auth_headers,
             )
 
-        assert response.status_code == 200
-        assert response.json()["status"] == "mitigation"
+        assert response.status_code == 400
+        assert response.json()["error_code"] == "NO_UPDATES"
 
     def test_update_job_multiple_fields(
         self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id
@@ -943,20 +920,6 @@ class TestUpdateJob:
         assert data["customer_name"] == "New Name"
         assert data["carrier"] == "State Farm"
         assert data["claim_number"] == "CLM-123"
-
-    def test_update_job_invalid_status(self, client, auth_headers, jwt_secret, mock_user_row):
-        """Invalid status returns 400 INVALID_STATUS."""
-        mock_client = make_mock_supabase(mock_user_row)
-
-        with _patch_all(jwt_secret, mock_client):
-            response = client.patch(
-                f"/v1/jobs/{uuid4()}",
-                json={"status": "bogus"},
-                headers=auth_headers,
-            )
-
-        assert response.status_code == 400
-        assert response.json()["error_code"] == "INVALID_STATUS"
 
     def test_update_job_invalid_loss_type(self, client, auth_headers, jwt_secret, mock_user_row):
         """Invalid loss_type on update returns 400."""
@@ -1042,7 +1005,7 @@ class TestUpdateJob:
 
     def test_update_job_no_auth(self, client):
         """Request without auth returns 401."""
-        response = client.patch(f"/v1/jobs/{uuid4()}", json={"status": "new"})
+        response = client.patch(f"/v1/jobs/{uuid4()}", json={"status": "lead"})
         assert response.status_code == 401
 
 
@@ -1259,61 +1222,6 @@ class TestCreateReconstructionJob:
         assert response.status_code == 422
 
 
-class TestStatusValidationPerJobType:
-    """PATCH /v1/jobs/{id} — status must be valid for the job's type."""
-
-    def test_mitigation_rejects_recon_status(
-        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
-    ):
-        """Setting status='scoping' on a mitigation job returns 400."""
-        job_id = uuid4()
-
-        def jobs_handler(mock_table):
-            # Per-type validation query: select("job_type").eq().eq().is_().single().execute()
-            (
-                mock_table.select.return_value.eq.return_value
-                .eq.return_value.is_.return_value
-                .single.return_value.execute.return_value
-            ).data = {"job_type": "mitigation"}
-
-        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
-
-        with _patch_all(jwt_secret, mock_client):
-            response = client.patch(
-                f"/v1/jobs/{job_id}",
-                json={"status": "scoping"},
-                headers=auth_headers,
-            )
-
-        assert response.status_code == 400
-        assert response.json()["error_code"] == "INVALID_STATUS_FOR_TYPE"
-
-    def test_recon_rejects_mitigation_status(
-        self, client, auth_headers, jwt_secret, mock_user_row, mock_company_id,
-    ):
-        """Setting status='drying' on a reconstruction job returns 400."""
-        job_id = uuid4()
-
-        def jobs_handler(mock_table):
-            (
-                mock_table.select.return_value.eq.return_value
-                .eq.return_value.is_.return_value
-                .single.return_value.execute.return_value
-            ).data = {"job_type": "reconstruction"}
-
-        mock_client = make_mock_supabase(mock_user_row, {"jobs": jobs_handler})
-
-        with _patch_all(jwt_secret, mock_client):
-            response = client.patch(
-                f"/v1/jobs/{job_id}",
-                json={"status": "drying"},
-                headers=auth_headers,
-            )
-
-        assert response.status_code == 400
-        assert response.json()["error_code"] == "INVALID_STATUS_FOR_TYPE"
-
-
 class TestCreateLinkedReconEndpoint:
     """POST /v1/jobs/{job_id}/create-linked-recon"""
 
@@ -1490,7 +1398,7 @@ class TestImmutableJobType:
     ):
         """Sending job_type in update payload is silently ignored (not in JobUpdate schema)."""
         job_id = uuid4()
-        row = _job_row(job_id=job_id, company_id=mock_company_id, status="new")
+        row = _job_row(job_id=job_id, company_id=mock_company_id, status="lead")
         row["job_type"] = "mitigation"
         row["linked_job_id"] = None
 

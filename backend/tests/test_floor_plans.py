@@ -139,9 +139,9 @@ def mock_user_row(mock_user_id, mock_auth_user_id, mock_company_id):
 def _setup_mocks(jwt_secret, mock_user_row, mock_job_row):
     """Return context managers that mock auth + job validation + event logging."""
     mock_admin = AsyncSupabaseMock()
-    # Auth context: user lookup
+    # Auth context: user lookup uses .maybe_single() (commit 7423ce2).
     (
-        mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+        mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
     ).data = mock_user_row
 
     mock_auth_client = AsyncSupabaseMock()
@@ -381,8 +381,9 @@ class TestCreateFloorPlan:
     ):
         """POST with non-existent job -> 404 JOB_NOT_FOUND."""
         mock_admin = AsyncSupabaseMock()
+        # Auth middleware uses .maybe_single() (commit 7423ce2).
         (
-            mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+            mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
         ).data = mock_user_row
 
         mock_auth_client = AsyncSupabaseMock()
@@ -3557,14 +3558,16 @@ class TestEnsureJobFloorPlanRpcMigration:
     def test_rpc_rejects_archived_jobs(self):
         text = self._text()
         upgrade = text.split("UPGRADE_SQL", 1)[1].split("DOWNGRADE_SQL", 1)[0]
-        assert "v_job.status = 'collected'" in upgrade
+        # Spec 01K renamed terminal "collected" → "paid". The migration was
+        # rewritten in-place (pre-launch, no dual-status window).
+        assert "v_job.status = 'paid'" in upgrade
         # Post-review MEDIUM #4: archived jobs raise 55006
         # (object_not_in_prerequisite_state), NOT 42501. 42501 is reserved
         # for "caller identity" failures; 55006 matches the frozen-version
         # trigger convention for "row not in mutable state". A Python
         # catch block must be able to tell them apart — same SQLSTATE for
         # different causes was lessons-doc pattern #5.
-        archived_block = upgrade.split("v_job.status = 'collected'", 1)[1].split(
+        archived_block = upgrade.split("v_job.status = 'paid'", 1)[1].split(
             "END IF", 1
         )[0]
         assert "'55006'" in archived_block, (
@@ -5303,7 +5306,8 @@ class TestAtomicRollbackWrapperMigration:
         wrapper_block = upgrade.split("rollback_floor_plan_version_atomic", 1)[1]
         assert "get_my_company_id()" in wrapper_block
         assert "Property mismatch" in wrapper_block or "property_id <> v_target.property_id" in wrapper_block
-        assert "Job archived" in wrapper_block or "status = 'collected'" in wrapper_block
+        # Spec 01K: terminal "collected" → "paid".
+        assert "Job archived" in wrapper_block or "status = 'paid'" in wrapper_block
         assert "Job has no property" in wrapper_block
 
     def test_wrapper_is_security_definer_with_locked_search_path(self):
@@ -6722,12 +6726,13 @@ class TestRaiseIfArchivedHelper:
     """Behavioral tests for the archive-job guard helper itself. Shared by
     the 3 by-job router endpoints for R6 (and by ensure_job_mutable)."""
 
-    def test_collected_status_raises_job_archived(self):
+    def test_paid_status_raises_job_archived(self):
+        """Spec 01K: 'paid' is one of the 3 archived terminal states."""
         from api.shared.exceptions import AppException
         from api.shared.guards import raise_if_archived
 
         with pytest.raises(AppException) as exc_info:
-            raise_if_archived({"status": "collected", "deleted_at": None})
+            raise_if_archived({"status": "paid", "deleted_at": None})
         assert exc_info.value.status_code == 403
         assert exc_info.value.error_code == "JOB_ARCHIVED"
 

@@ -191,7 +191,7 @@ def _make_admin_mock(user_row, service_table_handlers=None):
         if table_name == "users":
             # Auth middleware lookup: select().eq().is_().single().execute().data
             (
-                mock_table.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                mock_table.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
             ).data = user_row
         if service_table_handlers and table_name in service_table_handlers:
             service_table_handlers[table_name](mock_table)
@@ -349,7 +349,7 @@ class TestGetMe:
             if table_name == "users":
                 # get_user_with_company: select("*, companies(*)").eq().is_().single().execute()
                 (
-                    t.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                    t.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
                 ).data = full_user_data
                 # update_last_login: update().eq().execute()
                 t.update.return_value.eq.return_value.execute.return_value = AsyncSupabaseMock()
@@ -381,7 +381,7 @@ class TestGetMe:
             t = AsyncSupabaseMock()
             if table_name == "users":
                 (
-                    t.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                    t.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
                 ).data = None
             return t
 
@@ -530,7 +530,7 @@ class TestGetCompany:
             t = AsyncSupabaseMock()
             if table_name == "users":
                 (
-                    t.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                    t.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
                 ).data = full_user_data
             return t
 
@@ -558,7 +558,7 @@ class TestGetCompany:
             t = AsyncSupabaseMock()
             if table_name == "users":
                 (
-                    t.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                    t.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
                 ).data = None
             return t
 
@@ -600,7 +600,7 @@ class TestGetCompany:
             t = AsyncSupabaseMock()
             if table_name == "users":
                 (
-                    t.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+                    t.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
                 ).data = user_no_company
             return t
 

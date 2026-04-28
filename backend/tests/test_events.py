@@ -139,7 +139,8 @@ def _users_table_mock(user_row):
     """Build a mock table that returns user_row for the auth middleware lookup."""
     t = AsyncSupabaseMock()
     chain = t.select.return_value.eq.return_value.is_.return_value
-    chain.single.return_value.execute.return_value = MagicMock(data=user_row)
+    # Auth middleware uses .maybe_single() (commit 7423ce2).
+    chain.maybe_single.return_value.execute.return_value = MagicMock(data=user_row)
     return t
 
 

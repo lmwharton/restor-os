@@ -89,7 +89,7 @@ async def _make_job(admin_client, company_id: str, property_id: str, user_id: st
             "state": "MI",
             "zip": "48083",
             "loss_type": "water",
-            "status": "new",
+            "status": "lead",
             "created_by": user_id,
         })
         .execute()

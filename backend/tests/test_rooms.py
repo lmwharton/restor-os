@@ -129,8 +129,13 @@ def mock_room_row(mock_room_id, mock_job_id, mock_company_id):
 def _setup_mocks(jwt_secret, mock_user_row, mock_job_row):
     """Return context managers for auth + job validation."""
     mock_admin = AsyncSupabaseMock()
+    # Auth middleware was switched to .maybe_single() (commit 7423ce2 — handles
+    # missing user rows gracefully). Old test fixtures wired .single() and
+    # silently returned a coroutine for unconfigured fields; this lined up
+    # with the middleware's new last_notifications_seen_at parsing to break
+    # ~200 tests at once. Just match the middleware's call shape.
     (
-        mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.single.return_value.execute.return_value
+        mock_admin.table.return_value.select.return_value.eq.return_value.is_.return_value.maybe_single.return_value.execute.return_value
     ).data = mock_user_row
 
     mock_auth_client = AsyncSupabaseMock()
