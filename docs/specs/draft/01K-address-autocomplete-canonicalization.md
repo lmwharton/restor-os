@@ -19,6 +19,7 @@
 
 ## Reference
 - [CREW-13](https://linear.app/crewmatic/issue/CREW-13)
+- **Design prototype:** [`docs/design/customer-property-pickers/`](../../design/customer-property-pickers/README.md) — full HTML/JS mockup of every state (empty / typing / results / exact / fuzzy / no-match / selected) for both `<CustomerPicker>` and `<PropertyPicker>`, plus the mobile + desktop New Job form. Read the README in that directory before implementing UI — it maps each prototype component to its production target.
 - Existing components: `web/src/components/address-autocomplete.tsx` (Google Places via `use-places-autocomplete`), `web/src/components/google-maps-provider.tsx` (loads `places`, `geocoding`, `maps` libs).
 - npm deps: `@googlemaps/js-api-loader`, `use-places-autocomplete` (already installed).
 

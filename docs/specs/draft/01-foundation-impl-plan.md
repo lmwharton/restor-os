@@ -1166,6 +1166,8 @@ grep -rn "customer_name\|customer_phone\|customer_email\|address_line1.*\bjob\b"
 
 ## Phase 11: Frontend — Pickers (01K)
 
+> **Visual reference:** `docs/design/customer-property-pickers/` — full HTML/JS prototype of every picker state. Open `Customer + Property Pickers.html` locally to see all artboards. The README in that directory maps each prototype component (`<ComboInput>`, `<SelectedCard>`, `<ConfirmModal>`, etc.) to its production target. Match the visual output pixel-perfectly; do NOT copy the prototype's internal structure.
+
 ### Task 11.1: build-usps-standardized helper (frontend mirror of backend)
 
 - [ ] **Step 1:** Create `web/src/lib/build-usps-standardized.ts`:
@@ -1242,6 +1244,8 @@ function PropertyPicker({ customerId, value, onChange }: Props) {
 ---
 
 ## Phase 12: Frontend — Detail pages + list views + nav (01L)
+
+> **Visual reference:** `docs/design/customer-property-pickers/new-job-form.jsx` shows mobile + desktop layouts that pair with these detail pages — same Geist/cream/brand-orange vocabulary. The detail pages don't have dedicated mockups in this design package, but they should match the existing app's pattern + the picker prototype's `<SelectedCard>` shape for the customer/property header strip.
 
 ### Task 12.1: Property Detail Page
 
