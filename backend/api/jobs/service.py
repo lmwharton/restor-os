@@ -967,8 +967,8 @@ async def update_status(
             error_code="ILLEGAL_TRANSITION",
         )
 
-    # 2. Reason required for terminal/disputed/on-hold transitions.
-    needs_reason = target in lifecycle.REASON_REQUIRED
+    # 2. Reason required for off-ramps, dispute, OR any non-happy-path move.
+    needs_reason = lifecycle.transition_needs_reason(expected, target)
     has_reason = (
         bool((body.reason or "").strip())
         or bool(body.cancel_reason or body.cancel_reason_other)
@@ -976,7 +976,7 @@ async def update_status(
     if needs_reason and not has_reason:
         raise AppException(
             status_code=400,
-            detail=f"Reason is required when moving a job to {target}.",
+            detail=f"Reason is required when moving a job from {expected} to {target}.",
             error_code="REASON_REQUIRED",
         )
 

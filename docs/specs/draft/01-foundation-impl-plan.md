@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Ship the Customer-Property data foundation in one rollout — covering CREW-11 (data model + CRUD), CREW-13 (autocomplete pickers + canonicalization via existing Google Places integration), CREW-59 (Property + Customer detail pages), and CREW-60 (generalized job-clone pattern with "Convert to Reconstruction" preset).
+**Goal:** Ship the Customer-Property data foundation in one rollout — covering CREW-11 (data model + CRUD), CREW-13 (autocomplete pickers + canonicalization via existing Google Places integration), CREW-59 (Property + Customer detail pages), and CREW-60 (update reconstruction COPY_FIELDS for the new schema — the broader Convert-to-Reconstruction feature is already shipped via Spec 01B).
 
-**Architecture:** New `customers` first-class entity (company-scoped, phone-as-unique-key). `properties.customer_id` default-owner pointer + `jobs.customer_id` per-job customer. Drop denormalized `jobs.customer_*` columns (pre-launch clean cut). Generalized `clone_from_job_id` flag on POST /v1/jobs (covers Convert-to-Reconstruction). Property + Customer detail pages with property-centric customer body. All address canonicalization happens client-side via the existing `<AddressAutocomplete>` (Google Places) component.
+**Architecture:** New `customers` first-class entity (company-scoped, phone-as-unique-key). `properties.customer_id` default-owner pointer + `jobs.customer_id` per-job customer. Drop denormalized `jobs.customer_*` columns (pre-launch clean cut). Property + Customer detail pages with property-centric customer body. All address canonicalization happens client-side via the existing `<AddressAutocomplete>` (Google Places) component. Reconstruction auto-copy already exists via 01B's `linked_job_id` mechanism — just update its COPY_FIELDS list to match the new schema.
 
 **Tech Stack:** FastAPI + Supabase (Postgres + RLS), Pydantic v2, Alembic raw-SQL migrations, `phonenumbers` (E.164), `pg_trgm` (fuzzy search), `cryptography.fernet` (gate_code encryption), `bleach` (notes sanitization). Frontend: Next.js 16 + TanStack Query + existing `<AddressAutocomplete>` (Google Places via `use-places-autocomplete`).
 
@@ -23,13 +23,12 @@
 ### Created — Backend
 | Path | Spec | Purpose |
 |------|------|---------|
-| `backend/alembic/versions/<rev>_foundation_customer_property.py` | 01J/01K/01L/01M | Single Alembic revision: customers table + RLS + indexes; properties.customer_id + last_activity_at + trigger + notes columns; jobs.customer_id + parent_job_id + drop denorm + property_id NOT NULL; pg_trgm + match RPC. |
+| `backend/alembic/versions/<rev>_foundation_customer_property.py` | 01J/01K/01L | Single Alembic revision: customers table + RLS + indexes; properties.customer_id + last_activity_at + trigger + notes column; jobs.customer_id + drop denorm + property_id NOT NULL; pg_trgm + match RPC. (No new clone-related schema — `linked_job_id` already exists from 01B.) |
 | `backend/api/customers/__init__.py` | 01J | Module marker |
 | `backend/api/customers/schemas.py` | 01J | `CustomerCreate`, `CustomerUpdate`, `CustomerResponse`, `CustomerListItem`, `CustomerDetailResponse`, `CustomerDuplicateResponse`, `CustomerMatchResponse` |
 | `backend/api/customers/service.py` | 01J/01K | CRUD + dedup + match |
 | `backend/api/customers/router.py` | 01J/01K | 5 + 1 endpoints |
 | `backend/api/shared/phone.py` | 01J | `normalize_phone()` E.164 helper |
-| `backend/api/shared/encryption.py` | 01L | Fernet helpers for `properties.notes` |
 | `backend/api/shared/sanitize_notes.py` | 01L | `sanitize_notes()` via bleach |
 | `backend/api/shared/rate_limit.py` (if not present) | 01K | Per-user 60/min rate limit decorator for match endpoints |
 | `backend/tests/test_customers.py` | 01J | ~30 tests |
@@ -37,8 +36,7 @@
 | `backend/tests/test_property_match.py` | 01K | ~10 tests |
 | `backend/tests/test_property_detail_endpoints.py` | 01L | ~12 tests |
 | `backend/tests/test_customer_detail_endpoints.py` | 01L | ~6 tests |
-| `backend/tests/test_job_clone.py` | 01M | ~14 tests |
-| `backend/tests/test_notes_encryption.py` | 01L | ~5 tests |
+| (existing `backend/tests/test_jobs.py` extended) | 01M | +3 tests for the COPY_FIELDS update |
 | `backend/tests/test_sanitize_notes.py` | 01L | ~4 tests |
 
 ### Created — Frontend
@@ -49,11 +47,9 @@
 | `web/src/lib/hooks/use-property-match.ts` | 01K | Match endpoint hook |
 | `web/src/lib/hooks/use-property-detail.ts` | 01L | Property + jobs/photos/notes for detail page |
 | `web/src/lib/hooks/use-customer-detail.ts` | 01L | Customer + properties for detail page |
-| `web/src/lib/hooks/use-reconstruction.ts` | 01M | Linked-reconstruction lookup |
 | `web/src/lib/build-usps-standardized.ts` | 01K | Frontend mirror of backend dedup-key helper |
 | `web/src/components/customer-picker.tsx` | 01K | Customer autocomplete + create-new |
 | `web/src/components/property-picker.tsx` | 01K | Wraps `<AddressAutocomplete>` + match-tier dialog |
-| `web/src/components/convert-to-reconstruction-button.tsx` | 01M | Button + confirmation dialog |
 | `web/src/app/(protected)/properties/page.tsx` | 01L | Properties list view |
 | `web/src/app/(protected)/properties/[id]/page.tsx` | 01L | Property detail page (Sketch / Jobs / Photos / Notes tabs) |
 | `web/src/app/(protected)/customers/page.tsx` | 01L | Customers list view |
@@ -63,25 +59,24 @@
 ### Modified — Backend
 | Path | Spec | Change |
 |------|------|--------|
-| `backend/pyproject.toml` | 01J/01L | Add `phonenumbers>=8.13.0,<9`, `bleach>=6.1`, `cryptography>=42` |
+| `backend/pyproject.toml` | 01J/01L | Add `phonenumbers>=8.13.0,<9`, `bleach>=6.1` |
 | `backend/api/main.py` | 01J | Register `customers.router` |
 | `backend/api/properties/schemas.py` | 01J/01K/01L | Accept `customer_id`; nested customer in response; new sub-resource schemas; reject notes fields on main PATCH |
 | `backend/api/properties/service.py` | 01J/01K/01L | Cross-company FK validation; 23505 catch on POST/PATCH; nested customer embed; sub-resource logic; admin gate for customer_id changes |
 | `backend/api/properties/router.py` | 01J/01K/01L | Sub-resource routes: `/jobs`, `/photos`, `/notes`, `/match` |
-| `backend/api/jobs/schemas.py` | 01J/01M | Required FKs; drop inline customer/address; nested response; `clone_from_job_id` field; `parent_job_id` in response |
-| `backend/api/jobs/service.py` | 01J/01M | FK pre-fetch; clone logic with COPY_FIELDS + linked_job_id; idempotency; soft-delete-blocked-when-reconstruction-child-exists |
-| `backend/api/jobs/router.py` | 01J/01M | Refactored body; new `GET /v1/jobs/{id}/reconstruction` |
+| `backend/api/jobs/schemas.py` | 01J | Required FKs; drop inline customer/address; nested response. (`linked_job_id` already exists from 01B.) |
+| `backend/api/jobs/service.py` | 01J/01M | FK pre-fetch; **update existing `COPY_FIELDS` list** (drop `customer_*`/`address_*`, add `customer_id` + `loss_category`/`loss_class`/`loss_cause`) |
+| `backend/api/jobs/router.py` | 01J | Refactored body shape. (Existing routes preserved.) |
 | `backend/api/sharing/service.py` | 01J | Column-projection whitelist for customer fields |
-| `backend/api/config.py` | 01L | `GATE_CODE_FERNET_KEYS` env var |
 
 ### Modified — Frontend
 | Path | Spec | Change |
 |------|------|--------|
-| `web/src/lib/types.ts` | 01J/01K/01L/01M | Customer types + nested customer/property in Job/Property; `parent_job_id` field |
+| `web/src/lib/types.ts` | 01J/01K/01L | Customer types + nested customer/property in Job/Property |
 | `web/src/lib/__tests__/types.test.ts` | 01J | Update for new shapes |
 | `web/src/app/(protected)/dashboard/dashboard-client.tsx` | 01J | Read `job.customer.name` instead of `job.customer_name` |
 | `web/src/app/(protected)/jobs/page.tsx` | 01J | Same |
-| `web/src/app/(protected)/jobs/[id]/page.tsx` | 01J/01M | Same + add `<ConvertToReconstructionButton>` + "View Property" / "View Customer" links |
+| `web/src/app/(protected)/jobs/[id]/page.tsx` | 01J | Same + "View Property" / "View Customer" links |
 | `web/src/app/(protected)/jobs/new/page.tsx` (or wherever lives) | 01K | Replace inline customer/address with `<CustomerPicker>` + `<PropertyPicker>` |
 | `web/src/lib/hooks/use-jobs.ts` | 01J/01M | Update query/mutation types |
 | `web/src/components/sidebar-nav.tsx` (find via grep) | 01L | Add Properties + Customers tabs |
@@ -94,11 +89,10 @@
 
 **Files:** `backend/pyproject.toml`
 
-- [ ] **Step 1:** Open `backend/pyproject.toml`, locate `dependencies = [ ... ]`. Add three lines (alphabetical):
+- [ ] **Step 1:** Open `backend/pyproject.toml`, locate `dependencies = [ ... ]`. Add two lines (alphabetical):
 
 ```toml
 "bleach>=6.1,<7",
-"cryptography>=42,<43",
 "phonenumbers>=8.13.0,<9",
 ```
 
@@ -109,54 +103,22 @@ cd backend && pip install -e ".[dev]"
 
 - [ ] **Step 3:** Verify imports:
 ```bash
-cd backend && python -c "import phonenumbers, bleach; from cryptography.fernet import Fernet, MultiFernet; print('ok')"
+cd backend && python -c "import phonenumbers, bleach; print('ok')"
 ```
 
 - [ ] **Step 4:** Commit:
 ```bash
 git add backend/pyproject.toml
-git commit -m "deps: phonenumbers, bleach, cryptography (foundation rollout)"
+git commit -m "deps: phonenumbers, bleach (foundation rollout)"
 ```
 
-### Task 0.2: Generate Fernet key + add env vars
+### Task 0.2: Verify Google Maps key
 
-**Files:** `backend/api/config.py`, `backend/.env.example`, `web/.env.example`
+- [ ] **Step 1:** Confirm `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` exists in `web/.env.local` (already verified — set with a real key).
 
-- [ ] **Step 1:** Generate a Fernet key:
-```bash
-cd backend && python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
+- [ ] **Step 2:** Optionally harden in Google Cloud Console: HTTP-referrer restriction to localhost + staging + production domains; API restriction to Places API + Geocoding API + Maps JavaScript API only. Not blocking — can do post-launch.
 
-Copy the output (e.g., `g9V...=`).
-
-- [ ] **Step 2:** Add to `backend/.env` (NOT committed) and `backend/.env.example` (committed, with placeholder):
-```
-# .env (real key, never committed)
-GATE_CODE_FERNET_KEYS=g9V_actual_key=
-# .env.example (placeholder)
-GATE_CODE_FERNET_KEYS=  # comma-separated Fernet keys, newest first; rotate quarterly
-```
-
-- [ ] **Step 3:** Add to `backend/api/config.py` Settings class:
-```python
-class Settings(BaseSettings):
-    # ... existing fields ...
-    gate_code_fernet_keys: str  # comma-separated; MultiFernet rotates by parsing all
-```
-
-- [ ] **Step 4:** Verify Railway production secrets are set (cannot test locally — this is a manual checklist item the operator confirms before deploy):
-```bash
-# In Railway dashboard: Variables → confirm GATE_CODE_FERNET_KEYS is present
-echo "Manual: confirm GATE_CODE_FERNET_KEYS is set in Railway"
-```
-
-- [ ] **Step 5:** Frontend env: confirm `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` exists in `web/.env.local`. If not, generate one in Google Cloud Console with `Places API`, `Geocoding API`, `Maps JavaScript API` enabled and HTTP-referrer restriction to `localhost:3000` + production domain. Document in `web/CLAUDE.md` under "Google Maps API key".
-
-- [ ] **Step 6:** Commit:
-```bash
-git add backend/api/config.py backend/.env.example
-git commit -m "config: add GATE_CODE_FERNET_KEYS for gate_code encryption (01L)"
-```
+No commit — this is just a verification step.
 
 ---
 
@@ -262,19 +224,14 @@ ALTER TABLE jobs DROP COLUMN customer_phone;
 ALTER TABLE jobs DROP COLUMN customer_email;
 
 -- ============================================================================
--- 6. jobs.customer_id (required) + parent_job_id (clone) (01J + 01M)
+-- 6. jobs.customer_id (required) (01J)
 -- ============================================================================
+-- NOTE: `linked_job_id` (the reconstruction-source pointer) already exists from
+-- Spec 01B. No new clone-related columns needed here. CREW-60 only updates the
+-- COPY_FIELDS list in the service (Phase 8).
 ALTER TABLE jobs ADD COLUMN customer_id UUID REFERENCES customers(id) ON DELETE RESTRICT;
 ALTER TABLE jobs ALTER COLUMN customer_id SET NOT NULL;
 CREATE INDEX idx_jobs_customer ON jobs(customer_id) WHERE deleted_at IS NULL;
-
-ALTER TABLE jobs ADD COLUMN parent_job_id UUID REFERENCES jobs(id) ON DELETE RESTRICT;
-CREATE INDEX idx_jobs_parent ON jobs(parent_job_id) WHERE parent_job_id IS NOT NULL;
-
--- Reconstruction-only idempotency
-CREATE UNIQUE INDEX idx_jobs_one_reconstruction_per_parent
-    ON jobs(parent_job_id)
-    WHERE job_type = 'reconstruction' AND deleted_at IS NULL AND parent_job_id IS NOT NULL;
 
 -- ============================================================================
 -- 7. Tighten jobs.property_id NOT NULL (01J)
@@ -345,9 +302,6 @@ DROP FUNCTION IF EXISTS match_properties_close(UUID, TEXT, FLOAT, UUID);
 DROP TRIGGER IF EXISTS trg_jobs_update_property_activity ON jobs;
 DROP FUNCTION IF EXISTS update_property_last_activity();
 ALTER TABLE jobs ALTER COLUMN property_id DROP NOT NULL;
-DROP INDEX IF EXISTS idx_jobs_one_reconstruction_per_parent;
-DROP INDEX IF EXISTS idx_jobs_parent;
-ALTER TABLE jobs DROP COLUMN IF EXISTS parent_job_id;
 ALTER TABLE jobs ALTER COLUMN customer_id DROP NOT NULL;
 DROP INDEX IF EXISTS idx_jobs_customer;
 ALTER TABLE jobs DROP COLUMN IF EXISTS customer_id;
@@ -477,102 +431,9 @@ git commit -m "shared: normalize_phone E.164 helper (01J)"
 
 ---
 
-## Phase 3: Encryption + sanitization helpers (01L)
+## Phase 3: Notes sanitization helper (01L)
 
-### Task 3.1: Implement Fernet notes encryption helpers
-
-**Files:** `backend/api/shared/encryption.py`, `backend/tests/test_notes_encryption.py`
-
-- [ ] **Step 1:** Write failing tests:
-
-```python
-# backend/tests/test_notes_encryption.py
-import pytest
-from cryptography.fernet import Fernet
-from api.shared.encryption import encrypt_notes, decrypt_notes
-
-
-@pytest.fixture(autouse=True)
-def setup_keys(monkeypatch):
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", Fernet.generate_key().decode())
-    import api.shared.encryption as enc
-    enc._fernet = None
-
-
-def test_roundtrip():
-    plaintext = "Gate code: 1234. Key under mat. Dog in yard."
-    ct = encrypt_notes(plaintext)
-    assert ct != plaintext
-    assert decrypt_notes(ct) == plaintext
-
-
-def test_none_passthrough():
-    assert encrypt_notes(None) is None
-    assert encrypt_notes("") is None
-    assert decrypt_notes(None) is None
-
-
-def test_invalid_token_raises():
-    from cryptography.fernet import InvalidToken
-    with pytest.raises(InvalidToken):
-        decrypt_notes("not-a-valid-token")
-
-
-def test_multifernet_rotation(monkeypatch):
-    old_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", old_key)
-    import api.shared.encryption as enc
-    enc._fernet = None
-    ct_old = encrypt_notes("Gate 1234")
-
-    new_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", f"{new_key},{old_key}")
-    enc._fernet = None
-    assert decrypt_notes(ct_old) == "Gate 1234"
-    ct_new = encrypt_notes("Gate 1234")
-    assert ct_new != ct_old
-```
-
-- [ ] **Step 2:** Run tests, expect failure.
-
-- [ ] **Step 3:** Implement `backend/api/shared/encryption.py`:
-
-```python
-import os
-from cryptography.fernet import Fernet, MultiFernet
-
-_fernet: MultiFernet | None = None
-
-
-def _build_fernet() -> MultiFernet:
-    keys_csv = os.environ["GATE_CODE_FERNET_KEYS"]
-    keys = [k.strip() for k in keys_csv.split(",") if k.strip()]
-    if not keys:
-        raise RuntimeError("GATE_CODE_FERNET_KEYS is empty")
-    return MultiFernet([Fernet(k) for k in keys])
-
-
-def encrypt_notes(plaintext: str | None) -> str | None:
-    if not plaintext:
-        return None
-    global _fernet
-    if _fernet is None:
-        _fernet = _build_fernet()
-    return _fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
-
-
-def decrypt_notes(ciphertext: str | None) -> str | None:
-    if not ciphertext:
-        return None
-    global _fernet
-    if _fernet is None:
-        _fernet = _build_fernet()
-    return _fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-```
-
-- [ ] **Step 4:** Run tests, expect pass. Commit.
-
-### Task 3.2: Notes sanitization helper
+### Task 3.1: Notes sanitization helper
 
 **Files:** `backend/api/shared/sanitize_notes.py`, `backend/tests/test_sanitize_notes.py`
 
@@ -985,8 +846,7 @@ async def list_property_photos(token, company_id, property_id, limit=50, offset=
   - `test_clear_notes_with_explicit_null`
   - `test_member_can_edit` (NOT admin-only)
   - `test_max_length_enforced` — 16001 chars → 422
-  - `test_html_stripped_before_encrypt` — `<script>alert(1)</script>hi` → GET returns `hi`
-  - `test_notes_encrypted_at_rest` — direct DB SELECT shows ciphertext, not plaintext
+  - `test_html_stripped` — `<script>alert(1)</script>hi` → GET returns `hi`
   - `test_extra_fields_rejected` — body with anything other than `notes` → 422
   - `test_main_property_patch_rejects_notes_field` — main `PATCH /v1/properties/{id}` with `notes` body → 422
 
@@ -1001,7 +861,6 @@ class PropertyNotesUpdate(BaseModel):
 - [ ] **Step 3:** Implement `update_property_notes`:
 
 ```python
-from api.shared.encryption import encrypt_notes, decrypt_notes
 from api.shared.sanitize_notes import sanitize_notes
 
 
@@ -1009,8 +868,7 @@ async def update_property_notes(token, company_id, user_id, property_id, body: P
     client = await get_authenticated_client(token)
     update_data = body.model_dump(exclude_unset=True)
     if "notes" in update_data:
-        clean = sanitize_notes(update_data["notes"])
-        update_data["notes"] = encrypt_notes(clean)
+        update_data["notes"] = sanitize_notes(update_data["notes"])
     if not update_data:
         return await get_property(token, company_id, property_id)
     result = await (
@@ -1022,20 +880,7 @@ async def update_property_notes(token, company_id, user_id, property_id, body: P
     )
     if not result.data:
         raise AppException(404, "Property not found", "PROPERTY_NOT_FOUND")
-    # Decrypt before returning
-    row = result.data
-    if row.get("notes"):
-        row["notes"] = decrypt_notes(row["notes"])
-    return row
-```
-
-Add `_decrypt_property_row(row)` helper in service.py and call it from `get_property`, `list_properties`, and any other read path:
-
-```python
-def _decrypt_property_row(row: dict) -> dict:
-    if row.get("notes"):
-        row["notes"] = decrypt_notes(row["notes"])
-    return row
+    return result.data
 ```
 
 - [ ] **Step 4:** Update main `PATCH /v1/properties/{id}` schema (`PropertyUpdate`) to NOT include `notes` (extra="forbid" handles rejection automatically since `notes` isn't a declared field).
@@ -1148,9 +993,11 @@ app.state.limiter = limiter
 
 ---
 
-## Phase 8: Jobs refactor (01J + 01M)
+## Phase 8: Jobs refactor (01J + 01M COPY_FIELDS update)
 
-### Task 8.1: Update Job schemas (drop denorm, required FKs, nested response, clone_from_job_id, parent_job_id in response)
+The reconstruction-clone mechanism is **already shipped via 01B** (`linked_job_id` body field, auto-copy in service.py). This phase refactors job CRUD for the new schema (drop denorm, required FKs, nested response) and updates the existing `COPY_FIELDS` list to match.
+
+### Task 8.1: Update Job schemas (drop denorm, required FKs, nested response)
 
 - [ ] **Step 1:** Edit `backend/api/jobs/schemas.py`:
 
@@ -1161,8 +1008,8 @@ class JobCreate(BaseModel):
     property_id: UUID
     job_number: str = Field(..., min_length=1, max_length=100)
     job_type: Literal["mitigation", "reconstruction"] = "mitigation"
-    clone_from_job_id: UUID | None = None
-    # insurance + loss fields, all optional/overridable (full list per 01M COPY_FIELDS)
+    linked_job_id: UUID | None = None  # existing from 01B — for reconstruction auto-copy
+    # insurance + loss fields, all optional (and overridable when linked_job_id is set)
     loss_date: date | None = None
     claim_number: str | None = None
     carrier: str | None = None
@@ -1174,7 +1021,7 @@ class JobCreate(BaseModel):
     loss_class: Literal["1", "2", "3", "4"] | None = None
     loss_cause: str | None = None
     notes: str | None = None
-    # NOTE: parent_job_id, customer_name, customer_phone, customer_email, address_* OMITTED
+    # NOTE: customer_name, customer_phone, customer_email, address_* OMITTED (CREW-11 drops them)
 
 
 class JobCustomerNested(BaseModel):
@@ -1202,7 +1049,6 @@ class JobResponse(BaseModel):
     company_id: UUID
     customer_id: UUID
     property_id: UUID
-    parent_job_id: UUID | None  # NEW (01M Decision #11)
     linked_job_id: UUID | None  # existing from 01B
     job_number: str
     job_type: str
@@ -1212,73 +1058,43 @@ class JobResponse(BaseModel):
     property: JobPropertyNested
     created_at: datetime
     updated_at: datetime
-
-
-class IdempotentJobResponse(JobResponse):
-    idempotent_replay: bool = False  # 01M Decision #11
 ```
 
-Update `JobUpdate` similarly (all fields Optional, no `clone_from_job_id`).
+Update `JobUpdate` similarly (all fields Optional).
 
-- [ ] **Step 2:** Commit `jobs: schemas — required FKs + nested response + clone_from_job_id (01J/01M)`.
+- [ ] **Step 2:** Commit `jobs: schemas — required FKs + nested response (01J)`.
 
-### Task 8.2: Refactor `create_job` with FK pre-fetch + clone logic
+### Task 8.2: Refactor `create_job` (FK pre-fetch + COPY_FIELDS update)
 
-- [ ] **Step 1:** Add full set of failing tests:
+- [ ] **Step 1:** Add failing tests:
   - `test_create_requires_customer_id` / `_property_id`
   - `test_rejects_inline_customer_fields` / `_address_fields`
   - `test_with_customer_from_other_company_404` / `_property_from_other_company_404`
   - `test_response_has_nested_customer_and_property`
-  - `test_clone_copies_insurance_fields_from_source`
-  - `test_clone_body_overrides_source_fields`
-  - `test_clone_sets_parent_job_id`
-  - `test_clone_does_not_copy_scope_or_notes`
-  - `test_clone_with_source_from_other_company_404`
-  - `test_reconstruction_clone_idempotent_serial`
-  - `test_reconstruction_clone_idempotent_concurrent_double_click` (asyncio.gather)
-  - `test_non_reconstruction_clones_can_multiply`
-  - `test_clone_when_source_soft_deleted_returns_existing_reconstruction` (Decision #18)
-  - `test_idempotent_replay_does_not_double_log_audit`
-  - `test_idempotent_replay_preserves_original_created_by`
-  - `test_idempotent_replay_filters_company_id` (Decision #16)
-  - `test_reconstruction_clone_populates_linked_job_id` (Decision #12)
-  - `test_non_reconstruction_clone_does_not_populate_linked_job_id`
-  - `test_parent_job_id_unsettable_via_any_path`
-  - `test_audit_log_event_data_excludes_pii`
+  - **CREW-60 tests:**
+    - `test_reconstruction_clone_copies_customer_id` — POST a reconstruction with `linked_job_id`; assert response's `customer.id` matches source mitigation's customer
+    - `test_reconstruction_clone_copies_loss_category_class_cause` — new fields propagate
+    - `test_reconstruction_clone_does_not_reference_dropped_columns` — regression guard
+  - All existing 01B reconstruction-link tests updated for the new shape (no inline `customer_*` / `address_*` body; response read via `job.customer.name`)
 
-- [ ] **Step 2:** Implement `create_job` per 01M spec. Full body in spec § "API Endpoints" → "Modified: POST /v1/jobs". Key elements:
-  - FK pre-fetch (customer + property) — 404 on miss
-  - If `clone_from_job_id`: source pre-fetch with idempotent fallback
-  - COPY_FIELDS list (10 fields)
-  - Body overrides clone (including explicit None)
-  - `linked_job_id = parent_job_id` for reconstruction (Decision #12)
-  - 23505 catch with company-scoped existing-row lookup (Decision #16)
-  - Service-layer `assert "parent_job_id" not in body_dict` (Decision #15)
-  - Single audit event on first insert only
-  - Return `IdempotentJobResponse` shape with embeds
+- [ ] **Step 2:** Implement `create_job` updates:
+  - Add FK pre-fetch (`customer_id` + `property_id` via authenticated client, 0 rows = 404)
+  - **Update the existing `COPY_FIELDS` list** (~service.py line 319) per the diff in `docs/specs/draft/01M-reconstruction-copy-fields.md`:
+    - Remove: `customer_name`, `customer_phone`, `customer_email`, `address_line1`, `city`, `state`, `zip`
+    - Add: `customer_id`, `loss_category`, `loss_class`, `loss_cause`
+  - Drop the auto-create-property-from-address branch entirely (CREW-11 mandates frontend orchestration)
+  - Use embed-style SELECT for response: `select="*, customer:customers(...), property:properties(...)"`
+  - Helper `_fetch_job_with_embeds(client, company_id, job_id)` for response composition
 
-- [ ] **Step 3:** Helper `_fetch_job_with_embeds` for response composition.
+- [ ] **Step 3:** Run all tests, commit.
 
-- [ ] **Step 4:** Run all tests, commit.
-
-### Task 8.3: GET /v1/jobs/{id}/reconstruction lookup endpoint
-
-- [ ] **Step 1:** Tests (returns linked, 404 when none, RLS isolation, soft-delete excluded).
-- [ ] **Step 2:** Implement service + router. Commit.
-
-### Task 8.4: Soft-delete blocked when reconstruction child exists
-
-- [ ] **Step 1:** Test `test_source_job_soft_delete_blocked_when_reconstruction_child_exists` (Decision #17).
-- [ ] **Step 2:** Update `delete_job` (or whatever the soft-delete service is) with pre-flight: 0-count query for `parent_job_id = $id AND job_type = 'reconstruction' AND deleted_at IS NULL`. If > 0 → 409 `JOB_HAS_DEPENDENT_RECONSTRUCTION`.
-- [ ] **Step 3:** Run, commit.
-
-### Task 8.5: Update existing job tests for new payload + response shapes
+### Task 8.3: Update existing job tests for new payload + response shapes
 
 - [ ] **Step 1:** Find broken tests:
 ```bash
 cd backend && pytest tests/test_jobs.py -v 2>&1 | grep -E "FAIL|ERROR"
 ```
-- [ ] **Step 2:** Walk through each, replace inline customer/address fields with FKs, replace response field reads with nested.
+- [ ] **Step 2:** Walk through each, replace inline customer/address body fields with FKs (use `customer_id` / `property_id` fixtures from `conftest.py`), replace response field reads with nested (`job.customer.name`, `job.property.address_line1`).
 - [ ] **Step 3:** All pass. Commit.
 
 ---
@@ -1316,17 +1132,16 @@ result = await (
 
 ### Task 10.1: Update types.ts
 
-- [ ] **Step 1:** Edit `web/src/lib/types.ts`. Add `Customer`, `CustomerListItem`, `CustomerCreate`, `CustomerUpdate`, `CustomerNested`, `PropertyNested`. Update `Property` (add nested `customer`, `last_activity_at`, notes fields). Update `Job` (drop `customer_*`, `address_*`; add nested `customer`, `property`, `parent_job_id`).
+- [ ] **Step 1:** Edit `web/src/lib/types.ts`. Add `Customer`, `CustomerListItem`, `CustomerCreate`, `CustomerUpdate`, `CustomerNested`, `PropertyNested`. Update `Property` (add nested `customer`, `last_activity_at`, `notes` field). Update `Job` (drop `customer_*`, `address_*`; add nested `customer`, `property`).
 
 - [ ] **Step 2:** Update `web/src/lib/__tests__/types.test.ts`.
 - [ ] **Step 3:** `cd web && npx tsc --noEmit` — fix any compile errors at call sites (mostly mechanical replacements).
 - [ ] **Step 4:** Commit.
 
-### Task 10.2: use-customers + use-reconstruction hooks
+### Task 10.2: use-customers hooks
 
 - [ ] **Step 1:** Create `web/src/lib/hooks/use-customers.ts` with all 5 query/mutation hooks (mirror `use-properties.ts`).
-- [ ] **Step 2:** Create `web/src/lib/hooks/use-reconstruction.ts` (returns null on 404).
-- [ ] **Step 3:** Type-check. Commit.
+- [ ] **Step 2:** Type-check. Commit.
 
 ### Task 10.3: use-customer-match + use-property-match hooks
 
@@ -1461,56 +1276,40 @@ function PropertyPicker({ customerId, value, onChange }: Props) {
 
 ---
 
-## Phase 13: Frontend — Convert to Reconstruction button (01M)
+## Phase 13: Verification
 
-### Task 13.1: ConvertToReconstructionButton
-
-- [ ] **Step 1:** Create `web/src/components/convert-to-reconstruction-button.tsx` (~80 LOC). See 01M spec § "Frontend Architecture" for full body.
-- [ ] **Step 2:** Tests:
-  - hidden when `job_type !== "mitigation"`
-  - hidden when `status !== "completed"`
-  - shows "Convert to Reconstruction" when no existing reconstruction
-  - shows "View Reconstruction →" when reconstruction exists (toggle via `useReconstruction(jobId)`)
-  - dialog confirms before POST
-  - redirects to new job after success
-- [ ] **Step 3:** Wire into `web/src/app/(protected)/jobs/[id]/page.tsx`. Commit.
-
----
-
-## Phase 14: Verification
-
-### Task 14.1: Backend full test suite + lint
+### Task 13.1: Backend full test suite + lint
 
 - [ ] **Step 1:** `cd backend && pytest -v`. All pass.
 - [ ] **Step 2:** `cd backend && ruff check api/`. No errors.
 - [ ] **Step 3:** `cd backend && ruff format api/`. If diff, commit `backend: ruff format`.
 
-### Task 14.2: Frontend full test suite + build
+### Task 13.2: Frontend full test suite + build
 
 - [ ] **Step 1:** `cd web && npm test`. All pass.
 - [ ] **Step 2:** `cd web && npm run lint`. No errors.
 - [ ] **Step 3:** `cd web && npm run build`. Clean.
 
-### Task 14.3: Manual smoke test against staging (operator step)
+### Task 13.3: Manual smoke test against staging (operator step)
 
 - [ ] **Step 1:** Lakshman runs through:
   - Create customer with phone → DB stores E.164 → list endpoint hides phone
   - Create property linked to customer → property detail page renders all 4 tabs
   - Create job (new-job form) → pickers work, customer + property pre-fill
   - Customer detail page lists property + latest-job summary
-  - Convert to Reconstruction → new job linked → "View Reconstruction →" toggle works
+  - Reconstruction job creation via existing "Link to Mitigation Job" — verify auto-copied customer + property + insurance fields populate correctly
   - Adjuster share-link → no phone/email/notes visible
 
-### Task 14.4: Move specs to in-progress
+### Task 13.4: Move specs to in-progress
 
 - [ ] **Step 1:** `git mv docs/specs/draft/01J-customer-property-model.md docs/specs/in-progress/`
-- [ ] **Step 2:** Same for 01K, 01L, 01M, and the impl plan.
+- [ ] **Step 2:** Same for 01K, 01L, 01M-reconstruction-copy-fields, and the impl plan.
 - [ ] **Step 3:** Commit `specs: move foundation specs to in-progress`.
 - [ ] **Step 4:** `git push origin lm-dev`.
 
-### Task 14.5: Open PR
+### Task 13.5: Open PR
 
-- [ ] **Step 1:** `gh pr create --base main --title "[V1] Foundation: customer-property data model + pickers + detail pages + clone"` with body referencing the four Linear issues.
+- [ ] **Step 1:** `gh pr create --base main --title "[V1] Foundation: customer-property data model + pickers + detail pages"` with body referencing the four Linear issues.
 
 ---
 
@@ -1518,7 +1317,7 @@ function PropertyPicker({ customerId, value, onChange }: Props) {
 
 Spec coverage: ✅ every Done-When checkbox across the four specs maps to a task.
 
-Type consistency: ✅ `JobResponse`, `PropertyResponse`, `CustomerResponse`, `IdempotentJobResponse`, `PropertyMatchCandidate`, `CustomerMatchResponse` referenced consistently across phases.
+Type consistency: ✅ `JobResponse`, `PropertyResponse`, `CustomerResponse`, `PropertyMatchCandidate`, `CustomerMatchResponse` referenced consistently across phases.
 
 Risk callouts:
 - The migration is large (single revision, multiple table mutations). Test downgrade path locally + on staging before prod merge.

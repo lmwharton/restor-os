@@ -45,9 +45,12 @@ export function JobStatusBadge({
 
   const baseClass = `inline-flex items-center ${s.gap} ${s.padX} ${s.padY} rounded-full ${s.fontSize} font-semibold leading-none whitespace-nowrap`;
 
+  // Spec 01K Option A: chip text uses `ink` (dark, legible on `bg` tint),
+  // dot stays `color` (saturated, recognizable). Using `color` for both made
+  // light-tone chips like Lead / Lost / Completed too low-contrast.
   const style = {
     backgroundColor: meta.bg,
-    color: meta.color,
+    color: meta.ink,
     border: `1px solid ${meta.border}`,
     textDecoration: meta.strike ? "line-through" : "none",
   };
@@ -72,7 +75,7 @@ export function JobStatusBadge({
         {dot}
         <span>{meta.label}</span>
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M6 9l6 6 6-6" stroke={meta.color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M6 9l6 6 6-6" stroke={meta.ink} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </button>
     );

@@ -23,7 +23,7 @@ import { useUpdateJobStatus, isStatusConflictError } from "@/lib/hooks/use-jobs"
 import { apiGet } from "@/lib/api";
 import type { JobStatus } from "@/lib/types";
 import type { CloseoutGatesResponse } from "@/lib/hooks/use-closeout";
-import { STATUS_META, STATUS_TRANSITIONS, REASON_REQUIRED_STATUSES } from "@/lib/labels";
+import { STATUS_META, STATUS_TRANSITIONS, transitionNeedsReason, CANCEL_REASONS } from "@/lib/labels";
 
 interface ChangeStatusModalProps {
   open: boolean;
@@ -60,6 +60,10 @@ export function ChangeStatusModal({
   const [target, setTarget] = useState<JobStatus | null>(legalTargets[0] ?? null);
   const [reason, setReason] = useState("");
   const [resumeDate, setResumeDate] = useState("");
+  // Spec 01K D4 — cancel/lost use a structured dropdown (key) + optional "Other"
+  // free text. Default to first option so the picker isn't an empty radio group.
+  const [cancelReasonKey, setCancelReasonKey] = useState<string>(CANCEL_REASONS[0].value);
+  const [cancelReasonOther, setCancelReasonOther] = useState<string>("");
 
   const updateStatus = useUpdateJobStatus(jobId);
   const qc = useQueryClient();
@@ -77,6 +81,8 @@ export function ChangeStatusModal({
     setTarget(legalTargets[0] ?? null);
     setReason("");
     setResumeDate("");
+    setCancelReasonKey(CANCEL_REASONS[0].value);
+    setCancelReasonOther("");
   }, [open, currentStatus, legalTargets]);
 
   // Prefetch closeout gates the instant the user picks 'completed'.
@@ -98,8 +104,17 @@ export function ChangeStatusModal({
   }, [target, jobId, qc]);
 
   const showResume = target === "on_hold";
-  const needsReason = target ? REASON_REQUIRED_STATUSES.has(target) : false;
-  const reasonValid = !needsReason || reason.trim().length > 0;
+  // Spec 01K — reason required for off-ramps + any non-happy-path transition.
+  const needsReason = target ? transitionNeedsReason(currentStatus, target) : false;
+  // Spec 01K D4 — cancelled/lost use the structured dropdown UX; everything
+  // else (on_hold, disputed) keeps the free-text textarea.
+  const useCancelDropdown = target === "cancelled" || target === "lost";
+  const cancelReasonValid =
+    cancelReasonKey !== "other"
+      ? cancelReasonKey.length > 0
+      : cancelReasonOther.trim().length > 0;
+  const reasonValid = !needsReason
+    || (useCancelDropdown ? cancelReasonValid : reason.trim().length > 0);
   const canSubmit = !!target && reasonValid && !updateStatus.isPending;
 
   const targetMeta = target ? STATUS_META[target] : null;
@@ -113,18 +128,29 @@ export function ChangeStatusModal({
       return;
     }
 
-    updateStatus.mutate(
-      {
-        status: target,
-        expected_current_status: currentStatus,
-        reason: needsReason ? reason.trim() : undefined,
-        resume_date: showResume && resumeDate ? resumeDate : undefined,
-      },
-      {
-        onSuccess: () => onClose(),
-        // 409 handling: TanStack will surface the error; UI shows it inline.
-      },
-    );
+    // Spec 01K D-impl-1 — cancelled/lost route to two structured columns.
+    // One populated, never both: dropdown key OR free text "other".
+    const payload: Parameters<typeof updateStatus.mutate>[0] = {
+      status: target,
+      expected_current_status: currentStatus,
+      resume_date: showResume && resumeDate ? resumeDate : undefined,
+    };
+    if (needsReason) {
+      if (useCancelDropdown) {
+        if (cancelReasonKey === "other") {
+          payload.cancel_reason_other = cancelReasonOther.trim();
+        } else {
+          payload.cancel_reason = cancelReasonKey;
+        }
+      } else {
+        payload.reason = reason.trim();
+      }
+    }
+
+    updateStatus.mutate(payload, {
+      onSuccess: () => onClose(),
+      // 409 handling: TanStack will surface the error; UI shows it inline.
+    });
   }
 
   return (
@@ -215,8 +241,58 @@ export function ChangeStatusModal({
         })}
       </div>
 
-      {/* Reason — required when target needs one (on_hold, cancelled, lost, disputed) */}
-      {needsReason && (
+      {/* Reason — required when target needs one (on_hold, cancelled, lost, disputed).
+          Spec 01K D4: cancelled/lost get a structured dropdown so reasons are
+          queryable later (`WHERE cancel_reason = 'customer_cancelled'`). Free
+          text is reserved for "Other". on_hold/disputed stay free-text. */}
+      {needsReason && useCancelDropdown && (
+        <div className="mt-5">
+          <label className="text-[11px] font-semibold text-on-surface-variant tracking-[0.06em] uppercase">
+            Reason
+          </label>
+          <div className="mt-2 flex flex-col gap-1.5">
+            {CANCEL_REASONS.map((r) => {
+              const sel = cancelReasonKey === r.value;
+              return (
+                <label
+                  key={r.value}
+                  className="flex items-center gap-3 rounded-xl border px-3.5 py-2.5 cursor-pointer transition-colors"
+                  style={{
+                    backgroundColor: sel
+                      ? "color-mix(in srgb, var(--brand-accent) 8%, var(--surface-container-lowest))"
+                      : "var(--surface-container-lowest)",
+                    borderColor: sel ? "var(--brand-accent)" : "var(--outline-variant)",
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="cancel-reason"
+                    value={r.value}
+                    checked={sel}
+                    onChange={() => setCancelReasonKey(r.value)}
+                    className="accent-brand-accent w-4 h-4 shrink-0"
+                  />
+                  <span className="text-[14px] text-on-surface">{r.label}</span>
+                </label>
+              );
+            })}
+          </div>
+          {cancelReasonKey === "other" && (
+            <textarea
+              value={cancelReasonOther}
+              onChange={(e) => setCancelReasonOther(e.target.value)}
+              rows={2}
+              placeholder="Tell us why…"
+              onFocus={(e) => e.target.select()}
+              className="mt-2.5 w-full rounded-xl border border-outline-variant/60 bg-surface-container-lowest px-3.5 py-2.5 text-[16px] leading-snug text-on-surface placeholder:text-on-surface-variant/60 outline-none focus:border-brand-accent focus:ring-1 focus:ring-brand-accent/40 resize-none"
+            />
+          )}
+          <div className="mt-1.5 text-[12px] text-on-surface-variant/80">
+            Logged to job timeline.
+          </div>
+        </div>
+      )}
+      {needsReason && !useCancelDropdown && (
         <div className="mt-5">
           <label className="text-[11px] font-semibold text-on-surface-variant tracking-[0.06em] uppercase">
             Reason
