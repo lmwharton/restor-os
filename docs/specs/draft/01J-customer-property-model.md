@@ -83,7 +83,7 @@ The customer↔property M:N relationship is **derived through jobs + the propert
 - [ ] Index on `properties(customer_id) WHERE customer_id IS NOT NULL`
 - [ ] `jobs.customer_id` FK added (nullable initially; `NOT NULL` after wipe)
 - [ ] Index on `jobs(customer_id) WHERE deleted_at IS NULL AND customer_id IS NOT NULL`
-- [ ] **Pre-launch wipe**: `TRUNCATE jobs CASCADE` (cascades through `job_rooms`, `floor_plans`, photos, moisture readings, etc.)
+- [ ] **Pre-deploy cleanup is manual** (no `TRUNCATE` in migration SQL). Operator runs `DELETE FROM jobs;` via Supabase SQL Editor before the migration deploys; FK cascades clean up `job_rooms`, `floor_plans`, `photos`, `moisture_readings`, `event_history`, etc. The migration's Python `upgrade()` starts with a row-count guard that raises `RuntimeError` if jobs has rows.
 - [ ] `jobs.customer_name`, `jobs.customer_phone`, `jobs.customer_email` columns dropped
 - [ ] `jobs.customer_id` set `NOT NULL`
 - [ ] `jobs.property_id` set `NOT NULL` (was nullable from 01-jobs migration; safe now because we're removing the auto-create-property behavior + post-TRUNCATE there are no rows)
@@ -137,7 +137,7 @@ The customer↔property M:N relationship is **derived through jobs + the propert
 | 8 | Multi-field fuzzy autocomplete via `pg_trgm` (similarity ≥ 0.4) on name + entity_name; prefix on phone digits; ilike on email | Built into Supabase Postgres. Threshold tuned during implementation. Lets a tech start typing any field and find the customer. |
 | 9 | API contract for new-job creation is **clean / FK-only**: frontend orchestrates pick-or-create across `POST /v1/customers` + `POST /v1/properties` + `POST /v1/jobs` | Each endpoint has one responsibility; errors are localized; transactional resolve-or-create complexity stays out of the backend. Trade-off: up to 3 round-trips for a brand-new customer + property + job. Acceptable for V1. If offline mode demands batch create later, ship a `POST /v1/jobs/quick-create` endpoint without rewriting this one. |
 | 10 | Removal of inline customer/address fields on `POST /v1/jobs` (including the existing auto-create-property-from-address behavior) | Pre-launch, no production data, no migration cost. Frontend takes responsibility for resolving FKs explicitly — which it must do anyway to power the autocomplete UX. |
-| 11 | Pre-launch clean cut on `jobs.customer_*` columns: `TRUNCATE jobs CASCADE` then `DROP COLUMN` | No production data; no need for a backwards-compat shim. Matches 01H Decision #2 precedent. |
+| 11 | Pre-deploy cleanup of `jobs` is **manual operator action**, NOT in the migration SQL. Migration starts with a Python `upgrade()` row-count guard that raises if `jobs` has any non-soft-deleted rows. Operator runs `DELETE FROM jobs;` in Supabase SQL Editor before deploy; FK cascades handle dependents. | Putting `TRUNCATE` in committed SQL is a footgun — fresh-DB deployments, downgrade-and-reapply, and DR scenarios would re-execute it. Manual cleanup + safety guard is operator-controlled, idempotent on empty DBs, and fails loud (not silent) if you forget. |
 | 12 | Soft-delete only (sets `deleted_at`). FK actions: `properties.customer_id` is `ON DELETE SET NULL` (it's nullable). `jobs.customer_id` is `ON DELETE RESTRICT` (it's `NOT NULL` — `SET NULL` would be silently downgraded to RESTRICT anyway). `properties.customer_id` and `jobs.customer_id` reference customers' `id`. | Hard-delete a referenced customer should fail loudly, not corrupt jobs. Soft-delete is the only operationally legal delete path. |
 | 13 | "Change Owner" / changing `properties.customer_id` post-creation requires **admin role for any value change** — initial null→value, value→null, value→value. No TOCTOU race window because the role gate is uniform. | Simpler than etag-based optimistic concurrency. Property ownership is rare enough that "admin only" matches mental model. |
 | 14 | Customer search endpoint is **bundled into this spec** (Phase 1) | Without search, the customer entity is unusable from any UI. Required for both CREW-11 (CRUD callable from API) and CREW-13 (autocomplete). |
@@ -247,14 +247,12 @@ CREATE INDEX idx_properties_customer
     WHERE customer_id IS NOT NULL AND deleted_at IS NULL;
 
 -- ============================================================================
--- 4. Pre-launch wipe (no production data)
+-- 4. (No TRUNCATE in this migration SQL. Operator clears jobs manually before
+--    `alembic upgrade head` runs — via Supabase SQL Editor: DELETE FROM jobs;
+--    A Python row-count guard at the top of upgrade() refuses to run if jobs
+--    has any non-soft-deleted rows. See Decision #11 + the impl plan's
+--    "Pre-deploy procedure" section.)
 -- ============================================================================
--- TRUNCATE ... CASCADE in Postgres truncates ALL tables that have FKs
--- pointing here, regardless of the FK action. That includes event_history
--- (FK is ON DELETE SET NULL, but TRUNCATE CASCADE still wipes it).
--- Pre-launch this is acceptable; flagging explicitly so a future operator
--- doesn't run this against a populated DB.
-TRUNCATE jobs CASCADE;
 
 -- ============================================================================
 -- 5. Drop denormalized columns from jobs
@@ -272,7 +270,8 @@ ALTER TABLE jobs DROP COLUMN customer_email;
 ALTER TABLE jobs
     ADD COLUMN customer_id UUID REFERENCES customers(id) ON DELETE RESTRICT;
 
--- After TRUNCATE there are no rows; safe to require immediately
+-- After manual cleanup the table is empty; safe to require immediately.
+-- (If the safety guard didn't catch a populated table, this ALTER fails clearly.)
 ALTER TABLE jobs ALTER COLUMN customer_id SET NOT NULL;
 
 CREATE INDEX idx_jobs_customer
@@ -284,8 +283,8 @@ CREATE INDEX idx_jobs_customer
 -- ============================================================================
 -- Was added nullable in 01-jobs migration to support the auto-create-property
 -- behavior. That behavior is removed in this spec (frontend orchestrates
--- pick-or-create explicitly). Post-TRUNCATE there are no rows, so the
--- constraint applies cleanly.
+-- pick-or-create explicitly). Post-cleanup the table is empty so the
+-- constraint applies cleanly; if rows somehow exist, this ALTER fails loud.
 ALTER TABLE jobs ALTER COLUMN property_id SET NOT NULL;
 
 -- ============================================================================
@@ -402,13 +401,21 @@ Add `api/shared/phone.py`:
 
 ## Migration Plan
 
-1. **Author the Alembic revision** with the SQL in [Database Schema](#database-schema). Single file under `backend/alembic/versions/`.
-2. **Local dev**: `alembic upgrade head` against the dev Supabase project. Verify all checks: tables created, indexes present, RLS policies enabled, triggers attached. Test with `pytest backend/tests/`.
-3. **Staging**: same. Run integration tests end-to-end.
-4. **Production**: same. Pre-launch — no production data exists. Migration runs against empty tables.
+1. **Author the Alembic revision** with the SQL in [Database Schema](#database-schema). Single file under `backend/alembic/versions/`. The Python `upgrade()` opens with a row-count guard that raises `RuntimeError` if `jobs` has non-soft-deleted rows.
+2. **Local dev**:
+   - Run `DELETE FROM jobs;` in Supabase SQL Editor (or psql against local DB)
+   - `alembic upgrade head` — guard passes, migration applies cleanly
+   - Verify: tables created, indexes present, RLS policies enabled, triggers attached
+   - Run `pytest backend/tests/`
+3. **Staging**: same procedure — manual `DELETE FROM jobs;` first, then `alembic upgrade head`.
+4. **Production**:
+   - Operator opens Supabase Dashboard → SQL Editor → `DELETE FROM jobs;` (FK cascades clean dependents)
+   - Push the Railway deploy (commit to `main`)
+   - Railway pre-deploy hook runs `alembic upgrade head` — guard passes (0 rows), migration applies
+   - **If operator forgot Step 4.1**: migration fails loud with `RuntimeError: jobs has N active rows...`. Production stays at old schema, no corruption. Operator runs cleanup, redeploys.
 5. **Post-deploy verification**: smoke test the create-customer + create-property + create-job flow against staging via Postman/curl. Verify share-link redaction with a freshly-created adjuster share.
 
-No production data → no backfill, no dual-write window, no deprecation shim.
+No automatic data wipe → no foot-gun on re-run / fresh-DB scenarios → no backfill, no dual-write window, no deprecation shim.
 
 ---
 
@@ -533,7 +540,7 @@ When CREW-11 ships, file the **two** new Linear issues above (01K and 01L) so 01
 **If resuming cold:**
 1. Schema is the heart of the change — review the Database Schema section first.
 2. Work in this order: schema migration → customers module backend → properties + jobs API extensions → frontend types → existing tests refactor → new tests.
-3. Pre-launch wipe: `TRUNCATE jobs CASCADE` is destructive but expected — staging/dev only. Production is empty.
+3. **No TRUNCATE in migration SQL.** Operator clears jobs manually (`DELETE FROM jobs;` in Supabase SQL Editor) before `alembic upgrade head` runs. The Python guard at the top of upgrade() refuses if jobs has non-soft-deleted rows.
 4. Phone normalization library: confirm `phonenumbers` is available in `pyproject.toml`; if not, `pip install phonenumbers`.
 
 **Hot path questions:**
@@ -565,7 +572,7 @@ Parallel review by backend-architect, security-auditor, and code-reviewer surfac
 6. **Multi-field search ambiguity** (code-reviewer W3) — Decision #18 added: input-shape dispatch (digits → phone, `@` → email, else fuzzy on name + entity_name).
 7. **Share-link PII leak surface** (security-auditor C3) — moved from post-fetch redaction to column-projection whitelist. Decision #19 added: adjuster-scope SELECT projects only `id, name, entity_name, customer_type` from customers.
 8. **Notes / contact PII enumeration via list endpoint** (security-auditor M3, M6) — Decision #20 added: list endpoint excludes `phone`, `email`, `notes`. `notes` capped at 10000 chars by DB CHECK.
-9. **`TRUNCATE jobs CASCADE` cascade list wrong** (backend-architect W3, code-reviewer C3) — comment clarified to flag that `event_history` IS truncated (TRUNCATE CASCADE walks all FK refs regardless of action).
+9. **`TRUNCATE jobs CASCADE` removed from migration entirely** (replaces backend-architect W3 / code-reviewer C3 concerns about cascade behavior). Decision #11 revised: cleanup is now manual operator action via Supabase SQL Editor before deploy; the migration's Python `upgrade()` starts with a row-count guard that raises if jobs has rows. Eliminates re-run / DR / fresh-DB footgun risk; preserves "fail loud, not silent" property.
 10. **`phonenumbers` library version unpinned** (security-auditor M1) — pinned to `>=8.13.0,<9` + 64-char raw input cap.
 
 15+ new tests added covering each of the above.

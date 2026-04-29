@@ -138,10 +138,35 @@ cd backend && alembic current
 cd backend && alembic revision -m "foundation_customer_property"
 ```
 
-- [ ] **Step 3:** Replace the generated file's `upgrade()` body with the unified SQL. Insert SQL **in this order** (constraints depend on prior steps):
+- [ ] **Step 3:** Replace the generated file's `upgrade()` body with the unified SQL. The Alembic-generated scaffold imports `from alembic import op` — also add `import sqlalchemy as sa` at the top (used by the safety guard's `sa.text()`). Insert SQL **in this order** (constraints depend on prior steps):
 
 ```python
+import sqlalchemy as sa
+from alembic import op
+# ... revision metadata ...
+
+
 def upgrade() -> None:
+    # ========================================================================
+    # Safety guard — refuse to run if jobs has rows.
+    # This migration drops jobs.customer_*/address_* columns and adds NOT NULL
+    # FK columns. With existing rows, ALTER TABLE SET NOT NULL would fail OR
+    # silently corrupt schema state. Operator must clear jobs manually first:
+    #   In Supabase SQL Editor: DELETE FROM jobs;
+    #   (FK cascades clean up job_rooms, photos, moisture_readings, etc.)
+    # ========================================================================
+    bind = op.get_bind()
+    rows = bind.execute(sa.text(
+        "SELECT count(*) FROM jobs WHERE deleted_at IS NULL"
+    )).scalar()
+    if rows > 0:
+        raise RuntimeError(
+            f"jobs has {rows} active rows. Clear them manually before running "
+            f"this migration:\n"
+            f"  In Supabase SQL Editor: DELETE FROM jobs;\n"
+            f"Then re-run: alembic upgrade head"
+        )
+
     op.execute("""
 -- ============================================================================
 -- 1. pg_trgm for fuzzy autocomplete (01J + 01K)
@@ -212,9 +237,11 @@ CREATE INDEX idx_properties_company_last_activity
     WHERE deleted_at IS NULL;
 
 -- ============================================================================
--- 4. Pre-launch wipe (01J)
+-- 4. (No TRUNCATE in migration. Operator clears jobs manually before running
+--    `alembic upgrade head` via Supabase SQL Editor: DELETE FROM jobs;
+--    The Python guard at the top of upgrade() refuses to run if jobs has rows.
+--    See pre-deploy checklist below the SQL block.)
 -- ============================================================================
-TRUNCATE jobs CASCADE;
 
 -- ============================================================================
 -- 5. Drop denormalized columns (01J)
@@ -317,13 +344,23 @@ DROP TABLE IF EXISTS customers CASCADE;
 """)
 ```
 
-- [ ] **Step 4:** Apply locally:
+- [ ] **Step 4 (pre-flight):** Clear jobs manually before migration runs locally. The safety guard will refuse to upgrade otherwise.
+
+For local dev (Supabase local or hosted dev project):
+```bash
+# Via psql
+psql "$DATABASE_URL" -c "DELETE FROM jobs;"
+# Or via Supabase Dashboard: SQL Editor → DELETE FROM jobs;
+```
+Expected: rows deleted, FK cascades clean up `job_rooms`, `photos`, `floor_plans`, `moisture_readings`, etc.
+
+- [ ] **Step 5:** Apply locally:
 ```bash
 cd backend && alembic upgrade head
 ```
-Expected: clean upgrade, no errors.
+Expected: clean upgrade, no errors. If `RuntimeError: jobs has N active rows` — go back to Step 4.
 
-- [ ] **Step 5:** Smoke test schema:
+- [ ] **Step 6:** Smoke test schema:
 ```bash
 cd backend && python -c "
 import asyncio
@@ -345,16 +382,37 @@ asyncio.run(check())
 "
 ```
 
-- [ ] **Step 6:** Test downgrade roundtrip:
+- [ ] **Step 7:** Test downgrade roundtrip:
 ```bash
 cd backend && alembic downgrade -1 && alembic upgrade head
 ```
+(After downgrade, jobs is empty again — guard passes on re-upgrade.)
 
-- [ ] **Step 7:** Commit:
+- [ ] **Step 8:** Commit:
 ```bash
 git add backend/alembic/versions/<rev>_foundation_customer_property.py
-git commit -m "migration: foundation rollout — customers + property_id wiring + clone schema"
+git commit -m "migration: foundation rollout — customers + property_id wiring (manual jobs cleanup required pre-deploy)"
 ```
+
+---
+
+### Pre-deploy procedure (production)
+
+When this migration ships to production via Railway:
+
+1. **Operator (you) clears production jobs first** — via Supabase Dashboard SQL Editor:
+   ```sql
+   DELETE FROM jobs;
+   ```
+   FK cascades clean up `job_rooms`, `photos`, `floor_plans`, `moisture_readings`, `event_history`, etc.
+
+2. **Push the deploy** (already-committed merge to `main` triggers Railway deploy).
+
+3. **Railway pre-deploy hook** runs `alembic upgrade head` automatically.
+
+4. The safety guard sees 0 rows in jobs → migration proceeds with the structural changes.
+
+**If you skip Step 1 by accident:** the migration fails loud with `RuntimeError: jobs has N active rows. Clear them manually before running this migration.` — production stays at the old schema, no data corruption. You then run Step 1 + redeploy.
 
 ---
 
