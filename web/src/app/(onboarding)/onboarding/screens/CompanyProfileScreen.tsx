@@ -37,12 +37,20 @@ type Props = {
   onCreated: (companyName: string) => void;
   /** Called when the "Have active jobs in progress?" link is clicked. */
   onOpenQuickAdd: () => void;
+  /**
+   * True only when the company row already exists (user is resuming
+   * from a recovery URL or has already submitted Step 1 in this session).
+   * The Quick Add sidetrack calls POST /v1/jobs/batch which requires
+   * an authenticated company_id, so we hide the button on first visit.
+   */
+  hasCompany?: boolean;
 };
 
 export default function CompanyProfileScreen({
   showWelcomeBack,
   onCreated,
   onOpenQuickAdd,
+  hasCompany = false,
 }: Props) {
   const [ownerName, setOwnerName] = useState("");
   const [name, setName] = useState("");
@@ -283,14 +291,23 @@ export default function CompanyProfileScreen({
         ) : null}
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onOpenQuickAdd}
-            className="text-left text-[13px] font-medium underline underline-offset-2 transition-colors hover:opacity-80"
-            style={{ color: "#e85d26" }}
-          >
-            Have active jobs in progress? Add them now &rarr;
-          </button>
+          {/* Quick Add sidetrack — only shown when the company already
+              exists (returning user resuming, or this session already
+              submitted Step 1). On a fresh signup the user must click
+              Continue first; otherwise POST /v1/jobs/batch fails with
+              AUTH_NO_COMPANY because no company_id is on the JWT yet. */}
+          {hasCompany ? (
+            <button
+              type="button"
+              onClick={onOpenQuickAdd}
+              className="text-left text-[13px] font-medium underline underline-offset-2 transition-colors hover:opacity-80"
+              style={{ color: "#e85d26" }}
+            >
+              Have active jobs in progress? Add them now &rarr;
+            </button>
+          ) : (
+            <span /> /* Spacer so Continue stays right-aligned */
+          )}
           <PrimaryButton type="submit" loading={submitting} disabled={!isValid || submitting}>
             Continue
             <span aria-hidden className="text-[16px]">&rarr;</span>

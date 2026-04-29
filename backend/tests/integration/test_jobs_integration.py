@@ -31,7 +31,7 @@ async def test_create_job(api_client, onboarded_user):
     assert data["city"] == "Phoenix"
     assert data["loss_type"] == "water"
     assert data["customer_name"] == "John Smith"
-    assert data["status"] == "new"
+    assert data["status"] == "lead"
     assert data["job_number"].startswith("JOB-")
     assert data["company_id"] == onboarded_user["company_id"]
     # Detail response includes counts

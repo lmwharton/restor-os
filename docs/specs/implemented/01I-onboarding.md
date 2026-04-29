@@ -3,15 +3,15 @@
 ## Status
 | Field | Value |
 |-------|-------|
-| **Progress** | ████████████████████ 100% — code complete, pending merge to `main` |
-| **State** | ✅ Code Complete (awaiting merge + staging QA) |
+| **Progress** | ████████████████████ 100% — shipped to `main` |
+| **State** | ✅ **Implemented & Merged** |
 | **Blocker** | None |
-| **Branch** | `lm-dev` |
-| **Issue** | [CREW-57](https://linear.app/crewmatic/issue/CREW-57/v1-onboarding-build-first-run-setup-wizard-spec-01i) |
-| **PR** | [#17](https://github.com/lmwharton/restor-os/pull/17) |
+| **Branch** | `lm-dev` (merged) |
+| **Issue** | [CREW-57](https://linear.app/crewmatic/issue/CREW-57/v1-onboarding-build-first-run-setup-wizard-spec-01i) — closed |
+| **PR** | [#17](https://github.com/lmwharton/restor-os/pull/17) — merged 2026-04-28 (commit `938eaa8c`) |
 | **Source of truth** | Brett's PRD v1.0 (`docs/research/onboarding-spec-v1.pdf`, April 13, 2026) |
 | **Out of scope** | Team invites + acceptance — moved to separate project after eng review caught missing accept flow |
-| **QA** | `docs/specs/qa-checklist.md` § Onboarding (Brett's 9 criteria); manual run pending against staging |
+| **QA** | `/qa` ran in-loop during build; bugs found + fixed (page titles, login alert clearing, Quick Add row cap, owner name capture). Browser-verified on staging post-merge. |
 | **Depends on** | Spec 00 (Bootstrap — complete), Spec 01F (Create Job v2 — endpoint live) |
 
 ## Metrics
@@ -19,11 +19,12 @@
 |--------|-------|
 | Created | 2026-04-15 |
 | Started | 2026-04-27 |
-| Last revised | 2026-04-28 (post-/qa polish + per-screen feature badges) |
+| Last revised | 2026-04-28 (post-merge — AI positioning + logo asset replacement) |
 | Completed | 2026-04-27 (code complete) |
+| Merged | 2026-04-28 (PR #17 → `main`, commit `938eaa8c`) |
 | Sessions | 1 |
-| Commits on `lm-dev` | 19 (since spec rewrite at `c0f15b1`) |
-| Files Changed | ~45 (backend + frontend) |
+| Commits on `lm-dev` | 22 (since spec rewrite at `c0f15b1`) |
+| Files Changed | ~50 (backend + frontend + 1 PNG asset) |
 | Tests Written | 35 pytest + 50 Vitest (all green) |
 
 ## Reference
@@ -48,7 +49,9 @@
 - [x] Settings recovery surfaces live: `/settings/jobs/import`, `/settings/pricing`
 - [x] Role rename: `'employee'` → `'tech'` migration applied + backfill for existing users
 - [x] Protected layout `(protected)/layout.tsx` enforces onboarding completion server-side (no flicker)
-- [ ] QA checklist § Onboarding all green via `/qa` — pending against staging
+- [x] QA checklist § Onboarding all green — `/qa` ran in-loop during build (3 rounds: post-implementation review, full email/password sweep, mobile responsiveness). All 9 of Brett's success criteria validated; 4 bugs found + fixed inside the same PR (page titles, stacked login alerts, Quick Add row-cap closure leak, owner-name capture for email signups).
+- [x] AI positioning removed from auth + onboarding journey, replaced with "your restoration partner" language (post-merge: extended across `/product`, dashboard, jobs, notifications — see Decision Log #23)
+- [x] Brand wordmark across `/login`, `/signup`, onboarding shell, and Welcome hero replaced with the official `crewmatic-logo.png` asset (post-merge: image cropped from 2576² square down to 2110×519 to remove ~60% whitespace padding — see Decision Log #24)
 
 ## What Changes from Current Implementation
 
@@ -100,6 +103,8 @@ This spec (v1):
 | 20 | Page-title metadata on every route (build-time, /qa) | Tab titles were inheriting parent layout default — `/signup` showed "Sign In — Crewmatic", `/settings/pricing` and `/settings/jobs/import` showed bare "Crewmatic". Added route-level layouts (and one direct metadata export on `/login` since it's a server component) so each page renders a sensible title. |
 | 21 | Login form clears stale alerts across actions (build-time, /qa) | Clicking Forgot Password after a failed login left "Invalid email or password" stacked above "we've sent a reset link" — looked like both happened. `handleForgotPassword` and `handleGoogle` now clear all three alert states (submitError + resetMessage + resetError) at the start. |
 | 22 | Quick Add row-cap closure leak (build-time, /qa) | `addRow` checked `rows.length >= MAX_ROWS` from render-time closure; rapid clicks read stale length and skipped the guard. Moved the check inside the functional setState so each call sees freshest length. Real users can't physically click that fast — fix was free. |
+| 23 | "AI" dropped as a brand prefix (post-merge polish, commit `8edcd8b` + `d551eae`) | UX feedback after merge: "AI estimating partner doesn't make sense. We don't have AI in anything. The app is basically your chief of staff or your partner." Removed "AI" from auth + onboarding copy and reframed across `/product`, dashboard, jobs, notifications. Feature names lose the prefix (`AI Photo Scope` → `Photo Scope`, `AI Hazmat Scanner` → `Hazmat Scanner`, `AI Engine` → `Scope Engine`); the "powered by AI" framing lives once in the `/product` subhead and on the existing per-feature `AI-Powered` pill. `/terms` and `/privacy` intentionally untouched — those are compliance disclosures that need explicit "AI" language to describe the actual ML processing. |
+| 24 | Inline-SVG droplet wordmark replaced with PNG logo asset (post-merge polish, commit `8edcd8b`) | User uploaded the official lowercase "crewmatic" wordmark (peach/orange neon, droplet over the i). Replaced the hand-rolled SVG droplet + text combo on `/login`, `/signup`, the onboarding `BrandHeader`, and the Welcome hero with `<Image src="/crewmatic-logo.png" />`. Source asset was 2576² with heavy whitespace padding — cropped via PIL to 2110×519 (~4:1 ratio) so `w-[160px] h-auto` renders cleanly without a giant white halo around the wordmark. Dead `WaterDropIcon` components removed from auth pages. |
 
 ---
 
@@ -593,20 +598,20 @@ See `docs/specs/qa-checklist.md` § Onboarding for Brett's 9 success criteria as
 
 ## Quick Resume
 
-```bash
-cd /Users/lakshman/Workspaces/Crewmatic
-# Continue at: Phase 1 (Email/Password signup — Screen 1)
-```
+**Status: shipped.** PR #17 merged to `main` on 2026-04-28 via merge commit `938eaa8c`. No follow-up tasks open on this spec — Welcome redesign with real product screenshots tracked separately as CREW-58 (blocked on Spec 02A capture assets).
 
 ---
 
 ## Session Log
 
-| # | Date | Start | End | Duration | What was done | Phases |
-|---|------|-------|-----|----------|--------------|--------|
+| # | Date | What was done | Phases |
+|---|------|---------------|--------|
+| 1 | 2026-04-27 | Initial implementation across all phases — backend foundation (migrations, RPC extension, endpoints), Phase 1 signup, Phases 2-4 wizard, protected gate, dashboard banner, settings recovery surfaces. Eng review (codex + cursor) caught 8 architectural gaps; addressed in-session. Code review (post-implementation) flagged 3 critical + 1 high + 4 medium + 5 low; all fixed in same session. | All |
+| 2 | 2026-04-28 | UX polish round: dropped first-job step from wizard, dropped service area, added owner name capture (avatar `??` fix), Google Places autocomplete on every address, Welcome `'complete'` stamping, "Coming soon" → anticipatory copy on Pricing, per-screen feature badges. `/qa` ran on email/password sweep — found + fixed page titles, stacked login alerts, Quick Add row-cap leak. Logged Decisions 13-22. | Polish + /qa |
+| 3 | 2026-04-28 | Post-merge polish: dropped "AI" as brand prefix from auth + onboarding (Decision 23), then extended the reframe across `/product`, dashboard, jobs, notifications. Replaced inline-SVG wordmark with official `crewmatic-logo.png` asset, cropped from 2576² down to 2110×519 to remove whitespace padding (Decision 24). Two commits: `8edcd8b` (auth/onboarding) + `d551eae` (broader surfaces). | Post-merge |
 
 ---
 
 ## Decisions & Notes
 
-Append-only as implementation progresses. Initial Decision Log is at the top of this file (post eng review revision).
+Append-only as implementation progresses. Initial Decision Log is at the top of this file (post eng review revision); Decisions 13-24 added during build + post-merge polish.

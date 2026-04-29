@@ -5,8 +5,9 @@
  * inline. Backend `POST /v1/jobs/batch` is atomic: one bad row = full
  * rollback, so we validate hard client-side before sending.
  *
- * Job-status dropdown shows Brett's friendly labels (Lead/Scoped/
- * Submitted) — backend accepts either form (Decision Log #6).
+ * Job-status dropdown shows the 3 entry-points into the 01K lifecycle
+ * (Lead / Active / Invoiced) — backend `_normalize_batch_status` maps
+ * the friendly label to the snake_case enum.
  *
  * This component is mode-agnostic: it can render as a modal-style
  * sub-screen (during onboarding) or as a full settings page
@@ -46,10 +47,14 @@ const JOB_TYPE_OPTIONS: { value: JobTypeChoice; label: string }[] = [
   { value: "Reconstruction", label: "Reconstruction" },
 ];
 
+// Spec 01K — Lead/Active/Invoiced map to the 9-status lifecycle's
+// "stages of the job in our world right now": Lead = haven't started,
+// Active = currently working it, Invoiced = bill is out, payment pending.
+// Backend `_normalize_batch_status` rejects any other values.
 const JOB_STATUS_OPTIONS: { value: JobStatusChoice; label: string }[] = [
   { value: "Lead", label: "Lead" },
-  { value: "Scoped", label: "Scoped" },
-  { value: "Submitted", label: "Submitted" },
+  { value: "Active", label: "Active" },
+  { value: "Invoiced", label: "Invoiced" },
 ];
 
 const MAX_ROWS = 10;

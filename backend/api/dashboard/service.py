@@ -8,35 +8,27 @@ from supabase import AsyncClient
 
 from api.dashboard.schemas import DashboardResponse, KPIs, PipelineStage, PriorityJob
 from api.events.service import list_company_events
+from api.jobs.lifecycle import (
+    ACTIVE_LIST_STATUSES,
+    JOB_STATUSES,
+)
 
 logger = logging.getLogger(__name__)
 
-# Mitigation pipeline stages in display order
-PIPELINE_STAGES = [
-    "new",
-    "contracted",
-    "mitigation",
-    "drying",
-    "complete",
-    "submitted",
-    "collected",
-]
+# Spec 01K — single 9-status lifecycle (mitigation + reconstruction collapsed
+# onto one pipeline; job_type now drives behavior, not the status enum). Order
+# matches the frontend's STAGE_ORDER in dashboard-client.tsx so the bars line
+# up with the React UI without a remapping step.
+PIPELINE_STAGES = list(JOB_STATUSES)
 
-# Reconstruction pipeline stages in display order
-RECON_PIPELINE_STAGES = [
-    "new",
-    "scoping",
-    "in_progress",
-    "complete",
-    "submitted",
-    "collected",
-]
+# Statuses counted as "active" KPI (open jobs that aren't terminal/archived).
+# `disputed` is excluded — those jobs are stuck waiting on the carrier and
+# don't represent capacity in the way "active jobs" does for the owner.
+ACTIVE_STATUSES = set(ACTIVE_LIST_STATUSES) - {"disputed"}
 
-# Statuses considered "active" (not terminal)
-ACTIVE_STATUSES = {"new", "contracted", "mitigation", "drying", "scoping", "in_progress"}
-
-# Statuses that indicate jobs needing attention
-PRIORITY_STATUSES = {"new", "mitigation", "scoping"}
+# Statuses that surface as "priority" (need owner attention now). Leads need
+# qualification, on_hold needs a decision, disputed needs a carrier reply.
+PRIORITY_STATUSES = {"lead", "on_hold", "disputed"}
 
 
 async def get_dashboard(
@@ -61,34 +53,26 @@ async def get_dashboard(
     )
     jobs = jobs_result.data or []
 
-    # 2. Build pipeline counts — separate for mitigation and reconstruction
-    mit_counts: dict[str, int] = {}
-    recon_counts: dict[str, int] = {}
+    # 2. Build pipeline counts — single 9-status lifecycle (Spec 01K).
+    # mitigation + reconstruction were unified under one pipeline; job_type
+    # now lives separately as a property of the job, not the stage.
+    counts: dict[str, int] = {}
     for job in jobs:
-        s = job.get("status", "new")
-        jt = job.get("job_type", "mitigation")
-        if jt == "reconstruction":
-            recon_counts[s] = recon_counts.get(s, 0) + 1
-        else:
-            mit_counts[s] = mit_counts.get(s, 0) + 1
+        s = job.get("status", "lead")
+        counts[s] = counts.get(s, 0) + 1
 
     pipeline = [
         PipelineStage(
             stage=stage,
-            count=mit_counts.get(stage, 0),
+            count=counts.get(stage, 0),
             total_estimate=0.0,
         )
         for stage in PIPELINE_STAGES
     ]
 
-    reconstruction_pipeline = [
-        PipelineStage(
-            stage=stage,
-            count=recon_counts.get(stage, 0),
-            total_estimate=0.0,
-        )
-        for stage in RECON_PIPELINE_STAGES
-    ]
+    # Spec 01K — single pipeline replaces the separate recon track. Field
+    # stays on DashboardResponse (required by schema) but is always empty.
+    reconstruction_pipeline: list[PipelineStage] = []
 
     # 3. Compute KPIs
     active_jobs = sum(1 for j in jobs if j.get("status") in ACTIVE_STATUSES)

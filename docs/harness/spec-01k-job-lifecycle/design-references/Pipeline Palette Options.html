@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Pipeline palette — 3 options</title>
+<link rel="stylesheet" href="tokens.css" />
+<style>
+  body { background: var(--bg); padding: 0; }
+
+  .page {
+    max-width: 1280px;
+    margin: 0 auto;
+    padding: 48px 32px 96px;
+    color: var(--text);
+  }
+
+  .page-head h1 {
+    font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin: 0;
+  }
+  .page-head p {
+    margin: 8px 0 0; color: var(--text-2); font-size: 14px; max-width: 720px; line-height: 1.55;
+  }
+
+  .opt {
+    margin-top: 56px;
+    border-top: 1px solid var(--border);
+    padding-top: 28px;
+  }
+  .opt-head {
+    display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px;
+  }
+  .opt-tag {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em;
+    color: var(--text-3); text-transform: uppercase;
+  }
+  .opt-title {
+    font-size: 20px; font-weight: 700; letter-spacing: -0.01em;
+  }
+  .opt-sub {
+    color: var(--text-2); font-size: 13px; line-height: 1.55; max-width: 760px; margin: 4px 0 24px;
+  }
+
+  /* ---- pipeline bar (matches the screenshot) ---- */
+  .pipeline {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px 20px;
+  }
+  .pipeline-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+  }
+  .pipeline-label {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--text-3); text-transform: uppercase;
+  }
+  .pipeline-meta {
+    font-size: 11px; color: var(--text-3);
+  }
+  .group-row {
+    display: flex; align-items: center; gap: 10px; margin: 14px 0 6px;
+  }
+  .group-dot { width: 8px; height: 8px; border-radius: 999px; }
+  .group-name { font-size: 13px; font-weight: 600; }
+  .group-count { font-size: 12px; color: var(--text-3); margin-left: 2px; }
+
+  .bar {
+    display: grid;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 4px;
+    border-radius: 8px;
+    overflow: hidden;
+    height: 38px;
+  }
+  .seg {
+    display: flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 10px;
+    font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+    white-space: nowrap; overflow: hidden;
+    border-radius: 6px;
+  }
+  .seg .n { font-family: "Geist Mono", ui-monospace, monospace; font-weight: 700; font-size: 11px; }
+
+  .bar-single {
+    height: 38px;
+    border-radius: 8px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+  }
+
+  /* ---- chip row (status pills shown together) ---- */
+  .chips {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    margin-top: 18px;
+  }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; letter-spacing: 0.01em;
+  }
+  .chip .d { width: 6px; height: 6px; border-radius: 999px; flex: none; }
+
+  /* ---- legend / system explainer ---- */
+  .legend {
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+  }
+  .bucket {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+  }
+  .bucket-label {
+    font-family: "Geist Mono", ui-monospace, monospace;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+    color: var(--text-3); text-transform: uppercase; margin-bottom: 8px;
+  }
+  .bucket-stack { display: flex; flex-direction: column; gap: 6px; }
+  .bucket-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 12px; color: var(--text);
+  }
+  .bucket-sw { width: 14px; height: 14px; border-radius: 4px; flex: none; }
+
+  /* notes */
+  .note {
+    margin-top: 16px;
+    font-size: 12px; color: var(--text-2); line-height: 1.55;
+    max-width: 820px;
+  }
+  .note strong { color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="page-head">
+    <h1>Pipeline palette — 3 directions</h1>
+    <p>Same content, same layout. Three different color systems applied to the 8 closeout statuses, so you can compare how the bar reads at a glance and how individual chips feel in context.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <!-- OPTION A — 4-bucket lifecycle system                         -->
+  <!-- ============================================================ -->
+  <section class="opt" id="opt-a" style="
+    --c-lead:#c8b8a8;       --c-lead-fg:#1a1a1a;
+    --c-active:#e85d26;     --c-active-fg:#ffffff;
+    --c-hold:#e8a23a;       --c-hold-fg:#1a1a1a;
+    --c-disputed:#c8501a;   --c-disputed-fg:#ffffff;
+    --c-completed:#a8d4b6;  --c-completed-fg:#1a1a1a;
+    --c-invoiced:#5fae7d;   --c-invoiced-fg:#ffffff;
+    --c-paid:#1f7a48;       --c-paid-fg:#ffffff;
+    --c-cancelled:#7a746e;  --c-cancelled-fg:#ffffff;
+    --c-lost:#d4cdc6;       --c-lost-fg:#5a544f;
+  ">
+    <div class="opt-head">
+      <span class="opt-tag">Option A</span>
+      <span class="opt-title">4-bucket lifecycle</span>
+    </div>
+    <p class="opt-sub">Group statuses by what they mean operationally: <strong>in motion</strong> (orange), <strong>waiting</strong> (amber), <strong>won</strong> (green, deepening as money lands), <strong>closed</strong> (gray). Down from 8 hues to 4, with shade as the within-bucket variation. The bar now reads as a health summary, not a rainbow.</p>
+
+    <div class="pipeline">
+      <div class="pipeline-head">
+        <span class="pipeline-label">Pipeline</span>
+        <span class="pipeline-meta">Tap to filter</span>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:var(--c-active)"></span>
+        <span class="group-name">Mitigation</span>
+        <span class="group-count">9</span>
+      </div>
+      <div class="bar">
+        <div class="seg" style="background:var(--c-lead);color:var(--c-lead-fg)"><span class="n">1</span> Lead</div>
+        <div class="seg" style="background:var(--c-active);color:var(--c-active-fg)"><span class="n">1</span> Active</div>
+        <div class="seg" style="background:var(--c-hold);color:var(--c-hold-fg)"><span class="n">1</span> On Hold</div>
+        <div class="seg" style="background:var(--c-completed);color:var(--c-completed-fg)"><span class="n">1</span> Completed</div>
+        <div class="seg" style="background:var(--c-invoiced);color:var(--c-invoiced-fg)"><span class="n">1</span> Invoiced</div>
+        <div class="seg" style="background:var(--c-disputed);color:var(--c-disputed-fg)"><span class="n">1</span> Disputed</div>
+        <div class="seg" style="background:var(--c-paid);color:var(--c-paid-fg)"><span class="n">1</span> Paid</div>
+        <div class="seg" style="background:var(--c-cancelled);color:var(--c-cancelled-fg)"><span class="n">1</span> Cancelled</div>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:var(--c-active)"></span>
+        <span class="group-name">Reconstruction</span>
+        <span class="group-count">1</span>
+      </div>
+      <div class="bar-single" style="background:var(--c-active);color:var(--c-active-fg)">1 Active</div>
+    </div>
+
+    <div class="legend">
+      <div class="bucket">
+        <div class="bucket-label">In motion</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lead)"></span> Lead</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-active)"></span> Active</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Waiting</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-hold)"></span> On Hold</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-disputed)"></span> Disputed</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Won</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-completed)"></span> Completed</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-invoiced)"></span> Invoiced</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-paid)"></span> Paid</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Closed</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-cancelled)"></span> Cancelled</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lost)"></span> Lost</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <span class="chip" style="background:#f3ece4;color:#5a544f"><span class="d" style="background:#c8b8a8"></span>Lead</span>
+      <span class="chip" style="background:#fff3ed;color:#c44912"><span class="d" style="background:#e85d26"></span>Active</span>
+      <span class="chip" style="background:#fdefd8;color:#a35e0c"><span class="d" style="background:#e8a23a"></span>On Hold</span>
+      <span class="chip" style="background:#ecf6ef;color:#1f6a3c"><span class="d" style="background:#a8d4b6"></span>Completed</span>
+      <span class="chip" style="background:#e3f1e7;color:#1c6b41"><span class="d" style="background:#5fae7d"></span>Invoiced</span>
+      <span class="chip" style="background:#fbe8dc;color:#a23f10"><span class="d" style="background:#c8501a"></span>Disputed</span>
+      <span class="chip" style="background:#dcefe2;color:#155f37"><span class="d" style="background:#1f7a48"></span>Paid</span>
+      <span class="chip" style="background:#ebe7e3;color:#3a3633"><span class="d" style="background:#7a746e"></span>Cancelled</span>
+      <span class="chip" style="background:#f0ece8;color:#7a746e;text-decoration:line-through"><span class="d" style="background:#d4cdc6"></span>Lost</span>
+    </div>
+
+    <p class="note"><strong>Why this works:</strong> Invoiced / Completed / Paid all read as “green = good,” so a healthy pipeline literally looks green. Disputed is a saturated red-orange — the only thing on the bar that demands attention. Cancelled drops to gray because nothing's at stake anymore. Lead is a quiet tan, not gray, so it doesn't get confused with closed states.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- OPTION B — Monochrome with 2 accents                         -->
+  <!-- ============================================================ -->
+  <section class="opt" id="opt-b" style="
+    --c-lead:#e8e1da;       --c-lead-fg:#5a544f;
+    --c-active:#1a1a1a;     --c-active-fg:#ffffff;
+    --c-hold:#cfc6bd;       --c-hold-fg:#1a1a1a;
+    --c-disputed:#e85d26;   --c-disputed-fg:#ffffff;
+    --c-completed:#b6ada4;  --c-completed-fg:#1a1a1a;
+    --c-invoiced:#8a847e;   --c-invoiced-fg:#ffffff;
+    --c-paid:#1f7a48;       --c-paid-fg:#ffffff;
+    --c-cancelled:#5a544f;  --c-cancelled-fg:#ffffff;
+    --c-lost:#ede8e3;       --c-lost-fg:#8a847e;
+  ">
+    <div class="opt-head">
+      <span class="opt-tag">Option B</span>
+      <span class="opt-title">Monochrome + 2 alarms</span>
+    </div>
+    <p class="opt-sub">The pipeline is mostly grayscale (warm grays on the cream bg, deepening as a job progresses). Only two states get a real color: <strong>Disputed</strong> in brand orange (action required) and <strong>Paid</strong> in green (the win). Everything else is information without urgency.</p>
+
+    <div class="pipeline">
+      <div class="pipeline-head">
+        <span class="pipeline-label">Pipeline</span>
+        <span class="pipeline-meta">Tap to filter</span>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:#1a1a1a"></span>
+        <span class="group-name">Mitigation</span>
+        <span class="group-count">9</span>
+      </div>
+      <div class="bar">
+        <div class="seg" style="background:var(--c-lead);color:var(--c-lead-fg)"><span class="n">1</span> Lead</div>
+        <div class="seg" style="background:var(--c-active);color:var(--c-active-fg)"><span class="n">1</span> Active</div>
+        <div class="seg" style="background:var(--c-hold);color:var(--c-hold-fg)"><span class="n">1</span> On Hold</div>
+        <div class="seg" style="background:var(--c-completed);color:var(--c-completed-fg)"><span class="n">1</span> Completed</div>
+        <div class="seg" style="background:var(--c-invoiced);color:var(--c-invoiced-fg)"><span class="n">1</span> Invoiced</div>
+        <div class="seg" style="background:var(--c-disputed);color:var(--c-disputed-fg)"><span class="n">1</span> Disputed</div>
+        <div class="seg" style="background:var(--c-paid);color:var(--c-paid-fg)"><span class="n">1</span> Paid</div>
+        <div class="seg" style="background:var(--c-cancelled);color:var(--c-cancelled-fg)"><span class="n">1</span> Cancelled</div>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:#1a1a1a"></span>
+        <span class="group-name">Reconstruction</span>
+        <span class="group-count">1</span>
+      </div>
+      <div class="bar-single" style="background:var(--c-active);color:var(--c-active-fg)">1 Active</div>
+    </div>
+
+    <div class="legend">
+      <div class="bucket">
+        <div class="bucket-label">In motion</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lead)"></span> Lead</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-active)"></span> Active</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Waiting</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-hold)"></span> On Hold</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-disputed)"></span> Disputed <em style="color:var(--text-3);font-style:normal;margin-left:4px">accent</em></div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Won</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-completed)"></span> Completed</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-invoiced)"></span> Invoiced</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-paid)"></span> Paid <em style="color:var(--text-3);font-style:normal;margin-left:4px">accent</em></div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Closed</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-cancelled)"></span> Cancelled</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lost)"></span> Lost</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <span class="chip" style="background:#f0ebe5;color:#5a544f"><span class="d" style="background:#c8b8a8"></span>Lead</span>
+      <span class="chip" style="background:#1a1a1a;color:#ffffff"><span class="d" style="background:#ffffff"></span>Active</span>
+      <span class="chip" style="background:#ebe5df;color:#3a3633"><span class="d" style="background:#a39990"></span>On Hold</span>
+      <span class="chip" style="background:#ede8e3;color:#5a544f"><span class="d" style="background:#a39990"></span>Completed</span>
+      <span class="chip" style="background:#e8e3de;color:#3a3633"><span class="d" style="background:#6b6560"></span>Invoiced</span>
+      <span class="chip" style="background:#fff3ed;color:#c44912"><span class="d" style="background:#e85d26"></span>Disputed</span>
+      <span class="chip" style="background:#dcefe2;color:#155f37"><span class="d" style="background:#1f7a48"></span>Paid</span>
+      <span class="chip" style="background:#3a3633;color:#ffffff"><span class="d" style="background:#a39990"></span>Cancelled</span>
+      <span class="chip" style="background:#f0ece8;color:#8a847e;text-decoration:line-through"><span class="d" style="background:#d4cdc6"></span>Lost</span>
+    </div>
+
+    <p class="note"><strong>Why this works:</strong> Most jobs are routine. Coloring every status equally creates noise; coloring only the two states an operator should *react* to makes them pop. The trade-off is that the pipeline bar is less of an at-a-glance health view — you have to read it.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- OPTION C — Soft pastels matched to the cream background      -->
+  <!-- ============================================================ -->
+  <section class="opt" id="opt-c" style="
+    --c-lead:#e8dccd;       --c-lead-fg:#6b4e2a;
+    --c-active:#fab98a;     --c-active-fg:#7a3508;
+    --c-hold:#f5d29a;       --c-hold-fg:#7a4a08;
+    --c-disputed:#f1a982;   --c-disputed-fg:#7a3008;
+    --c-completed:#cfe7d4;  --c-completed-fg:#1f5a35;
+    --c-invoiced:#a9d2b6;   --c-invoiced-fg:#155233;
+    --c-paid:#7cba93;       --c-paid-fg:#0e3f24;
+    --c-cancelled:#d4cdc6;  --c-cancelled-fg:#3a3633;
+    --c-lost:#e8e2dc;       --c-lost-fg:#7a746e;
+  ">
+    <div class="opt-head">
+      <span class="opt-tag">Option C</span>
+      <span class="opt-title">Soft tints, matched to the cream</span>
+    </div>
+    <p class="opt-sub">Same 4-bucket logic as A, but every color is desaturated and warmed up so it sits naturally on the <span class="mono">#fff8f4</span> background. Reads as calm and editorial rather than dashboard-y. Dark text on pale fills keeps it accessible.</p>
+
+    <div class="pipeline">
+      <div class="pipeline-head">
+        <span class="pipeline-label">Pipeline</span>
+        <span class="pipeline-meta">Tap to filter</span>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:#e85d26"></span>
+        <span class="group-name">Mitigation</span>
+        <span class="group-count">9</span>
+      </div>
+      <div class="bar">
+        <div class="seg" style="background:var(--c-lead);color:var(--c-lead-fg)"><span class="n">1</span> Lead</div>
+        <div class="seg" style="background:var(--c-active);color:var(--c-active-fg)"><span class="n">1</span> Active</div>
+        <div class="seg" style="background:var(--c-hold);color:var(--c-hold-fg)"><span class="n">1</span> On Hold</div>
+        <div class="seg" style="background:var(--c-completed);color:var(--c-completed-fg)"><span class="n">1</span> Completed</div>
+        <div class="seg" style="background:var(--c-invoiced);color:var(--c-invoiced-fg)"><span class="n">1</span> Invoiced</div>
+        <div class="seg" style="background:var(--c-disputed);color:var(--c-disputed-fg)"><span class="n">1</span> Disputed</div>
+        <div class="seg" style="background:var(--c-paid);color:var(--c-paid-fg)"><span class="n">1</span> Paid</div>
+        <div class="seg" style="background:var(--c-cancelled);color:var(--c-cancelled-fg)"><span class="n">1</span> Cancelled</div>
+      </div>
+
+      <div class="group-row">
+        <span class="group-dot" style="background:#e85d26"></span>
+        <span class="group-name">Reconstruction</span>
+        <span class="group-count">1</span>
+      </div>
+      <div class="bar-single" style="background:var(--c-active);color:var(--c-active-fg)">1 Active</div>
+    </div>
+
+    <div class="legend">
+      <div class="bucket">
+        <div class="bucket-label">In motion</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lead)"></span> Lead</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-active)"></span> Active</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Waiting</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-hold)"></span> On Hold</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-disputed)"></span> Disputed</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Won</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-completed)"></span> Completed</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-invoiced)"></span> Invoiced</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-paid)"></span> Paid</div>
+        </div>
+      </div>
+      <div class="bucket">
+        <div class="bucket-label">Closed</div>
+        <div class="bucket-stack">
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-cancelled)"></span> Cancelled</div>
+          <div class="bucket-row"><span class="bucket-sw" style="background:var(--c-lost)"></span> Lost</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="chips">
+      <span class="chip" style="background:#f3eadc;color:#6b4e2a"><span class="d" style="background:#c8a974"></span>Lead</span>
+      <span class="chip" style="background:#fde6d4;color:#7a3508"><span class="d" style="background:#fab98a"></span>Active</span>
+      <span class="chip" style="background:#fbeacb;color:#7a4a08"><span class="d" style="background:#e8b96a"></span>On Hold</span>
+      <span class="chip" style="background:#e6f1ea;color:#1f5a35"><span class="d" style="background:#7cba93"></span>Completed</span>
+      <span class="chip" style="background:#dcecdf;color:#155233"><span class="d" style="background:#5a9f70"></span>Invoiced</span>
+      <span class="chip" style="background:#fbdcc4;color:#7a3008"><span class="d" style="background:#e08a52"></span>Disputed</span>
+      <span class="chip" style="background:#cce4d2;color:#0e3f24"><span class="d" style="background:#3d8758"></span>Paid</span>
+      <span class="chip" style="background:#ebe4dd;color:#3a3633"><span class="d" style="background:#a39990"></span>Cancelled</span>
+      <span class="chip" style="background:#f1ebe5;color:#7a746e;text-decoration:line-through"><span class="d" style="background:#c8c0b8"></span>Lost</span>
+    </div>
+
+    <p class="note"><strong>Why this works:</strong> Pipeline bar feels like part of the surface, not painted on top of it. Best for users who spend hours in the app — less visual fatigue. Risk: the bar is subtler, so a glance from across the room won't tell you anything.</p>
+  </section>
+
+  <!-- ============================================================ -->
+  <!-- COMPARISON STRIP                                             -->
+  <!-- ============================================================ -->
+  <section class="opt" id="compare">
+    <div class="opt-head">
+      <span class="opt-tag">Side-by-side</span>
+      <span class="opt-title">Just the bars</span>
+    </div>
+    <p class="opt-sub">Original vs. the three options, stacked. Squint test: which one tells you the most about pipeline health in the least time?</p>
+
+    <div style="display:flex; flex-direction:column; gap:14px; margin-top:8px;">
+
+      <!-- ORIGINAL -->
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;font-family:'Geist Mono',ui-monospace,monospace">Current</div>
+        <div class="bar">
+          <div class="seg" style="background:#6b6560;color:#fff"><span class="n">1</span> Lead</div>
+          <div class="seg" style="background:#e85d26;color:#fff"><span class="n">1</span> Active</div>
+          <div class="seg" style="background:#d97706;color:#fff"><span class="n">1</span> On Hold</div>
+          <div class="seg" style="background:#2a9d5c;color:#fff"><span class="n">1</span> Completed</div>
+          <div class="seg" style="background:#5b6abf;color:#fff"><span class="n">1</span> Invoiced</div>
+          <div class="seg" style="background:#b45309;color:#fff"><span class="n">1</span> Disputed</div>
+          <div class="seg" style="background:#059669;color:#fff"><span class="n">1</span> Paid</div>
+          <div class="seg" style="background:#9b1c1c;color:#fff"><span class="n">1</span> Cancelled</div>
+        </div>
+      </div>
+
+      <!-- A -->
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;font-family:'Geist Mono',ui-monospace,monospace">Option A · 4 buckets</div>
+        <div class="bar">
+          <div class="seg" style="background:#c8b8a8;color:#1a1a1a"><span class="n">1</span> Lead</div>
+          <div class="seg" style="background:#e85d26;color:#fff"><span class="n">1</span> Active</div>
+          <div class="seg" style="background:#e8a23a;color:#1a1a1a"><span class="n">1</span> On Hold</div>
+          <div class="seg" style="background:#a8d4b6;color:#1a1a1a"><span class="n">1</span> Completed</div>
+          <div class="seg" style="background:#5fae7d;color:#fff"><span class="n">1</span> Invoiced</div>
+          <div class="seg" style="background:#c8501a;color:#fff"><span class="n">1</span> Disputed</div>
+          <div class="seg" style="background:#1f7a48;color:#fff"><span class="n">1</span> Paid</div>
+          <div class="seg" style="background:#7a746e;color:#fff"><span class="n">1</span> Cancelled</div>
+        </div>
+      </div>
+
+      <!-- B -->
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;font-family:'Geist Mono',ui-monospace,monospace">Option B · monochrome</div>
+        <div class="bar">
+          <div class="seg" style="background:#e8e1da;color:#5a544f"><span class="n">1</span> Lead</div>
+          <div class="seg" style="background:#1a1a1a;color:#fff"><span class="n">1</span> Active</div>
+          <div class="seg" style="background:#cfc6bd;color:#1a1a1a"><span class="n">1</span> On Hold</div>
+          <div class="seg" style="background:#b6ada4;color:#1a1a1a"><span class="n">1</span> Completed</div>
+          <div class="seg" style="background:#8a847e;color:#fff"><span class="n">1</span> Invoiced</div>
+          <div class="seg" style="background:#e85d26;color:#fff"><span class="n">1</span> Disputed</div>
+          <div class="seg" style="background:#1f7a48;color:#fff"><span class="n">1</span> Paid</div>
+          <div class="seg" style="background:#5a544f;color:#fff"><span class="n">1</span> Cancelled</div>
+        </div>
+      </div>
+
+      <!-- C -->
+      <div>
+        <div style="font-size:11px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:var(--text-3);margin-bottom:6px;font-family:'Geist Mono',ui-monospace,monospace">Option C · soft tints</div>
+        <div class="bar">
+          <div class="seg" style="background:#e8dccd;color:#6b4e2a"><span class="n">1</span> Lead</div>
+          <div class="seg" style="background:#fab98a;color:#7a3508"><span class="n">1</span> Active</div>
+          <div class="seg" style="background:#f5d29a;color:#7a4a08"><span class="n">1</span> On Hold</div>
+          <div class="seg" style="background:#cfe7d4;color:#1f5a35"><span class="n">1</span> Completed</div>
+          <div class="seg" style="background:#a9d2b6;color:#155233"><span class="n">1</span> Invoiced</div>
+          <div class="seg" style="background:#f1a982;color:#7a3008"><span class="n">1</span> Disputed</div>
+          <div class="seg" style="background:#7cba93;color:#0e3f24"><span class="n">1</span> Paid</div>
+          <div class="seg" style="background:#d4cdc6;color:#3a3633"><span class="n">1</span> Cancelled</div>
+        </div>
+      </div>
+
+    </div>
+
+    <p class="note" style="margin-top:24px"><strong>My pick:</strong> Option A. Fewest hues, clearest mental model (motion → waiting → won → done), the only red-orange on the bar means “act on this,” and a healthy pipeline genuinely looks green. B is great if your operators' actual job is triage; C is great if you want the app to feel calm. Want me to apply A back to the actual app and re-render the existing modals + dashboard?</p>
+  </section>
+
+</div>
+</body>
+</html>

@@ -6,7 +6,10 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Plus } from "@/components/icons";
 import { useJobs, usePhotos, useUpdateJob } from "@/lib/hooks/use-jobs";
 import type { JobDetail, JobStatus, JobType } from "@/lib/types";
-import { STATUS_COLORS, withAlpha } from "@/lib/status-colors";
+import { JOB_STATUSES } from "@/lib/types";
+import { STATUS_META } from "@/lib/labels";
+import { STATUS_COLORS } from "@/lib/status-colors";
+import { JobStatusBadge } from "@/components/job-status-badge";
 
 /* ------------------------------------------------------------------ */
 /*  Helpers                                                            */
@@ -35,38 +38,12 @@ function categoryLabel(cat: string | null): string {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Status Badge                                                       */
+/*  Status Badge — uses shared <JobStatusBadge> from @/components       */
+/*  (Spec 01K — single 9-status lifecycle palette)                      */
 /* ------------------------------------------------------------------ */
 
-const statusConfig: Record<
-  JobStatus,
-  { label: string; color: string; bg: string }
-> = {
-  new:          { label: "New",         color: STATUS_COLORS.new,         bg: withAlpha(STATUS_COLORS.new, 0.15) },
-  contracted:   { label: "Contracted",  color: STATUS_COLORS.contracted,  bg: withAlpha(STATUS_COLORS.contracted, 0.15) },
-  mitigation:   { label: "Mitigation",  color: STATUS_COLORS.mitigation,  bg: withAlpha(STATUS_COLORS.mitigation, 0.15) },
-  drying:       { label: "Drying",      color: STATUS_COLORS.drying,      bg: withAlpha(STATUS_COLORS.drying, 0.15) },
-  complete:     { label: "Complete",    color: STATUS_COLORS.complete,    bg: withAlpha(STATUS_COLORS.complete, 0.15) },
-  submitted:    { label: "Submitted",   color: STATUS_COLORS.submitted,   bg: withAlpha(STATUS_COLORS.submitted, 0.15) },
-  collected:    { label: "Collected",   color: STATUS_COLORS.collected,   bg: withAlpha(STATUS_COLORS.collected, 0.15) },
-  scoping:      { label: "Scoping",     color: STATUS_COLORS.scoping,     bg: withAlpha(STATUS_COLORS.scoping, 0.15) },
-  in_progress:  { label: "In Progress", color: STATUS_COLORS.in_progress, bg: withAlpha(STATUS_COLORS.in_progress, 0.15) },
-};
-
 function StatusBadge({ status }: { status: JobStatus }) {
-  const config = statusConfig[status] ?? {
-    label: status.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()),
-    color: "#6b7280",
-    bg: "rgba(107,114,128,0.15)",
-  };
-  return (
-    <span
-      className="inline-flex items-center px-2 py-px rounded-full text-[10px] font-semibold"
-      style={{ backgroundColor: config.bg, color: config.color }}
-    >
-      {config.label}
-    </span>
-  );
+  return <JobStatusBadge status={status} size="sm" />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -75,7 +52,7 @@ function StatusBadge({ status }: { status: JobStatus }) {
 
 function TypeBadge({ type }: { type: JobType }) {
   return type === "mitigation" ? (
-    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[#eff6ff] text-[#3b82f6]">
+    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-[var(--type-mitigation-bg)] text-[var(--type-mitigation)]">
       MIT
     </span>
   ) : (
@@ -231,23 +208,15 @@ function JobTableRow({
 /*  Desktop Preview Panel                                              */
 /* ------------------------------------------------------------------ */
 
-const MITIGATION_PHASES: { value: JobStatus; label: string }[] = [
-  { value: "new", label: "New" },
-  { value: "contracted", label: "Contracted" },
-  { value: "mitigation", label: "Mitigation" },
-  { value: "drying", label: "Drying" },
-  { value: "complete", label: "Complete" },
-  { value: "submitted", label: "Submitted" },
-  { value: "collected", label: "Collected" },
-];
-const RECONSTRUCTION_PHASES: { value: JobStatus; label: string }[] = [
-  { value: "new", label: "New" },
-  { value: "scoping", label: "Scoping" },
-  { value: "in_progress", label: "In Progress" },
-  { value: "complete", label: "Complete" },
-  { value: "submitted", label: "Submitted" },
-  { value: "collected", label: "Collected" },
-];
+// Spec 01K — single 9-status lifecycle replaces the dual mit/recon phase lists.
+// Both job types now share the same status options. Build the dropdown options
+// from STATUS_META so labels stay in sync.
+const LIFECYCLE_PHASES: { value: JobStatus; label: string }[] = JOB_STATUSES.map((s) => ({
+  value: s,
+  label: STATUS_META[s].label,
+}));
+const MITIGATION_PHASES = LIFECYCLE_PHASES;
+const RECONSTRUCTION_PHASES = LIFECYCLE_PHASES;
 
 function PreviewPanel({ job }: { job: JobDetail | null }) {
   const { data: photos } = usePhotos(job?.id ?? "");
@@ -428,13 +397,16 @@ function PreviewPanel({ job }: { job: JobDetail | null }) {
 
 function JobCard({ job }: { job: JobDetail; isFirst?: boolean }) {
   const days = daysSince(job.created_at);
-  const typeColor = job.job_type === "mitigation" ? "bg-[#3b82f6]" : "bg-[#e85d26]";
+  // Spec 01K — list dot mirrors the lifecycle status badge on the same row.
+  // Job type is shown via the MIT/REC pill, so the dot doesn't need to repeat it.
+  const status = (job.status ?? "lead") as keyof typeof STATUS_COLORS;
+  const dotColor = STATUS_COLORS[status] ?? STATUS_COLORS.lead;
 
   return (
     <Link href={`/jobs/${job.id}`} className="block group">
       <div className="bg-surface-container-lowest rounded-xl px-3.5 py-3 shadow-[0_1px_3px_rgba(31,27,23,0.04)] flex items-center gap-3">
-        {/* Type dot */}
-        <span className={`w-2 h-2 rounded-full ${typeColor} shrink-0`} />
+        {/* Status dot — matches the badge */}
+        <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: dotColor }} />
 
         {/* Address + status */}
         <div className="flex-1 min-w-0">
@@ -746,12 +718,12 @@ export default function JobsPage() {
               <Link
                 href="/jobs/new?type=mitigation"
                 onClick={() => setShowNewJobSheet(false)}
-                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[#eff6ff] transition-all active:scale-[0.97]"
+                className="flex-1 rounded-xl h-11 flex items-center justify-center gap-2 bg-[var(--type-mitigation-bg)] transition-all active:scale-[0.97]"
               >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[#3b82f6]">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="text-[var(--type-mitigation)]">
                   <path d="M12 2.69l.66.72C13.52 4.35 16.5 7.7 16.5 11.5a4.5 4.5 0 0 1-9 0c0-3.8 2.98-7.15 3.84-8.09L12 2.69Z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="currentColor" fillOpacity="0.15" />
                 </svg>
-                <span className="text-[13px] font-semibold text-[#3b82f6]">Mitigation</span>
+                <span className="text-[13px] font-semibold text-[var(--type-mitigation)]">Mitigation</span>
               </Link>
               <Link
                 href="/jobs/new?type=reconstruction"

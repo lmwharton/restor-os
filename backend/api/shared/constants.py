@@ -45,16 +45,20 @@ VALID_WALL_TYPES: set[str] = {"exterior", "interior"}
 
 VALID_OPENING_TYPES: set[str] = {"door", "window", "missing_wall"}
 
-# --- Job lifecycle ---
+# --- Job lifecycle (Spec 01K) ---
 #
 # Jobs in these statuses are frozen: floor plan + room + wall data cannot be
-# mutated. Only "collected" (payment received, file closed) is a true terminal
-# state. "complete" means the tech finished field work but docs are still being
-# assembled; "submitted" means the scope went to the carrier but resubmits are
-# routine after rejection. Both must stay editable.
+# mutated. Per Spec 01K, three terminal states are archived:
+#   - "paid"      — full payment received, job closed
+#   - "cancelled" — active work cancelled
+#   - "lost"      — lead never converted
+#
+# `invoiced` is read-only at the application layer (handled in api/jobs/service.py
+# update_job — see READ_ONLY_STATUSES) but NOT archived (still in active lists,
+# can transition to disputed or paid).
 #
 # Enforced by api.shared.guards.ensure_job_mutable at every write path that
 # touches floor-plan-shaped data (floor_plans, job_rooms, wall_segments,
 # wall_openings). Single source of truth so walls/rooms/floor_plans services
 # agree on what "archived" means.
-ARCHIVED_JOB_STATUSES: frozenset[str] = frozenset({"collected"})
+ARCHIVED_JOB_STATUSES: frozenset[str] = frozenset({"paid", "cancelled", "lost"})

@@ -11,10 +11,25 @@ export type LossType = "water" | "fire" | "mold" | "storm" | "other";
 export type WaterCategory = "1" | "2" | "3";
 export type WaterClass = "1" | "2" | "3" | "4";
 export type JobType = "mitigation" | "reconstruction";
+
+// ─── Job lifecycle status (Spec 01K) ────────────────────────────────
+// Single business-lifecycle flow shared by all job types.
+// Backend stores snake_case; UI labels rendered via STATUS_META in lib/labels.ts.
 export type JobStatus =
-  | "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected"  // mitigation
-  | "scoping" | "in_progress";  // reconstruction-only
-// Note: "new", "complete", "submitted", "collected" are shared across both pipelines
+  | "lead"       // initial inquiry, not yet committed work
+  | "active"     // crew on-site or scheduled
+  | "on_hold"    // paused, waiting on external dependency
+  | "completed"  // work finished, ready for invoicing
+  | "invoiced"   // invoice sent, in collections phase
+  | "disputed"   // carrier denied; estimate becomes editable for supplement
+  | "paid"       // payment received, archived
+  | "cancelled"  // active work cancelled
+  | "lost";      // lead never converted
+
+export const JOB_STATUSES: readonly JobStatus[] = [
+  "lead", "active", "on_hold", "completed", "invoiced", "disputed", "paid", "cancelled", "lost",
+] as const;
+
 export type ReconPhaseStatus = "pending" | "in_progress" | "on_hold" | "complete";
 export type PhotoType = "damage" | "equipment" | "protection" | "containment" | "moisture_reading" | "before" | "after";
 export type ReportType = "full_report" | "mitigation_invoice" | "reconstruction_report";
@@ -22,9 +37,9 @@ export type ReportStatus = "draft" | "generating" | "ready" | "failed";
 export type ShareScope = "full" | "restoration_only" | "photos_only";
 
 // ─── Pipeline stages (for dashboard) ─────────────────────────────────
-export type MitigationPipelineStage = "new" | "contracted" | "mitigation" | "drying" | "complete" | "submitted" | "collected";
-export type ReconPipelineStage = "new" | "scoping" | "in_progress" | "complete" | "submitted" | "collected";
-export type PipelineStage = MitigationPipelineStage | ReconPipelineStage;
+// Spec 01K replaces the dual mit/recon pipeline rows with a single 9-status
+// lifecycle pipeline. PipelineStage IS JobStatus now.
+export type PipelineStage = JobStatus;
 
 // ─── Properties ───────────────────────────────────────────────────────
 export interface Property {
@@ -106,6 +121,28 @@ export interface Job {
   updated_by: string | null;
   created_at: string;
   updated_at: string;
+
+  // Spec 01K — lifecycle timestamps + reason fields + lead source.
+  // All nullable; populated when the relevant transition fires. Marked
+  // optional so existing mock data + test fixtures don't need a churn
+  // pass — the backend always emits the keys (null when unset).
+  active_at?: string | null;
+  completed_at?: string | null;
+  invoiced_at?: string | null;
+  disputed_at?: string | null;
+  dispute_resolved_at?: string | null;
+  paid_at?: string | null;
+  cancelled_at?: string | null;
+  on_hold_reason?: string | null;
+  on_hold_resume_date?: string | null;
+  cancel_reason?: string | null;
+  cancel_reason_other?: string | null;
+  dispute_reason?: string | null;
+  dispute_count?: number;
+  contract_signed_at?: string | null;
+  estimate_last_finalized_at?: string | null;
+  lead_source?: string | null;
+  lead_source_other?: string | null;
 }
 
 export interface JobDetail extends Job {

@@ -1,55 +1,27 @@
 import { describe, it, expect } from "vitest";
-import type { PipelineStage, JobStatus, MitigationPipelineStage, ReconPipelineStage, JobType, ReconPhaseStatus } from "../types";
+import type { PipelineStage, JobStatus, JobType, ReconPhaseStatus } from "../types";
+import { JOB_STATUSES } from "../types";
 
-describe("PipelineStage type", () => {
-  it("includes complete as a valid stage", () => {
-    const stage: PipelineStage = "complete";
-    expect(stage).toBe("complete");
+describe("JobStatus type (Spec 01K)", () => {
+  it("includes all 9 lifecycle statuses", () => {
+    const allStatuses: JobStatus[] = [
+      "lead", "active", "on_hold", "completed", "invoiced", "disputed", "paid", "cancelled", "lost",
+    ];
+    expect(allStatuses).toHaveLength(9);
   });
 
-  it("includes all expected mitigation pipeline stages", () => {
-    const allStages: MitigationPipelineStage[] = [
-      "new",
-      "contracted",
-      "mitigation",
-      "drying",
-      "complete",
-      "submitted",
-      "collected",
-    ];
-    expect(allStages).toHaveLength(7);
-    expect(allStages).toContain("complete");
-  });
-
-  it("includes all expected reconstruction pipeline stages", () => {
-    const reconStages: ReconPipelineStage[] = [
-      "new",
-      "scoping",
-      "in_progress",
-      "complete",
-      "submitted",
-      "collected",
-    ];
-    expect(reconStages).toHaveLength(6);
-    expect(reconStages).toContain("scoping");
-    expect(reconStages).toContain("in_progress");
+  it("JOB_STATUSES const matches the type union", () => {
+    expect(JOB_STATUSES).toHaveLength(9);
+    expect(JOB_STATUSES).toContain("lead");
+    expect(JOB_STATUSES).toContain("disputed");
+    expect(JOB_STATUSES).toContain("lost");
   });
 });
 
-describe("JobStatus type", () => {
-  it("includes both mitigation and reconstruction statuses", () => {
-    const allStatuses: JobStatus[] = [
-      "new",
-      "contracted",
-      "mitigation",
-      "drying",
-      "complete",
-      "submitted",
-      "collected",
-      "scoping",
-      "in_progress",
-    ];
-    expect(allStatuses).toHaveLength(9);
+describe("PipelineStage type", () => {
+  it("PipelineStage IS JobStatus (single 9-status pipeline)", () => {
+    const stage: PipelineStage = "active";
+    expect(stage).toBe("active");
   });
 });
 

@@ -178,7 +178,8 @@ def _users_table_mock(user_id, company_id):
     """Return a MagicMock configured for the 'users' table auth lookup."""
     t = AsyncSupabaseMock()
     chain = t.select.return_value.eq.return_value.is_.return_value
-    chain.single.return_value.execute.return_value = MagicMock(
+    # Auth middleware uses .maybe_single() (commit 7423ce2).
+    chain.maybe_single.return_value.execute.return_value = MagicMock(
         data={
             "id": str(user_id),
             "company_id": str(company_id),

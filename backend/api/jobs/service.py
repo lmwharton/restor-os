@@ -9,6 +9,9 @@ from uuid import UUID
 
 from postgrest.exceptions import APIError
 
+# Spec 01K — single 9-status lifecycle. Imported from lifecycle.py to keep
+# the matrix in one place (mirrored on the frontend in lib/labels.ts).
+from api.jobs import lifecycle
 from api.jobs.schemas import (
     JobBatchCreate,
     JobBatchResponse,
@@ -17,6 +20,7 @@ from api.jobs.schemas import (
     JobDetailResponse,
     JobUpdate,
     LinkedJobSummary,
+    StatusUpdateBody,
 )
 from api.shared.database import get_authenticated_client, get_supabase_admin_client
 from api.shared.events import log_event
@@ -30,38 +34,9 @@ JOB_NUMBER_MAX_RETRIES = 5
 VALID_LOSS_TYPES = {"water", "fire", "mold", "storm", "other"}
 VALID_LOSS_CATEGORIES = {"1", "2", "3"}
 VALID_LOSS_CLASSES = {"1", "2", "3", "4"}
-VALID_STATUSES = {
-    "new",
-    "contracted",
-    "mitigation",
-    "drying",
-    "scoping",
-    "in_progress",
-    "complete",
-    "submitted",
-    "collected",
-}
+VALID_STATUSES = lifecycle.VALID_STATUSES
 VALID_SORT_FIELDS = {"created_at", "updated_at", "job_number", "customer_name"}
 VALID_JOB_TYPES = {"mitigation", "reconstruction"}
-
-# Which statuses are valid for each job type
-MITIGATION_STATUSES = {
-    "new",
-    "contracted",
-    "mitigation",
-    "drying",
-    "complete",
-    "submitted",
-    "collected",
-}
-RECONSTRUCTION_STATUSES = {
-    "new",
-    "scoping",
-    "in_progress",
-    "complete",
-    "submitted",
-    "collected",
-}
 
 
 EMAIL_REGEX = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
@@ -218,6 +193,25 @@ def _parse_job_detail(
         updated_by=data.get("updated_by"),
         created_at=data["created_at"],
         updated_at=data["updated_at"],
+        # Spec 01K — lifecycle fields. All optional; populated only when the
+        # relevant transition has fired.
+        active_at=data.get("active_at"),
+        completed_at=data.get("completed_at"),
+        invoiced_at=data.get("invoiced_at"),
+        disputed_at=data.get("disputed_at"),
+        dispute_resolved_at=data.get("dispute_resolved_at"),
+        paid_at=data.get("paid_at"),
+        cancelled_at=data.get("cancelled_at"),
+        on_hold_reason=data.get("on_hold_reason"),
+        on_hold_resume_date=data.get("on_hold_resume_date"),
+        cancel_reason=data.get("cancel_reason"),
+        cancel_reason_other=data.get("cancel_reason_other"),
+        dispute_reason=data.get("dispute_reason"),
+        dispute_count=data.get("dispute_count") or 0,
+        contract_signed_at=data.get("contract_signed_at"),
+        estimate_last_finalized_at=data.get("estimate_last_finalized_at"),
+        lead_source=data.get("lead_source"),
+        lead_source_other=data.get("lead_source_other"),
         room_count=counts.get("room_count", 0),
         photo_count=counts.get("photo_count", 0),
         floor_plan_count=counts.get("floor_plan_count", 0),
@@ -348,10 +342,8 @@ async def create_job(
                 if linked_val is not None:
                     # Parse date strings from PostgREST into Python date objects
                     if field == "loss_date" and isinstance(linked_val, str):
-                        from datetime import date as date_type
-
                         try:
-                            linked_val = date_type.fromisoformat(linked_val)
+                            linked_val = date.fromisoformat(linked_val)
                         except ValueError:
                             linked_val = None
                     if linked_val is not None:
@@ -719,7 +711,7 @@ async def _create_job_fallback(
         "zip": body.zip,
         "loss_type": body.loss_type,
         "job_type": body.job_type,
-        "status": "new",
+        "status": "lead",  # Spec 01K — lifecycle's default starting state
         "created_by": str(user_id),
     }
 
@@ -895,12 +887,11 @@ async def update_job(
     if not updates:
         raise AppException(status_code=400, detail="No fields to update", error_code="NO_UPDATES")
 
-    # Validate enum fields if present
+    # Validate enum fields if present (status no longer accepted via this path).
     _validate_enums(
         loss_type=updates.get("loss_type"),
         loss_category=updates.get("loss_category"),
         loss_class=updates.get("loss_class"),
-        status=updates.get("status"),
     )
     _validate_contact_fields(
         customer_email=updates.get("customer_email"),
@@ -913,26 +904,12 @@ async def update_job(
 
     client = await get_authenticated_client(token)
 
-    # Validate status against job type if status is being changed
-    if "status" in updates:
-        current = await (
-            client.table("jobs")
-            .select("job_type")
-            .eq("id", str(job_id))
-            .eq("company_id", str(company_id))
-            .is_("deleted_at", "null")
-            .single()
-            .execute()
-        )
-        if current.data:
-            jtype = current.data.get("job_type", "mitigation")
-            allowed = MITIGATION_STATUSES if jtype == "mitigation" else RECONSTRUCTION_STATUSES
-            if updates["status"] not in allowed:
-                raise AppException(
-                    status_code=400,
-                    detail=f"Status '{updates['status']}' is not valid for {jtype} jobs",
-                    error_code="INVALID_STATUS_FOR_TYPE",
-                )
+    # Spec 01K — generic PATCH /jobs/{id} no longer accepts `status`. JobUpdate
+    # schema removed the field, and Pydantic's default `extra=ignore` strips
+    # any client attempt to sneak it through. A `{"status":"x"}`-only payload
+    # therefore lands in NO_UPDATES above (empty dict after stripping) — which
+    # is the correct user-facing signal. There is no reachable code path here
+    # where `status` survives into `updates`.
 
     result = await (
         client.table("jobs")
@@ -958,6 +935,124 @@ async def update_job(
 
     counts = await _get_job_counts(client, str(job_id))
     return _parse_job_detail(job_data, counts)
+
+
+# ---------------------------------------------------------------------------
+# Spec 01K — Status update (atomic, optimistic-locked)
+# ---------------------------------------------------------------------------
+
+
+async def update_status(
+    token: str,
+    company_id: UUID,
+    user_id: UUID,
+    job_id: UUID,
+    body: StatusUpdateBody,
+) -> JobDetailResponse:
+    """Move a job from one lifecycle status to another.
+
+    Validates the transition via the matrix, enforces required-reason rules,
+    and writes the status change + event_history entry atomically via
+    `rpc_update_job_status`. Returns 409 if the cached `expected_current_status`
+    is stale (optimistic lock fail).
+    """
+    target = body.status
+    expected = body.expected_current_status
+
+    # 1. Transition matrix check.
+    if not lifecycle.is_legal_transition(expected, target):
+        raise AppException(
+            status_code=400,
+            detail=f"Illegal transition {expected} → {target}",
+            error_code="ILLEGAL_TRANSITION",
+        )
+
+    # 2. Reason required for terminal/disputed/on-hold transitions.
+    needs_reason = target in lifecycle.REASON_REQUIRED
+    has_reason = (
+        bool((body.reason or "").strip())
+        or bool(body.cancel_reason or body.cancel_reason_other)
+    )
+    if needs_reason and not has_reason:
+        raise AppException(
+            status_code=400,
+            detail=f"Reason is required when moving a job to {target}.",
+            error_code="REASON_REQUIRED",
+        )
+
+    # 3. Resolve the canonical event_type.
+    if target == "invoiced" and expected == "disputed":
+        event_type = "dispute_resolved"
+    elif target == "active" and expected == "completed":
+        event_type = "job_reopened"
+    else:
+        event_type = lifecycle.event_type_for_transition(target)
+
+    # 4. Build the structured event_data payload (logged into event_history).
+    event_data: dict = {
+        "from_status": expected,
+        "to_status":   target,
+    }
+    if body.reason:
+        event_data["reason"] = body.reason.strip()
+    if body.override_gates:
+        event_data["override_gates"] = list(body.override_gates)
+    if body.override_reason:
+        event_data["override_reason"] = body.override_reason.strip()
+    if body.cancel_reason:
+        event_data["cancel_reason"] = body.cancel_reason
+    if body.cancel_reason_other:
+        event_data["cancel_reason_other"] = body.cancel_reason_other
+    if target == "on_hold" and body.resume_date:
+        event_data["resume_date"] = body.resume_date.isoformat()
+
+    # 5. Atomic RPC call. Returns NULL on optimistic-lock fail.
+    admin_client = await get_supabase_admin_client()
+    is_on_hold = target == "on_hold"
+    is_terminal_cancel = target in ("cancelled", "lost")
+    resume_iso = (
+        body.resume_date.isoformat() if is_on_hold and body.resume_date else None
+    )
+    rpc_params = {
+        "p_job_id": str(job_id),
+        "p_company_id": str(company_id),
+        "p_user_id": str(user_id),
+        "p_target_status": target,
+        "p_expected_current_status": expected,
+        "p_event_type": event_type,
+        "p_event_data": event_data,
+        "p_timestamp_field": lifecycle.TIMESTAMP_FIELDS.get(target),
+        "p_increment_dispute_count": target == "disputed",
+        "p_on_hold_reason": body.reason if is_on_hold else None,
+        "p_on_hold_resume_date": resume_iso,
+        "p_cancel_reason": body.cancel_reason if is_terminal_cancel else None,
+        "p_cancel_reason_other": body.cancel_reason_other if is_terminal_cancel else None,
+        "p_dispute_reason": body.reason if target == "disputed" else None,
+    }
+
+    result = await admin_client.rpc("rpc_update_job_status", rpc_params).execute()
+    raw = result.data
+    if isinstance(raw, list):
+        raw = raw[0] if raw else None
+
+    if raw is None:
+        # Optimistic-lock fail OR job not found — let the caller distinguish
+        # via a separate read if needed; either way the UI should refetch.
+        raise AppException(
+            status_code=409,
+            detail=(
+                "Job status has changed since you last loaded it. "
+                "Please refresh and try again."
+            ),
+            error_code="STATUS_CONFLICT",
+        )
+
+    # 6. Re-fetch counts + linked summary for the response (RPC returns the
+    #    raw row only; counts come via PostgREST embedded selects).
+    client = await get_authenticated_client(token)
+    counts = await _get_job_counts(client, str(job_id))
+    linked = await _get_linked_job_summary(client, raw.get("linked_job_id"))
+    return _parse_job_detail(raw, counts, linked)
 
 
 async def delete_job(
@@ -1037,35 +1132,30 @@ async def _delete_job_fallback(
 # ---------------------------------------------------------------------------
 
 # UI-label → backend-enum map. The Quick Add dropdown shows contractor
-# friendly labels; the DB already migrated past 'needs_scope/scoped/submitted'
-# to the 7-stage pipeline, so map onto those equivalents.
-#
-# Spec 01I § "Job status mapping":
-#   Lead       -> new       (default if omitted)
-#   Scoped     -> mitigation (matches the 49e2a91b6ebb migration's mapping)
-#   Submitted  -> submitted
-#
-# Pass-through is also accepted: if the caller sends an enum value that's
-# already in VALID_STATUSES, we trust it.
+# friendly labels; map onto Spec 01K's 9-status lifecycle. "Lead" is the
+# default starting state for a freshly added job; "Active" matches a job
+# already on the books with work scheduled; "Invoiced" matches a job whose
+# scope has already been billed out. Anything beyond that should come in
+# as a raw enum value.
 _UI_STATUS_LABEL_TO_ENUM: dict[str, str] = {
-    "lead": "new",
-    "scoped": "mitigation",
-    "submitted": "submitted",
+    "lead": "lead",
+    "active": "active",
+    "invoiced": "invoiced",
 }
 
 
 def _normalize_batch_status(raw: str | None) -> str:
     """Translate UI labels and enum values into the backend status enum.
 
-    Returns 'new' when ``raw`` is None / empty (the SQL default). Raises
-    AppException(400) on an unrecognized value rather than silently
-    coercing.
+    Returns 'lead' when ``raw`` is None / empty (the Spec 01K default for
+    new jobs). Raises AppException(400) on an unrecognized value rather
+    than silently coercing.
     """
     if raw is None:
-        return "new"
+        return "lead"
     s = str(raw).strip()
     if not s:
-        return "new"
+        return "lead"
     lowered = s.lower()
     if lowered in _UI_STATUS_LABEL_TO_ENUM:
         return _UI_STATUS_LABEL_TO_ENUM[lowered]

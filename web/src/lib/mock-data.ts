@@ -44,7 +44,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Dishwasher supply line failure",
     loss_date: dateStr(3),
     home_year_built: 1975,
-    status: "mitigation",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -86,7 +86,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Frozen pipe burst — second floor bathroom",
     loss_date: dateStr(5),
     home_year_built: null,
-    status: "drying",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -128,7 +128,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Sewer backup in basement",
     loss_date: dateStr(5),
     home_year_built: null,
-    status: "submitted",
+    status: "invoiced",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -170,7 +170,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Water heater leak",
     loss_date: dateStr(2),
     home_year_built: null,
-    status: "new",
+    status: "lead",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -212,7 +212,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Ice dam roof leak",
     loss_date: dateStr(6),
     home_year_built: null,
-    status: "drying",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -254,7 +254,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Washing machine overflow",
     loss_date: dateStr(7),
     home_year_built: null,
-    status: "drying",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: null,
@@ -296,7 +296,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Toilet overflow — commercial property",
     loss_date: dateStr(0),
     home_year_built: null,
-    status: "new",
+    status: "lead",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Emergency call — dispatched immediately",
@@ -323,7 +323,7 @@ export const mockJobs: JobDetail[] = [
       id: "j0000003-0000-0000-0000-000000000003",
       job_number: "JOB-20260321-003",
       job_type: "mitigation",
-      status: "submitted",
+      status: "invoiced",
     },
     job_number: "JOB-20260401-008",
     address_line1: "519 Pine Ridge Drive",
@@ -344,7 +344,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Sewer backup in basement — reconstruction after mitigation",
     loss_date: dateStr(5),
     home_year_built: null,
-    status: "in_progress",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Linked to mitigation JOB-20260321-003. Demo complete, rough-in underway.",
@@ -386,7 +386,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Kitchen fire — rebuild required",
     loss_date: dateStr(14),
     home_year_built: null,
-    status: "scoping",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Insurance-referred standalone reconstruction. No prior mitigation job in system.",
@@ -428,7 +428,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Basement flood — full rebuild after mitigation",
     loss_date: dateStr(20),
     home_year_built: null,
-    status: "new",
+    status: "lead",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Waiting on insurance approval to begin.",
@@ -454,7 +454,7 @@ export const mockJobs: JobDetail[] = [
       id: "j0000005-0000-0000-0000-000000000005",
       job_number: "JOB-20260320-005",
       job_type: "mitigation",
-      status: "drying",
+      status: "active",
     },
     job_number: "JOB-20260406-011",
     address_line1: "315 Elm Boulevard",
@@ -475,7 +475,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Ice dam roof leak — ceiling and wall rebuild",
     loss_date: dateStr(6),
     home_year_built: null,
-    status: "complete",
+    status: "completed",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Reconstruction complete, generating final report.",
@@ -517,7 +517,7 @@ export const mockJobs: JobDetail[] = [
     loss_cause: "Electrical fire in garage — partial rebuild",
     loss_date: dateStr(30),
     home_year_built: null,
-    status: "in_progress",
+    status: "active",
     floor_plan_id: null,
     assigned_to: null,
     notes: "Framing and electrical rough-in complete. Drywall phase starting.",
@@ -1287,15 +1287,32 @@ export const mockDashboardKPIs: DashboardKPIs = {
   cycle_change_days: -0.8,
 };
 
-export const mockPipeline: PipelineStageData[] = [
-  { stage: "new", label: "New", count: 2, amount: 0, color: "#dc2626" },
-  { stage: "contracted", label: "Contracted", count: 0, amount: 0, color: "#f59e0b" },
-  { stage: "mitigation", label: "Mitigation", count: 1, amount: 4200, color: "#e85d26" },
-  { stage: "drying", label: "Drying", count: 3, amount: 28500, color: "#2563eb" },
-  { stage: "complete", label: "Job Complete", count: 0, amount: 0, color: "#6b7280" },
-  { stage: "submitted", label: "Submitted", count: 1, amount: 12600, color: "#0891b2" },
-  { stage: "collected", label: "Collected", count: 4, amount: 41200, color: "#16a34a" },
-];
+// Spec 01K — single 9-status lifecycle pipeline. Colors + labels source
+// from STATUS_META so the mock dashboard reflects the same Option A
+// palette as production data — no hex drift if the palette flips.
+import { STATUS_META } from "./labels";
+import type { JobStatus } from "./types";
+
+const PIPELINE_COUNTS: Record<JobStatus, { count: number; amount: number }> = {
+  lead:      { count: 2, amount: 0 },
+  active:    { count: 4, amount: 32700 },
+  on_hold:   { count: 1, amount: 0 },
+  completed: { count: 0, amount: 0 },
+  invoiced:  { count: 1, amount: 12600 },
+  disputed:  { count: 0, amount: 0 },
+  paid:      { count: 4, amount: 41200 },
+  cancelled: { count: 0, amount: 0 },
+  lost:      { count: 0, amount: 0 },
+};
+
+export const mockPipeline: PipelineStageData[] = (
+  Object.keys(PIPELINE_COUNTS) as JobStatus[]
+).map((stage) => ({
+  stage,
+  label: STATUS_META[stage].label,
+  color: STATUS_META[stage].color,
+  ...PIPELINE_COUNTS[stage],
+}));
 
 export const mockPriorityTasks: PriorityTask[] = [
   // New

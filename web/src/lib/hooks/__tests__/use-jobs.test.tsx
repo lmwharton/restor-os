@@ -67,7 +67,7 @@ const fakeJob: JobDetail = {
   loss_cause: null,
   loss_date: null,
   home_year_built: null,
-  status: "new",
+  status: "lead",
   floor_plan_id: null,
   assigned_to: null,
   notes: null,

@@ -119,10 +119,13 @@ BEGIN
     -- (object_not_in_prerequisite_state) matches the convention used
     -- by the frozen-version trigger for "row is not in a mutable state",
     -- which is exactly what an archived job is.
-    IF v_job.status = 'collected' THEN
+    -- Spec 01K — three archived terminal statuses, not just paid.
+    -- Mirror api/shared/constants.py ARCHIVED_JOB_STATUSES so DB-level
+    -- guards stay consistent with service-layer guards.
+    IF v_job.status IN ('paid', 'cancelled', 'lost') THEN
         RAISE EXCEPTION 'Job archived'
               USING ERRCODE = '55006',
-                    MESSAGE = 'Cannot create floor plan for a collected job';
+                    MESSAGE = 'Cannot create floor plan for an archived job';
     END IF;
 
     -- 23502 (not_null_violation) semantically fits: the RPC's invariant

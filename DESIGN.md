@@ -50,7 +50,34 @@
 | Error (red) | #dc2626 | #fef2f2 | Error messages, destructive actions |
 | Non-obvious (orange) | #e85d26 | #fff3ed | AI-found line items (orange left border) |
 
-### Status Badge Colors
+### Status Badge Colors — Job Lifecycle (Spec 01K, 9 statuses, **Option A 4-bucket palette**)
+
+The lifecycle palette groups statuses into four operational buckets, with shade as the within-bucket variation. The pipeline bar reads as a health summary, not a rainbow: motion (orange family), waiting (amber family), won (greens deepening as money lands), closed (gray family). Source of truth: `web/src/lib/labels.ts` STATUS_META + `web/src/app/globals.css` `--status-*` tokens. **No blue.**
+
+| Bucket | Status | Text | Background | Memorable thing |
+|--------|--------|------|-----------|-----------------|
+| **In motion** | Lead | #8a7560 | #f3ece4 | Warm tan — pipeline entry, low commitment |
+| **In motion** | Active | #e85d26 | #fff3ed | **Brand orange** — crew is moving, this is "live" |
+| **Waiting** | On Hold | #b8801f | #fdefd8 | Amber — paused, contractor's call |
+| **Waiting** | Disputed | #c8501a | #fbe8dc | **Red-orange — the ONLY "act now" alarm color in the system** |
+| **Won** | Completed | #5fae7d | #e3f1e7 | Light green — work done, ready for invoicing |
+| **Won** | Invoiced | #2f8a5b | #dcefe2 | Mid green — money invoiced |
+| **Won** | Paid | #1f7a48 | #d4e8dc | Deep green — money landed |
+| **Closed** | Cancelled | #7a746e | #ebe7e3 | Warm gray — closed, not an error |
+| **Closed** | Lost | #a39990 | #f0ece8 | Lighter gray + strikethrough on label — never converted |
+
+**Differentiation rule:** Active / On Hold / Disputed all sit in the warm spectrum. Read them by saturation:
+- **Active** = brand orange (#e85d26) — brightest, used everywhere as primary
+- **On Hold** = quieter amber (#b8801f / #fdefd8) — paused, doesn't shout
+- **Disputed** = saturated red-orange (#c8501a / #fbe8dc) + brand-orange ring on dashboard map pins (shape differentiator) — the bar turns red here
+
+**Why "won" deepens:** Completed → Invoiced → Paid uses the same green family with deepening saturation, so visually a "Paid" badge feels like progress vs "Completed". Three different greens that mean three different things, but read as one bucket.
+
+**Why "cancelled" is gray, not red:** Cancelled is a closed terminal state — nothing's at stake anymore. Reserve red for things that need action (Disputed). Cancelled = "this doesn't matter to your day-to-day," not "this is an emergency."
+
+### Status Badge Colors — Legacy (pre-01K)
+
+The 5-status palette below is the pre-01K legacy palette. Once 01K migration runs, all jobs use the 9-status palette above. Kept here for reference until legacy code is removed.
 
 | Status | Text | Background |
 |--------|------|-----------|
@@ -59,6 +86,164 @@
 | Submitted | #5b6abf | #eef0fc |
 | Draft | #8a847e | #f5f5f4 |
 | In Progress | #d97706 | #fffbeb |
+
+### Contract Status Badge (header)
+
+When `contract_signed_at IS NOT NULL` on a job, show a small badge in the job detail header:
+
+```
+[ ✓ Contract signed ]   bg-[#edf7f0] text-[#2a9d5c] px-2 py-0.5 rounded text-[12px] font-medium
+```
+
+Pin badge inline next to the job number, never larger than the job number itself.
+
+### Disputed Map Pin (dashboard)
+
+Standard pin = filled circle in status color. Disputed pin gets an extra visual:
+
+```
+   ┌──┐  ← orange ring (#e85d26, 2px)
+   │██│  ← amber fill (#b45309)
+   └──┘
+   "Disputed" label below pin in 11px text-[#b45309]
+```
+
+The ring on top of the fill is what makes Disputed visually distinct from On Hold at glance distance.
+
+## Modals (new pattern for 01K)
+
+01K introduces two key modals: **Status Change** and **Closeout Checklist**. Both follow the same pattern.
+
+### Modal Container
+
+```
+- Overlay: bg-black/40 backdrop-blur-sm
+- Container: bg-white rounded-xl shadow-xl max-w-md w-full mx-4
+- Padding: 24px on all sides
+- Border: none (shadow + rounded does the work)
+```
+
+### Modal Structure
+
+```
+┌─────────────────────────────────────┐
+│ [Title] · 17px font-semibold        │
+│ [Subtitle] · 13px text-[#8a847e]    │  ← 4px gap
+│ ─────────────────────────────────── │  ← 24px gap
+│                                     │
+│ [Body content]                      │
+│                                     │
+│ ─────────────────────────────────── │  ← 24px gap, 1px border-t #eae6e1
+│        [Cancel]    [Primary action] │  ← 12px gap between buttons
+└─────────────────────────────────────┘
+```
+
+### Status Change Modal — specific layout
+
+```
+Title: Change job status
+Subtitle: 1042 Maple St · Active
+
+[Status selector] — pill buttons in a row, 1 per legal transition
+  ┌────────┐ ┌──────────┐ ┌───────────┐
+  │ Mark   │ │ Put on   │ │  Cancel  │
+  │ done   │ │  hold    │ │  job     │
+  └────────┘ └──────────┘ └───────────┘
+  (active state uses target-status color from palette above)
+
+[Reason field] — only shown when target status requires reason (on_hold, cancelled, lost, disputed)
+  Label: "Reason" · 13px text-[#6b6560]
+  Textarea: 3 rows, full-width, standard input styling
+
+[For on_hold only: Resume date]
+  Label: "Expected resume date (optional)"
+  Date picker (native or custom)
+
+[Gate failures section] — only shown if closeout gates fail
+  ⚠️  Contract not signed (acknowledge)
+  ⚠️  2 air movers still placed (warning)
+  [Close anyway reason ▾]   ← dropdown, only shown if any 'acknowledge' gate failed
+
+[Footer buttons]
+  [Cancel] (ghost) · [Submit] (primary, color matches target status)
+```
+
+### Closeout Checklist Modal — specific layout
+
+```
+Title: Mark this job completed?
+Subtitle: 1042 Maple St · Mitigation
+
+[Checklist] — one row per gate item, with icon + label + status
+  ✅ Contract signed
+  ✅ Photos tagged Final/After (4 of 4 rooms)
+  ⚠️  2 air movers still placed                   ← amber warning icon
+  ✅ All rooms at dry standard
+  ✅ Scope finalized (estimate sent 4/10)
+  🚫 Certificate not yet generated                ← red icon — hard block
+
+[If any 'acknowledge' gate fails → Close Anyway reason]
+  Label: "Why are you closing without [item]?"
+  Dropdown: Customer requested early completion / Scope transferred / Job cancelled partial / Dry standard override already logged / Other (free text)
+
+[Footer]
+  [Cancel] (ghost) · [Mark Completed] (primary green, disabled if hard_block)
+```
+
+### Modal Touch Targets
+
+- Buttons: 48px minimum height (gloves)
+- Pill selectors: 56px min — bigger because tech might be deciding fast
+- Form inputs: 48px min height, 16px font (no iOS zoom)
+
+## Settings — Closeout Requirements Page
+
+Admin page at `/settings/closeout`. Owner / admin role only.
+
+### Layout
+
+```
+┌──────────────────────────────────────────────────────────┐
+│ Closeout Requirements                                    │
+│ Configure when each job type is allowed to be marked    │
+│ Completed.                                               │
+│                                                          │
+│ ┌────────────────────────────────────────────────────┐  │
+│ │                Mit    Build-Back   Fire/Smoke      │  │
+│ │ Contract       [Ack▾] [Ack▾]       [Ack▾]          │  │
+│ │ Photos/room    [Warn▾][Warn▾]      [Warn▾]         │  │
+│ │ Moisture/room  [Warn▾](n/a)        (n/a)           │  │
+│ │ ...                                                │  │
+│ │                                                    │  │
+│ │ [Reset Mit]  [Reset Build-Back]  [Reset Fire/Smoke]│  │
+│ └────────────────────────────────────────────────────┘  │
+│                                                          │
+│ Legend:                                                  │
+│ ⚠️  Warning    Ack  Must acknowledge    🚫 Hard block    │
+└──────────────────────────────────────────────────────────┘
+```
+
+- Table: 1024px max-width, 1px borders #eae6e1, no shadows
+- Cell dropdown: 32px height, full-width within cell, white bg, border-[#eae6e1] rounded-md
+- (n/a) cells: muted grey #b5b0aa, italic, no dropdown
+- Reset buttons: ghost style, only confirms after AskUserQuestion-style modal
+- Help text below table: "Default for new companies: all Warning except Contract Signed = Must Acknowledge"
+
+## Job Detail Header — additions for 01K
+
+Add three new pieces below the job number:
+
+```
+JOB-20260418-007        Active                    1042 Maple St
+                                                  ──────────────
+                        [✓ Contract signed]                    
+                        Cycle time: 4 days        Days to payment: —
+                        ──────────────────        ──────────────
+```
+
+- Cycle time appears once status reaches Completed (computed from `active_at → completed_at`)
+- Days-to-payment appears once status reaches Paid (computed from `invoiced_at → paid_at`, excluding time spent in `disputed`)
+- Both styled: 11px text-[#8a847e] uppercase tracking-wide for label, 13px text-[#1a1a1a] font-semibold for value
 
 ## Layout
 
