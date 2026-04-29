@@ -19,22 +19,42 @@ JOB_STATUSES: tuple[str, ...] = (
 # Same set, used for membership checks (mirrors the jobs_status_check constraint).
 VALID_STATUSES: frozenset[str] = frozenset(JOB_STATUSES)
 
-# Transition matrix: source → set of legal targets.
+# Transition matrix: source → set of legal targets. Every status can move to
+# every other status — opened up 2026-04-29 because contractors make mistakes
+# and need an undo path. Off-happy-path transitions still require a reason
+# (see `transition_needs_reason`); closeout gates still enforced via the
+# closeout-checklist modal when target=`completed`.
 # Mirrored on the frontend in web/src/lib/labels.ts STATUS_TRANSITIONS.
 STATUS_TRANSITIONS: dict[str, frozenset[str]] = {
-    "lead":      frozenset({"active", "lost"}),
-    "active":    frozenset({"on_hold", "completed", "cancelled"}),
-    "on_hold":   frozenset({"active", "cancelled"}),
-    "completed": frozenset({"invoiced", "active"}),        # active = reopen
-    "invoiced":  frozenset({"paid", "disputed"}),
-    "disputed":  frozenset({"invoiced", "cancelled"}),     # invoiced = supplement filed
-    "paid":      frozenset(),
-    "cancelled": frozenset(),
-    "lost":      frozenset(),
+    s: frozenset(t for t in JOB_STATUSES if t != s) for s in JOB_STATUSES
 }
 
-# Statuses that require a reason on transition INTO them.
+# Canonical forward-pipeline transitions that never need a reason. Anything
+# else (off-ramp, backward, skip-ahead) requires a reason so the audit trail
+# captures *why* the contractor went off-script.
+HAPPY_PATH_TRANSITIONS: frozenset[tuple[str, str]] = frozenset({
+    ("lead",      "active"),
+    ("active",    "completed"),
+    ("completed", "invoiced"),
+    ("invoiced",  "paid"),
+    ("on_hold",   "active"),     # resume
+    ("disputed",  "invoiced"),   # dispute resolved / supplement filed
+})
+
+# Statuses that always require a reason on transition INTO them (off-ramps + dispute).
 REASON_REQUIRED: frozenset[str] = frozenset({"on_hold", "cancelled", "lost", "disputed"})
+
+
+def transition_needs_reason(from_status: str, to_status: str) -> bool:
+    """True if this from→to transition needs a reason. Combines:
+      • Off-ramp / dispute targets (always need a reason)
+      • Any move OFF the canonical happy-path forward pipeline
+
+    Intentional happy-path transitions (lead→active, etc.) stay reason-free.
+    """
+    if to_status in REASON_REQUIRED:
+        return True
+    return (from_status, to_status) not in HAPPY_PATH_TRANSITIONS
 
 # Per-status timestamp field set on entry. None = no timestamp field
 # (e.g. lead has no timestamp because it's the default state).

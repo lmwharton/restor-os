@@ -188,10 +188,10 @@ const MONO = "font-[family-name:var(--font-geist-mono)]";
 
 // Spec 01K — single 9-status pipeline. STAGE_META imports STATUS_META from labels.ts
 // (single source of truth), but exposes the {label, color, bg} shape this file uses.
-const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string }> =
+const STAGE_META: Record<PipelineStage, { label: string; color: string; bg: string; ink: string; fg: string }> =
   Object.fromEntries(
-    JOB_STATUSES.map((s) => [s, { label: STATUS_META[s].label, color: STATUS_META[s].color, bg: STATUS_META[s].bg }])
-  ) as Record<PipelineStage, { label: string; color: string; bg: string }>;
+    JOB_STATUSES.map((s) => [s, { label: STATUS_META[s].label, color: STATUS_META[s].color, bg: STATUS_META[s].bg, ink: STATUS_META[s].ink, fg: STATUS_META[s].fg }])
+  ) as Record<PipelineStage, { label: string; color: string; bg: string; ink: string; fg: string }>;
 
 const STAGE_ORDER: readonly PipelineStage[] = JOB_STATUSES;
 
@@ -399,11 +399,12 @@ function PipelineBar({
                   style={{
                     width: `${widthPct}%`,
                     backgroundColor: meta.color,
+                    color: meta.fg,
                   }}
                   title={`${count} jobs in ${meta.label} — click to filter`}
                 >
-                  <span className="text-[13px] font-bold text-white leading-none drop-shadow-sm">{count}</span>
-                  <span className="text-[9px] font-semibold text-white/90 uppercase tracking-wide drop-shadow-sm hidden sm:inline">{meta.label}</span>
+                  <span className="text-[13px] font-bold leading-none">{count}</span>
+                  <span className="text-[9px] font-semibold opacity-90 uppercase tracking-wide hidden sm:inline">{meta.label}</span>
                 </button>
               );
             })}
@@ -505,7 +506,7 @@ function JobsList({
                 </div>
                 <span
                   className={`text-[9px] ${MONO} uppercase tracking-wider px-1.5 py-0.5 rounded shrink-0`}
-                  style={{ backgroundColor: meta.bg, color: meta.color }}
+                  style={{ backgroundColor: meta.bg, color: meta.ink }}
                 >
                   {meta.label}
                 </span>

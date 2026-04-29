@@ -42,17 +42,18 @@ textarea:focus::placeholder {
   --brand-accent: #e85d26;
 
   /* Status colors — Spec 01K 9-status lifecycle, Option A 4-bucket palette.
+     Canonical hex from Anthropic Design "Pipeline Palette Options.html" 2026-04-29.
      Keep in sync with web/src/lib/status-colors.ts and web/src/lib/labels.ts.
      Buckets: motion (orange) · waiting (amber) · won (green) · closed (gray). */
-  --status-lead:      #8a7560;  /* warm tan — quiet "in motion" */
+  --status-lead:      #c8b8a8;  /* cream tan — quiet entry, not gray (avoid closed-state confusion) */
   --status-active:    #e85d26;  /* brand orange — full motion */
-  --status-on-hold:   #b8801f;  /* amber — waiting */
+  --status-on-hold:   #e8a23a;  /* warm amber — waiting */
   --status-disputed:  #c8501a;  /* red-orange — only "act now" alarm */
-  --status-completed: #5fae7d;  /* light green — won */
-  --status-invoiced:  #2f8a5b;  /* mid green — money invoiced */
+  --status-completed: #a8d4b6;  /* light mint — won bucket entry */
+  --status-invoiced:  #5fae7d;  /* medium green — money invoiced */
   --status-paid:      #1f7a48;  /* deep green — money landed */
   --status-cancelled: #7a746e;  /* warm gray — closed */
-  --status-lost:      #a39990;  /* lighter gray — lost */
+  --status-lost:      #d4cdc6;  /* light gray — lead that never converted */
 
   /* Status backgrounds — hand-tuned warm tints (NOT alpha overlays).
      Mirror of STATUS_BG in web/src/lib/status-colors.ts. */
@@ -60,11 +61,34 @@ textarea:focus::placeholder {
   --status-active-bg:    #fff3ed;
   --status-on-hold-bg:   #fdefd8;
   --status-disputed-bg:  #fbe8dc;
-  --status-completed-bg: #e3f1e7;
-  --status-invoiced-bg:  #dcefe2;
-  --status-paid-bg:      #d4e8dc;
+  --status-completed-bg: #ecf6ef;  /* lightest green tint */
+  --status-invoiced-bg:  #e3f1e7;  /* medium-light green tint */
+  --status-paid-bg:      #dcefe2;  /* medium green tint */
   --status-cancelled-bg: #ebe7e3;
   --status-lost-bg:      #f0ece8;
+
+  /* Pipeline-segment foreground (text color on the saturated --status-* fill). */
+  --status-lead-fg:      #1a1a1a;
+  --status-active-fg:    #ffffff;
+  --status-on-hold-fg:   #1a1a1a;
+  --status-disputed-fg:  #ffffff;
+  --status-completed-fg: #1a1a1a;
+  --status-invoiced-fg:  #ffffff;
+  --status-paid-fg:      #ffffff;
+  --status-cancelled-fg: #ffffff;
+  --status-lost-fg:      #5a544f;
+
+  /* Chip ink — text color on the LIGHT --status-*-bg tint. Darker than
+     --status-* so labels stay legible against the pale tint. */
+  --status-lead-ink:      #5a544f;
+  --status-active-ink:    #c44912;
+  --status-on-hold-ink:   #a35e0c;
+  --status-disputed-ink:  #a23f10;
+  --status-completed-ink: #1f6a3c;
+  --status-invoiced-ink:  #1c6b41;
+  --status-paid-ink:      #155f37;
+  --status-cancelled-ink: #3a3633;
+  --status-lost-ink:      #7a746e;
 
   /* Job type colors — spec 01K Option A bans pure blue. Mitigation gets a
      desaturated teal (water/drying semantic, warm-aware) instead of #3b82f6. */

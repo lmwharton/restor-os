@@ -14,15 +14,15 @@
 import type { JobStatus } from "./types";
 
 export const STATUS_COLORS: Record<JobStatus, string> = {
-  lead:      "#8a7560",  // warm tan — quiet "in motion"
+  lead:      "#c8b8a8",  // cream tan — quiet "in motion", reads as neutral entry
   active:    "#e85d26",  // brand orange — full motion
-  on_hold:   "#b8801f",  // amber — waiting
+  on_hold:   "#e8a23a",  // warm amber — waiting (was #b8801f, design called for warmer)
   disputed:  "#c8501a",  // red-orange — only "act now" color
-  completed: "#5fae7d",  // light green — won
-  invoiced:  "#2f8a5b",  // mid green — money invoiced
+  completed: "#a8d4b6",  // light mint — won bucket entry
+  invoiced:  "#5fae7d",  // medium green — money invoiced
   paid:      "#1f7a48",  // deep green — money landed
   cancelled: "#7a746e",  // warm gray — closed
-  lost:      "#a39990",  // lighter gray — lost
+  lost:      "#d4cdc6",  // light gray — lead-that-never-converted
 } as const;
 
 /**
@@ -36,11 +36,45 @@ export const STATUS_BG: Record<JobStatus, string> = {
   active:    "#fff3ed",
   on_hold:   "#fdefd8",
   disputed:  "#fbe8dc",
-  completed: "#e3f1e7",
-  invoiced:  "#dcefe2",
-  paid:      "#d4e8dc",
+  completed: "#ecf6ef",  // lightest green — pairs with #a8d4b6
+  invoiced:  "#e3f1e7",  // medium-light green — pairs with #5fae7d
+  paid:      "#dcefe2",  // medium green tint — pairs with #1f7a48
   cancelled: "#ebe7e3",
   lost:      "#f0ece8",
+} as const;
+
+/**
+ * Pipeline-segment foreground (text on the saturated STATUS_COLORS bg).
+ * Picked for WCAG AA contrast: dark text on light fills, white on dark.
+ * Per design Option A `--c-{status}-fg`.
+ */
+export const STATUS_FG: Record<JobStatus, string> = {
+  lead:      "#1a1a1a",
+  active:    "#ffffff",
+  on_hold:   "#1a1a1a",
+  disputed:  "#ffffff",
+  completed: "#1a1a1a",
+  invoiced:  "#ffffff",
+  paid:      "#ffffff",
+  cancelled: "#ffffff",
+  lost:      "#5a544f",
+} as const;
+
+/**
+ * Chip ink (text color on the LIGHT STATUS_BG tint, NOT on the saturated
+ * fill). Darker than STATUS_COLORS so the label stays legible against the
+ * pale tint. Per design Option A chip palette.
+ */
+export const STATUS_INK: Record<JobStatus, string> = {
+  lead:      "#5a544f",
+  active:    "#c44912",
+  on_hold:   "#a35e0c",
+  disputed:  "#a23f10",
+  completed: "#1f6a3c",
+  invoiced:  "#1c6b41",
+  paid:      "#155f37",
+  cancelled: "#3a3633",
+  lost:      "#7a746e",
 } as const;
 
 // Job type indicator dots — distinct from lifecycle status colors. Spec 01K
