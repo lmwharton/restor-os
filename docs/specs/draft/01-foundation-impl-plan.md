@@ -29,7 +29,6 @@
 | `backend/api/customers/service.py` | 01J/01K | CRUD + dedup + match |
 | `backend/api/customers/router.py` | 01J/01K | 5 + 1 endpoints |
 | `backend/api/shared/phone.py` | 01J | `normalize_phone()` E.164 helper |
-| `backend/api/shared/encryption.py` | 01L | Fernet helpers for `properties.notes` |
 | `backend/api/shared/sanitize_notes.py` | 01L | `sanitize_notes()` via bleach |
 | `backend/api/shared/rate_limit.py` (if not present) | 01K | Per-user 60/min rate limit decorator for match endpoints |
 | `backend/tests/test_customers.py` | 01J | ~30 tests |
@@ -38,7 +37,6 @@
 | `backend/tests/test_property_detail_endpoints.py` | 01L | ~12 tests |
 | `backend/tests/test_customer_detail_endpoints.py` | 01L | ~6 tests |
 | (existing `backend/tests/test_jobs.py` extended) | 01M | +3 tests for the COPY_FIELDS update |
-| `backend/tests/test_notes_encryption.py` | 01L | ~5 tests |
 | `backend/tests/test_sanitize_notes.py` | 01L | ~4 tests |
 
 ### Created — Frontend
@@ -61,7 +59,7 @@
 ### Modified — Backend
 | Path | Spec | Change |
 |------|------|--------|
-| `backend/pyproject.toml` | 01J/01L | Add `phonenumbers>=8.13.0,<9`, `bleach>=6.1`, `cryptography>=42` |
+| `backend/pyproject.toml` | 01J/01L | Add `phonenumbers>=8.13.0,<9`, `bleach>=6.1` |
 | `backend/api/main.py` | 01J | Register `customers.router` |
 | `backend/api/properties/schemas.py` | 01J/01K/01L | Accept `customer_id`; nested customer in response; new sub-resource schemas; reject notes fields on main PATCH |
 | `backend/api/properties/service.py` | 01J/01K/01L | Cross-company FK validation; 23505 catch on POST/PATCH; nested customer embed; sub-resource logic; admin gate for customer_id changes |
@@ -70,7 +68,6 @@
 | `backend/api/jobs/service.py` | 01J/01M | FK pre-fetch; **update existing `COPY_FIELDS` list** (drop `customer_*`/`address_*`, add `customer_id` + `loss_category`/`loss_class`/`loss_cause`) |
 | `backend/api/jobs/router.py` | 01J | Refactored body shape. (Existing routes preserved.) |
 | `backend/api/sharing/service.py` | 01J | Column-projection whitelist for customer fields |
-| `backend/api/config.py` | 01L | `GATE_CODE_FERNET_KEYS` env var |
 
 ### Modified — Frontend
 | Path | Spec | Change |
@@ -92,11 +89,10 @@
 
 **Files:** `backend/pyproject.toml`
 
-- [ ] **Step 1:** Open `backend/pyproject.toml`, locate `dependencies = [ ... ]`. Add three lines (alphabetical):
+- [ ] **Step 1:** Open `backend/pyproject.toml`, locate `dependencies = [ ... ]`. Add two lines (alphabetical):
 
 ```toml
 "bleach>=6.1,<7",
-"cryptography>=42,<43",
 "phonenumbers>=8.13.0,<9",
 ```
 
@@ -107,54 +103,22 @@ cd backend && pip install -e ".[dev]"
 
 - [ ] **Step 3:** Verify imports:
 ```bash
-cd backend && python -c "import phonenumbers, bleach; from cryptography.fernet import Fernet, MultiFernet; print('ok')"
+cd backend && python -c "import phonenumbers, bleach; print('ok')"
 ```
 
 - [ ] **Step 4:** Commit:
 ```bash
 git add backend/pyproject.toml
-git commit -m "deps: phonenumbers, bleach, cryptography (foundation rollout)"
+git commit -m "deps: phonenumbers, bleach (foundation rollout)"
 ```
 
-### Task 0.2: Generate Fernet key + add env vars
+### Task 0.2: Verify Google Maps key
 
-**Files:** `backend/api/config.py`, `backend/.env.example`, `web/.env.example`
+- [ ] **Step 1:** Confirm `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` exists in `web/.env.local` (already verified — set with a real key).
 
-- [ ] **Step 1:** Generate a Fernet key:
-```bash
-cd backend && python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-```
+- [ ] **Step 2:** Optionally harden in Google Cloud Console: HTTP-referrer restriction to localhost + staging + production domains; API restriction to Places API + Geocoding API + Maps JavaScript API only. Not blocking — can do post-launch.
 
-Copy the output (e.g., `g9V...=`).
-
-- [ ] **Step 2:** Add to `backend/.env` (NOT committed) and `backend/.env.example` (committed, with placeholder):
-```
-# .env (real key, never committed)
-GATE_CODE_FERNET_KEYS=g9V_actual_key=
-# .env.example (placeholder)
-GATE_CODE_FERNET_KEYS=  # comma-separated Fernet keys, newest first; rotate quarterly
-```
-
-- [ ] **Step 3:** Add to `backend/api/config.py` Settings class:
-```python
-class Settings(BaseSettings):
-    # ... existing fields ...
-    gate_code_fernet_keys: str  # comma-separated; MultiFernet rotates by parsing all
-```
-
-- [ ] **Step 4:** Verify Railway production secrets are set (cannot test locally — this is a manual checklist item the operator confirms before deploy):
-```bash
-# In Railway dashboard: Variables → confirm GATE_CODE_FERNET_KEYS is present
-echo "Manual: confirm GATE_CODE_FERNET_KEYS is set in Railway"
-```
-
-- [ ] **Step 5:** Frontend env: confirm `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` exists in `web/.env.local`. If not, generate one in Google Cloud Console with `Places API`, `Geocoding API`, `Maps JavaScript API` enabled and HTTP-referrer restriction to `localhost:3000` + production domain. Document in `web/CLAUDE.md` under "Google Maps API key".
-
-- [ ] **Step 6:** Commit:
-```bash
-git add backend/api/config.py backend/.env.example
-git commit -m "config: add GATE_CODE_FERNET_KEYS for gate_code encryption (01L)"
-```
+No commit — this is just a verification step.
 
 ---
 
@@ -467,102 +431,9 @@ git commit -m "shared: normalize_phone E.164 helper (01J)"
 
 ---
 
-## Phase 3: Encryption + sanitization helpers (01L)
+## Phase 3: Notes sanitization helper (01L)
 
-### Task 3.1: Implement Fernet notes encryption helpers
-
-**Files:** `backend/api/shared/encryption.py`, `backend/tests/test_notes_encryption.py`
-
-- [ ] **Step 1:** Write failing tests:
-
-```python
-# backend/tests/test_notes_encryption.py
-import pytest
-from cryptography.fernet import Fernet
-from api.shared.encryption import encrypt_notes, decrypt_notes
-
-
-@pytest.fixture(autouse=True)
-def setup_keys(monkeypatch):
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", Fernet.generate_key().decode())
-    import api.shared.encryption as enc
-    enc._fernet = None
-
-
-def test_roundtrip():
-    plaintext = "Gate code: 1234. Key under mat. Dog in yard."
-    ct = encrypt_notes(plaintext)
-    assert ct != plaintext
-    assert decrypt_notes(ct) == plaintext
-
-
-def test_none_passthrough():
-    assert encrypt_notes(None) is None
-    assert encrypt_notes("") is None
-    assert decrypt_notes(None) is None
-
-
-def test_invalid_token_raises():
-    from cryptography.fernet import InvalidToken
-    with pytest.raises(InvalidToken):
-        decrypt_notes("not-a-valid-token")
-
-
-def test_multifernet_rotation(monkeypatch):
-    old_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", old_key)
-    import api.shared.encryption as enc
-    enc._fernet = None
-    ct_old = encrypt_notes("Gate 1234")
-
-    new_key = Fernet.generate_key().decode()
-    monkeypatch.setenv("GATE_CODE_FERNET_KEYS", f"{new_key},{old_key}")
-    enc._fernet = None
-    assert decrypt_notes(ct_old) == "Gate 1234"
-    ct_new = encrypt_notes("Gate 1234")
-    assert ct_new != ct_old
-```
-
-- [ ] **Step 2:** Run tests, expect failure.
-
-- [ ] **Step 3:** Implement `backend/api/shared/encryption.py`:
-
-```python
-import os
-from cryptography.fernet import Fernet, MultiFernet
-
-_fernet: MultiFernet | None = None
-
-
-def _build_fernet() -> MultiFernet:
-    keys_csv = os.environ["GATE_CODE_FERNET_KEYS"]
-    keys = [k.strip() for k in keys_csv.split(",") if k.strip()]
-    if not keys:
-        raise RuntimeError("GATE_CODE_FERNET_KEYS is empty")
-    return MultiFernet([Fernet(k) for k in keys])
-
-
-def encrypt_notes(plaintext: str | None) -> str | None:
-    if not plaintext:
-        return None
-    global _fernet
-    if _fernet is None:
-        _fernet = _build_fernet()
-    return _fernet.encrypt(plaintext.encode("utf-8")).decode("utf-8")
-
-
-def decrypt_notes(ciphertext: str | None) -> str | None:
-    if not ciphertext:
-        return None
-    global _fernet
-    if _fernet is None:
-        _fernet = _build_fernet()
-    return _fernet.decrypt(ciphertext.encode("utf-8")).decode("utf-8")
-```
-
-- [ ] **Step 4:** Run tests, expect pass. Commit.
-
-### Task 3.2: Notes sanitization helper
+### Task 3.1: Notes sanitization helper
 
 **Files:** `backend/api/shared/sanitize_notes.py`, `backend/tests/test_sanitize_notes.py`
 
@@ -975,8 +846,7 @@ async def list_property_photos(token, company_id, property_id, limit=50, offset=
   - `test_clear_notes_with_explicit_null`
   - `test_member_can_edit` (NOT admin-only)
   - `test_max_length_enforced` — 16001 chars → 422
-  - `test_html_stripped_before_encrypt` — `<script>alert(1)</script>hi` → GET returns `hi`
-  - `test_notes_encrypted_at_rest` — direct DB SELECT shows ciphertext, not plaintext
+  - `test_html_stripped` — `<script>alert(1)</script>hi` → GET returns `hi`
   - `test_extra_fields_rejected` — body with anything other than `notes` → 422
   - `test_main_property_patch_rejects_notes_field` — main `PATCH /v1/properties/{id}` with `notes` body → 422
 
@@ -991,7 +861,6 @@ class PropertyNotesUpdate(BaseModel):
 - [ ] **Step 3:** Implement `update_property_notes`:
 
 ```python
-from api.shared.encryption import encrypt_notes, decrypt_notes
 from api.shared.sanitize_notes import sanitize_notes
 
 
@@ -999,8 +868,7 @@ async def update_property_notes(token, company_id, user_id, property_id, body: P
     client = await get_authenticated_client(token)
     update_data = body.model_dump(exclude_unset=True)
     if "notes" in update_data:
-        clean = sanitize_notes(update_data["notes"])
-        update_data["notes"] = encrypt_notes(clean)
+        update_data["notes"] = sanitize_notes(update_data["notes"])
     if not update_data:
         return await get_property(token, company_id, property_id)
     result = await (
@@ -1012,20 +880,7 @@ async def update_property_notes(token, company_id, user_id, property_id, body: P
     )
     if not result.data:
         raise AppException(404, "Property not found", "PROPERTY_NOT_FOUND")
-    # Decrypt before returning
-    row = result.data
-    if row.get("notes"):
-        row["notes"] = decrypt_notes(row["notes"])
-    return row
-```
-
-Add `_decrypt_property_row(row)` helper in service.py and call it from `get_property`, `list_properties`, and any other read path:
-
-```python
-def _decrypt_property_row(row: dict) -> dict:
-    if row.get("notes"):
-        row["notes"] = decrypt_notes(row["notes"])
-    return row
+    return result.data
 ```
 
 - [ ] **Step 4:** Update main `PATCH /v1/properties/{id}` schema (`PropertyUpdate`) to NOT include `notes` (extra="forbid" handles rejection automatically since `notes` isn't a declared field).
